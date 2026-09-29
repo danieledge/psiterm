@@ -372,7 +372,7 @@ RESOURCE ARRAY r_pm_cal_server_lines
 		DLG_LINE { type=EEikCtChoiceList; prompt="Sync with the Agenda"; id=EPmDlgCalOn;
 			control=CHOICELIST { array_id=r_pm_yesno_array; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="CalDAV server"; id=EPmDlgCalHost;
-			control=EDWIN { width=24; maxlength=62; }; },
+			control=EDWIN { width=24; maxlength=190; }; },
 		DLG_LINE { type=EEikCtSecretEd; prompt="Password (if not the mail one)"; id=EPmDlgCalPass;
 			control=SECRETED { num_letters=32; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="New Psion entries go to"; id=EPmDlgCalDefault;

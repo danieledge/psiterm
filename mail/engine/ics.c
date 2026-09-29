@@ -292,7 +292,14 @@ int ics_new(const IcsChange *c, int zone, const char *uid, char *buf, int max)
 
 /* The object's lines, unfolded. Each VEVENT is found by its RECURRENCE-ID
    ("" for the master). */
-typedef struct { int start, end; char recurid[24]; } Block;   /* line numbers */
+typedef struct
+	{
+	int start, end;          /* line numbers */
+	int has_rid;             /* an exception (has a RECURRENCE-ID) */
+	char recurid[24];        /* its RECURRENCE-ID in UTC, or a date */
+	int wall;                /* ... or it had a TZID: the wall-clock time */
+	long wall_t;
+	} Block;
 #define MAX_LINES 1500
 #define MAX_BLOCKS 60
 
@@ -300,6 +307,7 @@ typedef struct
 	{
 	char *text;              /* unfolded copy, lines NUL-separated */
 	int nlines;
+	int zone;
 	int off[MAX_LINES];
 	int nblocks;
 	Block block[MAX_BLOCKS];
@@ -308,46 +316,79 @@ typedef struct
 
 static int load(Obj *ob, const char *buf, int len, int zone)
 {
-	static char line[LINE_MAX_ICS * 4];
 	char name[40], params[200];
+	char *line;
 	int pos = 0, used = 0, n, cur = -1, depth = 0;
+	/* a line can be as long as the whole object (unfolded, never longer) */
 	ob->text = (char *)malloc(len + 16);
-	if (!ob->text) return -1;
+	line = (char *)malloc(len + 16);
+	if (!ob->text || !line) { free(ob->text); free(line); return -1; }
 	ob->nlines = ob->nblocks = 0;
 	ob->vcal_end = -1;
-	while ((n = next_line(buf, len, &pos, line, sizeof(line))) >= 0) {
+	ob->zone = zone;
+	while ((n = next_line(buf, len, &pos, line, len + 16)) >= 0) {
 		const char *v;
 		if (n == 0) continue;
-		if (ob->nlines >= MAX_LINES || used + n + 1 > len + 16) { free(ob->text); return -1; }
+		if (ob->nlines >= MAX_LINES || used + n + 1 > len + 16) { free(ob->text); free(line); return -1; }
 		ob->off[ob->nlines] = used;
 		memcpy(ob->text + used, line, n + 1);
 		used += n + 1;
 		v = split_prop(line, name, sizeof(name), params, sizeof(params));
 		if (!strcmp(name, "BEGIN") && !pm_strcasecmp(v, "VEVENT") && ob->nblocks < MAX_BLOCKS) {
 			cur = ob->nblocks++;
+			memset(&ob->block[cur], 0, sizeof(Block));
 			ob->block[cur].start = ob->nlines;
-			ob->block[cur].recurid[0] = 0;
 			depth = 0;
 		} else if (cur >= 0 && !strcmp(name, "BEGIN")) depth++;
 		else if (cur >= 0 && !strcmp(name, "END")) {
 			if (depth > 0) depth--;
 			else { ob->block[cur].end = ob->nlines; cur = -1; }
-		} else if (cur >= 0 && depth == 0 && !strcmp(name, "RECURRENCE-ID"))
-			norm_recurid(params, v, zone, ob->block[cur].recurid);
+		} else if (cur >= 0 && depth == 0 && !strcmp(name, "RECURRENCE-ID")) {
+			Block *b = &ob->block[cur];
+			long t;
+			int utc, date_only;
+			b->has_rid = 1;
+			if (cal_parse_time(v, &t, &utc, &date_only) == 0) {
+				if (date_only) cal_fmt_date(t, b->recurid);
+				else if (utc) cal_fmt_utc(t, b->recurid);
+				else { b->wall = 1; b->wall_t = t; }   /* TZID (or floating): see find_block */
+			}
+		}
 		if (!strcmp(name, "END") && !pm_strcasecmp(v, "VCALENDAR")) ob->vcal_end = ob->nlines;
 		ob->nlines++;
 	}
+	free(line);
 	return ob->vcal_end >= 0 ? 0 : (free(ob->text), -1);
 }
 
 static const char *L(Obj *ob, int i) { return ob->text + ob->off[i]; }
 
+/* The block for an instance: recurid "" is the master; otherwise the
+   server's UTC RECURRENCE-ID. An exception written with a TZID is matched
+   without knowing that zone: its wall-clock time is the UTC time shifted by
+   the zone's offset (at most 14 hours, in quarter hours) - the Psion's own
+   zone first, else the nearest such exception. */
 static int find_block(Obj *ob, const char *recurid)
 {
-	int i;
-	for (i = 0; i < ob->nblocks; i++)
-		if (!strcmp(ob->block[i].recurid, recurid)) return i;
-	return -1;
+	int i, best = -1;
+	long want, bestd = 15 * 3600L;
+	int utc, date_only;
+	for (i = 0; i < ob->nblocks; i++) {
+		Block *b = &ob->block[i];
+		if (!recurid[0]) { if (!b->has_rid) return i; continue; }
+		if (b->has_rid && !b->wall && !strcmp(b->recurid, recurid)) return i;
+	}
+	if (!recurid[0] || cal_parse_time(recurid, &want, &utc, &date_only) != 0 || date_only) return -1;
+	for (i = 0; i < ob->nblocks; i++) {
+		Block *b = &ob->block[i];
+		long d;
+		if (!b->has_rid || !b->wall) continue;
+		if (b->wall_t == cal_utc_to_local(ob->zone, want)) return i;
+		d = b->wall_t - want;
+		if (d < 0) d = -d;
+		if (d % 900 == 0 && d < bestd) { bestd = d; best = i; }
+	}
+	return best;
 }
 
 static int is_prop(const char *line, const char *name)
@@ -471,14 +512,14 @@ int ics_change(char *buf, int len, int max, const char *recurid, const IcsChange
 	return o.n;
 }
 
-int ics_exclude(char *buf, int len, int max, const char *recurid)
+int ics_exclude(char *buf, int len, int max, const char *recurid, int zone)
 {
 	Obj *ob = (Obj *)malloc(sizeof(Obj));
 	Out o;
 	int i, master, target;
 	char l[60];
 	if (!ob) return -1;
-	if (load(ob, buf, len, 0) != 0) { free(ob); return -1; }
+	if (load(ob, buf, len, zone) != 0) { free(ob); return -1; }
 	master = find_block(ob, "");
 	target = find_block(ob, recurid);
 	o.b = (char *)malloc(max + 1); o.n = 0; o.max = max; o.bad = 0;

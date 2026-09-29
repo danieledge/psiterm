@@ -44,12 +44,13 @@ typedef struct
 static Cal g_cal[MAX_CALS];
 static int g_ncal;
 static char g_home[200];
+static char g_where[200];            /* host+path the list came from */
 
 static char g_dir[160];
 static char *g_text;                 /* XML element text (calendar data can be big) */
 #define TEXT_MAX (160 * 1024)
 static char *g_obj;                  /* a calendar object being changed */
-#define OBJ_MAX (96 * 1024)
+#define OBJ_MAX (128 * 1024)
 
 /* ------------------------------------------------------------ helpers */
 
@@ -108,7 +109,12 @@ static void load_cals(void)
 	while (fgets(line, sizeof(line), f)) {
 		char *p = line;
 		line[strcspn(line, "\r\n")] = 0;
-		if (!strncmp(line, "#PSICAL1\t", 9)) { pm_copy(g_home, line + 9, sizeof(g_home)); continue; }
+		if (!strncmp(line, "#PSICAL1\t", 9)) {
+			char *q = line + 9;
+			pm_copy(g_home, field(&q), sizeof(g_home));
+			if (strcmp(field(&q), g_where)) { g_home[0] = 0; break; }   /* another server */
+			continue;
+		}
 		if (line[0] == '#' || !line[0] || g_ncal >= MAX_CALS) continue;
 		{
 			Cal *c = &g_cal[g_ncal++];
@@ -132,7 +138,7 @@ static int save_cals(void)
 	path_of("calendars.txt", path, sizeof(path));
 	path_of("calendars.tmp", tmp, sizeof(tmp));
 	if (!(f = fopen(tmp, "w"))) return -1;
-	fprintf(f, "#PSICAL1\t%s\n", g_home);
+	fprintf(f, "#PSICAL1\t%s\t%s\n", g_home, g_where);
 	for (i = 0; i < g_ncal; i++) {
 		Cal *c = &g_cal[i];
 		fprintf(f, "%s\t%d\t%s\t%s\t%s\t%s\n", c->id, c->sync, c->ctag, c->href, c->flags, c->name);
@@ -396,7 +402,7 @@ static void window(char *start, char *end, char *first_day)
 {
 	PmShared *s = pm_shared();
 	long now = pm_time(), today = now - now % 86400;
-	int back = s->cal.days_back > 0 ? s->cal.days_back : 30;
+	int back = s->cal.days_back >= 0 ? s->cal.days_back : 30;
 	int ahead = s->cal.days_ahead > 0 ? s->cal.days_ahead : 180;
 	cal_fmt_utc(today - back * 86400L, start);
 	cal_fmt_utc(today + (ahead + 1) * 86400L, end);
@@ -405,7 +411,7 @@ static void window(char *start, char *end, char *first_day)
 
 static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 {
-	static char body[900];
+	static char body[1500];
 	HttpResp r;
 	char a[24], b[24], day[12];
 	int n, res;
@@ -413,7 +419,13 @@ static int fetch_events(Cal *c, FILE *out, char *why, int whymax)
 	n = snprintf(body, sizeof(body),
 		"<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
 		"<C:calendar-query xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">"
-		"<D:prop><D:getetag/><C:calendar-data><C:expand start=\"%s\" end=\"%s\"/></C:calendar-data></D:prop>"
+		"<D:prop><D:getetag/><C:calendar-data>"
+		"<C:comp name=\"VCALENDAR\"><C:prop name=\"VERSION\"/><C:comp name=\"VEVENT\">"
+		"<C:prop name=\"UID\"/><C:prop name=\"SUMMARY\"/><C:prop name=\"LOCATION\"/>"
+		"<C:prop name=\"DTSTART\"/><C:prop name=\"DTEND\"/><C:prop name=\"DURATION\"/>"
+		"<C:prop name=\"RECURRENCE-ID\"/><C:prop name=\"RRULE\"/><C:prop name=\"RDATE\"/>"
+		"<C:prop name=\"STATUS\"/><C:comp name=\"VALARM\"><C:allprop/></C:comp></C:comp></C:comp>"
+		"<C:expand start=\"%s\" end=\"%s\"/></C:calendar-data></D:prop>"
 		"<C:filter><C:comp-filter name=\"VCALENDAR\"><C:comp-filter name=\"VEVENT\">"
 		"<C:time-range start=\"%s\" end=\"%s\"/></C:comp-filter></C:comp-filter></C:filter>"
 		"</C:calendar-query>", a, b, a, b);
@@ -500,16 +512,23 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 		int i;
 		read_change(&p, &c);
 		if (!cal) { pushed(res, key, "failed", ""); return PM_RES_OK; }
-		genrandom(rnd, sizeof(rnd));
-		for (i = 0; i < 8; i++) sprintf(uid + i * 2, "%02x", rnd[i]);
-		strcat(uid, "-psion");
+		/* the app names it, so a retry after a lost reply finds it there
+		   (If-None-Match) rather than making a second one */
+		pm_copy(uid, field(&p), sizeof(uid));
+		for (i = 0; uid[i]; i++)
+			if (!((uid[i] >= '0' && uid[i] <= '9') || (uid[i] >= 'a' && uid[i] <= 'z') || (uid[i] >= 'A' && uid[i] <= 'Z') || uid[i] == '-')) uid[i] = '-';
+		if (!uid[0]) {
+			genrandom(rnd, sizeof(rnd));
+			for (i = 0; i < 8; i++) sprintf(uid + i * 2, "%02x", rnd[i]);
+			strcat(uid, "-psion");
+		}
 		len = ics_new(&c, s->cal.zone, uid, g_obj, OBJ_MAX);
 		if (len < 0) { pushed(res, key, "failed", ""); return PM_RES_OK; }
 		snprintf(href, sizeof(href), "%s%s.ics", cal->href, uid);
 		rc = http_request("PUT", href, "Content-Type: text/calendar; charset=utf-8\r\nIf-None-Match: *\r\n",
 			g_obj, len, &r, 0, 0, why, whymax);
 		if (rc != PM_RES_OK) return rc;
-		pushed(res, key, r.status / 100 == 2 ? "ok" : "failed", href);
+		pushed(res, key, r.status / 100 == 2 || r.status == 412 ? "ok" : "failed", href);
 		cal->fetch = 1;
 		pm_log("caldav: new %s -> %d", href, r.status);
 		return PM_RES_OK;
@@ -538,7 +557,7 @@ static int push_one(char *line, FILE *res, char *why, int whymax)
 		if (op[0] == 'M') {
 			read_change(&p, &c);
 			len = ics_change(g_obj, len, OBJ_MAX - 1, recurid, &c, s->cal.zone);
-		} else len = ics_exclude(g_obj, len, OBJ_MAX - 1, recurid);
+		} else len = ics_exclude(g_obj, len, OBJ_MAX - 1, recurid, s->cal.zone);
 		if (len < 0) { pushed(res, key, "failed", href); return PM_RES_OK; }
 		snprintf(hdr, sizeof(hdr), "Content-Type: text/calendar; charset=utf-8\r\n%s%s%s",
 			r.etag[0] ? "If-Match: " : "", r.etag, r.etag[0] ? "\r\n" : "");
@@ -658,6 +677,7 @@ static int sync_now(int list_only, char *why, int whymax)
 	if (!g_text || !g_obj || !g_dav) { snprintf(why, whymax, "Not enough memory for the calendar"); return PM_RES_FAILED; }
 
 	http_target(k->host, k->port ? k->port : 443, !k->plain, k->user[0] ? k->user : a->user, pass);
+	snprintf(g_where, sizeof(g_where), "%s%s", k->host, k->path);
 	load_cals();
 	res = list_calendars(why, whymax);
 	if (res != PM_RES_OK) return res;

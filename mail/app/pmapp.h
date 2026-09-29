@@ -109,7 +109,7 @@ public:
 	~CPmView();
 	void ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSettings& aCal);
 	void CalendarSyncL();                    // ask the engine, then update the Agenda
-	TBool CalendarBusy() const { return iCalSync && iCalSync->Running(); }
+	TBool CalendarBusy() const { return iCalPending || (iCalSync && iCalSync->Running()); }
 	void StoreDirectory(TDes& aDir) const { StoreDir(aDir); }
 	// MPmCalObserver
 	void CalProgress(const TDesC& aText);
@@ -171,6 +171,7 @@ private:
 	void TickL();
 	void HandleResultL(const PmCmd& aCmd);
 	void HandleCalResultL(const PmCmd& aCmd, TInt aRes, const TDesC& aMsg);
+	void CalCmd(const TDesC8& aArg);
 	void ReloadL();
 	void LoadFoldersL();
 	void LoadListL();
@@ -198,6 +199,7 @@ private:
 	CPmCalSync* iCalSync;
 	TBool iCalSecond;                // sending what the Agenda sync found
 	TBuf<120> iCalMsg;
+	TBool iCalPending;               // a calendar sync is with the engine
 	RChunk iChunk;
 	TBool iChunkOpen;
 	PmShared* iShared;

@@ -83,7 +83,7 @@ static void tag(XmlScan *x)
 	x->tag[x->tlen] = 0;
 	if (t[0] == '?' || t[0] == '!') return;
 	if (t[0] == '/') { close = 1; t++; }
-	empty = x->tlen > 0 && x->tag[x->tlen - 1] == '/';
+	empty = x->last == '/';
 	while (t[n] && t[n] != ' ' && t[n] != '\t' && t[n] != '\r' && t[n] != '\n' && t[n] != '/' && n < (int)sizeof(name) - 1) {
 		name[n] = t[n];
 		n++;
@@ -112,7 +112,7 @@ void xs_feed(XmlScan *x, const char *in, int n)
 		char c = in[i];
 		switch (x->st) {
 		case S_TEXT:
-			if (c == '<') { x->st = S_TAG; x->tlen = 0; x->quote = 0; }
+			if (c == '<') { x->st = S_TAG; x->tlen = 0; x->quote = 0; x->last = 0; }
 			else if (c == '&') { x->st = S_ENT; x->elen = 0; }
 			else put(x, &c, 1);
 			break;
@@ -121,9 +121,16 @@ void xs_feed(XmlScan *x, const char *in, int n)
 			else if (x->elen < (int)sizeof(x->ent) - 1) x->ent[x->elen++] = c;
 			break;
 		case S_TAG:
-			if (x->quote) { if (c == x->quote) x->quote = 0; break; }
-			if (c == '"' || c == '\'') { if (x->tlen && x->tag[0] != '!') { x->quote = c; break; } }
-			if (c == '>') { tag(x); x->st = S_TEXT; break; }
+			/* attribute values are kept (xs callers may look at x->tag),
+			   and a '>' inside quotes doesn't end the tag */
+			if (x->quote) {
+				if (c == x->quote) x->quote = 0;
+				if (x->tlen < (int)sizeof(x->tag) - 1) x->tag[x->tlen++] = c;
+				break;
+			}
+			if ((c == '"' || c == '\'') && x->tlen && x->tag[0] != '!') x->quote = c;
+			else if (c == '>') { tag(x); x->st = S_TEXT; break; }
+			x->last = c;
 			if (x->tlen < (int)sizeof(x->tag) - 1) x->tag[x->tlen++] = c;
 			if (x->tlen == 3 && !memcmp(x->tag, "!--", 3)) { x->st = S_COMMENT; x->tlen = 0; }
 			else if (x->tlen == 8 && !memcmp(x->tag, "![CDATA[", 8)) { x->st = S_CDATA; x->tlen = 0; }

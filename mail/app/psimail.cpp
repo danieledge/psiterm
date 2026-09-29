@@ -320,6 +320,7 @@ void CPmView::StopEngine()
 
 void CPmView::EngineEnded()
 	{
+	iCalPending = EFalse;
 	TExitType type = iProcess.ExitType();
 	TInt reason = iProcess.ExitReason();
 	TExitCategoryName cat = iProcess.ExitCategory();
@@ -1046,7 +1047,14 @@ void CPmView::CalendarSyncL()
 	if (CalendarBusy())
 		return;
 	iCalSecond = EFalse;
-	Cmd(PM_CMD_CALSYNC, KNullDesC8, 0, KNullDesC8);
+	CalCmd(KNullDesC8);
+	}
+
+// one calendar sync at a time: the engine and CPmCalSync share its files
+void CPmView::CalCmd(const TDesC8& aArg)
+	{
+	iCalPending = ETrue;
+	Cmd(PM_CMD_CALSYNC, KNullDesC8, 0, aArg);
 	}
 
 void CPmView::CalProgress(const TDesC& aText)
@@ -1065,9 +1073,15 @@ void CPmView::CalSyncDone(TInt aError, const TDesC& aSummary, TBool aPushed)
 		// send what changed in the Agenda (the engine then fetches again)
 		iCalSecond = ETrue;
 		iCalMsg = aSummary;
-		Cmd(PM_CMD_CALSYNC, KNullDesC8, 0, KNullDesC8);
+		CalCmd(KNullDesC8);
 		Render();
 		return;
+		}
+	if (aError == KErrNone && iCal->iCopyExisting)
+		{
+		// the Psion's own entries have been sent once: not again
+		iCal->iCopyExisting = 0;
+		((CPmAppUi*)iEikonEnv->EikAppUi())->SaveCalSettings();
 		}
 	if (iCalSecond && aError == KErrNone && iCalMsg.Length())
 		Toast(iCalMsg);                  // the first pass said what happened
@@ -1398,6 +1412,8 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 	TInt res = s->last_res;
 	SafeCopy(iStatus, msg);
 	iStatusUntil = User::TickCount() + 64 * 6;
+	if (aCmd.op == PM_CMD_CALSYNC)
+		iCalPending = EFalse;
 	if (aCmd.op == PM_CMD_CALSYNC && res != PM_RES_UNTRUSTED && res != PM_RES_CANCELLED)
 		{
 		HandleCalResultL(aCmd, res, msg);
@@ -1464,6 +1480,7 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 			hp.Copy(host);
 			Cmd(PM_CMD_TRUST, KNullDesC8, 0, hp);
 			// and try again
+			if (aCmd.op == PM_CMD_CALSYNC) iCalPending = ETrue;
 			Cmd(aCmd.op, TPtrC8((const TUint8*)aCmd.folder), aCmd.uid, TPtrC8((const TUint8*)aCmd.arg));
 			}
 		break;
@@ -1516,6 +1533,7 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 void CPmView::HandleCalResultL(const PmCmd& aCmd, TInt aRes, const TDesC& aMsg)
 	{
 	TBool list = aCmd.arg[0] == 'l';
+	iCalPending = EFalse;
 	if (aRes == PM_RES_OK)
 		{
 		if (list)
@@ -1550,7 +1568,7 @@ void CPmView::HandleCalResultL(const PmCmd& aCmd, TInt aRes, const TDesC& aMsg)
 			CopyToC(iCal->iCal.pass, sizeof(iCal->iCal.pass), pw);
 			((CPmAppUi*)iEikonEnv->EikAppUi())->SaveCalSettings();
 			CopySettingsToShared();
-			Cmd(PM_CMD_CALSYNC, KNullDesC8, 0, TPtrC8((const TUint8*)aCmd.arg));
+			CalCmd(TPtrC8((const TUint8*)aCmd.arg));
 			}
 		return;
 		}
@@ -2573,8 +2591,10 @@ void CPmAppUi::EditCalendarL()
 		return;
 	TBool turnedOn = c.iCal.enabled && !iCalSettings.iCal.enabled;
 	TBuf<128> oldFile(iCalSettings.iAgendaFile);
-	if (c.iAgendaFile.CompareF(oldFile) != 0 || c.iCal.zone != iCalSettings.iCal.zone)
+	if (c.iAgendaFile.CompareF(oldFile) != 0)
 		CPmCalSync::ForgetL(dir);            // another file: start the links again
+	// (a new time zone needs nothing: the engine fetches everything again
+	// and the entries are corrected like any other server change)
 	if (turnedOn)
 		c.iCal.acct = iSettings.iAcct;
 	iCalSettings = c;
@@ -2592,8 +2612,17 @@ CPmCalDialog::~CPmCalDialog()
 void CPmCalDialog::PreLayoutDynInitL()
 	{
 	SetChoiceListCurrentItem(EPmDlgCalOn, iCal.iCal.enabled ? 1 : 0);
-	TBuf<64> host;
+	// host[:port][/path]
+	TBuf<200> host;
 	FromC(host, iCal.iCal.host);
+	if (iCal.iCal.port && iCal.iCal.port != 443)
+		{
+		host.Append(':');
+		host.AppendNum(iCal.iCal.port);
+		}
+	TBuf<130> path;
+	FromC(path, iCal.iCal.path);
+	host.Append(path);
 	SetEdwinTextL(EPmDlgCalHost, &host);
 	SetEdwinTextL(EPmDlgCalFile, &iCal.iAgendaFile);
 	SetChoiceListCurrentItem(EPmDlgCalZone, iCal.iCal.zone);
@@ -2620,7 +2649,7 @@ void CPmCalDialog::PreLayoutDynInitL()
 
 TBool CPmCalDialog::OkToExitL(TInt /*aButtonId*/)
 	{
-	TBuf<64> host;
+	TBuf<200> host;
 	GetEdwinText(host, EPmDlgCalHost);
 	host.Trim();
 	TInt on = ChoiceListCurrentItem(EPmDlgCalOn);
@@ -2641,7 +2670,8 @@ TBool CPmCalDialog::OkToExitL(TInt /*aButtonId*/)
 			return EFalse;
 			}
 		}
-	// "https://host/path" is allowed: the path is where to look for calendars
+	// "https://host:port/path" is allowed: the path is where to look for
+	// calendars. (Always TLS: a calendar password shouldn't go in the clear.)
 	TInt scheme = host.Find(_L("://"));
 	if (scheme >= 0) host.Delete(0, scheme + 3);
 	TInt slash = host.Locate('/');
@@ -2651,9 +2681,18 @@ TBool CPmCalDialog::OkToExitL(TInt /*aButtonId*/)
 		CopyToC(iCal.iCal.path, sizeof(iCal.iCal.path), host.Mid(slash));
 		host.SetLength(slash);
 		}
+	iCal.iCal.port = 443;
+	TInt colon = host.Locate(':');
+	if (colon >= 0)
+		{
+		TLex lex(host.Mid(colon + 1));
+		TInt port = 443;
+		if (lex.Val(port) == KErrNone && port > 0 && port < 65536)
+			iCal.iCal.port = port;
+		host.SetLength(colon);
+		}
 	CopyToC(iCal.iCal.host, sizeof(iCal.iCal.host), host);
 	iCal.iCal.enabled = on;
-	iCal.iCal.port = 443;
 	TBuf<32> pw;
 	GetSecretEditorText(pw, EPmDlgCalPass);
 	if (pw.Length())

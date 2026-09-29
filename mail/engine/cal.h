@@ -35,9 +35,10 @@ struct XmlScan
 	char tag[160];
 	int tlen;
 	int quote;
+	char last;               /* the tag's last character ("/": empty element) */
 	char ent[12];
 	int elen;
-	char path[XS_DEPTH][32];
+	char path[XS_DEPTH][48];
 	int depth;
 	char *text;              /* the current element's text */
 	int len, max;
@@ -83,7 +84,7 @@ int  ics_new(const IcsChange *c, int zone, const char *uid, char *out, int max);
    object has none). Returns the new length, -1 if impossible. */
 int  ics_change(char *buf, int len, int max, const char *recurid, const IcsChange *c, int zone);
 /* Removes one instance of a recurring event (EXDATE). Returns new length. */
-int  ics_exclude(char *buf, int len, int max, const char *recurid);
+int  ics_exclude(char *buf, int len, int max, const char *recurid, int zone);
 
 /* ---- HTTP/1.1 over the engine's connection (http.c) */
 typedef struct

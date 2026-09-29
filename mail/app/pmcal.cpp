@@ -182,11 +182,14 @@ void CPmCalSync::Close()
 	iModel = NULL;
 	if (iServ)
 		{
-		iServ->CloseAgenda();
-		iServ->Close();
+		if (iAgendaOpen)
+			iServ->CloseAgenda();
+		if (iServConnected)
+			iServ->Close();
 		delete iServ;
 		iServ = NULL;
 		}
+	iAgendaOpen = iServConnected = EFalse;
 	delete iPara;
 	iPara = NULL;
 	delete iChar;
@@ -206,6 +209,7 @@ void CPmCalSync::StartL(const TDesC& aStoreDir, const TPmCalSettings& aSettings)
 	iDir = aStoreDir;
 	iDir.Append(_L("cal\\"));
 	iAdded = iChangedN = iRemoved = iSent = iFailed = 0;
+	iPushedRead = EFalse;
 	iPhase = EOpen;
 	iPos = 0;
 	Next();
@@ -224,6 +228,17 @@ void CPmCalSync::DoCancel()
 
 TInt CPmCalSync::RunError(TInt aError)
 	{
+	// keep what was done: entries added so far must stay linked
+	if (iMap && iPush && iFsOpen)
+		{
+		TRAPD(err, SaveMapL(); SavePushL());
+		if (err == KErrNone && iPushedRead)
+			{
+			TFileName path;
+			Path(KPushedFile, path);
+			iFs.Delete(path);
+			}
+		}
 	Close();
 	Reset();
 	iPhase = EIdle;
@@ -367,8 +382,11 @@ void CPmCalSync::LoadEventsL()
 		TPmCalEvent e;
 		EventKey(line, key);
 		e.iKeyHash = Fnv(key);
-		TPtrC8 hashed = line.Mid(Field(line, 0).Length() + Field(line, 1).Length() + Field(line, 2).Length() +
-			Field(line, 3).Length() + 4);      // flags .. location
+		TInt skip = Field(line, 0).Length() + Field(line, 1).Length() + Field(line, 2).Length() +
+			Field(line, 3).Length() + 4;
+		if (skip > line.Length())
+			continue;                         // not a whole line
+		TPtrC8 hashed = line.Mid(skip);       // flags .. location
 		e.iHash = Fnv(hashed);
 		e.iMapped = -1;
 		e.iLine = line.AllocLC();
@@ -685,16 +703,18 @@ void CPmCalSync::OpenL()
 	TTime now;
 	now.HomeTime();
 	if (iWinStart == Time::NullTTime())
-		iWinStart = Midnight(now) - TTimeIntervalDays(iSettings.iCal.days_back > 0 ? iSettings.iCal.days_back : 30);
+		iWinStart = Midnight(now) - TTimeIntervalDays(iSettings.iCal.days_back >= 0 ? iSettings.iCal.days_back : 30);
 	iWinEnd = Midnight(now) + TTimeIntervalDays((iSettings.iCal.days_ahead > 0 ? iSettings.iCal.days_ahead : 180) + 1);
 
 	iPara = CParaFormatLayer::NewL();
 	iChar = CCharFormatLayer::NewL();
 	iServ = RAgendaServ::NewL();
 	User::LeaveIfError(iServ->Connect());
+	iServConnected = ETrue;
 	iModel = CAgnEntryModel::NewL();
 	iModel->SetServer(iServ);
 	iModel->OpenL(iSettings.iAgendaFile, TTimeIntervalMinutes(9 * 60), TTimeIntervalMinutes(9 * 60), TTimeIntervalMinutes(9 * 60));
+	iAgendaOpen = ETrue;
 	iServ->WaitUntilLoaded();
 	if (iServ->FileIsReadOnly())
 		User::Leave(KErrAccessDenied);
@@ -752,7 +772,12 @@ void CPmCalSync::PushEntryL(TChar aOp, TUint32 aAuid, CAgnEntry* aEntry, const T
 		TInt alarm = -2;                            // leave the server's alarms alone
 		if (iSettings.iAlarms)
 			{
-			alarm = -1;
+			// "no alarm" removes the server's only if it had one we could
+			// read (it may have kinds the Psion can't show)
+			TLex8 l(Field(aEventLine, 7));
+			TInt had = -1;
+			if (aOp == 'M') l.Val(had);
+			if (aOp == 'N' || had >= 0) alarm = -1;
 			if (aEntry->HasAlarm())
 				{
 				TTimeIntervalMinutes m;
@@ -777,6 +802,14 @@ void CPmCalSync::PushEntryL(TChar aOp, TUint32 aAuid, CAgnEntry* aEntry, const T
 		AppendClean(line, text.Left(190));
 		line.Append('\t');
 		AppendClean(line, aEntry->Location().Left(110));
+		if (aOp == 'N')
+			{
+			// the event's UID on the server: the same if this is sent again
+			line.Append(_L8("\tpsion-"));
+			AppendHex64(line, iSince);
+			line.Append('-');
+			line.AppendNum((TUint)aAuid, EDecimal);
+			}
 		}
 	PushL(line);
 	CleanupStack::PopAndDestroy();       // buf
@@ -923,9 +956,7 @@ void CPmCalSync::ReadPushedL()
 			}
 		}
 	CleanupStack::PopAndDestroy();
-	TFileName path;
-	Path(KPushedFile, path);
-	iFs.Delete(path);
+	iPushedRead = ETrue;                    // deleted once the links are saved
 	}
 
 // one batch of the entries we look after
@@ -966,7 +997,7 @@ TBool CPmCalSync::MappedStepL()
 		if (ev < 0)
 			{
 			// not on the server (any more)
-			if (gone || (start != Time::NullTTime() && start < iWinStart))
+			if (gone || (start != Time::NullTTime() && (start < iWinStart || start >= iWinEnd)))
 				{
 				RemoveMap(iPos);                // gone, or just old: the Psion keeps it
 				continue;
@@ -1094,6 +1125,12 @@ void CPmCalSync::FinishL()
 	{
 	SaveMapL();
 	SavePushL();
+	if (iPushedRead)
+		{
+		TFileName path;
+		Path(KPushedFile, path);
+		iFs.Delete(path);
+		}
 	TBool pushed = iPush->Count() > 0;
 	TBuf<120> msg;
 	if (iAdded || iChangedN || iRemoved)

@@ -30,7 +30,7 @@ for i in range(n_filler):
     put(m, flags="(\\Seen)" if i % 3 else "")
 
 m = MIMEText("Hello Dan,\n\nThis is a plain message with café, €5 and “quotes” — and an emoji \U0001F600.\n\n-- \nAlice\n", "plain", "utf-8")
-m["From"] = str(Header("Alice Ångström", "utf-8")) + " <alice@example.com>"
+m["From"] = formataddr(("Alice Ångström", "alice@example.com"))
 m["To"] = user
 m["Cc"] = "Bob <bob@example.org>, carol@example.net"
 m["Reply-To"] = "alice-replies@example.com"

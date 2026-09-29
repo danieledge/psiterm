@@ -179,7 +179,6 @@ void CPwView::StartEngineL()
 	CopyToC(s->net.save_as, sizeof(s->net.save_as), iUpdateFile);
 	CopyToC(s->home_url, sizeof(s->home_url), iSettings.iHome);
 	CopyToC(s->start_url, sizeof(s->start_url), iStartUrl);
-	iStartUrl.Zero();
 
 	// the engine and its resources (Messages, CSS) live next to the app
 	TParse parse;
@@ -204,6 +203,7 @@ void CPwView::StartEngineL()
 		return;
 		}
 	iRunning = ETrue;
+	iStartUrl.Zero();                  // (kept if the engine could not start)
 	if (!iWatcher)
 		iWatcher = new(ELeave) CPwWatcher(*this);
 	iWatcher->Watch(iProcess);
@@ -842,7 +842,7 @@ TBool CPwAppUi::ProcessCommandParametersL(TApaCommand /*aCommand*/, TFileName& a
 		TBuf<PW_URL_MAX> url;
 		url.Copy(aTail.Left(url.MaxLength()));
 		url.Trim();
-		if (url.Length() > 0)
+		if (url.Length() > 0 && iView)
 			iView->OpenUrlL(url);
 		}
 	aDocumentName.Zero();          // PsiWeb has no document file
@@ -860,7 +860,7 @@ void CPwAppUi::ProcessMessageL(TUid aUid, const TDesC8& aParams)
 	TBuf<PW_URL_MAX> url;
 	url.Copy(aParams.Left(url.MaxLength()));
 	url.Trim();
-	if (url.Length() > 0)
+	if (url.Length() > 0 && iView)
 		iView->OpenUrlL(url);
 	}
 

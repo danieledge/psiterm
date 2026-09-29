@@ -133,6 +133,9 @@ private:
 	CParaFormatLayer* iPara;
 	CCharFormatLayer* iChar;
 	TAny* iIter;               // CAgnSyncIter
+	TBool iServConnected;
+	TBool iAgendaOpen;
+	TBool iPushedRead;
 	// what we know
 	CArrayFixFlat<TPmCalEvent>* iEvents;
 	CArrayFixFlat<TPmCalMap>* iMap;
