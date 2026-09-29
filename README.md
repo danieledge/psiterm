@@ -24,6 +24,12 @@ and Claude Code - on a 1999 palmtop.
 - Signed over-the-air updates straight from GitHub (TLS 1.3 on a 36 MHz ARM)
 - An on-device crypto speed test
 
+## PsiWeb: a web browser
+
+`web/` builds **PsiWeb**, the NetSurf web browser for the 5mx, on PsiTerm's
+modem/dial-up link and TLS 1.3 client - see [web/README.md](web/README.md)
+(`dist/PsiWeb.sis`, built by `web/build.sh`).
+
 ## Install
 
 Copy `dist/PsiTerm.sis` to the Psion and open it (install to D: if you have a

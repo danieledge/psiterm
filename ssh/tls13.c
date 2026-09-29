@@ -464,3 +464,6 @@ int tls_read(void *buf, int max, int timeout_ms)
 }
 
 const char *tls_error(void) { return g_err ? g_err : ""; }
+
+/* decrypted bytes waiting to be read (PsiWeb polls without blocking) */
+int tls_pending(void) { return g_app_pos < g_app_len; }

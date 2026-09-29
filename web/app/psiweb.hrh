@@ -1,0 +1,39 @@
+// PSIWEB.HRH - command and control ids for PsiWeb.app
+
+enum TPwCommands
+	{
+	EPwCmdOpen = 0x1000,
+	EPwCmdHome,
+	EPwCmdReload,
+	EPwCmdStop,
+	EPwCmdBack,
+	EPwCmdForward,
+	EPwCmdTop,
+	EPwCmdBottom,
+	EPwCmdZoomIn,
+	EPwCmdZoomOut,
+	EPwCmdZoomNormal,
+	EPwCmdImages,
+	EPwCmdConnSettings,
+	EPwCmdBrowserSettings,
+	EPwCmdPageInfo,
+	EPwCmdRestart,
+	EPwCmdAbout
+	};
+
+enum TPwDialogControls
+	{
+	EPwDlgUrl = 0x100,
+	EPwDlgBaud,
+	EPwDlgFlow,
+	EPwDlgLink,
+	EPwDlgProxy,
+	EPwDlgProxyHost,
+	EPwDlgProxyPort,
+	EPwDlgHome,
+	EPwDlgInfo1,
+	EPwDlgInfo2,
+	EPwDlgInfo3,
+	EPwDlgInfo4,
+	EPwDlgInfo5
+	};

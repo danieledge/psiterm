@@ -1,0 +1,17 @@
+// PSIWEB.MMP - PsiWeb.app (the engine, psiweb.exe, is built by ../Makefile)
+TARGET        psiweb.app
+TARGETTYPE    app
+UID           0x1000006c 0x01000A7A
+TARGETPATH    \system\apps\psiweb
+
+PROJECT       ptproj
+SUBPROJECT    psiweb
+
+SOURCE        psiweb.cpp
+RESOURCE      psiweb.rss
+
+USERINCLUDE   \ptproj\psiweb
+SYSTEMINCLUDE \ptproj\psiwebinc \ptproj\psitermssh \epoc32\include\libc \epoc32\include
+
+LIBRARY       euser.lib efsrv.lib apparc.lib cone.lib eikon.lib ws32.lib gdi.lib
+LIBRARY       fbscli.lib bafl.lib

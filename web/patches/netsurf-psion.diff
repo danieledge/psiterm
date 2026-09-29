@@ -1,0 +1,442 @@
+diff --git a/content/fetch.c b/content/fetch.c
+index f090039..22be84c 100644
+--- a/content/fetch.c
++++ b/content/fetch.c
+@@ -54,7 +54,9 @@
+ #include "content/fetchers.h"
+ #include "content/fetchers/resource.h"
+ #include "content/fetchers/about/about.h"
++#ifdef WITH_CURL
+ #include "content/fetchers/curl.h"
++#endif
+ #include "content/fetchers/data.h"
+ #include "content/fetchers/file/file.h"
+ #include "javascript/fetcher.h"
+@@ -286,6 +288,15 @@ nserror fetcher_init(void)
+ {
+ 	nserror ret;
+ 
++#ifdef PSIWEB
++	{
++		extern nserror fetch_psi_register(void);
++		ret = fetch_psi_register();
++		if (ret != NSERROR_OK) {
++			return ret;
++		}
++	}
++#endif
+ #ifdef WITH_CURL
+ 	ret = fetch_curl_register();
+ 	if (ret != NSERROR_OK) {
+diff --git a/frontends/framebuffer/fbtk/event.c b/frontends/framebuffer/fbtk/event.c
+index 7a58091..b9c9046 100644
+--- a/frontends/framebuffer/fbtk/event.c
++++ b/frontends/framebuffer/fbtk/event.c
+@@ -302,6 +302,12 @@ fbtk_keycode_to_ucs4(int code, fbtk_modifier_type mods)
+ {
+ 	int ucs4 = -1;
+ 
++#ifdef PSIWEB
++	/* PsiWeb: the Psion keyboard delivers finished characters */
++	if (code >= 0x10000)
++		return code - 0x10000;
++#endif
++
+ 	if (mods & FBTK_MOD_LSHIFT || mods & FBTK_MOD_RSHIFT) {
+ 		if ((code >= 0) && (code < (int) NOF_ELEMENTS(sh_keymap)))
+ 			ucs4 = sh_keymap[code];
+diff --git a/frontends/framebuffer/fetch.c b/frontends/framebuffer/fetch.c
+index 23cbb4f..a4fcf98 100644
+--- a/frontends/framebuffer/fetch.c
++++ b/frontends/framebuffer/fetch.c
+@@ -90,11 +90,34 @@ static const char *fetch_filetype(const char *unix_path)
+ 	return "text/html";
+ }
+ 
++#ifdef PSIWEB
++/* PsiWeb builds its resources into the program (web/mkres.py) */
++extern int pwres_get(const char *name, const unsigned char **data, size_t *len);
++
++static nserror get_resource_data(const char *path, const uint8_t **data, size_t *len)
++{
++	if (strcmp(path, "favicon.ico") == 0)
++		return NSERROR_NOT_FOUND;
++	return pwres_get(path, data, len) == 0 ? NSERROR_OK : NSERROR_NOT_FOUND;
++}
++
++static nsurl *psiweb_resource_url(const char *path)
++{
++	(void)path;
++	return NULL;
++}
++#endif
++
+ /* table for fetch operations */
+ static struct gui_fetch_table fetch_table = {
+ 	.filetype = fetch_filetype,
+ 
++#ifdef PSIWEB
++	.get_resource_url = psiweb_resource_url,
++	.get_resource_data = get_resource_data,
++#else
+ 	.get_resource_url = get_resource_url,
++#endif
+ };
+ 
+ struct gui_fetch_table *framebuffer_fetch_table = &fetch_table;
+diff --git a/frontends/framebuffer/gui.c b/frontends/framebuffer/gui.c
+index 5bfc822..92cac62 100644
+--- a/frontends/framebuffer/gui.c
++++ b/frontends/framebuffer/gui.c
+@@ -18,7 +18,9 @@
+ 
+ #include <stdint.h>
+ #include <limits.h>
++#ifndef PSIWEB
+ #include <getopt.h>
++#endif
+ #include <assert.h>
+ #include <string.h>
+ #include <stdbool.h>
+@@ -60,6 +62,16 @@
+ 
+ #define NSFB_TOOLBAR_DEFAULT_LAYOUT "blfsrutc"
+ 
++#ifdef PSIWEB
++/* PsiWeb (Psion Series 5mx): the screen, keyboard, pen and menu commands
++ * come from PsiWeb.app through the pwback.h backend */
++#include "desktop/searchweb.h"
++#include "pwback.h"
++#include "psiweb_cmds.h"
++extern void nsfb_epoc_register(void);
++static void psiweb_commands(void);
++#endif
++
+ fbtk_widget_t *fbtk;
+ 
+ static bool fb_complete = false;
+@@ -107,6 +119,9 @@ static struct gui_drag {
+ static void die(const char *error)
+ {
+ 	fprintf(stderr, "%s\n", error);
++#ifdef PSIWEB
++	pwb_fatal(error);
++#endif
+ 	exit(1);
+ }
+ 
+@@ -474,6 +489,19 @@ framebuffer_pick_default_fename(void *ctx, const char *name, enum nsfb_type_e ty
+ 	}
+ }
+ 
++#ifdef PSIWEB
++static bool
++process_cmdline(int argc, char** argv)
++{
++	(void)argc; (void)argv;
++	fename = "epoc";
++	febpp = 16;
++	fewidth = 640;
++	feheight = 240;
++	feurl = pwb_home_url();
++	return true;
++}
++#else
+ static bool
+ process_cmdline(int argc, char** argv)
+ {
+@@ -549,6 +577,8 @@ process_cmdline(int argc, char** argv)
+ 	return true;
+ }
+ 
++#endif /* PSIWEB */
++
+ /**
+  * Set option defaults for framebuffer frontend
+  *
+@@ -584,6 +614,21 @@ static nserror set_defaults(struct nsoption_s *defaults)
+ 		{ NSOPTION_LISTEND, 0},
+ 	};
+ 
++#ifdef PSIWEB
++	{
++		/* 16 MB Psion: small caches, cookies next to the app */
++		char path[160];
++		snprintf(path, sizeof(path), "%sCookies", pwb_res_dir());
++		nsoption_setnull_charp(cookie_file, strdup(path));
++		nsoption_setnull_charp(cookie_jar, strdup(path));
++		defaults[NSOPTION_memory_cache_size].value.i = 1024 * 1024;
++		defaults[NSOPTION_max_fetchers].value.i = 6;
++		defaults[NSOPTION_max_fetchers_per_host].value.i = 2;
++		defaults[NSOPTION_max_cached_fetch_handles].value.i = 1;
++		defaults[NSOPTION_fb_toolbar_size].value.i = 26;
++		defaults[NSOPTION_fb_furniture_size].value.i = 14;
++	}
++#endif
+ 	/* Set defaults for absent option strings */
+ 	nsoption_setnull_charp(cookie_file, strdup("~/.netsurf/Cookies"));
+ 	nsoption_setnull_charp(cookie_jar, strdup("~/.netsurf/Cookies"));
+@@ -635,6 +680,9 @@ static void framebuffer_run(void)
+ 			    (event.value.controlcode ==  NSFB_CONTROL_QUIT))
+ 				fb_complete = true;
+ 		}
++#ifdef PSIWEB
++		psiweb_commands();
++#endif
+ 
+ 		fbtk_redraw(fbtk);
+ 	}
+@@ -1957,6 +2005,9 @@ static void
+ gui_window_set_status(struct gui_window *g, const char *text)
+ {
+ 	fbtk_set_text(g->status, text);
++#ifdef PSIWEB
++	pwb_set_status(text);
++#endif
+ }
+ 
+ static void
+@@ -1993,9 +2044,21 @@ static nserror
+ gui_window_set_url(struct gui_window *g, nsurl *url)
+ {
+ 	fbtk_set_text(g->url, nsurl_access(url));
++#ifdef PSIWEB
++	pwb_set_url(nsurl_access(url));
++#endif
+ 	return NSERROR_OK;
+ }
+ 
++#ifdef PSIWEB
++static void
++gui_window_set_title(struct gui_window *g, const char *title)
++{
++	(void)g;
++	pwb_set_title(title);
++}
++#endif
++
+ static void
+ throbber_advance(void *pw)
+ {
+@@ -2058,6 +2121,9 @@ gui_window_start_throbber(struct gui_window *g)
+ {
+ 	g->throbber_index = 0;
+ 	framebuffer_schedule(100, throbber_advance, g);
++#ifdef PSIWEB
++	pwb_set_busy(1);
++#endif
+ }
+ 
+ static void
+@@ -2065,6 +2131,11 @@ gui_window_stop_throbber(struct gui_window *gw)
+ {
+ 	gw->throbber_index = -1;
+ 	fbtk_set_bitmap(gw->throbber, &throbber0);
++#ifdef PSIWEB
++	pwb_set_busy(0);
++	pwb_set_nav(browser_window_back_available(gw->bw),
++			browser_window_forward_available(gw->bw));
++#endif
+ 
+ 	fb_update_back_forward(gw);
+ 
+@@ -2159,6 +2230,9 @@ static struct gui_window_table framebuffer_window_table = {
+ 	.event = gui_window_event,
+ 
+ 	.set_url = gui_window_set_url,
++#ifdef PSIWEB
++	.set_title = gui_window_set_title,
++#endif
+ 	.set_status = gui_window_set_status,
+ 	.set_pointer = gui_window_set_pointer,
+ 	.place_caret = gui_window_place_caret,
+@@ -2203,7 +2277,12 @@ main(int argc, char** argv)
+ 		die("NetSurf operation table failed registration");
+         }
+ 
++#ifdef PSIWEB
++	nsfb_epoc_register();
++	respaths = fb_init_resource_path(pwb_res_dir());
++#else
+ 	respaths = fb_init_resource_path(NETSURF_FB_RESPATH":"NETSURF_FB_FONTPATH);
++#endif
+ 
+ 	/* initialise logging. Not fatal if it fails but not much we
+ 	 * can do about it either.
+@@ -2219,11 +2298,27 @@ main(int argc, char** argv)
+ 	nsoption_read(options, nsoptions);
+ 	free(options);
+ 	nsoption_commandline(&argc, argv, nsoptions);
++#ifdef PSIWEB
++	nsoption_set_bool(foreground_images, pwb_load_images() != 0);
++	nsoption_set_bool(background_images, pwb_load_images() != 0);
++	if (pwb_zoom() >= 30)
++		nsoption_set_int(scale, pwb_zoom());
++#endif
+ 
+ 	/* message init */
++#ifdef PSIWEB
++	{
++		extern const unsigned char *pwres_messages(size_t *len);
++		size_t mlen;
++		const unsigned char *m = pwres_messages(&mlen);
++		(void)messages;
++		ret = messages_add_from_inline(m, mlen);
++	}
++#else
+ 	messages = filepath_find(respaths, "Messages");
+         ret = messages_add_from_file(messages);
+ 	free(messages);
++#endif
+ 	if (ret != NSERROR_OK) {
+ 		fprintf(stderr, "Message translations failed to load\n");
+ 	}
+@@ -2251,7 +2346,11 @@ main(int argc, char** argv)
+ 
+ 	fbtk = fbtk_init(nsfb);
+ 
++#ifndef PSIWEB
+ 	fbtk_enable_oskb(fbtk);
++#else
++	pwb_ready();
++#endif
+ 
+ 	urldb_load_cookies(nsoption_charp(cookie_file));
+ 
+@@ -2324,3 +2423,76 @@ void gui_resize(fbtk_widget_t *root, int width, int height)
+  * c-basic-offset:8
+  * End:
+  */
++
++#ifdef PSIWEB
++/* menu commands from PsiWeb.app */
++static void psiweb_commands(void)
++{
++	char arg[512];
++	struct gui_window *gw = window_list;
++	struct browser_window *bw;
++	nsurl *url = NULL;
++	int cmd = pwb_take_command(arg, sizeof(arg));
++
++	if (cmd == PW_CMD_NONE)
++		return;
++	if (cmd == PW_CMD_QUIT) {
++		fb_complete = true;
++		return;
++	}
++	if (gw == NULL)
++		return;
++	bw = gw->bw;
++
++	switch (cmd) {
++	case PW_CMD_HOME:
++		snprintf(arg, sizeof(arg), "%s", pwb_home_url());
++		/* fall through */
++	case PW_CMD_OPEN:
++		if (search_web_omni(arg, SEARCH_WEB_OMNI_NONE, &url) == NSERROR_OK) {
++			browser_window_navigate(bw, url, NULL, BW_NAVIGATE_HISTORY,
++					NULL, NULL, NULL);
++			nsurl_unref(url);
++		}
++		break;
++	case PW_CMD_BACK:
++		if (browser_window_back_available(bw))
++			browser_window_history_back(bw, false);
++		fb_update_back_forward(gw);
++		break;
++	case PW_CMD_FORWARD:
++		if (browser_window_forward_available(bw))
++			browser_window_history_forward(bw, false);
++		fb_update_back_forward(gw);
++		break;
++	case PW_CMD_RELOAD:
++		browser_window_reload(bw, true);
++		break;
++	case PW_CMD_STOP:
++		browser_window_stop(bw);
++		break;
++	case PW_CMD_ZOOM:
++		if (atoi(arg) >= 30 && atoi(arg) <= 300)
++			browser_window_set_scale(bw, atoi(arg) / 100.0f, true);
++		break;
++	case PW_CMD_TOP:
++		widget_scroll_y(gw, 0, true);
++		break;
++	case PW_CMD_BOTTOM:
++		widget_scroll_y(gw, 0x3fffffff, true);
++		break;
++	case PW_CMD_PAGEUP:
++		widget_scroll_y(gw, -fbtk_get_height(gw->browser), false);
++		break;
++	case PW_CMD_PAGEDOWN:
++		widget_scroll_y(gw, fbtk_get_height(gw->browser), false);
++		break;
++	case PW_CMD_IMAGES:
++		nsoption_set_bool(foreground_images, arg[0] == '1');
++		nsoption_set_bool(background_images, arg[0] == '1');
++		break;
++	default:
++		break;
++	}
++}
++#endif
+diff --git a/utils/config.h b/utils/config.h
+index 3914771..284898b 100644
+--- a/utils/config.h
++++ b/utils/config.h
+@@ -208,4 +208,29 @@ char *realpath(const char *path, char *resolved_path);
+ 	#define NO_IPV6
+ #endif
+ 
++
++/* Psion Series 5mx / EPOC R5 (estlib) */
++#if defined(__EPOC32__)
++#undef HAVE_MMAP
++#undef WITH_MMAP
++#undef HAVE_SCANDIR
++#undef HAVE_DIRFD
++#undef HAVE_UNLINKAT
++#undef HAVE_FSTATAT
++#undef HAVE_REGEX
++#undef HAVE_EXECINFO
++#undef HAVE_UTSNAME
++#undef HAVE_INETPTON
++#undef HAVE_INETATON
++#undef HAVE_SIGPIPE
++#undef HAVE_REALPATH
++#undef HAVE_STRPTIME
++#undef HAVE_STRFTIME
++#undef HAVE_STRTOULL
++#undef HAVE_STRNDUP
++#undef HAVE_STRCASESTR
++#undef HAVE_STRCHRNUL
++#define NO_IPV6 1
++#endif
++
+ #endif
+diff --git a/utils/regex.h b/utils/regex.h
+index a415239..bddfb58 100644
+--- a/utils/regex.h
++++ b/utils/regex.h
+@@ -54,7 +54,7 @@ int regcomp(regex_t *restrict preg, const char *restrictregex, int cflags);
+ 
+ size_t regerror(int errorcode, const regex_t *restrict preg, char *restrict errbuf, size_t errbuf_size);
+ 
+-int regexec(const regex_t *restrict preg, const char *restrict string, size_t nmatch, regmatch_t pmatch[restrict], int eflags);
++int regexec(const regex_t *restrict preg, const char *restrict string, size_t nmatch, regmatch_t pmatch[], int eflags);
+ 
+ void regfree(regex_t *preg);
+ 
+diff --git a/utils/utils.c b/utils/utils.c
+index c647185..3639bbd 100644
+--- a/utils/utils.c
++++ b/utils/utils.c
+@@ -560,7 +560,7 @@ int
+ regexec(const regex_t *restrict preg,
+ 	const char *restrict string,
+ 	size_t nmatch,
+-	regmatch_t pmatch[restrict],
++	regmatch_t pmatch[],
+ 	int eflags)
+ {
+ 	return REG_NOMATCH;
