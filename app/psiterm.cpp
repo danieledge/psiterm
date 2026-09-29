@@ -59,7 +59,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.39");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.40");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -2652,7 +2652,14 @@ void CTermView::SshProcessEnded()
 		LocalMessage(_L8("\r\nStarting the installer - PsiTerm will close.\r\n"));
 		iInstallPending = ETrue;
 		if (iToolDlg)
-			TRAP_IGNORE(iToolDlg->CloseL());     // the installer starts when it has closed
+			{
+			// the installer starts when the window has closed. Closing it
+			// deletes it, so nothing below may touch it (FinishL on the
+			// deleted window was a KERN-EXEC 3 at the end of every update)
+			CToolDialog* dlg = iToolDlg;
+			iToolDlg = NULL;
+			TRAP_IGNORE(dlg->CloseL());
+			}
 		}
 	if (iToolDlg)
 		TRAP_IGNORE(iToolDlg->FinishL());
