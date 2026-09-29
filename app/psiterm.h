@@ -210,6 +210,7 @@ struct THostEntry
 	TBuf<60> iUser;
 	TBuf<63> iPassword;   // empty = ask when connecting
 	TInt iPort;
+	TBuf<100> iCommand;   // run on login, e.g. tmux new -A -s psion (optional)
 	};
 
 class CHostList : public CBase
@@ -362,6 +363,7 @@ public:
 	// SSH (Dropbear in psissh.exe)
 	void StartSshL();
 	void SetSshPassword(const TDesC& aPassword) { iSshPassword.Copy(aPassword); }
+	void SetLoginCommand(const TDesC& aCommand) { iLoginCmd.Copy(aCommand); }
 	void StartSpeedTestL();
 	void StartUpdateL();
 	void ScreenshotL();                 // after a short delay (menu gone)
@@ -530,6 +532,7 @@ private:
 	void TakeScreenshotL();
 	void ShotDir(TDes& aDir);
 	TInt DeleteShots();
+	TBuf<100> iLoginCmd;      // the connected host's command on login
 	TBuf8<64> iSshPassword;   // saved password for the next launch, then wiped
 	// auto-reconnect
 	TBuf8<64> iReconnectPw;   // the saved password of this session (RAM only)

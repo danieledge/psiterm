@@ -59,7 +59,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.36");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.37");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -2432,7 +2432,7 @@ void CTermView::LaunchSshL(TInt aMode)
 		{
 		iUserQuit = EFalse;
 		TPtr8 cmd((TUint8*)iShared->command, sizeof(iShared->command) - 1);
-		cmd.Copy(iSettings.iStartCmd);
+		cmd.Copy(iLoginCmd);
 		cmd.ZeroTerminate();
 		if (iSshPassword.Length() > 0)
 			iReconnectPw = iSshPassword;
@@ -2808,11 +2808,12 @@ void CHostList::Load()
 	TPtr8 data(buf->Des());
 	TInt r = file.Read(data);
 	file.Close();
-	if (r != KErrNone || data.Length() < 9 || data[0] != 'P' || data[1] != 'H' || data[2] != 1)
+	if (r != KErrNone || data.Length() < 9 || data[0] != 'P' || data[1] != 'H' || (data[2] != 1 && data[2] != 2))
 		{
 		delete buf;
 		return;
 		}
+	TInt fileVer = data[2];
 	TInt count = data[3];
 	iLast = data[4];
 	TUint32 salt = data[5] | (data[6] << 8) | (data[7] << 16) | (data[8] << 24);
@@ -2835,6 +2836,8 @@ void CHostList::Load()
 		Scramble(pw, key + (TUint32)i * 0x10001u);
 		e.iPassword.Copy(pw);
 		pw.FillZ();
+		if (fileVer >= 2 && !GetStr(data, pos, e.iCommand))
+			break;
 		TRAPD(err, iEntries->AppendL(e));
 		e.iPassword.FillZ();
 		if (err != KErrNone)
@@ -2859,7 +2862,7 @@ TInt CHostList::Save()
 	TUint32 key = KeyFor(salt);
 	data.Append('P');
 	data.Append('H');
-	data.Append(1);
+	data.Append(2);
 	data.Append((TUint8)iEntries->Count());
 	data.Append((TUint8)iLast);
 	for (TInt b = 0; b < 4; b++)
@@ -2878,6 +2881,7 @@ TInt CHostList::Save()
 		data.Append((TUint8)pw.Length());
 		data.Append(pw);
 		pw.FillZ();
+		PutStr(data, e.iCommand);
 		}
 	iFs.MkDirAll(KHostsFile);
 	RFile file;
@@ -3225,9 +3229,13 @@ CHostEditDialog::CHostEditDialog(THostEntry& aEntry)
 void CHostEditDialog::PreLayoutDynInitL()
 	{
 	SetEdwinTextL(EPtDlgName, &iEntry.iName);
-	SetEdwinTextL(EPtDlgHost, &iEntry.iHost);
-	SetNumberEditorValue(EPtDlgPort, iEntry.iPort > 0 ? iEntry.iPort : 22);
+	// the port rides along as host:port, which saves a line on the screen
+	TBuf<108> host(iEntry.iHost);
+	if (iEntry.iPort > 0 && iEntry.iPort != 22)
+		host.AppendFormat(_L(":%d"), iEntry.iPort);
+	SetEdwinTextL(EPtDlgHost, &host);
 	SetEdwinTextL(EPtDlgUser, &iEntry.iUser);
+	SetEdwinTextL(EPtDlgStartCmd, &iEntry.iCommand);
 	// (the secret editor holds at most CEikSecretEditor::EMaxSecEdLength = 32
 	//  characters; its limit is set in the resource - more panics EIKON 12)
 	SetCheckBoxState(EPtDlgRemember,
@@ -3236,12 +3244,26 @@ void CHostEditDialog::PreLayoutDynInitL()
 
 TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
 	{
-	TBuf<100> host;
+	TBuf<108> host;
 	TBuf<60> user;
 	GetEdwinText(host, EPtDlgHost);
 	GetEdwinText(user, EPtDlgUser);
 	host.Trim();
 	user.Trim();
+	TInt port = 22;
+	TInt colon = host.LocateReverse(':');
+	if (colon > 0 && colon < host.Length() - 1)
+		{
+		TLex lex(host.Mid(colon + 1));
+		TInt p;
+		if (lex.Val(p) == KErrNone && lex.Eos() && p > 0 && p < 65536)
+			{
+			port = p;
+			host.SetLength(colon);
+			}
+		}
+	if (host.Length() > 100)
+		host.SetLength(100);
 	if (host.Length() == 0)
 		{
 		CEikonEnv::Static()->InfoMsg(_L("Enter a host name or IP address"));
@@ -3260,7 +3282,9 @@ TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
 	iEntry.iName.Trim();
 	if (iEntry.iName.Length() == 0)
 		iEntry.iName = LeftSafe(host, iEntry.iName.MaxLength());
-	iEntry.iPort = NumberEditorValue(EPtDlgPort);
+	iEntry.iPort = port;
+	GetEdwinText(iEntry.iCommand, EPtDlgStartCmd);
+	iEntry.iCommand.Trim();
 	TBuf<63> typed;
 	GetSecretEditorText(typed, EPtDlgPassword);
 	if (CheckBoxState(EPtDlgRemember) == CEikButtonBase::ESet)
@@ -3308,7 +3332,6 @@ void CConnDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPtDlgFlow))->SetCurrentItem(iSettings.iRtsCts ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgLink))->SetCurrentItem(iSettings.iNetMode ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgReconnect))->SetCurrentItem(iSettings.iAutoReconnect ? 1 : 0);
-	((CEikEdwin*)Control(EPtDlgStartCmd))->SetTextL(&iSettings.iStartCmd);
 	}
 
 TBool CConnDialog::OkToExitL(TInt /*aButtonId*/)
@@ -3317,7 +3340,6 @@ TBool CConnDialog::OkToExitL(TInt /*aButtonId*/)
 	iSettings.iRtsCts = ((CEikChoiceList*)Control(EPtDlgFlow))->CurrentItem() == 1;
 	iSettings.iNetMode = ((CEikChoiceList*)Control(EPtDlgLink))->CurrentItem() == 1;
 	iSettings.iAutoReconnect = ((CEikChoiceList*)Control(EPtDlgReconnect))->CurrentItem() == 1;
-	((CEikEdwin*)Control(EPtDlgStartCmd))->GetText(iSettings.iStartCmd);
 	return ETrue;
 	}
 
@@ -3447,6 +3469,17 @@ void CPsiTermAppUi::ConstructL()
 		e.iPort = settings.iSshPort;
 		iHosts->AddL(e);
 		iHosts->Save();
+		}
+	if (settings.iStartCmd.Length() > 0)
+		{
+		// 0.33-0.36 had one login command for every host: give it to each
+		// saved host that has none, then retire the global setting
+		for (TInt i = 0; i < iHosts->Count(); i++)
+			if (iHosts->At(i).iCommand.Length() == 0)
+				iHosts->At(i).iCommand = settings.iStartCmd;
+		iHosts->Save();
+		settings.iStartCmd.Zero();
+		SaveSettings(settings);
 		}
 	iSnippets = CSnippetList::NewL(iCoeEnv->FsSession());
 	iSnippets->Load();
@@ -3723,6 +3756,7 @@ void CPsiTermAppUi::ConnectHostL(TInt aIndex)
 	s.iSshPort = e.iPort;
 	SaveSettings(s);
 	iView->SetSshPassword(e.iPassword);
+	iView->SetLoginCommand(e.iCommand);
 	iView->StartSshL();
 	}
 

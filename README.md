@@ -35,7 +35,7 @@ and Claude Code - on a 1999 palmtop.
 - Themes (classic, inverted, high contrast, soft), cursor styles, and a status
   line with the connection state and clock
 - Auto-reconnect when a session drops (Psion switched off, WiFi gone), with an
-  optional command on login such as `tmux new -A -s psion` to land back where
+  optional per-host command on login such as `tmux new -A -s psion` to land back where
   you were
 - Terminus font in four sizes (plus Courier), optional bold, 16 greys
 - Scrollback, pen selection, copy/paste with the system clipboard

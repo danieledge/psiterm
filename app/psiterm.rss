@@ -257,8 +257,7 @@ RESOURCE DIALOG r_pt_conn_dialog
 		DLG_LINE { type=EEikCtChoiceList; prompt="Baud rate"; id=EPtDlgBaud; control=CHOICELIST { array_id=r_pt_baud_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Flow control"; id=EPtDlgFlow; control=CHOICELIST { array_id=r_pt_flow_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="SSH connects via"; id=EPtDlgLink; control=CHOICELIST { array_id=r_pt_link_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Reconnect if dropped"; id=EPtDlgReconnect; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Command on login"; id=EPtDlgStartCmd; control=EDWIN { width=22; maxlength=100; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Reconnect if dropped"; id=EPtDlgReconnect; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
 		};
 	}
 
@@ -379,9 +378,9 @@ RESOURCE DIALOG r_pt_host_edit_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgName; control=EDWIN { width=22; maxlength=24; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Host"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=100; }; },
-		DLG_LINE { type=EEikCtNumberEditor; prompt="Port"; id=EPtDlgPort; control=NUMBER_EDITOR { min=1; max=65535; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Host (host:port)"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=106; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="User"; id=EPtDlgUser; control=EDWIN { width=22; maxlength=60; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Command on login"; id=EPtDlgStartCmd; control=EDWIN { width=22; maxlength=100; }; },
 		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPtDlgPassword; control=SECRETED { num_letters=32; }; },
 		DLG_LINE { type=EEikCtCheckBox; prompt="Remember password"; id=EPtDlgRemember; }
 		};
