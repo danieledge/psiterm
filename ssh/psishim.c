@@ -1088,11 +1088,33 @@ fail:
 	return 2;
 }
 
+extern int psi_keygen(const char *dir, char *pub, int pubmax, char *why, int whymax);
+extern int psi_have_key(const char *dir, char *path, int max);
+
+/* Mode 4: make the SSH login key (once) and show its public half. */
+static int run_keygen(void)
+{
+	char pub[200], why[96];
+	int r;
+	const char *m = "Making your SSH login key (Ed25519)...\r\n";
+	pg_out_write(m, strlen(m));
+	r = psi_keygen(pg_home(), pub, sizeof(pub), why, sizeof(why));
+	if (r < 0) {
+		sprintf(psi_fmtbuf, "Could not make the key: %s\r\n", why);
+		pg_out_write(psi_fmtbuf, strlen(psi_fmtbuf));
+		return 1;
+	}
+	m = r == 0 ? "Done - a new key was made.\r\n" : "You already have a key.\r\n";
+	pg_out_write(m, strlen(m));
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	static char portstr[12];
 	static char target[200];
-	static char *dargv[12];
+	static char *dargv[14];
+	static char keyfile[200];
 	char why[96];
 	int r, dargc = 0;
 	PsiShared* s;
@@ -1105,6 +1127,12 @@ int main(int argc, char **argv)
 		memcpy(saved_pw, s->password, sizeof(saved_pw) - 1);
 		saved_pw[sizeof(saved_pw) - 1] = 0;
 		memset(s->password, 0, sizeof(s->password));
+	}
+	if (s && s->mode == 4) {             /* no serial port needed */
+		r = run_keygen();
+		pg_set_exit(r);
+		pg_close();
+		return r;
 	}
 	if (r != 0) {
 		if (s) {
@@ -1163,6 +1191,10 @@ int main(int argc, char **argv)
 	dargv[dargc++] = portstr;
 	dargv[dargc++] = "-K";                 /* keepalive: notice a dead link in ~30 s */
 	dargv[dargc++] = "10";
+	if (psi_have_key(pg_home(), keyfile, sizeof(keyfile))) {
+		dargv[dargc++] = "-i";             /* the login key: tried before the password */
+		dargv[dargc++] = keyfile;
+	}
 	if (s->command[0])
 		dargv[dargc++] = "-t";             /* a terminal even with a command */
 	dargv[dargc++] = target;

@@ -47,7 +47,8 @@ int pg_init(void)
 	g.net_mode = getenv("PSI_NET") ? 1 : 0;
 	if (getenv("PSI_CMD")) strncpy(g.command, getenv("PSI_CMD"), sizeof(g.command) - 1);
 	g.tls = getenv("PSI_TLS") ? 1 : 0;
-	if (getenv("PSI_UPLOAD")) {
+	if (getenv("PSI_KEYGEN")) g.mode = 4;
+	else if (getenv("PSI_UPLOAD")) {
 		g.mode = 3;
 		strcpy(g.path, "/upload");
 		strcpy(g.save_as, getenv("PSI_UPLOAD"));

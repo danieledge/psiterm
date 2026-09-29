@@ -95,6 +95,8 @@ enum TPsiTermCommands
 	EPtCmdTmuxPrefixB,
 	EPtCmdTmuxPrefixA,
 	EPtCmdAppearance,
+	EPtCmdLoginKey,
+	EPtCmdInstallKey,
 
 	EPtCmdSnippet0 = 0x1400,  // ... EPtCmdSnippet0 + KMaxSnippets - 1: send snippet N
 	EPtCmdHost0 = 0x1500      // ... + KMaxHosts - 1: connect to saved host N (welcome screen)

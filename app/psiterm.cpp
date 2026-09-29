@@ -51,6 +51,7 @@ _LIT8(KHangupCommand, "ATH\r");
 const TInt KMoreDataTimeout = 25000;   // microseconds to wait for more bytes
 _LIT(KSshExeName, "psissh.exe");
 _LIT(KSeedFile, "C:\\System\\Apps\\PsiTerm\\ssh_seed.bin");
+_LIT(KKeyPubFile, "C:\\System\\Apps\\PsiTerm\\id_ed25519.pub");   // written by psissh mode 4
 _LIT(KSshHome, "C:\\System\\Apps\\PsiTerm");
 const TInt KEntropyKeysNeeded = 40;
 const TInt KScrollbackLines = 300;       // ~150 KB of history
@@ -59,7 +60,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.43");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.44");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -942,6 +943,7 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 		if (iLaunchMode == 1) aText.Append(_L("Running the speed test..."));
 		else if (iLaunchMode == 2) aText.Append(_L("Updating PsiTerm..."));
 		else if (iLaunchMode == 3) aText.Append(_L("Sending screenshots..."));
+		else if (iLaunchMode == 4) aText.Append(_L("Making the SSH login key..."));
 		else if (state == PSI_STATE_DIALING) aText.Format(_L("Connecting to %S..."), &host);
 		else if (state == PSI_STATE_KEYEX) aText.Format(_L("Securing the connection to %S..."), &host);
 		else if (state == PSI_STATE_CONNECTED)
@@ -1765,7 +1767,10 @@ TKeyResponse CTermView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aT
 			{
 			iGatheringEntropy = EFalse;
 			LocalMessage(_L8(" done.\r\n"));
-			LaunchSshL();
+			if (iEntropyMode == 4)
+				StartKeyGenL();
+			else
+				LaunchSshL();
 			}
 		else
 			LocalMessage(_L8("."));
@@ -2198,9 +2203,108 @@ void CTermView::StartSshL()
 		LocalMessage(_L8("\r\nSSH needs some randomness for its keys the first time.\r\n"
 			"Please type random keys until it says done (Esc cancels): "));
 		iGatheringEntropy = ETrue;
+		iEntropyMode = 0;
 		return;
 		}
 	LaunchSshL();
+	}
+
+// ----- SSH login key ---------------------------------------------------------------
+// psissh (mode 4) makes an Ed25519 key once: C:\System\Apps\PsiTerm\id_ed25519,
+// public half in id_ed25519.pub. It is offered to every server before the
+// password; "Install login key on server" adds it to a server's
+// ~/.ssh/authorized_keys from inside a logged-in session.
+
+TBool CTermView::SshLoggedIn() const
+	{
+	return iSshActive && iLaunchMode == 0 && iShared && iShared->state == PSI_STATE_CONNECTED;
+	}
+
+TBool CTermView::HaveLoginKey() const
+	{
+	TEntry entry;
+	return iCoeEnv->FsSession().Entry(KKeyPubFile, entry) == KErrNone;
+	}
+
+static TInt ReadPubKey(RFs& aFs, TDes8& aKey)
+	{
+	RFile f;
+	TInt r = f.Open(aFs, KKeyPubFile, EFileRead);
+	if (r != KErrNone)
+		return r;
+	r = f.Read(aKey);
+	f.Close();
+	while (aKey.Length() && (aKey[aKey.Length() - 1] == '\n' || aKey[aKey.Length() - 1] == '\r'))
+		aKey.SetLength(aKey.Length() - 1);
+	if (r == KErrNone && (aKey.Length() < 20 || aKey.Left(12) != _L8("ssh-ed25519 ")))
+		r = KErrCorrupt;
+	return r;
+	}
+
+static void AppendKeyHelp(TDes8& aOut, const TDesC8& aKey)
+	{
+	aOut.Append(_L8("\r\nYour SSH login key (public half):\r\n\r\n"));
+	aOut.Append(aKey);
+	aOut.Append(_L8("\r\n\r\nTo use it with a server: connect with your password, then choose "
+		"Terminal > Install login key on server (at a shell prompt). After that "
+		"PsiTerm logs in with the key - no password needed.\r\n\r\n"
+		"The key is also saved in C:\\System\\Apps\\PsiTerm\\id_ed25519.pub. "
+		"If this Psion is lost, remove that line from the server's "
+		"~/.ssh/authorized_keys.\r\n"));
+	}
+
+void CTermView::ShowLoginKeyL()
+	{
+	TBuf8<200> key;
+	if (ReadPubKey(iCoeEnv->FsSession(), key) != KErrNone)
+		return;
+	HBufC8* buf = HBufC8::NewLC(1000);
+	TPtr8 t = buf->Des();
+	AppendKeyHelp(t, key);
+	BeginDebugL(_L("SSH login key"));
+	LocalMessage(t);
+	CleanupStack::PopAndDestroy();
+	ShowDebugL();
+	}
+
+void CTermView::StartKeyGenL()
+	{
+	if (iSshActive || iGatheringEntropy)
+		return;
+	if (!SeedFileExists() && iKeyCount < KEntropyKeysNeeded)
+		{
+		LocalMessage(_L8("\r\nMaking a key needs some randomness.\r\n"
+			"Please type random keys until it says done (Esc cancels): "));
+		iGatheringEntropy = ETrue;
+		iEntropyMode = 4;
+		return;
+		}
+	BeginDebugL(_L("SSH login key"));
+	LaunchSshL(4);
+	RunToolDialogL();
+	}
+
+void CTermView::InstallLoginKeyL()
+	{
+	TBuf8<200> key;
+	if (!SshLoggedIn() || ReadPubKey(iCoeEnv->FsSession(), key) != KErrNone)
+		return;
+	// the key's middle (the base64 blob) is what grep looks for
+	TPtrC8 blob(key.Mid(12));
+	TInt sp = blob.Locate(' ');
+	if (sp > 0)
+		blob.Set(blob.Left(sp));
+	HBufC8* buf = HBufC8::NewLC(700);
+	TPtr8 c = buf->Des();
+	// in a subshell, so the umask does not stick to the user's shell
+	c.Append(_L8(" (umask 077; mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && "
+		"{ grep -qF '"));
+	c.Append(blob);
+	c.Append(_L8("' ~/.ssh/authorized_keys || echo '"));
+	c.Append(key);
+	c.Append(_L8("' >> ~/.ssh/authorized_keys; }) && echo 'PsiTerm: login key installed'\r"));
+	SendString(c);
+	CleanupStack::PopAndDestroy();
 	}
 
 void CTermView::StartSpeedTestL()
@@ -2446,7 +2550,7 @@ void CTermView::LaunchSshL(TInt aMode)
 	iShared->entropy_len = PSI_ENTROPY_SIZE;
 	iShared->mode = aMode;
 	iLaunchMode = aMode;
-	iShared->net_mode = (aMode != 1 && iSettings.iNetMode) ? 1 : 0;
+	iShared->net_mode = (aMode != 1 && aMode != 4 && iSettings.iNetMode) ? 1 : 0;
 	if (aMode == 3)
 		{
 		// send screenshots: POST the bundle to the update server
@@ -2715,6 +2819,21 @@ void CTermView::SshProcessEnded()
 			CToolDialog* dlg = iToolDlg;
 			iToolDlg = NULL;
 			TRAP_IGNORE(dlg->CloseL());
+			}
+		}
+	if (iLaunchMode == 4 && type != EExitPanic && exitCode == 0)
+		{
+		TBuf8<200> key;
+		if (ReadPubKey(iCoeEnv->FsSession(), key) == KErrNone)
+			{
+			HBufC8* buf = HBufC8::New(1000);
+			if (buf)
+				{
+				TPtr8 t = buf->Des();
+				AppendKeyHelp(t, key);
+				LocalMessage(t);
+				delete buf;
+				}
 			}
 		}
 	if (iToolDlg)
@@ -3476,12 +3595,28 @@ void CToolDialog::PostLayoutDynInitL()
 	iLaidOut = ETrue;
 	}
 
+// Scrolls the tool window so its last few paragraphs show. (Putting the
+// cursor at the end, as before, left only the last line showing, at the top.)
+static void ShowTail(CEikEdwin* aEd, const TDesC& aText)
+	{
+	TInt pos = aText.Length();
+	TInt paras = 0;
+	while (pos > 0)
+		{
+		if (aText[pos - 1] == CEditableText::EParagraphDelimiter && ++paras >= 6)
+			break;
+		pos--;
+		}
+	aEd->SetCursorPosL(aText.Length(), EFalse);
+	aEd->SetCursorPosL(pos, EFalse);
+	}
+
 void CToolDialog::RefreshL()
 	{
 	HBufC* text = iView.DebugTextLC();
 	CEikEdwin* ed = (CEikEdwin*)Control(EPtDlgDebugText);
 	ed->SetTextL(text);
-	ed->SetCursorPosL(ed->TextLength(), EFalse);   // keep the newest line in view
+	ShowTail(ed, *text);
 	ed->DrawNow();
 	CleanupStack::PopAndDestroy();       // text
 	}
@@ -3943,6 +4078,7 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemDimmed(EPtCmdSsh, ssh);
 		aMenuPane->SetItemDimmed(EPtCmdSshDisconnect, !ssh);
 		aMenuPane->SetItemDimmed(EPtCmdHangup, ssh || !iView->ModemOnline());
+		aMenuPane->SetItemDimmed(EPtCmdInstallKey, !iView->SshLoggedIn() || !iView->HaveLoginKey());
 		return;
 		}
 	if (aMenuId == R_PT_SNIPPETS_MENU)
@@ -4010,6 +4146,15 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPtCmdHangup:   iView->HangUp(); break;
 	case EPtCmdSendSize: iView->SendScreenSize(); break;
+	case EPtCmdLoginKey:
+		if (iView->HaveLoginKey())
+			iView->ShowLoginKeyL();
+		else if (ConfirmDisconnectL(aCommand))
+			iView->StartKeyGenL();
+		break;
+	case EPtCmdInstallKey:
+		iView->InstallLoginKeyL();
+		break;
 	case EPtCmdSerialInfo:
 		if (ConfirmDisconnectL(aCommand))
 			iView->SerialInfo();

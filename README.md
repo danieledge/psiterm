@@ -28,6 +28,9 @@ and Claude Code - on a 1999 palmtop.
 
 - SSH with saved hosts and (optionally) saved passwords; a start screen to
   connect with one key (1-9)
+- Key login: PsiTerm makes an Ed25519 key (Settings > SSH login key) and
+  installs it on a server for you (Terminal > Install login key on server),
+  so no passwords need to be kept on the Psion
 - Snippets: your own commands and prompts on a menu and on Shift+Ctrl
   hotkeys, with escapes for any key sequence (`\n`, `^C`, `\e`)
 - Claude Code keys (interrupt, rewind, switch mode, /clear, /compact...) and a

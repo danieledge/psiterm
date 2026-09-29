@@ -375,6 +375,11 @@ public:
 	void SshProcessEnded();
 	TBool SshActive() const { return iSshActive; }
 	TBool ModemOnline() const;
+	TBool SshLoggedIn() const;
+	TBool HaveLoginKey() const;
+	void ShowLoginKeyL();          // the public key and how to use it
+	void StartKeyGenL();           // make the key (psissh mode 4)
+	void InstallLoginKeyL();       // type the authorized_keys command into the session
 	static TInt PumpCallback(TAny* aSelf);
 
 	// from CCoeControl
@@ -535,6 +540,7 @@ private:
 	void TakeScreenshotL();
 	void ShotDir(TDes& aDir);
 	TInt DeleteShots();
+	TInt iEntropyMode;        // what to launch once the randomness is gathered
 	TBool iModemOnline;       // the terminal saw CONNECT (and no NO CARRIER since)
 	TUint iLastRx;            // tick of the last serial data outside SSH
 	TBuf8<16> iRxTail;        // end of the last serial data, for split words
