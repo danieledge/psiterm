@@ -19,6 +19,7 @@
 #include <apgcli.h>
 #include <eikedwin.h>
 #include <eikcmbut.h>
+#include <eiksbfrm.h>
 #include <eikbtpan.h>
 #include "psiterm.h"
 
@@ -57,7 +58,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.28");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.29");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -2739,6 +2740,10 @@ void CToolDialog::PreLayoutDynInitL()
 	SetTitleL(iTitle);
 	if (iFinished)
 		SetButtonTextL(_L("Close"));
+	// a vertical scroll bar, so long results (the speed test) can be scrolled
+	// with the pen as well as the arrow keys
+	CEikEdwin* ed = (CEikEdwin*)Control(EPtDlgDebugText);
+	ed->CreateScrollBarFrameL()->SetScrollBarVisibilityL(CEikScrollBarFrame::EOff, CEikScrollBarFrame::EOn);
 	RefreshL();
 	}
 
@@ -2748,6 +2753,8 @@ void CToolDialog::RefreshL()
 	CEikEdwin* ed = (CEikEdwin*)Control(EPtDlgDebugText);
 	ed->SetTextL(text);
 	ed->SetCursorPosL(ed->TextLength(), EFalse);   // keep the newest line in view
+	if (ed->ScrollBarFrame())
+		ed->UpdateScrollBarsL();
 	ed->DrawNow();
 	CleanupStack::PopAndDestroy();       // text
 	}
