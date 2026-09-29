@@ -411,6 +411,8 @@ private:
 class CTermView : public CCoeControl, public MSerialObserver
 	{
 public:
+	struct TTmuxTab { TInt iIndex; TBuf<20> iName; TBool iCurrent; TInt iX0; TInt iX1; };
+	enum { KMaxTabs = 12 };
 	CTermView();
 	~CTermView();
 	void ConstructL(const TRect& aRect, const TPsiSettings& aSettings);
@@ -466,6 +468,8 @@ public:
 	void ShowKeyL(const TDesC& aBase, const TDesC& aName);
 	const TDesC& KeyBase() const { return iKeyBase; }
 	void ParseTmuxTabs();
+	static TInt ParseTabList(const TDesC& aText, TTmuxTab* aTabs, TInt& aCurrent);
+	TBool RowIsBar(TInt aRow) const;
 	void CheckTabsL();              // Debug: what the tab reader sees
 	void DrawTabs(CWindowGc& aGc) const;
 	void SelectTmuxWindow(TInt aIndex);           // make the key (psissh mode 4)
@@ -585,14 +589,15 @@ private:
 	enum { EPenNone, EPenSelect, EPenScroll, EPenMouse } iPenMode;
 	TInt iMouseMode;
 	// tmux windows as tabs (read from tmux's status line)
-	struct TTmuxTab { TInt iIndex; TBuf<20> iName; TBool iCurrent; TInt iX0; TInt iX1; };
-	enum { KMaxTabs = 12 };
 	TTmuxTab iTabs[KMaxTabs];
 	TInt iTabCount;
 	TInt iTabRow;             // the screen row tmux's status line is on; -1 = no tmux seen
 	TBool iTabsDrawn;         // PsiTerm draws its tab bar over that row
 	TBuf<200> iTabSig;        // what was parsed last, to notice changes
 	TBool iPenOnTabs;
+	TBuf8<240> iTitle;         // the terminal title as it arrives (OSC 0/2)
+	TTmuxTab iTitleTabs[KMaxTabs];   // tmux's window list from a PSITABS title
+	TInt iTitleTabCount;
 	TInt iLastState;          // connection state last tick, and since when
 	TUint iStateSince;
 	TUint iTickCount;

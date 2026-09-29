@@ -63,7 +63,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.52");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.53");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -826,6 +826,27 @@ int CTermView::CbSetTermProp(VTermProp aProp, VTermValue* aVal, void* aUser)
 	CTermView* self = (CTermView*)aUser;
 	if (aProp == VTERM_PROP_CURSORVISIBLE)
 		self->iCurVisible = aVal->boolean;
+	else if (aProp == VTERM_PROP_TITLE)
+		{
+		// tmux can send its window list as the title (tmux > Set up tabs):
+		// "PSITABS 0:bash- 1:vim* "
+		const VTermStringFragment& f = aVal->string;
+		if (f.initial)
+			self->iTitle.Zero();
+		TInt room = self->iTitle.MaxLength() - self->iTitle.Length();
+		self->iTitle.Append(TPtrC8((const TUint8*)f.str, (TInt)f.len < room ? (TInt)f.len : room));
+		if (f.final)
+			{
+			self->iTitleTabCount = 0;
+			if (self->iTitle.Length() >= 8 && self->iTitle.Left(8) == _L8("PSITABS "))
+				{
+				TBuf<240> t;
+				t.Copy(self->iTitle.Mid(8));
+				TInt cur = 0;
+				self->iTitleTabCount = ParseTabList(t, self->iTitleTabs, cur);
+				}
+			}
+		}
 	else if (aProp == VTERM_PROP_MOUSE)
 		self->iMouseMode = aVal->number;    // e.g. tmux with "set -g mouse on"
 	return 1;
@@ -1116,6 +1137,79 @@ static TBool IsTmuxFlag(TUint aCh)
 	return aCh == '*' || aCh == '-' || aCh == '#' || aCh == '!' || aCh == '~';
 	}
 
+// Reads "N:name" window entries out of tmux's status line (or a PSITABS
+// title), whatever decorates them: "[psion] 0:bash- 1:vim*" (the default),
+// "SESSION:main < 3:VirtualTeam > host  22:41" (themes). Times, dates and
+// other text are skipped. Returns the count; aCurrent = entries marked *.
+TInt CTermView::ParseTabList(const TDesC& aText, TTmuxTab* aTabs, TInt& aCurrent)
+	{
+	TBuf<240> line(LeftSafe(aText, 240));
+	// "(B" is left behind by a stray tput sgr0 in some status formats
+	for (TInt k = line.Find(_L("(B")); k >= 0; k = line.Find(_L("(B")))
+		line.Replace(k, 2, _L("  "));
+	TInt n = 0, i = 0;
+	aCurrent = 0;
+	while (i < line.Length() && n < KMaxTabs)
+		{
+		while (i < line.Length() && line[i] == ' ')
+			i++;
+		TInt s = i;
+		while (i < line.Length() && line[i] != ' ')
+			i++;
+		TInt e = i;
+		// decorations around an entry
+		while (s < e && (line[s] == '<' || line[s] == '>' || line[s] == '[' || line[s] == '(' || line[s] == '|'))
+			s++;
+		while (e > s && (line[e - 1] == '<' || line[e - 1] == '>' || line[e - 1] == ']' || line[e - 1] == ')' || line[e - 1] == '|'))
+			e--;
+		TInt d = s, idx = 0;
+		while (d < e && line[d] >= '0' && line[d] <= '9')
+			idx = idx * 10 + (line[d++] - '0');
+		if (d == s || d - s > 3 || d >= e || line[d] != ':')
+			continue;                         // not "N:..."
+		TInt nameStart = d + 1, end = e;
+		if (nameStart >= end || (line[nameStart] >= '0' && line[nameStart] <= '9'))
+			continue;                         // a time such as 22:41
+		TBool cur = EFalse;
+		while (end > nameStart && (IsTmuxFlag(line[end - 1])
+			|| ((line[end - 1] == 'Z' || line[end - 1] == 'M') && end - 2 >= nameStart
+				&& (IsTmuxFlag(line[end - 2]) || line[end - 2] == 'M'))))
+			{
+			if (line[end - 1] == '*')
+				cur = ETrue;
+			end--;
+			}
+		if (end <= nameStart || line.Mid(nameStart, end - nameStart).Locate(':') >= 0)
+			continue;
+		aTabs[n].iIndex = idx;
+		aTabs[n].iName.Copy(line.Mid(nameStart, end - nameStart > 20 ? 20 : end - nameStart));
+		aTabs[n].iCurrent = cur;
+		aTabs[n].iX0 = aTabs[n].iX1 = 0;
+		if (cur)
+			aCurrent++;
+		n++;
+		}
+	return n;
+	}
+
+// Is screen row aRow coloured like a status bar (most cells not on the
+// default background, or reversed)?
+TBool CTermView::RowIsBar(TInt aRow) const
+	{
+	TInt coloured = 0;
+	for (TInt c = 0; c < iCols; c++)
+		{
+		VTermPos pos;
+		pos.row = aRow;
+		pos.col = c;
+		VTermScreenCell cell;
+		if (vterm_screen_get_cell(iScreen, pos, &cell)
+			&& (!VTERM_COLOR_IS_DEFAULT_BG(&cell.bg) || cell.attrs.reverse))
+			coloured++;
+		}
+	return coloured * 10 >= iCols * 6;
+	}
+
 void CTermView::ParseTmuxTabs()
 	{
 	TTmuxTab tabs[KMaxTabs];
@@ -1126,6 +1220,21 @@ void CTermView::ParseTmuxTabs()
 		for (TInt pass = 0; pass < 2 && row < 0; pass++)
 			{
 			TInt r = pass == 0 ? iRows - 1 : 0;
+			TBool bar = RowIsBar(r);
+			if (iTitleTabCount > 0)
+				{
+				// tmux sends the list itself: just find its status bar
+				if (bar || (pass == 1 && row < 0))
+					{
+					row = bar ? r : iRows - 1;
+					count = iTitleTabCount;
+					for (TInt t = 0; t < count; t++)
+						tabs[t] = iTitleTabs[t];
+					}
+				continue;
+				}
+			if (!bar)
+				continue;
 			TBuf<200> line;
 			for (TInt c = 0; c < iCols && c < line.MaxLength(); c++)
 				{
@@ -1136,53 +1245,12 @@ void CTermView::ParseTmuxTabs()
 				TUint ch = vterm_screen_get_cell(iScreen, pos, &cell) ? cell.chars[0] : 0;
 				line.Append((TText)(ch >= 0x20 && ch < 0x7f ? ch : (ch == 0 ? ' ' : '?')));
 				}
-			if (line.Length() < 4)
-				continue;
-			// the default status-left is "[session] "; without it, start at 0
-			TInt i = 0, n = 0, current = 0;
-			if (line[0] == '[')
+			TInt current = 0;
+			TInt n = ParseTabList(line, tabs, current);
+			if (n >= 1 && (current == 1 || (current == 0 && n == 1)))
 				{
-				TInt close = line.Locate(']');
-				if (close > 0 && close <= 40)
-					i = close + 1;
-				}
-			while (i < line.Length() && n < KMaxTabs)
-				{
-				while (i < line.Length() && line[i] == ' ')
-					i++;
-				if (i >= line.Length() || line[i] == '"')
-					break;                            // the right-hand side
-				TInt s = i;
-				while (i < line.Length() && line[i] != ' ')
-					i++;
-				// N:name + flags
-				TInt d = s, idx = 0;
-				while (d < i && line[d] >= '0' && line[d] <= '9')
-					idx = idx * 10 + (line[d++] - '0');
-				if (d == s || d >= i || line[d] != ':')
-					break;
-				TInt nameStart = d + 1, end = i;
-				TBool cur = EFalse;
-				while (end > nameStart && (IsTmuxFlag(line[end - 1])
-					|| ((line[end - 1] == 'Z' || line[end - 1] == 'M') && end - 2 >= nameStart
-						&& (IsTmuxFlag(line[end - 2]) || line[end - 2] == 'M'))))
-					{
-					if (line[end - 1] == '*')
-						cur = ETrue;
-					end--;
-					}
-				if (end <= nameStart)
-					break;
-				tabs[n].iIndex = idx;
-				tabs[n].iName.Copy(line.Mid(nameStart, end - nameStart > 20 ? 20 : end - nameStart));
-				tabs[n].iCurrent = cur;
-				tabs[n].iX0 = tabs[n].iX1 = 0;
-				if (cur)
-					current++;
-				n++;
-				}
-			if (n >= 1 && current == 1)
-				{
+				if (current == 0)
+					tabs[0].iCurrent = ETrue;     // a theme showing only this window
 				row = r;
 				count = n;
 				}
@@ -4754,7 +4822,7 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 				iView->Settings().iTmuxTabs ? EEikMenuItemSymbolOn : 0);
 		if (!iView->SshLoggedIn())
 			{
-			static const TInt KTmux[] = { EPtCmdTmuxCopy, EPtCmdTmuxDetach, EPtCmdTmuxMouse };
+			static const TInt KTmux[] = { EPtCmdTmuxCopy, EPtCmdTmuxDetach, EPtCmdTmuxMouse, EPtCmdTabsSetup };
 			static const TInt KWin[] = { EPtCmdTmuxNew, EPtCmdTmuxNext, EPtCmdTmuxPrev,
 				EPtCmdTmuxChoose, EPtCmdTmuxRename };
 			static const TInt KPane[] = { EPtCmdTmuxSplitH, EPtCmdTmuxSplitV, EPtCmdTmuxPane,
@@ -4762,7 +4830,7 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 			static const TInt KClaude[] = { EPtCmdClaudeEsc, EPtCmdClaudeEscEsc, EPtCmdClaudeMode,
 				EPtCmdClaudeClear, EPtCmdClaudeCompact, EPtCmdClaudeResume, EPtCmdClaudeHelp };
 			const TInt* ids = KTmux;
-			TInt n = 3;
+			TInt n = 4;
 			if (aMenuId == R_PT_TMUX_WIN_MENU) { ids = KWin; n = 5; }
 			else if (aMenuId == R_PT_TMUX_PANE_MENU) { ids = KPane; n = 4; }
 			else if (aMenuId == R_PT_CLAUDE_MENU) { ids = KClaude; n = 7; }
@@ -4800,6 +4868,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		return;
 		}
 	if (((aCommand >= EPtCmdTmuxNew && aCommand <= EPtCmdTmuxDetach) || aCommand == EPtCmdTmuxMouse
+		|| aCommand == EPtCmdTabsSetup
 		|| (aCommand >= EPtCmdClaudeEsc && aCommand <= EPtCmdClaudeHelp))
 		&& !iView->SshLoggedIn())
 		{
@@ -4922,6 +4991,14 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdTmuxCopy:    SendTmux('['); break;
 	case EPtCmdTmuxRename:  SendTmux(','); break;
 	case EPtCmdTmuxDetach:  SendTmux('d'); break;
+	case EPtCmdTabsSetup:
+		// at a shell prompt inside tmux: tmux sends its window list as the
+		// terminal title, and ~/.tmux.conf keeps that for new tmux servers
+		iView->SendString(_L8(" tmux set -g set-titles on \\; set -g set-titles-string "
+			"'PSITABS #{W:#I:#W#F }'; grep -q PSITABS ~/.tmux.conf 2>/dev/null || "
+			"printf '%s\\n' 'set -g set-titles on' \"set -g set-titles-string 'PSITABS "
+			"#{W:#I:#W#F }'\" >> ~/.tmux.conf; echo 'PsiTerm: tabs set up'\r"));
+		break;
 	case EPtCmdCheckTabs:
 		iView->CheckTabsL();
 		break;

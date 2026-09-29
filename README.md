@@ -36,7 +36,8 @@ and Claude Code - on a 1999 palmtop.
 - Snippets: your own commands and prompts on a menu and on Shift+Ctrl
   hotkeys, with escapes for any key sequence (`\n`, `^C`, `\e`)
 - tmux windows shown as tabs: tap one to switch, Ctrl+Tab / Shift+Ctrl+Tab
-  for the next / previous (works with tmux's default status line)
+  for the next / previous. Read from tmux's status line, or exactly from
+  tmux itself after tmux > Set up tabs on this server
 - Claude Code keys (interrupt, rewind, switch mode, /clear, /compact...) and a
   tmux menu (windows, splits, panes, zoom, scroll mode, detach)
 - Themes (classic, inverted, high contrast, soft), cursor styles, and a status

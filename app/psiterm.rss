@@ -171,6 +171,7 @@ RESOURCE MENU_PANE r_pt_tmux_menu
 		MENU_ITEM { command=EPtCmdTmuxDetach; txt="Detach"; extratxt="d"; },
 		MENU_ITEM { command=EPtCmdTmuxMouse; txt="Stylus (mouse) on/off"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdTmuxTabs; txt="Windows as tabs"; extratxt="Ctrl+Tab"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdTabsSetup; txt="Set up tabs on this server"; },
 		MENU_ITEM { cascade=r_pt_tmux_prefix_menu; txt="Prefix key"; }
 		};
 	}

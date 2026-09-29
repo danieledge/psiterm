@@ -95,6 +95,7 @@ enum TPsiTermCommands
 	EPtCmdTmuxMouse,
 	EPtCmdTmuxTabs,
 	EPtCmdCheckTabs,
+	EPtCmdTabsSetup,
 	EPtCmdTmuxPrefixB,
 	EPtCmdTmuxPrefixA,
 	EPtCmdAppearance,
