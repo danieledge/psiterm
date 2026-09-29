@@ -74,14 +74,18 @@ void gfx_fill(PmCanvas* c, int x, int y, int w, int h, int grey)
 	if (y1 > c->cy1) y1 = c->cy1;
 	if (x >= x1 || y >= y1)
 		return;
-	unsigned char both = (unsigned char)(grey | (grey << 4));
+	unsigned int b = (unsigned int)(grey | (grey << 4));
+	unsigned int word = b | (b << 8) | (b << 16) | (b << 24);
 	for (yy = y; yy < y1; yy++)
 		{
 		int xx = x;
 		if (xx & 1) { put(c, xx, yy, grey); xx++; }
 		unsigned char* p = c->bits + yy * c->stride + (xx >> 1);
-		while (xx + 1 < x1) { *p++ = both; xx += 2; }
-		if (xx < x1) put(c, xx, yy, grey);
+		unsigned char* e = c->bits + yy * c->stride + (x1 >> 1);   /* whole bytes end here */
+		while (p < e && ((unsigned long)p & 3)) *p++ = (unsigned char)b;
+		while (p + 4 <= e) { *(unsigned int*)p = word; p += 4; }
+		while (p < e) *p++ = (unsigned char)b;
+		if (x1 & 1) put(c, x1 - 1, yy, grey);
 		}
 	}
 
@@ -94,18 +98,29 @@ void gfx_dotted_hline(PmCanvas* c, int x, int y, int w, int grey)
 		gfx_pixel(c, x + i, y, grey, 15);
 	}
 
-/* coverage of a pixel by a circle of radius r (half pixels), 4x4 samples */
+/* coverage of a pixel by a circle of radius r (half pixels), 4x4 samples.
+ * Pixels well inside or outside the edge are decided from their centre,
+ * which is most of them: only the edge ring pays for the samples. */
 static int corner_cover(int px, int py, int cx2, int cy2, int r2)
 	{
-	int n = 0;
+	/* centre of the pixel relative to the circle, in 1/8 pixels */
+	int dx = px * 8 + 4 - cx2 * 4, dy = py * 8 + 4 - cy2 * 4;
+	int d = dx * dx + dy * dy, R = r2 * 4;
+	/* a pixel reaches at most 0.71 px (6/8) from its centre */
+	int in = R - 6, out = R + 6;
+	if (in > 0 && d <= in * in) return 16;
+	if (d > out * out) return 0;
+	int n = 0, rr = R * R;
 	for (int sy = 0; sy < 4; sy++)
+		{
+		int ey = dy - 3 + sy * 2;
+		ey *= ey;
 		for (int sx = 0; sx < 4; sx++)
 			{
-			/* sample positions in 1/8 pixels, centred in the sub-cells */
-			int dx = (px * 8 + sx * 2 + 1) - cx2 * 4;
-			int dy = (py * 8 + sy * 2 + 1) - cy2 * 4;
-			if (dx * dx + dy * dy <= r2 * r2 * 16) n++;
+			int ex = dx - 3 + sx * 2;
+			if (ex * ex + ey <= rr) n++;
 			}
+		}
 	return n;                                  /* 0..16 */
 	}
 
@@ -181,15 +196,32 @@ static const PmGlyph* glyph(const PmFont* f, unsigned char ch)
 static void draw_glyph(PmCanvas* c, const PmFont* f, const PmGlyph* g, int x, int y, int grey)
 	{
 	const unsigned char* d = f->data + g->off;
-	int n = 0;
-	for (int r = 0; r < g->h; r++)
+	int w = g->w, h = g->h;
+	/* the visible part of the glyph */
+	int k0 = c->cx0 - x, k1 = c->cx1 - x, r0 = c->cy0 - y, r1 = c->cy1 - y;
+	if (k0 < 0) k0 = 0;
+	if (r0 < 0) r0 = 0;
+	if (k1 > w) k1 = w;
+	if (r1 > h) r1 = h;
+	if (k0 >= k1 || r0 >= r1)
+		return;
+	int mono = c->mono;
+	for (int r = r0; r < r1; r++)
 		{
-		int yy = y + r;
-		for (int k = 0; k < g->w; k++, n++)
+		int n = r * w + k0;
+		int xx = x + k0;
+		unsigned char* row = c->bits + (y + r) * c->stride;
+		for (int k = k0; k < k1; k++, n++, xx++)
 			{
 			int a = (n & 1) ? (d[n >> 1] >> 4) : (d[n >> 1] & 15);
-			if (a && yy >= c->cy0 && yy < c->cy1)
-				gfx_pixel(c, x + k, yy, grey, a);
+			if (!a) continue;
+			unsigned char* p = row + (xx >> 1);
+			int v;
+			if (a >= 15 || (mono && a >= 8)) v = grey;
+			else if (mono) continue;
+			else v = blend((xx & 1) ? (*p >> 4) : (*p & 15), grey, a);
+			if (xx & 1) *p = (unsigned char)((*p & 0x0f) | (v << 4));
+			else *p = (unsigned char)((*p & 0xf0) | v);
 			}
 		}
 	}

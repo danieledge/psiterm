@@ -50,14 +50,15 @@ RESOURCE HOTKEYS r_pm_hotkeys
 		HOTKEY { command=EPmCmdSwitchAccount; key='j'; },
 		HOTKEY { command=EPmCmdEditAccount; key='k'; },
 		HOTKEY { command=EPmCmdHangup; key='h'; },
-		HOTKEY { command=EPmCmdOffline; key='o'; }
+		HOTKEY { command=EPmCmdOffline; key='o'; },
+		HOTKEY { command=EPmCmdWeb; key='p'; }
 		};
 	shift_control=
 		{
 		HOTKEY { command=EPmCmdReplyAll; key='r'; },
 		HOTKEY { command=EPmCmdWhole; key='w'; },
 		HOTKEY { command=EPmCmdOlder; key='y'; },
-		HOTKEY { command=EPmCmdShowHeaders; key='h'; }
+		HOTKEY { command=EPmCmdCalendar; key='c'; }
 		};
 	}
 
@@ -99,7 +100,7 @@ RESOURCE MENU_PANE r_pm_message_menu
 		MENU_ITEM { command=EPmCmdFlag; txt="Flag / unflag"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdSaveAttach; txt="Save attachment..."; },
 		MENU_ITEM { command=EPmCmdWhole; txt="Get whole message"; },
-		MENU_ITEM { command=EPmCmdShowHeaders; txt="Show all headers"; }
+		MENU_ITEM { command=EPmCmdWeb; txt="View as web page"; }
 		};
 	}
 
@@ -124,6 +125,7 @@ RESOURCE MENU_PANE r_pm_tools_menu
 		MENU_ITEM { command=EPmCmdNewAccount; txt="New account..."; },
 		MENU_ITEM { command=EPmCmdDeleteAccount; txt="Delete account"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdConnSettings; txt="Connection settings..."; },
+		MENU_ITEM { command=EPmCmdSmooth; txt="Smooth text"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPmCmdRestart; txt="Restart mail engine"; }
 		};
 	}

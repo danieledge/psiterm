@@ -33,7 +33,11 @@ enum TPmCommands
 	EPmCmdPrev,
 	EPmCmdNext,
 	EPmCmdEmptyTrash,
-	EPmCmdShowHeaders
+	EPmCmdShowHeadersUnused,
+	EPmCmdWeb,
+	EPmCmdSmooth,
+	EPmCmdCalendar,
+	EPmCmdCalSettings
 	};
 
 enum TPmDialogControls

@@ -21,10 +21,12 @@
 #include <eikdialg.h>
 #include <eikdialg.hrh>
 #include <badesca.h>
+#include <fbs.h>
 
 extern "C" {
 #include <psimail.h>
 }
+#include "pmui.h"
 
 #include <psimail.rsg>
 #include "psimail.hrh"
@@ -40,6 +42,9 @@ struct TPmSettings
 	TInt iOffline;
 	TInt iAcct;            // current account
 	TInt iStore;           // 0 = CF card if there is one, 1 = internal disk
+	TInt iMono;            // 1 = text without anti-aliasing
+	TInt iCalSync;         // calendar: sync with the Agenda at Send & receive
+	TInt iSpare[6];
 	PmAccount iAccounts[PM_MAX_ACCOUNTS];
 	};
 
@@ -99,7 +104,7 @@ private:
 class CPmView : public CCoeControl
 	{
 public:
-	enum TMode { EFolders, EList, EMessage, EOutbox, ENoAccount };
+	enum TMode { EList, EMessage, EOutbox, ENoAccount };
 	~CPmView();
 	void ConstructL(const TRect& aRect, TPmSettings& aSettings);
 	TMode Mode() const { return iMode; }
@@ -112,14 +117,13 @@ public:
 	void AccountChangedL();                  // switched to another account
 	void Cmd(TInt aOp, const TDesC8& aFolder, TUint aUid, const TDesC8& aArg);
 	TBool Busy() const;
-	TBool HasSelection() const;
 	const TPmRow* CurrentRow() const;
 	TBool CurrentIsSearch() const { return iSearch; }
 	const TPmFolder* CurrentFolder() const;
 	const TDesC8& FolderImap() const { return iFolder; }
 	TInt FolderCount() const;
 	const TPmFolder& FolderAt(TInt aIndex) const;
-	void ShowFoldersL();
+	void FocusFoldersL();
 	void OpenFolderL(const TDesC8& aImap);
 	void ShowOutboxL();
 	void OpenCurrentL();
@@ -137,22 +141,23 @@ public:
 	TInt AttachmentCount() const;
 	void AttachmentsL(CDesCArray& aNames);
 	TBool MessageHeader(const TDesC& aName, TDes& aValue) const;
-	void QuoteBodyL(TDes& aOut, TInt aMaxLines) const;
-	void ToggleHeaders();
+	void PlainBodyL(TDes& aOut, TBool aQuote) const;
+	TBool HasHtml() const { return iHtml; }
+	void ViewAsWebPageL();
+	void OpenWebL(const TDesC& aUrl);
 	void DraftFromOutboxL(CPmDraft& aDraft);
 	void SaveDraftL(CPmDraft& aDraft, TBool aSend);
 	void DeleteOutboxL();
-	void Title(TDes& aTitle) const;
 	TInt OutboxCount();
+	void Toast(const TDesC& aText);
+	void Render();                           // draw the screen again
 private:
 	void Draw(const TRect& aRect) const;
-	void DrawTitle(CWindowGc& aGc) const;
-	void DrawStatus(CWindowGc& aGc) const;
-	void DrawFolders(CWindowGc& aGc) const;
-	void DrawList(CWindowGc& aGc) const;
-	void DrawMessage(CWindowGc& aGc) const;
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
+	TKeyResponse MailboxKeyL(TUint aCode);
+	TKeyResponse ReaderKeyL(TUint aCode, TUint aMods);
 	void HandlePointerEventL(const TPointerEvent& aEvent);
+	void ActivateLinkL(TInt aLink);
 	void AddEntropy(TUint aValue);
 	static TInt TickCallback(TAny* aSelf);
 	void Tick();
@@ -163,21 +168,22 @@ private:
 	void LoadListL();
 	void LoadOutboxL();
 	void LoadMessageL();
-	void WrapMessageL();
+	void BuildDoc();
 	void ReadFileL(const TDesC& aName, HBufC*& aBuf, TInt aMax);
 	void StoreDir(TDes& aDir) const;
 	void FolderDir(const TDesC8& aImap, TDes& aDir) const;
 	void MsgPath(TUint aUid, const TDesC& aExt, TDes& aPath) const;
 	void OutboxDir(TDes& aDir) const;
 	TInt Rows() const;
-	TInt LineHeight() const { return iLineH; }
-	TRect BodyRect() const;
 	void MoveSel(TInt aDelta);
+	void Scroll(TInt aDelta);
 	void EnsureVisible();
 	void FormatDate(TInt aDate, TDes& aOut) const;
 	void CopySettingsToShared();
 	void SetStatus(const TDesC& aText);
-	void Redraw();
+	void RenderMailbox();
+	void RenderReader();
+	TInt SidebarCount() const { return iFolders->Count() + 1; }   // + the outbox
 private:
 	TPmSettings* iSettings;
 	RChunk iChunk;
@@ -189,6 +195,9 @@ private:
 	CPeriodic* iTimer;
 	TMode iMode;
 	TMode iListMode;                 // EList or EOutbox: where Esc returns from a message
+	TBool iSidebar;                  // keys move in the folder column
+	TInt iFolderSel;
+	TInt iFolderTop;
 	TBool iSearch;                   // the list shows search results
 	TBuf<60> iSearchWords;
 	TBuf8<128> iFolder;              // IMAP name of the open folder
@@ -199,32 +208,36 @@ private:
 	// message view
 	TUint iMsgUid;
 	HBufC* iText;                    // the message file (cp1252)
-	CArrayFixFlat<TInt>* iLineStart; // wrapped lines: start in iText
-	CArrayFixFlat<TInt>* iLineLen;
-	TInt iHeaderLines;               // wrapped lines before the body
-	TInt iMsgTop;
+	TInt iBodyOff;                   // after the file's first line
+	PmDoc iDoc;
+	TBool iDocValid;
+	TInt iScroll;
+	TInt iFocusLink;
 	TBool iWaitingBody;
-	TBool iAllHeaders;
+	TBool iHtml;                     // an HTML original is on the card
 	TInt iTruncated;                 // bytes not downloaded
 	CDesCArrayFlat* iAttNames;
+	CDesCArrayFlat* iAttSizes;
 	CDesC8ArrayFlat* iAttParts;
 	// engine bookkeeping
 	PmCmd iSent[PM_CMDQ];
 	TUint iDoneSeen;
 	TUint iChangedSeen;
-	TUint iBeat;
 	TBuf<128> iStatus;
+	TUint iStatusUntil;              // tick count when it goes
 	TBuf<128> iLastProgress;
 	TInt iBusyWas;
 	TInt iEntropyPos;
+	TBuf<100> iToast;
+	TUint iToastUntil;
 	// drawing
-	const CFont* iFont;
-	CFont* iBold;
-	TInt iLineH;
-	TInt iAscent;
-	TBool iShowMsg;
-	TBuf<120> iMsg1;
-	TBuf<120> iMsg2;
+	CFbsBitmap* iBitmap;
+	TUint8* iBits;                   // 640x240, 4 bits a pixel
+	PmCanvas iCanvas;
+	PmUiFolder iUiFolders[82];
+	PmUiRow iUiRows[12];
+	TBuf<16> iDates[12];
+	PmUiAttachment iUiAtt[8];
 	};
 
 class CPmInfoDialog : public CEikDialog
@@ -323,6 +336,7 @@ public:
 	void ConstructL();
 	~CPmAppUi();
 	void SaveSettings();
+	void ComposeDraftL(CPmDraft* aDraft, const TDesC& aTitle) { ComposeL(aDraft, aTitle); }
 private:
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);

@@ -204,7 +204,7 @@ def hc(op, a, b, c, d):
         wr(c, blob); return len(names)
     if op == 406:
         import shutil; shutil.rmtree(host_path(cstr(a)), ignore_errors=True); return 0
-    if op == 407: log("[log]", cstr(a)); return 0
+    if op == 407: log("[log]", cstr(a), ("@%.2fM insns" % (insns[0] / 1e6)) if COUNT else ""); return 0
     if op == 408:
         try: os.makedirs(host_path(cstr(a)), exist_ok=True); return 0
         except OSError: return u32(-1)
@@ -254,8 +254,10 @@ def on_done(uc_, addr, size, user):
     state["exit"] = s32(uc.reg_read(UC_ARM_REG_R0)); uc.emu_stop()
 uc.hook_add(UC_HOOK_CODE, on_done, begin=DONE, end=DONE)
 if COUNT:
+    PROF = {} if "--prof" in args else None
     def on_block(uc_, addr, size, user):
         insns[0] += size >> 2
+        if PROF is not None: PROF[addr] = PROF.get(addr, 0) + (size >> 2)
     uc.hook_add(UC_HOOK_BLOCK, on_block)
 
 # --trace f1,f2: log calls and return values of these functions
@@ -357,4 +359,15 @@ log("exit %s; heap in use %d KB, peak %d KB, arena %d KB, %d allocations" %
 if COUNT:
     log("%d million ARM instructions: roughly %.1f s on a 36 MHz Psion 5mx (at ~15 MIPS)" %
         (insns[0] // 1000000, insns[0] / 15e6))
+if COUNT and PROF:
+    syms = sorted((int(m.group(1), 16), m.group(2).split("(")[0]) for m in re.finditer(r"^\s+0x([0-9a-f]+)\s+([A-Za-z_].*?)\s*$", MAP, re.M))
+    import bisect
+    keys = [a for a, _ in syms]
+    per = {}
+    for a, n in PROF.items():
+        i = bisect.bisect_right(keys, a) - 1
+        nm = syms[i][1] if i >= 0 else "?"
+        per[nm] = per.get(nm, 0) + n
+    for nm, n in sorted(per.items(), key=lambda x: -x[1])[:25]:
+        log("%8.2fM %5.1f%% %s" % (n / 1e6, 100.0 * n / insns[0], nm))
 sys.exit(0 if state["exit"] == 0 and all(r == 0 for r in results) else 1)

@@ -16,6 +16,8 @@
 #include <eikon.rsg>
 #include <apgcli.h>
 #include <txtetext.h>
+#include <apacmdln.h>
+#include <eikdll.h>
 #include "pmapp.h"
 
 _LIT(KEngineExe, "psimail.exe");
@@ -172,34 +174,43 @@ CPmView::~CPmView()
 	delete iFolders;
 	delete iRows;
 	delete iText;
-	delete iLineStart;
-	delete iLineLen;
+	if (iDocValid)
+		doc_free(&iDoc);
 	delete iAttNames;
+	delete iAttSizes;
 	delete iAttParts;
-	if (iBold)
-		iCoeEnv->ReleaseScreenFont(iBold);
+	delete iBitmap;
+	User::Free(iBits);
 	if (iChunkOpen)
 		iChunk.Close();
 	}
 
+// the drawing code's memory (see ui/pmui.h)
+void* ui_alloc(int aSize) { return User::Alloc(aSize); }
+void ui_free(void* aPtr) { User::Free(aPtr); }
+
 void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings)
 	{
 	iSettings = &aSettings;
-	CreateWindowL();
+	// PsiMail draws everything itself, in 16 greys (see ui/)
+	CreateBackedUpWindowL(iCoeEnv->RootWin(), EGray16);
 	SetRectL(aRect);
+	EnableDragEvents();
 	iFolders = new(ELeave) CArrayFixFlat<TPmFolder>(16);
 	iRows = new(ELeave) CArrayFixFlat<TPmRow>(32);
-	iLineStart = new(ELeave) CArrayFixFlat<TInt>(256);
-	iLineLen = new(ELeave) CArrayFixFlat<TInt>(256);
 	iAttNames = new(ELeave) CDesCArrayFlat(4);
+	iAttSizes = new(ELeave) CDesCArrayFlat(4);
 	iAttParts = new(ELeave) CDesC8ArrayFlat(4);
 
-	iFont = iEikonEnv->NormalFont();
-	TFontSpec spec = iFont->FontSpecInTwips();
-	spec.iFontStyle.SetStrokeWeight(EStrokeWeightBold);
-	iBold = iCoeEnv->CreateScreenFontL(spec);
-	iLineH = iFont->HeightInPixels() + 3;
-	iAscent = iFont->AscentInPixels() + 1;
+	TSize size = aRect.Size();
+	if (size.iWidth > 640) size.iWidth = 640;
+	if (size.iHeight > 240) size.iHeight = 240;
+	iBitmap = new(ELeave) CFbsBitmap;
+	User::LeaveIfError(iBitmap->Create(size, EGray16));
+	TInt stride = (size.iWidth + 1) / 2;
+	iBits = (TUint8*)User::AllocL(stride * size.iHeight);
+	Mem::Fill(iBits, stride * size.iHeight, 0xff);
+	gfx_init(&iCanvas, iBits, size.iWidth, size.iHeight, stride);
 
 	TInt r = iChunk.CreateGlobal(_L(PSI_SHARED_NAME), sizeof(PmShared), sizeof(PmShared));
 	if (r == KErrAlreadyExists)
@@ -320,7 +331,7 @@ void CPmView::EngineEnded()
 void CPmView::SettingsChanged()
 	{
 	CopySettingsToShared();
-	Redraw();
+	Render();
 	}
 
 TBool CPmView::Busy() const
@@ -333,12 +344,12 @@ void CPmView::Cmd(TInt aOp, const TDesC8& aFolder, TUint aUid, const TDesC8& aAr
 	PmShared* s = iShared;
 	if (!iRunning)
 		{
-		iEikonEnv->InfoMsg(_L("The mail engine is not running"));
+		Toast(_L("The mail engine is not running"));
 		return;
 		}
 	if (s->cmd_head - s->cmd_tail >= PM_CMDQ)
 		{
-		iEikonEnv->InfoMsg(_L("Busy - try again in a moment"));
+		Toast(_L("Busy - try again in a moment"));
 		return;
 		}
 	PmCmd& c = s->cmd[s->cmd_head % PM_CMDQ];
@@ -352,7 +363,7 @@ void CPmView::Cmd(TInt aOp, const TDesC8& aFolder, TUint aUid, const TDesC8& aAr
 	Mem::Copy(c.arg, aArg.Ptr(), n);
 	iSent[s->cmd_head % PM_CMDQ] = c;
 	s->cmd_head++;
-	Redraw();
+	Render();
 	}
 
 // ============================================================================
@@ -431,7 +442,7 @@ void CPmView::AccountChangedL()
 	if (!a.used)
 		{
 		iMode = ENoAccount;
-		Redraw();
+		Render();
 		return;
 		}
 	LoadFoldersL();
@@ -445,7 +456,7 @@ void CPmView::AccountChangedL()
 		Cmd(PM_CMD_FOLDERS, KNullDesC8, 0, KNullDesC8);
 		Cmd(PM_CMD_SYNC, _L8("INBOX"), 0, KNullDesC8);
 		}
-	Redraw();
+	Render();
 	}
 
 void CPmView::LoadFoldersL()
@@ -638,130 +649,100 @@ void CPmView::LoadMessageL()
 	{
 	delete iText;
 	iText = NULL;
+	if (iDocValid)
+		{
+		doc_free(&iDoc);
+		iDocValid = EFalse;
+		}
 	iAttNames->Reset();
+	iAttSizes->Reset();
 	iAttParts->Reset();
 	iTruncated = 0;
+	iBodyOff = 0;
+	iFocusLink = 0;
 	TBuf<150> path;
+	MsgPath(iMsgUid, _L("htm"), path);
+	TEntry he;
+	iHtml = iCoeEnv->FsSession().Entry(path, he) == KErrNone;
 	MsgPath(iMsgUid, _L("txt"), path);
 	HBufC* buf = NULL;
 	ReadFileL(path, buf, 300 * 1024);
 	iWaitingBody = buf == NULL;
 	iText = buf;
-	if (iText)
-		{
-		// "#PSIMAIL1 TAB bytes-not-downloaded TAB html" first
-		TPtr t = iText->Des();
-		if (t.Length() && t[0] == '#')
-			{
-			TInt nl = t.Locate('\n');
-			TPtrC l = nl >= 0 ? t.Left(nl) : TPtrC(t);
-			NextField(l);
-			iTruncated = ToInt(NextField(l));
-			t.Delete(0, nl >= 0 ? nl + 1 : t.Length());
-			}
-		// the attachments
-		MsgPath(iMsgUid, _L("att"), path);
-		HBufC* att = NULL;
-		ReadFileL(path, att, 16 * 1024);
-		if (att)
-			{
-			CleanupStack::PushL(att);
-			TPtrC rest = *att;
-			while (rest.Length())
-				{
-				TInt nl = rest.Locate('\n');
-				TPtrC line = nl >= 0 ? rest.Left(nl) : rest;
-				rest.Set(nl >= 0 ? rest.Mid(nl + 1) : TPtrC());
-				if (!line.Length())
-					continue;
-				TPtrC l = line;
-				TPtrC part = NextField(l);
-				TInt size = ToInt(NextField(l));
-				TPtrC name = NextField(l);
-				TBuf<120> shown;
-				SafeCopy(shown, name.Left(name.Length() < 90 ? name.Length() : 90));
-				// base64 is 4/3 of the file
-				TInt kb = (size * 3 / 4 + 1023) / 1024;
-				shown.AppendFormat(_L(" (%d KB)"), kb);
-				iAttNames->AppendL(shown);
-				TBuf8<16> p8;
-				SafeCopy(p8, part);
-				iAttParts->AppendL(p8);
-				}
-			CleanupStack::PopAndDestroy();
-			}
-		}
-	WrapMessageL();
-	}
-
-// word-wraps the message into screen lines
-void CPmView::WrapMessageL()
-	{
-	iLineStart->Reset();
-	iLineLen->Reset();
-	iHeaderLines = 0;
 	if (!iText)
 		return;
-	TPtr t = iText->Des();
-	for (TInt i = 0; i < t.Length(); i++)
-		if (t[i] == '\t') t[i] = ' ';
-		else if (t[i] == '\r') t[i] = ' ';
-	TInt width = Rect().Width() - 8;
-	TInt pos = 0, len = t.Length();
-	TBool inHeader = ETrue;
-	while (pos < len)
+	// "#PSIMAIL1 TAB bytes-not-downloaded TAB html" first
+	TPtrC t = *iText;
+	if (t.Length() && t[0] == '#')
 		{
-		TInt nl = t.Mid(pos).Locate('\n');
-		TInt end = nl >= 0 ? pos + nl : len;
-		TPtrC para = t.Mid(pos, end - pos);
-		if (inHeader)
-			{
-			if (para.Length() == 0)
-				{
-				inHeader = EFalse;
-				}
-			else if (!iAllHeaders && (para.Find(_L("Reply-To: ")) == 0 || para.Find(_L("Message-ID: ")) == 0))
-				{
-				pos = end + 1;
-				continue;
-				}
-			}
-		if (para.Length() == 0)
-			{
-			iLineStart->AppendL(pos);
-			iLineLen->AppendL(0);
-			}
-		TInt p = 0;
-		while (p < para.Length())
-			{
-			TPtrC rest = para.Mid(p);
-			TInt fit = iFont->TextCount(rest, width);
-			if (fit <= 0) fit = 1;
-			if (fit < rest.Length())
-				{
-				TInt sp = fit;
-				while (sp > 0 && rest[sp] != ' ') sp--;
-				if (sp > fit / 3) fit = sp + 1;
-				}
-			TInt shown = fit;
-			while (shown > 0 && rest[shown - 1] == ' ' && fit < rest.Length()) shown--;
-			iLineStart->AppendL(pos + p);
-			iLineLen->AppendL(shown);
-			p += fit;
-			}
-		if (inHeader)
-			iHeaderLines = iLineStart->Count();
-		pos = end + 1;
+		TInt nl = t.Locate('\n');
+		TPtrC l = nl >= 0 ? t.Left(nl) : t;
+		NextField(l);
+		iTruncated = ToInt(NextField(l));
+		iBodyOff = nl >= 0 ? nl + 1 : t.Length();
 		}
+	// the attachments
+	MsgPath(iMsgUid, _L("att"), path);
+	HBufC* att = NULL;
+	ReadFileL(path, att, 16 * 1024);
+	if (att)
+		{
+		CleanupStack::PushL(att);
+		TPtrC rest = *att;
+		while (rest.Length() && iAttNames->Count() < 8)
+			{
+			TInt nl = rest.Locate('\n');
+			TPtrC line = nl >= 0 ? rest.Left(nl) : rest;
+			rest.Set(nl >= 0 ? rest.Mid(nl + 1) : TPtrC());
+			if (!line.Length())
+				continue;
+			TPtrC l = line;
+			TPtrC part = NextField(l);
+			TInt size = ToInt(NextField(l));
+			TPtrC name = NextField(l);
+			iAttNames->AppendL(name.Left(name.Length() < 90 ? name.Length() : 90));
+			// base64 is 4/3 of the file
+			TInt kb = (size * 3 / 4 + 1023) / 1024;
+			TBuf<16> z;
+			if (kb >= 1024) z.Format(_L("%d.%d MB"), kb / 1024, (kb % 1024) * 10 / 1024);
+			else z.Format(_L("%d KB"), kb);
+			iAttSizes->AppendL(z);
+			TBuf8<16> p8;
+			SafeCopy(p8, part);
+			iAttParts->AppendL(p8);
+			}
+		CleanupStack::PopAndDestroy();
+		}
+	BuildDoc();
+	}
+
+// lays the message out (ui/pmdoc.cpp)
+void CPmView::BuildDoc()
+	{
+	if (iDocValid)
+		{
+		doc_free(&iDoc);
+		iDocValid = EFalse;
+		}
+	if (!iText)
+		return;
+	TInt n = iAttNames->Count();
+	for (TInt i = 0; i < n; i++)
+		{
+		iUiAtt[i].name = (const char*)(*iAttNames)[i].Ptr();
+		iUiAtt[i].len = (*iAttNames)[i].Length();
+		iUiAtt[i].size = (const char*)(*iAttSizes)[i].Ptr();
+		iUiAtt[i].slen = (*iAttSizes)[i].Length();
+		}
+	TPtrC body = iText->Mid(iBodyOff);
+	doc_build(&iDoc, (const char*)body.Ptr(), body.Length(), iCanvas.w, iUiAtt, n, (iTruncated + 1023) / 1024);
+	iDocValid = ETrue;
 	}
 
 void CPmView::ReloadL()
 	{
 	switch (iMode)
 		{
-	case EFolders:
-		LoadFoldersL();
-		break;
 	case EList:
 		LoadFoldersL();
 		LoadListL();
@@ -785,23 +766,26 @@ void CPmView::ReloadL()
 	default:
 		break;
 		}
-	Redraw();
+	Render();
 	}
 
 // ============================================================================
 // Navigation
 // ============================================================================
 
-void CPmView::ShowFoldersL()
+void CPmView::FocusFoldersL()
 	{
-	LoadFoldersL();
-	iMode = EFolders;
-	iSel = 0;
-	for (TInt i = 0; i < iFolders->Count(); i++)
-		if ((*iFolders)[i].iImap == iFolder) iSel = i;
-	iTop = 0;
-	EnsureVisible();
-	Redraw();
+	if (iMode == EMessage)
+		BackL();
+	if (iMode != EList && iMode != EOutbox)
+		return;
+	iSidebar = ETrue;
+	// the open folder is the highlighted one
+	iFolderSel = iFolders->Count();                // (the outbox)
+	if (iMode == EList)
+		for (TInt i = 0; i < iFolders->Count(); i++)
+			if ((*iFolders)[i].iImap == iFolder) iFolderSel = i;
+	Render();
 	}
 
 void CPmView::OpenFolderL(const TDesC8& aImap)
@@ -810,12 +794,15 @@ void CPmView::OpenFolderL(const TDesC8& aImap)
 	iSearch = EFalse;
 	iMode = EList;
 	iListMode = EList;
+	iSidebar = EFalse;
 	iSel = iTop = 0;
 	iRows->Reset();
 	LoadListL();
 	iSel = 0;
 	iTop = 0;
-	Redraw();
+	for (TInt i = 0; i < iFolders->Count(); i++)
+		if ((*iFolders)[i].iImap == iFolder) iFolderSel = i;
+	Render();
 	// always look for changes when a folder is opened
 	if (!iSettings->iOffline)
 		Cmd(PM_CMD_SYNC, iFolder, 0, KNullDesC8);
@@ -825,16 +812,12 @@ void CPmView::ShowOutboxL()
 	{
 	iMode = EOutbox;
 	iListMode = EOutbox;
+	iSidebar = EFalse;
+	iSearch = EFalse;
+	iFolderSel = iFolders->Count();
 	iSel = iTop = 0;
 	LoadOutboxL();
-	Redraw();
-	}
-
-TBool CPmView::HasSelection() const
-	{
-	if (iMode == EMessage) return ETrue;
-	if (iMode == EList || iMode == EOutbox) return iSel >= 0 && iSel < iRows->Count();
-	return EFalse;
+	Render();
 	}
 
 const TPmRow* CPmView::CurrentRow() const
@@ -846,17 +829,14 @@ const TPmRow* CPmView::CurrentRow() const
 
 void CPmView::OpenCurrentL()
 	{
-	if (iMode == EFolders)
+	if (iSidebar)
 		{
-		if (iSel >= 0 && iSel < iFolders->Count())
-			{
-			if ((*iFolders)[iSel].iKind == 'N')
-				{
-				iEikonEnv->InfoMsg(_L("That folder holds only other folders"));
-				return;
-				}
-			OpenFolderL((*iFolders)[iSel].iImap);
-			}
+		if (iFolderSel >= iFolders->Count())
+			ShowOutboxL();
+		else if ((*iFolders)[iFolderSel].iKind == 'N')
+			Toast(_L("That folder holds only other folders"));
+		else
+			OpenFolderL((*iFolders)[iFolderSel].iImap);
 		return;
 		}
 	if (iMode == EOutbox)
@@ -871,10 +851,9 @@ void CPmView::OpenCurrentL()
 	TBool wasUnread = row.iFlags.Locate('S') < 0;
 	iMsgUid = row.iUid;
 	iMode = EMessage;
-	iMsgTop = 0;
-	iMsg1.Zero();
-	iMsg2.Zero();
-	if (row.iFlags.Locate('S') < 0)
+	iScroll = 0;
+	iFocusLink = 0;
+	if (wasUnread)
 		row.iFlags.Append('S');                  // the engine marks it read
 	LoadMessageL();
 	if (iWaitingBody)
@@ -889,7 +868,7 @@ void CPmView::OpenCurrentL()
 		// here already (e.g. marked unread again): tell the server it's read
 		Cmd(PM_CMD_FLAG, iFolder, iMsgUid, _L8("+S"));
 		}
-	Redraw();
+	Render();
 	}
 
 void CPmView::BackL()
@@ -899,14 +878,19 @@ void CPmView::BackL()
 		iMode = iListMode;
 		if (iMode == EList) LoadListL(); else LoadOutboxL();
 		}
+	else if (iSidebar)
+		iSidebar = EFalse;
 	else if (iMode == EList && iSearch)
 		{
 		iSearch = EFalse;
 		LoadListL();
 		}
 	else if (iMode == EList || iMode == EOutbox)
-		ShowFoldersL();
-	Redraw();
+		{
+		FocusFoldersL();
+		return;
+		}
+	Render();
 	}
 
 void CPmView::StepMessageL(TInt aDir)
@@ -916,7 +900,7 @@ void CPmView::StepMessageL(TInt aDir)
 	TInt s = iSel + aDir;
 	if (s < 0 || s >= iRows->Count())
 		{
-		iEikonEnv->InfoMsg(aDir > 0 ? _L("That was the oldest message") : _L("That was the newest message"));
+		Toast(aDir > 0 ? _L("That was the oldest message") : _L("That was the newest message"));
 		return;
 		}
 	iSel = s;
@@ -944,7 +928,7 @@ void CPmView::DeleteCurrentL()
 		if ((*iRows)[i].iUid == uid) { iSel = i; break; }
 	if (iSel < 0 || iSel >= iRows->Count() || (*iRows)[iSel].iUid != uid)
 		{
-		Redraw();
+		Render();
 		return;
 		}
 	iRows->Delete(iSel);
@@ -957,8 +941,8 @@ void CPmView::DeleteCurrentL()
 			OpenCurrentL();
 		}
 	EnsureVisible();
-	iEikonEnv->InfoMsg(forGood ? _L("Deleted") : _L("Moved to the Trash"));
-	Redraw();
+	Toast(forGood ? _L("Deleted") : _L("Moved to the Trash"));
+	Render();
 	}
 
 TBool CPmView::MoveCurrentL(const TDesC8& aDest)
@@ -968,7 +952,7 @@ TBool CPmView::MoveCurrentL(const TDesC8& aDest)
 		return EFalse;
 	if (aDest == iFolder)
 		{
-		iEikonEnv->InfoMsg(_L("It is in that folder already"));
+		Toast(_L("It is in that folder already"));
 		return EFalse;
 		}
 	Cmd(PM_CMD_MOVE, iFolder, row->iUid, aDest);
@@ -982,7 +966,7 @@ TBool CPmView::MoveCurrentL(const TDesC8& aDest)
 			OpenCurrentL();
 		}
 	EnsureVisible();
-	Redraw();
+	Render();
 	return ETrue;
 	}
 
@@ -1003,15 +987,15 @@ void CPmView::ToggleFlagL(TChar aFlag)
 		row.iFlags.Append(aFlag);
 	Cmd(PM_CMD_FLAG, iFolder, row.iUid, op);
 	if (aFlag == 'S')
-		iEikonEnv->InfoMsg(at >= 0 ? _L("Marked unread") : _L("Marked read"));
+		Toast(at >= 0 ? _L("Marked unread") : _L("Marked read"));
 	else
-		iEikonEnv->InfoMsg(at >= 0 ? _L("Flag removed") : _L("Flagged"));
-	Redraw();
+		Toast(at >= 0 ? _L("Flag removed") : _L("Flagged"));
+	Render();
 	}
 
 void CPmView::RefreshL()
 	{
-	if (iMode == EFolders)
+	if (iSidebar)
 		Cmd(PM_CMD_FOLDERS, KNullDesC8, 0, KNullDesC8);
 	else if (iMode == EOutbox)
 		Cmd(PM_CMD_SEND, KNullDesC8, 0, KNullDesC8);
@@ -1028,7 +1012,7 @@ void CPmView::OlderL()
 
 void CPmView::SearchL(const TDesC& aWords)
 	{
-	if (iMode == EFolders || iMode == EOutbox || iMode == ENoAccount)
+	if (iMode == EOutbox || iMode == ENoAccount)
 		iFolder = _L8("INBOX");
 	SafeCopy(iSearchWords, aWords);
 	TBuf8<PM_ARG_MAX> w;
@@ -1047,7 +1031,7 @@ void CPmView::WholeMessageL()
 		return;
 	if (iTruncated <= 0)
 		{
-		iEikonEnv->InfoMsg(_L("You have the whole message"));
+		Toast(_L("You have the whole message"));
 		return;
 		}
 	iWaitingBody = ETrue;
@@ -1070,13 +1054,6 @@ void CPmView::SaveAttachmentL(TInt aIndex)
 	if (aIndex < 0 || aIndex >= iAttParts->Count())
 		return;
 	Cmd(PM_CMD_ATTACH, iFolder, iMsgUid, (*iAttParts)[aIndex]);
-	}
-
-void CPmView::ToggleHeaders()
-	{
-	iAllHeaders = !iAllHeaders;
-	TRAPD(err, WrapMessageL());
-	Redraw();
 	}
 
 // value of a header line in the open message ("From", "Subject"...)
@@ -1104,31 +1081,18 @@ TBool CPmView::MessageHeader(const TDesC& aName, TDes& aValue) const
 	return EFalse;
 	}
 
-// the message's text with "> " before each line
-void CPmView::QuoteBodyL(TDes& aOut, TInt aMaxLines) const
+// the message as plain text (for replies, with "> " before each line)
+void CPmView::PlainBodyL(TDes& aOut, TBool aQuote) const
 	{
 	if (!iText)
 		return;
-	TPtrC t = *iText;
-	TInt blank = t.Find(_L("\n\n"));
-	if (blank < 0)
+	TPtrC body = iText->Mid(iBodyOff);
+	TInt room = aOut.MaxLength() - aOut.Length();
+	if (room <= 8)
 		return;
-	TPtrC rest = t.Mid(blank + 2);
-	TInt n = 0;
-	while (rest.Length() && n < aMaxLines)
-		{
-		TInt nl = rest.Locate('\n');
-		TPtrC line = nl >= 0 ? rest.Left(nl) : rest;
-		rest.Set(nl >= 0 ? rest.Mid(nl + 1) : TPtrC());
-		if (aOut.Length() + line.Length() + 4 > aOut.MaxLength())
-			break;
-		aOut.Append(line.Length() && line[0] == '>' ? _L(">") : _L("> "));
-		aOut.Append(line);
-		aOut.Append('\n');
-		n++;
-		}
-	if (rest.Length() && aOut.Length() + 8 < aOut.MaxLength())
-		aOut.Append(_L("> ...\n"));
+	TUint8* out = (TUint8*)aOut.Ptr() + aOut.Length();
+	TInt n = doc_plain((const char*)body.Ptr(), body.Length(), (char*)out, room, aQuote);
+	aOut.SetLength(aOut.Length() + n);
 	}
 
 // ============================================================================
@@ -1265,18 +1229,18 @@ void CPmView::SaveDraftL(CPmDraft& aDraft, TBool aSend)
 	if (aSend)
 		{
 		if (iSettings->iOffline)
-			iEikonEnv->InfoMsg(_L("In the outbox - it goes at the next Send & receive"));
+			Toast(_L("In the outbox - it goes at the next Send & receive"));
 		else
 			{
 			Cmd(PM_CMD_SEND, KNullDesC8, 0, KNullDesC8);
-			iEikonEnv->InfoMsg(_L("Sending..."));
+			Toast(_L("Sending..."));
 			}
 		}
 	else
-		iEikonEnv->InfoMsg(_L("Saved in the outbox"));
+		Toast(_L("Saved in the outbox"));
 	if (iMode == EOutbox)
 		LoadOutboxL();
-	Redraw();
+	Render();
 	}
 
 void CPmView::DeleteOutboxL()
@@ -1302,7 +1266,7 @@ void CPmView::DeleteOutboxL()
 	p = dir; p.AppendFormat(_L("%04d.err"), no); fs.Delete(p);
 	p = dir; p.AppendNum(no); p.Append(_L(".err")); fs.Delete(p);
 	LoadOutboxL();
-	Redraw();
+	Render();
 	}
 
 // ============================================================================
@@ -1357,13 +1321,21 @@ void CPmView::TickL()
 		iBusyWas = s->busy;
 		redraw = ETrue;
 		}
-	if (redraw)
+	// messages that have had their time
+	TUint now = User::TickCount();
+	if (iToast.Length() && now - iToastUntil < 0x80000000u)
 		{
-		ActivateGc();
-		DrawStatus(SystemGc());
-		DrawTitle(SystemGc());
-		DeactivateGc();
+		iToast.Zero();
+		redraw = ETrue;
 		}
+	if (iStatus.Length() && iStatusUntil && now - iStatusUntil < 0x80000000u && !s->busy)
+		{
+		iStatus.Zero();
+		iStatusUntil = 0;
+		redraw = ETrue;
+		}
+	if (redraw)
+		Render();
 	}
 
 void CPmView::HandleResultL(const PmCmd& aCmd)
@@ -1373,6 +1345,7 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 	FromC(msg, s->last_msg);
 	TInt res = s->last_res;
 	SafeCopy(iStatus, msg);
+	iStatusUntil = User::TickCount() + 64 * 6;
 	switch (res)
 		{
 	case PM_RES_OK:
@@ -1394,16 +1367,16 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 			iEikonEnv->InfoWinL(_L("Attachment saved"), file);
 			}
 		else if ((aCmd.op == PM_CMD_SYNC || aCmd.op == PM_CMD_SENDRECV) && s->new_mail > 0 && aCmd.op == PM_CMD_SENDRECV)
-			iEikonEnv->InfoMsg(msg);
+			Toast(msg);
 		else if (aCmd.op == PM_CMD_SEND || aCmd.op == PM_CMD_SENDRECV)
-			iEikonEnv->InfoMsg(msg);
+			Toast(msg);
 		if (aCmd.op == PM_CMD_BODY || aCmd.op == PM_CMD_FULLBODY)
 			{
 			if (iMode == EMessage && aCmd.uid == iMsgUid)
 				{
-				TInt top = iMsgTop;
+				TInt top = iScroll;
 				LoadMessageL();
-				if (aCmd.op == PM_CMD_FULLBODY) iMsgTop = top;
+				if (aCmd.op == PM_CMD_FULLBODY) iScroll = top;
 				}
 			}
 		ReloadL();
@@ -1466,23 +1439,18 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 			ReloadL();                         // queued, as expected when offline
 			break;
 			}
-		if (aCmd.op == PM_CMD_BODY && iMode == EMessage && aCmd.uid == iMsgUid)
-			{
-			iMsg1 = _L("Could not download this message:");
-			SafeCopy(iMsg2, msg);
-			}
-		iEikonEnv->InfoMsg(msg);
+		Toast(msg);
 		ReloadL();
 		break;
 	case PM_RES_CANCELLED:
-		iEikonEnv->InfoMsg(_L("Stopped"));
+		Toast(_L("Stopped"));
 		break;
 	default:
 		if (aCmd.op == PM_CMD_BODY || aCmd.op == PM_CMD_ATTACH || aCmd.op == PM_CMD_SEND ||
 			aCmd.op == PM_CMD_SENDRECV || aCmd.op == PM_CMD_SEARCH)
 			iEikonEnv->InfoWinL(_L("PsiMail"), msg.Left(120));
 		else
-			iEikonEnv->InfoMsg(msg);
+			Toast(msg);
 		ReloadL();
 		break;
 		}
@@ -1491,202 +1459,24 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 void CPmView::SetStatus(const TDesC& aText)
 	{
 	SafeCopy(iStatus, aText);
-	Redraw();
-	}
-
-void CPmView::Redraw()
-	{
-	DrawNow();
+	iStatusUntil = User::TickCount() + 64 * 6;
+	Render();
 	}
 
 // ============================================================================
-// Drawing
+// Drawing - everything through ui/ (pmscreens.cpp), into a 16-grey bitmap
 // ============================================================================
 
 TInt CPmView::Rows() const
 	{
-	TInt n = BodyRect().Height() / iLineH;
-	return n > 0 ? n : 1;
+	return ui_mailbox_rows(iCanvas.h);
 	}
 
-TRect CPmView::BodyRect() const
+void CPmView::Toast(const TDesC& aText)
 	{
-	TRect r = Rect();
-	r.iTl.iY += iLineH + 2;        // title
-	r.iBr.iY -= iLineH + 2;        // status
-	return r;
-	}
-
-void CPmView::Title(TDes& aTitle) const
-	{
-	aTitle.Zero();
-	PmAccount& a = iSettings->iAccounts[iSettings->iAcct];
-	TBuf<32> acct;
-	FromC(acct, a.name);
-	switch (iMode)
-		{
-	case ENoAccount:
-		aTitle = _L("PsiMail");
-		break;
-	case EFolders:
-		aTitle = acct;
-		aTitle.Append(_L(" - folders"));
-		break;
-	case EOutbox:
-		aTitle = acct;
-		aTitle.AppendFormat(_L(" - outbox (%d)"), iRows->Count());
-		break;
-	default:
-		{
-		const TPmFolder* f = CurrentFolder();
-		aTitle = acct;
-		aTitle.Append(_L(" - "));
-		if (f)
-			aTitle.Append(f->iName.Left(40));
-		else
-			{
-			TBuf<40> n;
-			n.Copy(iFolder.Left(40));
-			aTitle.Append(n);
-			}
-		if (iSearch)
-			{
-			aTitle.Append(_L(" - search: "));
-			aTitle.Append(iSearchWords.Left(30));
-			}
-		else if (iMode == EList && f && f->iUnread > 0)
-			aTitle.AppendFormat(_L(" (%d unread)"), f->iUnread);
-		if (iMode == EMessage && iRows->Count())
-			aTitle.AppendFormat(_L("   %d of %d"), iSel + 1, iRows->Count());
-		break;
-		}
-		}
-	}
-
-void CPmView::DrawTitle(CWindowGc& aGc) const
-	{
-	TRect r = Rect();
-	r.iBr.iY = r.iTl.iY + iLineH + 2;
-	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	aGc.SetBrushColor(KRgbBlack);
-	aGc.SetPenColor(KRgbWhite);
-	aGc.UseFont(iBold);
-	TBuf<160> t;
-	Title(t);
-	TBuf<24> right;
-	if (iShared->online)
-		right = _L("online");
-	if (iSettings->iOffline)
-		right = _L("offline");
-	TInt rw = iBold->TextWidthInPixels(right) + 8;
-	TRect left(r.iTl, TPoint(r.iBr.iX - rw, r.iBr.iY));
-	aGc.DrawText(t, left, iAscent + 1, CGraphicsContext::ELeft, 4);
-	aGc.DrawText(right, TRect(TPoint(r.iBr.iX - rw, r.iTl.iY), r.iBr), iAscent + 1, CGraphicsContext::ERight, 4);
-	aGc.DiscardFont();
-	}
-
-void CPmView::DrawStatus(CWindowGc& aGc) const
-	{
-	TRect r = Rect();
-	r.iTl.iY = r.iBr.iY - iLineH - 2;
-	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	aGc.SetBrushColor(TRgb::Gray4(2));
-	aGc.SetPenColor(KRgbBlack);
-	aGc.UseFont(iFont);
-	TBuf<160> t;
-	if (iShared->busy && iLastProgress.Length())
-		t = iLastProgress;
-	else if (iShared->busy || iShared->cmd_head != iShared->cmd_tail)
-		t = _L("Working...");
-	else
-		t = iStatus;
-	TBuf<40> right;
-	if (iShared->busy)
-		right = _L("Esc stops");
-	else if (iMode == EMessage && iAttNames->Count())
-		right.Format(_L("%d attached - Ctrl+S saves"), iAttNames->Count());
-	TInt rw = right.Length() ? iFont->TextWidthInPixels(right) + 8 : 0;
-	aGc.DrawText(t, TRect(r.iTl, TPoint(r.iBr.iX - rw, r.iBr.iY)), iAscent + 1, CGraphicsContext::ELeft, 4);
-	if (rw)
-		aGc.DrawText(right, TRect(TPoint(r.iBr.iX - rw, r.iTl.iY), r.iBr), iAscent + 1, CGraphicsContext::ERight, 4);
-	aGc.DiscardFont();
-	}
-
-void CPmView::Draw(const TRect& /*aRect*/) const
-	{
-	CWindowGc& gc = SystemGc();
-	gc.SetPenStyle(CGraphicsContext::ENullPen);
-	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	gc.SetBrushColor(KRgbWhite);
-	gc.DrawRect(BodyRect());
-	gc.SetPenStyle(CGraphicsContext::ESolidPen);
-	DrawTitle(gc);
-	DrawStatus(gc);
-	gc.SetBrushColor(KRgbWhite);
-	gc.SetPenColor(KRgbBlack);
-	switch (iMode)
-		{
-	case EFolders:
-		DrawFolders(gc);
-		break;
-	case EList:
-	case EOutbox:
-		DrawList(gc);
-		break;
-	case EMessage:
-		DrawMessage(gc);
-		break;
-	case ENoAccount:
-		{
-		gc.UseFont(iBold);
-		TRect b = BodyRect();
-		gc.DrawText(_L("Welcome to PsiMail"), TPoint(b.iTl.iX + 20, b.iTl.iY + 40));
-		gc.DiscardFont();
-		gc.UseFont(iFont);
-		gc.DrawText(_L("Set up your mail account with Tools > New account (Ctrl+K)."), TPoint(b.iTl.iX + 20, b.iTl.iY + 40 + 2 * iLineH));
-		gc.DrawText(_L("For Fastmail, make an app password at Settings > Privacy & Security."), TPoint(b.iTl.iX + 20, b.iTl.iY + 40 + 3 * iLineH));
-		gc.DiscardFont();
-		break;
-		}
-		}
-	}
-
-void CPmView::DrawFolders(CWindowGc& aGc) const
-	{
-	TRect b = BodyRect();
-	TInt rows = Rows();
-	if (iFolders->Count() == 0)
-		{
-		aGc.UseFont(iFont);
-		aGc.DrawText(_L("No folders yet: File > Send & receive (Ctrl+G) fetches them."), TPoint(b.iTl.iX + 8, b.iTl.iY + iAscent + 4));
-		aGc.DiscardFont();
-		return;
-		}
-	for (TInt i = 0; i < rows && iTop + i < iFolders->Count(); i++)
-		{
-		const TPmFolder& f = (*iFolders)[iTop + i];
-		TRect row(b.iTl.iX, b.iTl.iY + i * iLineH, b.iBr.iX, b.iTl.iY + (i + 1) * iLineH);
-		TBool sel = iTop + i == iSel;
-		aGc.SetBrushColor(sel ? KRgbBlack : KRgbWhite);
-		aGc.SetPenColor(sel ? KRgbWhite : KRgbBlack);
-		const CFont* font = f.iUnread > 0 ? iBold : iFont;
-		aGc.UseFont(font);
-		TBuf<100> name;
-		// indent subfolders ("Work/Projects" -> "  Projects")
-		TInt depth = 0, last = -1;
-		for (TInt k = 0; k < f.iName.Length(); k++)
-			if (f.iName[k] == '/' || f.iName[k] == '.') { depth++; last = k; }
-		if (f.iKind != '-' && f.iKind != 'N') { depth = 0; last = -1; }
-		for (TInt d = 0; d < depth && d < 6; d++) name.Append(_L("   "));
-		name.Append(f.iName.Mid(last + 1).Left(60));
-		TBuf<32> count;
-		if (f.iUnread > 0) count.Format(_L("%d new  "), f.iUnread);
-		if (f.iTotal >= 0 && f.iKind != 'N') count.AppendFormat(_L("%d"), f.iTotal);
-		TInt cw = font->TextWidthInPixels(count) + 10;
-		aGc.DrawText(name, TRect(row.iTl, TPoint(row.iBr.iX - cw, row.iBr.iY)), iAscent + 1, CGraphicsContext::ELeft, 8);
-		aGc.DrawText(count, TRect(TPoint(row.iBr.iX - cw, row.iTl.iY), row.iBr), iAscent + 1, CGraphicsContext::ERight, 6);
-		aGc.DiscardFont();
-		}
+	SafeCopy(iToast, aText);
+	iToastUntil = User::TickCount() + 64 * 3;      // 3 s (1/64 s ticks)
+	Render();
 	}
 
 void CPmView::FormatDate(TInt aDate, TDes& aOut) const
@@ -1715,177 +1505,186 @@ void CPmView::FormatDate(TInt aDate, TDes& aOut) const
 		aOut.Format(_L("%d %s %02d"), d.Day() + 1, KMonths[d.Month()], d.Year() % 100);
 	}
 
-void CPmView::DrawList(CWindowGc& aGc) const
+static const char* CStr(const TDesC& aDes) { return (const char*)aDes.Ptr(); }
+
+void CPmView::RenderMailbox()
 	{
-	TRect b = BodyRect();
+	PmUiMailbox m;
+	Mem::FillZ(&m, sizeof(m));
+	PmAccount& a = iSettings->iAccounts[iSettings->iAcct];
+	m.account = a.name;
+	m.alen = User::StringLength((const TUint8*)a.name);
+	TInt nf = iFolders->Count();
+	if (nf > 80) nf = 80;
+	TInt k = 0;
+	for (TInt i = 0; i < nf; i++)
+		{
+		const TPmFolder& f = (*iFolders)[i];
+		PmUiFolder& u = iUiFolders[k++];
+		// "Work/Projects": show "Projects", indented
+		TInt depth = 0, last = -1;
+		if (f.iKind == '-' || f.iKind == 'N')
+			for (TInt j = 0; j < f.iName.Length(); j++)
+				if (f.iName[j] == '/' || f.iName[j] == '.') { depth++; last = j; }
+		u.name = CStr(f.iName) + last + 1;
+		u.len = f.iName.Length() - last - 1;
+		u.kind = f.iKind;
+		u.unread = f.iKind == 'S' || f.iKind == 'D' || f.iKind == 'T' || f.iKind == 'J' ? 0 : f.iUnread;
+		u.depth = depth > 3 ? 3 : depth;
+		}
+	PmUiFolder& ob = iUiFolders[k++];
+	ob.name = "Outbox"; ob.len = 6; ob.kind = 'O'; ob.depth = 0;
+	ob.unread = OutboxCount();
+	m.folders = iUiFolders;
+	m.nfolders = k;
+	m.folderSel = iFolderSel < k ? iFolderSel : k - 1;
+	TInt srows = ui_sidebar_rows(iCanvas.h);
+	if (iFolderSel < iFolderTop) iFolderTop = iFolderSel;
+	if (iFolderSel >= iFolderTop + srows) iFolderTop = iFolderSel - srows + 1;
+	if (iFolderTop < 0) iFolderTop = 0;
+	m.folderTop = iFolderTop;
+	m.sidebarFocus = iSidebar;
+
+	TBuf<80> title;
+	TBuf<80> sub;
+	if (iMode == EOutbox)
+		{
+		title = _L("Outbox");
+		if (iRows->Count()) sub.Format(_L("%d waiting to go"), iRows->Count());
+		}
+	else
+		{
+		const TPmFolder* f = CurrentFolder();
+		if (iSearch)
+			{
+			title = _L("Search");
+			sub = _L("\x93");
+			sub.Append(iSearchWords.Left(40));
+			sub.Append(_L("\x94 in "));
+			sub.Append(f ? f->iName.Left(30) : TPtrC(_L("Inbox")));
+			}
+		else
+			{
+			if (f) title = f->iName.Left(60); else title.Copy(iFolder.Left(60));
+			TInt unread = 0;
+			for (TInt i = 0; i < iRows->Count(); i++)
+				if ((*iRows)[i].iFlags.Locate('S') < 0) unread++;
+			if (unread) sub.Format(_L("%d unread"), unread);
+			else if (iRows->Count()) sub.Format(_L("%d messages"), iRows->Count());
+			}
+		}
+	m.title = CStr(title); m.tlen = title.Length();
+	m.subtitle = CStr(sub); m.sublen = sub.Length();
+
 	TInt rows = Rows();
-	if (iRows->Count() == 0)
+	TInt n = 0;
+	for (TInt i = iTop; i < iRows->Count() && n < rows + 1 && n < 12; i++, n++)
 		{
-		aGc.UseFont(iFont);
-		const TDesC& t = iMode == EOutbox ? _L("The outbox is empty.")
-			: iSearch ? _L("Nothing found.")
-			: (iShared->busy ? _L("Fetching...") : _L("No messages here. Ctrl+G to send and receive."));
-		aGc.DrawText(t, TPoint(b.iTl.iX + 8, b.iTl.iY + iAscent + 4));
-		aGc.DiscardFont();
-		return;
-		}
-	TInt w = b.Width();
-	TInt flagW = iFont->TextWidthInPixels(_L("@!")) + 10;
-	TInt fromW = w * 28 / 100;
-	TInt dateW = iFont->TextWidthInPixels(_L("Wed 00:00")) + 10;
-	for (TInt i = 0; i < rows && iTop + i < iRows->Count(); i++)
-		{
-		const TPmRow& row = (*iRows)[iTop + i];
-		TInt y0 = b.iTl.iY + i * iLineH, y1 = y0 + iLineH;
-		TBool sel = iTop + i == iSel;
-		TBool unread = iMode == EList && row.iFlags.Locate('S') < 0;
-		aGc.SetBrushColor(sel ? KRgbBlack : KRgbWhite);
-		aGc.SetPenColor(sel ? KRgbWhite : KRgbBlack);
-		const CFont* font = unread ? iBold : iFont;
-		aGc.UseFont(font);
-		TBuf<4> flags;
+		const TPmRow& r = (*iRows)[i];
+		PmUiRow& u = iUiRows[n];
+		u.from = CStr(r.iFrom); u.flen = r.iFrom.Length();
+		u.subj = r.iSubject.Length() ? CStr(r.iSubject) : "(no subject)";
+		u.slen = r.iSubject.Length() ? r.iSubject.Length() : 12;
 		if (iMode == EOutbox)
 			{
-			if (row.iFlags.Locate('E') >= 0) flags.Append('!');
-			else if (row.iFlags.Locate('D') >= 0) flags.Append('d');
-			else flags.Append('>');
+			if (r.iFlags.Locate('E') >= 0) iDates[n] = _L("not sent");
+			else if (r.iFlags.Locate('D') >= 0) iDates[n] = _L("draft");
+			else iDates[n] = _L("to send");
+			u.flags = (r.iFlags.Locate('E') >= 0 ? KRowError : 0) | (r.iFlags.Locate('D') >= 0 ? KRowDraft : 0);
 			}
 		else
 			{
-			flags.Append(unread ? '*' : row.iFlags.Locate('A') >= 0 ? 'r' : ' ');
-			if (row.iFlags.Locate('F') >= 0) flags.Append('!');
-			else if (row.iFlags.Locate('T') >= 0) flags.Append('@');
+			FormatDate(r.iDate, iDates[n]);
+			u.flags = 0;
+			if (r.iFlags.Locate('S') < 0) u.flags |= KRowUnread;
+			if (r.iFlags.Locate('F') >= 0) u.flags |= KRowFlagged;
+			if (r.iFlags.Locate('T') >= 0) u.flags |= KRowAttach;
+			if (r.iFlags.Locate('A') >= 0) u.flags |= KRowAnswered;
 			}
-		TInt x = b.iTl.iX;
-		aGc.DrawText(flags, TRect(x, y0, x + flagW, y1), iAscent + 1, CGraphicsContext::ELeft, 4);
-		x += flagW;
-		// cut to fit
-		TBuf<64> from(row.iFrom);
-		TInt fit = font->TextCount(from, fromW - 8);
-		if (fit < from.Length()) from.SetLength(fit);
-		aGc.DrawText(from, TRect(x, y0, x + fromW, y1), iAscent + 1, CGraphicsContext::ELeft, 0);
-		x += fromW;
-		TBuf<16> date;
-		if (iMode == EOutbox)
-			{
-			if (row.iFlags.Locate('E') >= 0) date = _L("failed");
-			else if (row.iFlags.Locate('D') >= 0) date = _L("draft");
-			else date = _L("to send");
-			}
-		else
-			FormatDate(row.iDate, date);
-		TBuf<100> subj(row.iSubject.Length() ? TPtrC(row.iSubject) : TPtrC(_L("(no subject)")));
-		TInt sw = b.iBr.iX - dateW - x;
-		fit = font->TextCount(subj, sw - 6);
-		if (fit < subj.Length()) subj.SetLength(fit);
-		aGc.DrawText(subj, TRect(x, y0, x + sw, y1), iAscent + 1, CGraphicsContext::ELeft, 0);
-		aGc.DrawText(date, TRect(b.iBr.iX - dateW, y0, b.iBr.iX, y1), iAscent + 1, CGraphicsContext::ERight, 4);
-		aGc.DiscardFont();
+		u.date = CStr(iDates[n]); u.dlen = iDates[n].Length();
 		}
-	// how far down the list we are
-	if (iRows->Count() > rows)
-		{
-		TInt h = b.Height();
-		TInt th = h * rows / iRows->Count();
-		if (th < 6) th = 6;
-		TInt ty = b.iTl.iY + (h - th) * iTop / (iRows->Count() - rows);
-		aGc.SetBrushColor(TRgb::Gray4(1));
-		aGc.SetPenStyle(CGraphicsContext::ENullPen);
-		aGc.DrawRect(TRect(b.iBr.iX - 3, ty, b.iBr.iX, ty + th));
-		aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-		}
+	m.rows = iUiRows;
+	m.nrows = n;
+	m.total = iRows->Count();
+	m.top = iTop;
+	m.sel = iSel;
+	const TDesC& empty = iMode == EOutbox ? _L("Nothing waiting to be sent")
+		: iSearch ? _L("Nothing found")
+		: (Busy() ? _L("Looking for messages...") : _L("No messages here"));
+	m.empty = CStr(empty); m.elen = empty.Length();
+	m.busy = Busy();
+	if (m.busy && iLastProgress.Length()) { m.status = CStr(iLastProgress); m.statlen = iLastProgress.Length(); }
+	else if (m.busy) { m.status = "Working"; m.statlen = 7; }
+	else if (iStatus.Length()) { m.status = CStr(iStatus); m.statlen = iStatus.Length(); }
+	m.online = iShared->online;
+	m.offline = iSettings->iOffline;
+	ui_mailbox(&iCanvas, &m);
 	}
 
-void CPmView::DrawMessage(CWindowGc& aGc) const
+void CPmView::RenderReader()
 	{
-	TRect b = BodyRect();
-	aGc.SetBrushColor(KRgbWhite);
-	aGc.SetPenColor(KRgbBlack);
-	if (!iText)
+	PmUiReader r;
+	Mem::FillZ(&r, sizeof(r));
+	const TPmRow* row = CurrentRow();
+	if (iText && iDocValid)
 		{
-		aGc.UseFont(iBold);
-		const TPmRow* row = CurrentRow();
-		if (row)
-			aGc.DrawText(row->iSubject, TPoint(b.iTl.iX + 8, b.iTl.iY + iAscent + 4));
-		aGc.DiscardFont();
-		aGc.UseFont(iFont);
-		if (iMsg1.Length() && !iShared->busy)
-			{
-			aGc.DrawText(iMsg1, TPoint(b.iTl.iX + 8, b.iTl.iY + iAscent + 4 + 2 * iLineH));
-			aGc.DrawText(iMsg2, TPoint(b.iTl.iX + 8, b.iTl.iY + iAscent + 4 + 3 * iLineH));
-			}
-		else
-			aGc.DrawText(_L("Downloading the message..."), TPoint(b.iTl.iX + 8, b.iTl.iY + iAscent + 4 + 2 * iLineH));
-		aGc.DiscardFont();
-		return;
+		r.text = CStr(*iText) + iBodyOff;
+		r.len = iText->Length() - iBodyOff;
+		r.doc = &iDoc;
 		}
-	TInt rows = Rows();
-	TInt total = iLineStart->Count();
-	for (TInt i = 0; i < rows && iMsgTop + i < total; i++)
+	r.scroll = iScroll;
+	r.position = iSel + 1;
+	r.count = iRows->Count();
+	const TPmFolder* f = CurrentFolder();
+	if (iListMode == EOutbox) { r.folder = "Outbox"; r.flen = 6; }
+	else if (iSearch) { r.folder = "Search"; r.flen = 6; }
+	else if (f) { r.folder = CStr(f->iName); r.flen = f->iName.Length(); }
+	r.focusLink = iFocusLink;
+	r.busy = Busy();
+	if (r.busy && iLastProgress.Length()) { r.status = CStr(iLastProgress); r.statlen = iLastProgress.Length(); }
+	else if (iStatus.Length()) { r.status = CStr(iStatus); r.statlen = iStatus.Length(); }
+	r.loading = iWaitingBody || !iDocValid;
+	if (row) { r.subject = CStr(row->iSubject); r.sublen = row->iSubject.Length(); r.flagged = row->iFlags.Locate('F') >= 0; }
+	r.html = iHtml;
+	r.att = iUiAtt;
+	r.natt = iAttNames->Count();
+	ui_reader(&iCanvas, &r);
+	}
+
+// draws the screen into iBits, then onto the window
+void CPmView::Render()
+	{
+	iCanvas.mono = iSettings->iMono;
+	switch (iMode)
 		{
-		TInt k = iMsgTop + i;
-		TPtrC line = iText->Mid((*iLineStart)[k], (*iLineLen)[k]);
-		TInt y = b.iTl.iY + i * iLineH + iAscent + 1;
-		if (k < iHeaderLines)
-			{
-			// "From: x" with the label in bold
-			TInt c = line.Locate(':');
-			TInt st = (*iLineStart)[k];
-			TBool paraStart = st == 0 || (*iText)[st - 1] == '\n';
-			if (c > 0 && c < 14 && paraStart)
-				{
-				aGc.UseFont(iBold);
-				TPtrC label = line.Left(c + 1);
-				aGc.DrawText(label, TPoint(b.iTl.iX + 4, y));
-				TInt lw = iBold->TextWidthInPixels(label);
-				aGc.DiscardFont();
-				aGc.UseFont(iFont);
-				aGc.DrawText(line.Mid(c + 1), TPoint(b.iTl.iX + 4 + lw, y));
-				aGc.DiscardFont();
-				continue;
-				}
-			}
-		aGc.UseFont(iFont);
-		aGc.DrawText(line, TPoint(b.iTl.iX + 4, y));
-		aGc.DiscardFont();
-		}
-	// a rule under the headers
-	if (iHeaderLines > iMsgTop && iHeaderLines - iMsgTop < rows)
+	case EMessage:
+		RenderReader();
+		break;
+	case ENoAccount:
 		{
-		TInt y = b.iTl.iY + (iHeaderLines - iMsgTop) * iLineH + iLineH / 2;
-		aGc.SetPenColor(TRgb::Gray4(1));
-		aGc.DrawLine(TPoint(b.iTl.iX + 4, y), TPoint(b.iBr.iX - 4, y));
-		aGc.SetPenColor(KRgbBlack);
+		const TDesC& a = _L("Set up your mail with Tools > New account (Ctrl+K).");
+		const TDesC& b = _L("For Fastmail, make an app password at Settings > Privacy & Security.");
+		ui_welcome(&iCanvas, CStr(a), a.Length(), CStr(b), b.Length());
+		break;
 		}
-	// attachments after the end of the text
-	if (iMsgTop + rows > total && iAttNames->Count())
+	default:
+		RenderMailbox();
+		break;
+		}
+	if (iToast.Length())
+		ui_toast(&iCanvas, CStr(iToast), iToast.Length());
+	// the buffer has an EGray16 scan line's layout
+	for (TInt y = 0; y < iCanvas.h; y++)
 		{
-		TInt i = total - iMsgTop + 1;
-		aGc.UseFont(iBold);
-		for (TInt a = 0; a < iAttNames->Count() && i < rows; a++, i++)
-			{
-			TBuf<130> t;
-			t.Format(_L("[%d] "), a + 1);
-			t.Append((*iAttNames)[a].Left(120));
-			aGc.DrawText(t, TPoint(b.iTl.iX + 4, b.iTl.iY + i * iLineH + iAscent + 1));
-			}
-		aGc.DiscardFont();
+		TPtr8 row(iBits + y * iCanvas.stride, iCanvas.stride, iCanvas.stride);
+		iBitmap->SetScanLine(row, y);
 		}
-	if (total > rows)
-		{
-		TInt all = total + iAttNames->Count() + 1;
-		TInt h = b.Height();
-		TInt th = h * rows / all;
-		if (th < 6) th = 6;
-		TInt maxTop = all - rows;
-		if (maxTop < 1) maxTop = 1;
-		TInt ty = b.iTl.iY + (h - th) * iMsgTop / maxTop;
-		if (ty + th > b.iBr.iY) ty = b.iBr.iY - th;
-		aGc.SetBrushColor(TRgb::Gray4(1));
-		aGc.SetPenStyle(CGraphicsContext::ENullPen);
-		aGc.DrawRect(TRect(b.iBr.iX - 3, ty, b.iBr.iX, ty + th));
-		aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-		}
+	DrawNow();
+	}
+
+void CPmView::Draw(const TRect& aRect) const
+	{
+	SystemGc().BitBlt(aRect.iTl, iBitmap, aRect);
 	}
 
 // ============================================================================
@@ -1895,7 +1694,7 @@ void CPmView::DrawMessage(CWindowGc& aGc) const
 void CPmView::EnsureVisible()
 	{
 	TInt rows = Rows();
-	TInt count = iMode == EFolders ? iFolders->Count() : iRows->Count();
+	TInt count = iRows->Count();
 	if (iSel >= count) iSel = count - 1;
 	if (iSel < 0) iSel = 0;
 	if (iSel < iTop) iTop = iSel;
@@ -1906,21 +1705,44 @@ void CPmView::EnsureVisible()
 
 void CPmView::MoveSel(TInt aDelta)
 	{
-	if (iMode == EMessage)
+	if (iSidebar)
 		{
-		TInt all = iLineStart->Count() + iAttNames->Count() + 1;
-		TInt maxTop = all - Rows();
-		if (maxTop < 0) maxTop = 0;
-		iMsgTop += aDelta;
-		if (iMsgTop > maxTop) iMsgTop = maxTop;
-		if (iMsgTop < 0) iMsgTop = 0;
+		iFolderSel += aDelta;
+		if (iFolderSel >= SidebarCount()) iFolderSel = SidebarCount() - 1;
+		if (iFolderSel < 0) iFolderSel = 0;
 		}
 	else
 		{
 		iSel += aDelta;
 		EnsureVisible();
 		}
-	Redraw();
+	Render();
+	}
+
+void CPmView::Scroll(TInt aDelta)
+	{
+	if (!iDocValid)
+		return;
+	TInt maxs = iDoc.height - ui_reader_body_height(iCanvas.h);
+	if (maxs < 0) maxs = 0;
+	iScroll += aDelta;
+	if (iScroll > maxs) iScroll = maxs;
+	if (iScroll < 0) iScroll = 0;
+	// a highlighted link that has gone off screen is let go
+	if (iFocusLink)
+		{
+		PmUiReader r;
+		Mem::FillZ(&r, sizeof(r));
+		r.doc = &iDoc;
+		r.scroll = iScroll;
+		r.text = CStr(*iText) + iBodyOff;
+		TBool seen = EFalse;
+		for (TInt i = 0; i < iDoc.nops && !seen; i++)
+			if (iDoc.ops[i].link == iFocusLink && iDoc.ops[i].y > iScroll && iDoc.ops[i].y < iScroll + ui_reader_body_height(iCanvas.h))
+				seen = ETrue;
+		if (!seen) iFocusLink = 0;
+		}
+	Render();
 	}
 
 // Key and pen timings: the randomness behind TLS keys (see psiglue pg_entropy)
@@ -1945,67 +1767,133 @@ TKeyResponse CPmView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 	AddEntropy(code);
 	if (aKeyEvent.iModifiers & EModifierCtrl)
 		return EKeyWasNotConsumed;         // the menu's hotkeys
+	if (code == EKeyEscape && Busy())
+		{
+		iShared->net.quit = 1;             // stop what the engine is doing
+		Toast(_L("Stopping..."));
+		return EKeyWasConsumed;
+		}
+	if (iMode == EMessage)
+		return ReaderKeyL(code, aKeyEvent.iModifiers);
+	if (iMode == EList || iMode == EOutbox)
+		return MailboxKeyL(code);
+	return EKeyWasNotConsumed;
+	}
+
+TKeyResponse CPmView::MailboxKeyL(TUint aCode)
+	{
 	TInt page = Rows() - 1;
 	if (page < 1) page = 1;
-	switch (code)
+	switch (aCode)
 		{
 	case EKeyEscape:
-		if (Busy())
-			{
-			iShared->net.quit = 1;         // stop what the engine is doing
-			iEikonEnv->InfoMsg(_L("Stopping..."));
-			}
-		else
-			BackL();
-		return EKeyWasConsumed;
-	case EKeyUpArrow:
-		MoveSel(-1);
-		return EKeyWasConsumed;
-	case EKeyDownArrow:
-		MoveSel(1);
-		return EKeyWasConsumed;
-	case EKeyPageUp:
-		MoveSel(-page);
-		return EKeyWasConsumed;
-	case EKeyPageDown:
-	case ' ':
-		if (iMode == EMessage || code == EKeyPageDown)
-			{
-			MoveSel(page);
-			return EKeyWasConsumed;
-			}
+		BackL();
 		break;
-	case EKeyHome:
-		MoveSel(-100000);
-		return EKeyWasConsumed;
-	case EKeyEnd:
-		MoveSel(100000);
-		return EKeyWasConsumed;
+	case EKeyUpArrow: MoveSel(-1); break;
+	case EKeyDownArrow: MoveSel(1); break;
+	case EKeyPageUp: MoveSel(-page); break;
+	case EKeyPageDown: MoveSel(page); break;
+	case EKeyHome: MoveSel(-100000); break;
+	case EKeyEnd: MoveSel(100000); break;
 	case EKeyEnter:
-		if (iMode != EMessage)
-			OpenCurrentL();
-		return EKeyWasConsumed;
-	case EKeyLeftArrow:
-		if (iMode == EMessage)
-			StepMessageL(-1);
-		else if (iMode == EList || iMode == EOutbox)
-			BackL();
-		return EKeyWasConsumed;
 	case EKeyRightArrow:
-		if (iMode == EMessage)
-			StepMessageL(1);
-		else
-			OpenCurrentL();
-		return EKeyWasConsumed;
+		OpenCurrentL();
+		break;
+	case EKeyLeftArrow:
+		if (!iSidebar) FocusFoldersL();
+		break;
+	case EKeyTab:
+		if (iSidebar) OpenCurrentL(); else FocusFoldersL();
+		break;
 	case EKeyDelete:
 	case EKeyBackspace:
-		if (iMode == EList || iMode == EOutbox || (iMode == EMessage && code == EKeyDelete))
-			DeleteCurrentL();
-		return EKeyWasConsumed;
+		if (!iSidebar) DeleteCurrentL();
+		break;
 	default:
+		return EKeyWasNotConsumed;
+		}
+	return EKeyWasConsumed;
+	}
+
+TKeyResponse CPmView::ReaderKeyL(TUint aCode, TUint aMods)
+	{
+	TInt page = ui_reader_body_height(iCanvas.h) - 34;
+	PmUiReader r;
+	Mem::FillZ(&r, sizeof(r));
+	if (iDocValid)
+		{
+		r.doc = &iDoc;
+		r.text = CStr(*iText) + iBodyOff;
+		}
+	r.scroll = iScroll;
+	switch (aCode)
+		{
+	case EKeyEscape:
+		if (iFocusLink) { iFocusLink = 0; Render(); }
+		else BackL();
+		break;
+	case EKeyUpArrow: Scroll(-17); break;
+	case EKeyDownArrow: Scroll(17); break;
+	case EKeyPageUp: Scroll(-page); break;
+	case EKeyPageDown:
+	case ' ':
+		Scroll(page);
+		break;
+	case EKeyHome: Scroll(-10000000); break;
+	case EKeyEnd: Scroll(10000000); break;
+	case EKeyLeftArrow: StepMessageL(-1); break;
+	case EKeyRightArrow: StepMessageL(1); break;
+	case EKeyTab:
+		{
+		// the next link or attachment on screen (Shift+Tab: the one before)
+		TInt next = ui_reader_next_link(&r, iCanvas.h, iFocusLink, (aMods & EModifierShift) ? -1 : 1);
+		iFocusLink = next;
+		if (!next && iDocValid)
+			Toast(_L("No more links on this page"));
+		Render();
 		break;
 		}
-	return EKeyWasNotConsumed;
+	case EKeyEnter:
+		if (iFocusLink) ActivateLinkL(iFocusLink);
+		break;
+	case EKeyDelete:
+		DeleteCurrentL();
+		break;
+	default:
+		return EKeyWasNotConsumed;
+		}
+	return EKeyWasConsumed;
+	}
+
+// a link: open it in PsiWeb; an attachment: save it
+void CPmView::ActivateLinkL(TInt aLink)
+	{
+	if (aLink <= -1000)
+		{
+		SaveAttachmentL(-aLink - 1000);
+		return;
+		}
+	const char* url = 0;
+	TInt n = iDocValid ? doc_link_url(&iDoc, CStr(*iText) + iBodyOff, aLink, &url) : 0;
+	if (!n)
+		return;
+	TPtrC8 u((const TUint8*)url, n);
+	if (u.Left(7).CompareF(_L8("mailto:")) == 0)
+		{
+		// write to them
+		CPmDraft* d = CPmDraft::NewL();
+		CleanupStack::PushL(d);
+		TPtrC8 addr = u.Mid(7);
+		TInt q = addr.Locate('?');
+		if (q >= 0) addr.Set(addr.Left(q));
+		SafeCopy(d->iTo, addr);
+		CleanupStack::Pop();
+		((CPmAppUi*)iEikonEnv->EikAppUi())->ComposeDraftL(d, _L("New message"));
+		return;
+		}
+	TBuf<256> link;
+	SafeCopy(link, u);
+	OpenWebL(link);
 	}
 
 void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
@@ -2014,27 +1902,120 @@ void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
 	AddEntropy(p.iX * 1000 + p.iY);
 	if (aEvent.iType != TPointerEvent::EButton1Down)
 		return;
-	TRect b = BodyRect();
-	if (!b.Contains(p))
+	TInt index = -1;
+	if (iMode == EList || iMode == EOutbox)
+		{
+		PmUiMailbox m;
+		Mem::FillZ(&m, sizeof(m));
+		m.nfolders = SidebarCount();
+		m.folderTop = iFolderTop;
+		m.total = iRows->Count();
+		m.top = iTop;
+		switch (ui_mailbox_hit(iCanvas.w, iCanvas.h, &m, p.iX, p.iY, &index))
+			{
+		case EHitFolder:
+			iSidebar = ETrue;
+			iFolderSel = index;
+			OpenCurrentL();
+			break;
+		case EHitRow:
+			if (index == iSel && !iSidebar) OpenCurrentL();
+			else { iSidebar = EFalse; iSel = index; EnsureVisible(); Render(); }
+			break;
+		case EHitRefresh: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdSendRecv); break;
+		case EHitSearch: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdSearch); break;
+		case EHitNew: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdNew); break;
+		default: break;
+			}
 		return;
+		}
 	if (iMode == EMessage)
 		{
-		// top half: back a page, bottom half: on a page
-		TInt page = Rows() - 1;
-		MoveSel(p.iY < b.Center().iY ? -page : page);
-		return;
+		PmUiReader r;
+		Mem::FillZ(&r, sizeof(r));
+		if (iDocValid) { r.doc = &iDoc; r.text = CStr(*iText) + iBodyOff; }
+		r.scroll = iScroll;
+		r.html = iHtml;
+		TInt link = 0;
+		TInt page = ui_reader_body_height(iCanvas.h) - 34;
+		switch (ui_reader_hit(iCanvas.w, iCanvas.h, &r, p.iX, p.iY, &link))
+			{
+		case EHitBack: BackL(); break;
+		case EHitReply: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdReply); break;
+		case EHitReplyAll: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdReplyAll); break;
+		case EHitForward: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdForward); break;
+		case EHitDelete: DeleteCurrentL(); break;
+		case EHitArchive: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdArchive); break;
+		case EHitFlag: ToggleFlagL('F'); break;
+		case EHitWeb: ViewAsWebPageL(); break;
+		case EHitLink:
+		case EHitAttach:
+			iFocusLink = link;
+			Render();
+			ActivateLinkL(link);
+			break;
+		case EHitTop: Scroll(-page); break;
+		case EHitBottom: Scroll(page); break;
+		default: break;
+			}
 		}
-	TInt i = iTop + (p.iY - b.iTl.iY) / iLineH;
-	TInt count = iMode == EFolders ? iFolders->Count() : iRows->Count();
-	if (i < 0 || i >= count)
-		return;
-	if (i == iSel)
-		OpenCurrentL();
-	else
+	}
+
+// ============================================================================
+// PsiWeb: links, and HTML mail as a web page (NetSurf)
+// ============================================================================
+
+const TUid KUidPsiWeb = { 0x01000A7A };
+
+void CPmView::OpenWebL(const TDesC& aUrl)
+	{
+	// PsiWeb needs the serial port: let go of it
+	Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
+	// already running? then tell it through its shared memory
+	RChunk chunk;
+	if (chunk.OpenGlobal(_L("PsiWebShared"), EFalse) == KErrNone)
 		{
-		iSel = i;
-		Redraw();
+		// PwShared (web/psiweb.h): the command is at a known place; rather
+		// than depend on its layout, start PsiWeb again: it hands the
+		// address to the running copy
+		chunk.Close();
 		}
+	RApaLsSession ls;
+	User::LeaveIfError(ls.Connect());
+	CleanupClosePushL(ls);
+	TApaAppInfo info;
+	TInt r = ls.GetAppInfo(info, KUidPsiWeb);
+	CleanupStack::PopAndDestroy();          // ls
+	if (r != KErrNone)
+		{
+		iEikonEnv->InfoWinL(_L("PsiWeb is not installed"), _L("Install PsiWeb.sis to open links and web pages"));
+		return;
+		}
+	CApaCommandLine* cmd = CApaCommandLine::NewLC();
+	cmd->SetLibraryNameL(info.iFullName);
+	cmd->SetCommandL(EApaCommandRun);
+	TBuf8<256> tail;
+	tail.Copy(aUrl.Left(250));
+	cmd->SetTailEndL(tail);
+	EikDll::StartAppL(*cmd);
+	CleanupStack::PopAndDestroy();          // cmd
+	Toast(_L("Opening in PsiWeb..."));
+	}
+
+void CPmView::ViewAsWebPageL()
+	{
+	if (iMode != EMessage || !iHtml)
+		{
+		Toast(_L("This message has no web page version"));
+		return;
+		}
+	TBuf<150> path;
+	MsgPath(iMsgUid, _L("htm"), path);
+	// file:///D:/PsiMail/A0/F.../12.htm
+	TBuf<200> url(_L("file:///"));
+	for (TInt i = 0; i < path.Length(); i++)
+		url.Append(path[i] == '\\' ? '/' : path[i]);
+	OpenWebL(url);
 	}
 
 // ============================================================================
@@ -2514,7 +2495,7 @@ CPmDraft* CPmAppUi::ReplyDraftL(TBool aAll)
 	const TPmRow* row = iView->CurrentRow();
 	if (!row || (iView->Mode() != CPmView::EList && iView->Mode() != CPmView::EMessage))
 		{
-		iEikonEnv->InfoMsg(_L("Choose a message first"));
+		iView->Toast(_L("Choose a message first"));
 		return NULL;
 		}
 	if (iView->Mode() == CPmView::EList)
@@ -2526,7 +2507,7 @@ CPmDraft* CPmAppUi::ReplyDraftL(TBool aAll)
 	THdrs* h = HeadersLC(*iView);
 	if (!h->iFrom.Length())
 		{
-		iEikonEnv->InfoMsg(_L("Wait for the message to download"));
+		iView->Toast(_L("Wait for the message to download"));
 		CleanupStack::PopAndDestroy();         // h
 		return NULL;
 		}
@@ -2577,7 +2558,7 @@ CPmDraft* CPmAppUi::ReplyDraftL(TBool aAll)
 	p.Append(_L(", "));
 	p.Append(who.Left(60));
 	p.Append(_L(" wrote:\n"));
-	iView->QuoteBodyL(p, 300);
+	iView->PlainBodyL(p, ETrue);
 	delete d->iBody;
 	d->iBody = body;
 	CleanupStack::Pop();                      // d
@@ -2598,13 +2579,13 @@ CPmDraft* CPmAppUi::ForwardDraftL()
 		iView->OpenCurrentL();
 	if (iView->Mode() != CPmView::EMessage)
 		{
-		iEikonEnv->InfoMsg(_L("Choose a message first"));
+		iView->Toast(_L("Choose a message first"));
 		return NULL;
 		}
 	THdrs* h = HeadersLC(*iView);
 	if (!h->iFrom.Length())
 		{
-		iEikonEnv->InfoMsg(_L("Wait for the message to download"));
+		iView->Toast(_L("Wait for the message to download"));
 		CleanupStack::PopAndDestroy();         // h
 		return NULL;
 		}
@@ -2626,23 +2607,12 @@ CPmDraft* CPmAppUi::ForwardDraftL()
 	p.Append(_L("\nTo: "));
 	p.Append(h->iTo.Left(200));
 	p.Append(_L("\n\n"));
-	// the text without "> "
-	HBufC* q = HBufC::NewLC(30 * 1024);
-	TPtr qp = q->Des();
-	iView->QuoteBodyL(qp, 600);
-	TPtrC rest = qp;
-	while (rest.Length())
-		{
-		TInt nl = rest.Locate('\n');
-		TPtrC line = nl >= 0 ? rest.Left(nl) : rest;
-		rest.Set(nl >= 0 ? rest.Mid(nl + 1) : TPtrC());
-		if (line.Left(2) == _L("> ")) line.Set(line.Mid(2));
-		else if (line.Left(1) == _L(">")) line.Set(line.Mid(1));
-		if (p.Length() + line.Length() + 2 > p.MaxLength() - 100) break;
-		p.Append(line);
-		p.Append('\n');
-		}
-	CleanupStack::PopAndDestroy();            // q
+	// the text (leaving room for the note below)
+	{
+		TPtr room((TUint8*)p.Ptr(), p.Length(), p.MaxLength() - 100);
+		iView->PlainBodyL(room, EFalse);
+		p.SetLength(room.Length());
+	}
 	if (iView->AttachmentCount())
 		p.Append(_L("\n(The attachments are not forwarded: save them first and attach them.)\n"));
 	CleanupStack::Pop();                      // body
@@ -2664,7 +2634,7 @@ void CPmAppUi::MoveL()
 	{
 	if (!iView->CurrentRow() || (iView->Mode() != CPmView::EList && iView->Mode() != CPmView::EMessage))
 		{
-		iEikonEnv->InfoMsg(_L("Choose a message first"));
+		iView->Toast(_L("Choose a message first"));
 		return;
 		}
 	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(8);
@@ -2682,7 +2652,7 @@ void CPmAppUi::MoveL()
 	if (names->Count() == 0)
 		{
 		CleanupStack::PopAndDestroy(2);    // map, names
-		iEikonEnv->InfoMsg(_L("No folders yet - Send & receive first"));
+		iView->Toast(_L("No folders yet - Send & receive first"));
 		return;
 		}
 	TInt choice = 0;
@@ -2702,7 +2672,7 @@ void CPmAppUi::SaveAttachmentL()
 	{
 	if (iView->AttachmentCount() == 0)
 		{
-		iEikonEnv->InfoMsg(_L("This message has no attachments"));
+		iView->Toast(_L("This message has no attachments"));
 		return;
 		}
 	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(4);
@@ -2747,7 +2717,7 @@ void CPmAppUi::SwitchAccountL()
 	if (names->Count() < 2)
 		{
 		CleanupStack::PopAndDestroy(2);    // map, names
-		iEikonEnv->InfoMsg(_L("There is only one account (Tools > New account)"));
+		iView->Toast(_L("There is only one account (Tools > New account)"));
 		return;
 		}
 	CleanupStack::Pop(2);
@@ -2821,7 +2791,7 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemDimmed(EPmCmdFlag, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdSaveAttach, iView->AttachmentCount() == 0);
 		aMenuPane->SetItemDimmed(EPmCmdWhole, m != CPmView::EMessage);
-		aMenuPane->SetItemDimmed(EPmCmdShowHeaders, m != CPmView::EMessage);
+		aMenuPane->SetItemDimmed(EPmCmdWeb, m != CPmView::EMessage || !iView->HasHtml());
 		aMenuPane->SetItemDimmed(EPmCmdNew, m == CPmView::ENoAccount);
 		}
 	else if (aMenuId == R_PM_FOLDER_MENU)
@@ -2838,7 +2808,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 	if (m == CPmView::ENoAccount && aCommand != EEikCmdExit && aCommand != EPmCmdNewAccount &&
 		aCommand != EPmCmdConnSettings && aCommand != EPmCmdAbout)
 		{
-		iEikonEnv->InfoMsg(_L("Set up an account first: Tools > New account"));
+		iView->Toast(_L("Set up an account first: Tools > New account"));
 		return;
 		}
 	switch (aCommand)
@@ -2865,12 +2835,12 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		iView->SettingsChanged();
 		if (iSettings.iOffline)
 			iView->Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
-		iEikonEnv->InfoMsg(iSettings.iOffline ? _L("Working offline: changes wait until you go online")
+		iView->Toast(iSettings.iOffline ? _L("Working offline: changes wait until you go online")
 			: _L("Online: PsiMail will connect when it needs to"));
 		break;
 	case EPmCmdHangup:
 		iView->Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
-		iEikonEnv->InfoMsg(_L("Hanging up - the serial port will be free"));
+		iView->Toast(_L("Hanging up - the serial port will be free"));
 		break;
 	case EPmCmdAbout:
 		AboutL();
@@ -2901,11 +2871,11 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 				dest = iView->FolderAt(i).iImap;
 		if (!dest.Length())
 			{
-			iEikonEnv->InfoMsg(_L("There is no Archive folder"));
+			iView->Toast(_L("There is no Archive folder"));
 			break;
 			}
 		if (iView->MoveCurrentL(dest))
-			iEikonEnv->InfoMsg(_L("Archived"));
+			iView->Toast(_L("Archived"));
 		break;
 		}
 	case EPmCmdUnread:
@@ -2920,11 +2890,16 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 	case EPmCmdWhole:
 		iView->WholeMessageL();
 		break;
-	case EPmCmdShowHeaders:
-		iView->ToggleHeaders();
+	case EPmCmdWeb:
+		iView->ViewAsWebPageL();
+		break;
+	case EPmCmdSmooth:
+		iSettings.iMono = !iSettings.iMono;
+		SaveSettings();
+		iView->Render();
 		break;
 	case EPmCmdFolders:
-		iView->ShowFoldersL();
+		iView->FocusFoldersL();
 		break;
 	case EPmCmdRefresh:
 		iView->RefreshL();
@@ -2964,7 +2939,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 			if (!iSettings.iAccounts[i].used) { slot = i; break; }
 		if (slot < 0)
 			{
-			iEikonEnv->InfoMsg(_L("PsiMail has room for 4 accounts"));
+			iView->Toast(_L("PsiMail has room for 4 accounts"));
 			break;
 			}
 		if (EditAccountL(slot, ETrue))
