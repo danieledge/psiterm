@@ -18,6 +18,8 @@
 #include <eikdll.h>
 #include <apgcli.h>
 #include <eikedwin.h>
+#include <eikcmbut.h>
+#include <eikbtpan.h>
 #include "psiterm.h"
 
 #ifndef TRAP_IGNORE
@@ -55,7 +57,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.27");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.28");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -2720,10 +2722,23 @@ void CToolDialog::SetSizeAndPositionL(const TSize& aSize)
 	SetCornerAndSizeL(EHCenterVCenter, size);   // what CEikDialog does, clamped
 	}
 
+// One button: "Stop" while the job runs, "Close" afterwards (a hidden
+// second button would still take its space and push this one off centre)
+void CToolDialog::SetButtonTextL(const TDesC& aText)
+	{
+	CEikCommandButtonBase* b = ButtonPanel()->ButtonById(EEikBidOk);
+	if (b)
+		{
+		((CEikCommandButton*)b)->SetTextL(aText);
+		b->DrawNow();
+		}
+	}
+
 void CToolDialog::PreLayoutDynInitL()
 	{
 	SetTitleL(iTitle);
-	MakePanelButtonVisible(iFinished ? EPtBidStop : EEikBidOk, EFalse);
+	if (iFinished)
+		SetButtonTextL(_L("Close"));
 	RefreshL();
 	}
 
@@ -2743,9 +2758,7 @@ void CToolDialog::FinishL()
 		return;
 	iFinished = ETrue;
 	RefreshL();
-	MakePanelButtonVisible(EPtBidStop, EFalse);
-	MakePanelButtonVisible(EEikBidOk, ETrue);
-	DrawNow();
+	SetButtonTextL(_L("Close"));
 	}
 
 TBool CToolDialog::OkToExitL(TInt /*aButtonId*/)

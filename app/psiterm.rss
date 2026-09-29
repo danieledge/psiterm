@@ -104,8 +104,7 @@ RESOURCE DLG_BUTTONS r_pt_tool_buttons
 	{
 	buttons=
 		{
-		DLG_BUTTON { id=EPtBidStop; button=CMBUT { txt="Stop"; }; hotkey=EEikBidCancel; flags=0; },
-		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Close"; }; hotkey=EEikBidOk; flags=0; }
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Stop"; }; hotkey=EEikBidOk; flags=0; }
 		};
 	}
 

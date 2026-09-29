@@ -178,6 +178,7 @@ public:
 	void CloseL() { TryExitL(EEikBidOk); }
 private:
 	void SetSizeAndPositionL(const TSize& aSize);   // never larger than the screen
+	void SetButtonTextL(const TDesC& aText);
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
 	CTermView& iView;
