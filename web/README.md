@@ -73,6 +73,13 @@ To publish a release: set the version in `web/app/psiweb.cpp` (KVersion),
 - No JavaScript, so sites that need it show their no-script version or
   nothing.
 
+### Opened by PsiMail
+
+PsiMail opens links and "View as web page" in PsiWeb: it starts PsiWeb with
+the address on its command line, or hands it to a PsiWeb that is already
+running (a message to the app). Messages are opened from the card as
+`file:///D:/PsiMail/...`.
+
 ## How it fits together
 
 ```

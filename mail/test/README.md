@@ -44,3 +44,36 @@ to ISRG Root X1 and the server's RSA-PSS signature have all been checked
 by then. In the emulator that first connection costs ~108 million ARM
 instructions (~7 s on a 5mx); later ones ~33 million (~2 s), because the
 checked intermediates are remembered in `certs.txt`.
+
+## Calendar
+
+A local CalDAV server: `pip install radicale`, then run it with a config
+like
+
+    [server]
+    hosts = 127.0.0.1:5232
+    [auth]
+    type = htpasswd
+    htpasswd_filename = /tmp/radicale/users     (dan@example.com:secret)
+    htpasswd_encryption = plain
+    [storage]
+    filesystem_folder = /tmp/radicale/collections
+
+make two calendars (`curl -u dan@example.com:secret -X MKCALENDAR
+http://127.0.0.1:5232/dan@example.com/work/`, and `home`) and fill them with
+`calpopulate.py`: a timed event with a TZID and an alarm, a weekly series
+with an exception date, an all-day event over three days, a yearly
+birthday, a cancelled event. Then
+
+    PM_CAL_HOST=127.0.0.1 PM_CAL_PORT=5232 PM_CAL_PLAIN=1 PM_USER=dan@example.com \
+      PM_PASS=secret psimail-host -s /tmp/pmcal cal
+
+writes `/tmp/pmcal/cal/events.txt`; the same in the emulator
+(`emu/run_psimail.py cal`) must give the same file. Changes to send go in
+`cal/push.txt` (formats at the top of `engine/caldav.c`). `PM_CAL_ZONE`
+picks the time zone (1 = London, 2 = Paris...). The Agenda side
+(`app/pmcal.cpp`) needs a real Psion.
+
+Against Fastmail: `caldav.fastmail.com`'s chain (`../tools/fastmail-caldav-chain.pem`,
+Let's Encrypt YR2 via ISRG Root YR, cross-signed by ISRG Root X1) passes
+`certtest`.
