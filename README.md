@@ -68,9 +68,13 @@ public key built into `ssh/psishim.c` before installing anything. The Psion
 does not check TLS certificates (no CA store, too slow), so the signature is
 what makes updates trustworthy, from GitHub or anywhere else.
 
-To make a release: build, then
+To make a release: build, run
 `tools/release/sign.py dist/PsiTerm.sis <version>` with the release key
-(kept outside the repository), and commit `dist/`.
+(kept outside the repository), set `dist/version.txt`, commit, and **tag the
+commit `v<version>`** and push the tag. PsiTerm reads `version.txt` from
+`main`, then fetches the signature and the .sis from the tag
+(`.../v0.31/dist/`), so GitHub's 5-minute cache can never mix old and new
+files.
 
 Settings > Update source can point PsiTerm at a local server instead
 (`server/psion-update.sh`, plain HTTP). The same server receives the Debug

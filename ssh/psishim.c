@@ -913,8 +913,18 @@ static int run_update(void)
 	sprintf(msg, "Version %s is available (you have %s).\r\n", remote, s->version);
 	pg_out_write(msg, strlen(msg));
 
-	if (g_tls) sprintf(path, "PsiTerm.sis.sig?v=%s", remote);
-	else strcpy(path, "PsiTerm.sis.sig");
+	/* The release files are fetched from the release's git tag
+	   (.../v0.30/dist/ instead of .../main/dist/): a tag never changes, so
+	   no cache anywhere can hand out a mix of old and new files. */
+	if (g_tls) {
+		char *m = strstr(s->path, "/main/");
+		if (m && strlen(s->path) + strlen(remote) < sizeof(s->path) - 2) {
+			char rest[64];
+			strcpy(rest, m + 6);
+			sprintf(m, "/v%s/%s", remote, rest);
+		}
+	}
+	strcpy(path, "PsiTerm.sis.sig");
 	if (fetch_small(path, sigtxt, sizeof(sigtxt), why, sizeof(why)) < 0) {
 		sprintf(why, "no release signature on the server (PsiTerm.sis.sig)");
 		goto fail;
@@ -938,7 +948,7 @@ static int run_update(void)
 			int k;
 			if (total >= 0 && got >= total) break;
 			if (g_tls) {
-				sprintf(path, "%sPsiTerm.sis?v=%s", s->path, remote);
+				sprintf(path, "%sPsiTerm.sis", s->path);
 				clen = http_request(path, got, chunk, why, sizeof(why));
 			} else {
 				sprintf(path, "%sPsiTerm.sis?o=%ld&n=%d", s->path, got, chunk);
