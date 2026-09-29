@@ -312,6 +312,13 @@ static void cli_sessionloop() {
 
 			TRACE(("leave cli_sessionloop: running"))
 			cli_ses.state = SESSION_RUNNING;
+#ifdef __EPOC32__
+			{
+				/* tell PsiTerm: its status line says "connected" */
+				extern void pg_set_state(int);
+				pg_set_state(3);        /* PSI_STATE_CONNECTED */
+			}
+#endif
 			return;
 
 		case SESSION_RUNNING:

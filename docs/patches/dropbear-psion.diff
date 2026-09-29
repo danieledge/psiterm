@@ -363,10 +363,24 @@ index 0a052a3..d5489da 100644
  
  	cli_session(sock_in, sock_out, progress, proxy_cmd_pid);
 diff --git a/src/cli-session.c b/src/cli-session.c
-index 90273b2..522c350 100644
+index 90273b2..c0a09e2 100644
 --- a/src/cli-session.c
 +++ b/src/cli-session.c
-@@ -447,6 +447,12 @@ void cli_dropbear_exit(int exitcode, const char* format, va_list param) {
+@@ -312,6 +312,13 @@ static void cli_sessionloop() {
+ 
+ 			TRACE(("leave cli_sessionloop: running"))
+ 			cli_ses.state = SESSION_RUNNING;
++#ifdef __EPOC32__
++			{
++				/* tell PsiTerm: its status line says "connected" */
++				extern void pg_set_state(int);
++				pg_set_state(3);        /* PSI_STATE_CONNECTED */
++			}
++#endif
+ 			return;
+ 
+ 		case SESSION_RUNNING:
+@@ -447,6 +454,12 @@ void cli_dropbear_exit(int exitcode, const char* format, va_list param) {
  
  	dropbear_log(LOG_INFO, "%s", fullmsg);
  
