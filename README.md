@@ -5,7 +5,12 @@
 > will break. Bug reports (a photo of the screen is perfect) are very welcome
 > via [GitHub issues](https://github.com/danieledge/psiterm/issues).
 
+[![Download PsiTerm.sis](https://img.shields.io/badge/Download-PsiTerm.sis-2ea44f?logo=github)](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis)
 [![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support-FFDD00?logo=buymeacoffee&logoColor=000)](https://buymeacoffee.com/danedge)
+
+**Download:** [PsiTerm.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis)
+(always the latest version - see [`dist/version.txt`](dist/version.txt)).
+Once installed, PsiTerm updates itself: Terminal > Update PsiTerm.
 
 An SSH terminal for the **Psion Series 5mx** (EPOC R5, 36 MHz ARM710T).
 
@@ -33,8 +38,9 @@ and Claude Code - on a 1999 palmtop.
 
 ## Install
 
-Copy `dist/PsiTerm.sis` to the Psion and open it (install to D: if you have a
-CF card). Then see `docs/FIRSTRUN.TXT` for a step-by-step first run.
+Download [`PsiTerm.sis`](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis),
+copy it to the Psion (e.g. via a CF card or PsiWin) and open it - install to D:
+if you have a CF card. Then see `docs/FIRSTRUN.TXT` for a step-by-step first run.
 
 ## Building
 
