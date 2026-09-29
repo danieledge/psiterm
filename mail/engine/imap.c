@@ -595,6 +595,7 @@ static void remove_cached(int acct, const char *folder, unsigned int uid)
 	char p[190];
 	st_msg_path(acct, folder, uid, "txt", p, sizeof(p)); remove(p);
 	st_msg_path(acct, folder, uid, "att", p, sizeof(p)); remove(p);
+	st_msg_path(acct, folder, uid, "htm", p, sizeof(p)); remove(p);
 }
 
 int imap_sync(int acct, const char *folder, int older, char *why, int whymax)
@@ -713,6 +714,12 @@ typedef struct
 	char line[1024];          /* format=flowed: the line being joined */
 	int ln;
 	int cr;                   /* last char written was \r (to drop it) */
+	FILE *hf;                 /* HTML messages: the original, for NetSurf */
+	char pl[1600];            /* plain text: the line being built */
+	int pln;
+	int sig;                  /* after "-- ": the signature */
+	int nurls;
+	char *urls[60];
 	long got;
 	long total;
 	int percent;
@@ -721,6 +728,93 @@ typedef struct
 	char hdr[1400];
 	int have;
 	} BodyCtx;
+
+/* ---- plain text to PsiMail's rich text (see ui/pmui.h): quotes ("> ")
+   become quote blocks, the signature is marked, web addresses become links */
+
+static void plain_link(BodyCtx *b, const char *u, int n)
+{
+	char num[12];
+	if (b->nurls >= 60) { fwrite(u, 1, n, b->f); return; }
+	b->urls[b->nurls] = (char *)malloc(n + 8);
+	if (!b->urls[b->nurls]) { fwrite(u, 1, n, b->f); return; }
+	if (!pm_strncasecmp(u, "www.", 4)) { strcpy(b->urls[b->nurls], "http://"); memcpy(b->urls[b->nurls] + 7, u, n); b->urls[b->nurls][n + 7] = 0; }
+	else { memcpy(b->urls[b->nurls], u, n); b->urls[b->nurls][n] = 0; }
+	b->nurls++;
+	sprintf(num, "\x15%d\x16", b->nurls);
+	fputs(num, b->f);
+	fwrite(u, 1, n, b->f);
+	fputc('\x17', b->f);
+}
+
+static void plain_text(BodyCtx *b, const char *s, int n)
+{
+	int i = 0;
+	while (i < n) {
+		int at = -1, k;
+		for (k = i; k < n; k++) {
+			if ((k == i || s[k - 1] == ' ' || s[k - 1] == '(' || s[k - 1] == '<') &&
+			    (!pm_strncasecmp(s + k, "http://", 7) || !pm_strncasecmp(s + k, "https://", 8) ||
+			     (!pm_strncasecmp(s + k, "www.", 4) && k + 5 < n))) { at = k; break; }
+		}
+		if (at < 0) { fwrite(s + i, 1, n - i, b->f); return; }
+		fwrite(s + i, 1, at - i, b->f);
+		k = at;
+		while (k < n && s[k] != ' ' && s[k] != '>' && s[k] != '"' && s[k] != '<') k++;
+		while (k > at && (s[k - 1] == '.' || s[k - 1] == ',' || s[k - 1] == ')' || s[k - 1] == ';' || s[k - 1] == ':')) k--;
+		plain_link(b, s + at, k - at);
+		i = k;
+	}
+}
+
+static void plain_line(BodyCtx *b, char *s, int n)
+{
+	int i, depth = 0, p = 0;
+	for (i = 0; i < n; i++) {
+		unsigned char c = (unsigned char)s[i];
+		if (c == '\t') s[i] = ' ';
+		else if (c < 0x20) s[i] = ' ';
+	}
+	if ((n == 3 && !memcmp(s, "-- ", 3)) || (n == 2 && !memcmp(s, "--", 2))) b->sig = 1;
+	if (b->sig) {
+		fputs("\x01s", b->f);
+		plain_text(b, s, n);
+		fputc('\n', b->f);
+		return;
+	}
+	/* "> > text" / ">> text" */
+	while (p < n && (s[p] == '>' || (s[p] == ' ' && depth > 0 && p + 1 < n && s[p + 1] == '>'))) {
+		if (s[p] == '>') depth++;
+		p++;
+	}
+	if (depth > 0) {
+		if (p < n && s[p] == ' ') p++;
+		fprintf(b->f, "\x01q%d", depth > 9 ? 9 : depth);
+		if (p == n) fputc(' ', b->f);           /* an empty quoted line keeps the bar */
+		plain_text(b, s + p, n - p);
+		fputc('\n', b->f);
+		return;
+	}
+	plain_text(b, s, n);
+	fputc('\n', b->f);
+}
+
+static void plain_out(BodyCtx *b, const char *s, int n, int end_of_line)
+{
+	int i;
+	for (i = 0; i < n; i++) {
+		if (b->pln < (int)sizeof(b->pl)) b->pl[b->pln++] = s[i];
+		else { plain_line(b, b->pl, b->pln); b->pln = 0; b->pl[b->pln++] = s[i]; }
+	}
+	if (end_of_line) { plain_line(b, b->pl, b->pln); b->pln = 0; }
+}
+
+/* the HTML converter's output is already rich text */
+static void out_rich(const char *s, int n, void *ctx)
+{
+	BodyCtx *b = (BodyCtx *)ctx;
+	fwrite(s, 1, n, b->f);
+}
 
 static void out_text(const char *s, int n, void *ctx)
 {
@@ -736,19 +830,18 @@ static void out_text(const char *s, int n, void *ctx)
 					!(b->ln == 3 && !memcmp(b->line, "-- ", 3));
 				if (soft) {
 					if (b->delsp) b->ln--;
-					fwrite(b->line, 1, b->ln, b->f);
-				} else {
-					fwrite(b->line, 1, b->ln, b->f);
-					fputc('\n', b->f);
-				}
+					plain_out(b, b->line, b->ln, 0);
+				} else
+					plain_out(b, b->line, b->ln, 1);
 				b->ln = 0;
 				continue;
 			}
 			if (b->ln < (int)sizeof(b->line)) b->line[b->ln++] = c;
-			else { fwrite(b->line, 1, b->ln, b->f); b->ln = 0; b->line[b->ln++] = c; }
+			else { plain_out(b, b->line, b->ln, 0); b->ln = 0; b->line[b->ln++] = c; }
 			continue;
 		}
-		fputc(c, b->f);
+		if (c == '\n') plain_out(b, 0, 0, 1);
+		else plain_out(b, &c, 1, 0);
 	}
 }
 
@@ -775,8 +868,9 @@ static void body_stream(const char *data, int n, void *ctx)
 		}
 	}
 	(void)i;
+	if (b->hf && dn) fwrite(dec, 1, dn, b->hf);
 	cn = cs_to_cp1252(b->charset, dec, dn, conv, sizeof(conv));
-	if (b->html) html_feed(b->html, conv, cn, out_text, b);
+	if (b->html) html_feed(b->html, conv, cn, out_rich, b);
 	else out_text(conv, cn, b);
 }
 
@@ -884,6 +978,13 @@ int imap_body(int acct, const char *folder, unsigned int uid, int full, char *wh
 			b.flowed = tp->flowed && !b.st.html;
 			b.delsp = tp->delsp;
 			b.percent = -1;
+			if (b.html) {
+				/* keep the HTML as it came, for "View as web page" */
+				char hp[190];
+				st_msg_path(acct, folder, uid, "htm", hp, sizeof(hp));
+				if ((b.hf = fopen(hp, "wb")) != 0)
+					fprintf(b.hf, "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=%s\">\n", b.charset);
+			}
 			g_stream = body_stream;
 			g_stream_ctx = &b;
 			if (full || tp->size <= limit)
@@ -891,9 +992,15 @@ int imap_body(int acct, const char *folder, unsigned int uid, int full, char *wh
 			else
 				r = cmd(on_body_quoted, &b, why, whymax, "UID FETCH %u (BODY.PEEK[%s]<0.%ld>)", uid, tp->id, limit);
 			g_stream = 0;
-			if (b.html) { html_end(b.html, out_text, &b); html_free(b.html); b.html = 0; }
-			if (b.ln) fwrite(b.line, 1, b.ln, b.f);
-			if (rest > 0) fprintf(b.f, "\n\n[%ld KB more not downloaded - use Get whole message]\n", (rest + 1023) / 1024);
+			if (b.html) { html_end(b.html, out_rich, &b); html_free(b.html); b.html = 0; }
+			else {
+				int k;
+				if (b.ln) plain_out(&b, b.line, b.ln, 0);
+				if (b.pln) plain_out(&b, 0, 0, 1);
+				for (k = 0; k < b.nurls; k++) { fprintf(b.f, "\x01u%d %s\n", k + 1, b.urls[k]); free(b.urls[k]); }
+				b.nurls = 0;
+			}
+			if (b.hf) { fclose(b.hf); b.hf = 0; }
 		}
 	}
 	if (fclose(b.f) != 0 && r == PM_RES_OK) { set_why(why, whymax, "Could not save the message (disk full?)"); r = PM_RES_FAILED; }

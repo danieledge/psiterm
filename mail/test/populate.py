@@ -82,6 +82,53 @@ m["To"] = user
 m["Subject"] = "Flowed"
 put(m)
 
+rich = """<html><head><style>.x{}</style></head><body>
+<h1>The Weekly Psion</h1>
+<p>Hello <b>Dan</b>, here is what's <i>new</i> this week. Read the <a href="https://example.com/full">full story online</a>.</p>
+<h2>In this issue</h2>
+<ul><li>Series 5mx battery tips</li><li>A <b>new</b> email client</li><li>Readers' letters</li></ul>
+<ol><li>First numbered</li><li>Second numbered</li></ol>
+<blockquote>The Psion 5mx keyboard is still the best ever made on a small computer.<blockquote>Agreed!</blockquote></blockquote>
+<p>Some code:</p><pre>10 PRINT "HELLO"
+20 GOTO 10</pre>
+<img src="cid:logo" alt="Psion logo"><hr>
+<table><tr><td>Price</td><td>&pound;49</td></tr><tr><td>Stock</td><td>3 left</td></tr></table>
+<p style="font-size:10px">Unsubscribe: <a href="https://example.com/unsub?id=12345">click here</a></p>
+</body></html>"""
+m = MIMEMultipart("alternative")
+m.attach(MIMEText("plain fallback", "plain", "utf-8"))
+m.attach(MIMEText(rich, "html", "utf-8"))
+m["From"] = "The Weekly Psion <news@psion.example>"
+m["To"] = user
+m["Subject"] = "The Weekly Psion - issue 42"
+put(m)
+m = MIMEText(rich, "html", "utf-8")
+m["From"] = "HTML Only <htmlonly@example.com>"
+m["To"] = user
+m["Subject"] = "Rich HTML only"
+put(m)
+m = MIMEText("""Sounds good, see you at 7.
+
+Bob
+
+On Mon, Alice wrote:
+> Shall we meet at the cafe tomorrow? I can bring the Psion
+> and show you the new mail program. It even does HTML now,
+> see www.example.com/psimail for details.
+>
+> On Sun, Bob wrote:
+>> Are you free this week?
+>> Let me know.
+
+-- 
+Bob Smith
+https://bob.example.org
+""", "plain", "utf-8")
+m["From"] = "Bob Smith <bob@example.org>"
+m["To"] = user
+m["Subject"] = "Re: Tomorrow"
+put(m)
+
 big = "".join("Line %05d of a long message, padded to be quite long indeed.\n" % i for i in range(2500))
 m = MIMEText(big, "plain", "utf-8")
 m["From"] = "big@example.com"

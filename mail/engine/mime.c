@@ -205,11 +205,13 @@ void mime_structure(ImapNode *body, PmStructure *st)
 	memset(st, 0, sizeof(*st));
 	st->text = -1;
 	walk(st, body, "", 0);
+	/* HTML when there is some: PsiMail shows its styles, lists, quotes and
+	   links (the plain alternative is often an afterthought) */
 	for (i = 0; i < st->n; i++)
-		if (!st->part[i].attachment && !strcmp(st->part[i].type, "text/plain")) { st->text = i; break; }
+		if (!st->part[i].attachment && !strcmp(st->part[i].type, "text/html")) { st->text = i; st->html = 1; break; }
 	if (st->text < 0)
 		for (i = 0; i < st->n; i++)
-			if (!st->part[i].attachment && !strcmp(st->part[i].type, "text/html")) { st->text = i; st->html = 1; break; }
+			if (!st->part[i].attachment && !strcmp(st->part[i].type, "text/plain")) { st->text = i; break; }
 	for (i = 0; i < st->n; i++)
 		if (i != st->text && st->part[i].attachment)
 			st->nattach++;

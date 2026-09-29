@@ -84,6 +84,7 @@ static void local_update(int acct, const char *folder, unsigned int uid, const c
 		char p[190];
 		st_msg_path(acct, folder, uid, "txt", p, sizeof(p)); remove(p);
 		st_msg_path(acct, folder, uid, "att", p, sizeof(p)); remove(p);
+		st_msg_path(acct, folder, uid, "htm", p, sizeof(p)); remove(p);
 	}
 }
 

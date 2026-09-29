@@ -1,9 +1,12 @@
-/* html.c - HTML mail to plain text, streamed a piece at a time
+/* html.c - HTML mail to PsiMail's rich text, streamed a piece at a time
  *
- * Enough to read typical HTML-only mail on a 640x240 screen: block tags
- * become line breaks, lists get "* ", links are numbered ("text[3]") and
- * listed at the end, images show their alt text, <script>, <style> and
- * <head> are dropped, entities are decoded, spaces are collapsed.
+ * The app lays the result out with real type (see ui/pmui.h for the
+ * format): paragraphs, headings, bulleted and numbered lists, quotes,
+ * preformatted text, rules, images (as their description), bold, italic
+ * and numbered links (addresses listed at the end). Layout tables are
+ * flattened into paragraphs - what reads best on a 640x240 screen; the
+ * "View as web page" command shows the real thing with NetSurf.
+ * <script>, <style>, <head> are dropped, entities decoded, spaces collapsed.
  * Input and output are Windows-1252.
  */
 #include <string.h>
@@ -11,9 +14,10 @@
 #include <stdio.h>
 #include "pm.h"
 
-#define TAG_MAX   400
-#define MAX_LINKS 40
-#define LINK_MAX  160
+#define TAG_MAX   600
+#define MAX_LINKS 99
+#define LINK_MAX  200
+#define MAX_DEPTH 8
 
 enum { S_TEXT, S_TAG, S_ENT, S_COMMENT, S_SKIP };
 
@@ -24,16 +28,23 @@ struct HtmlConv
 	int tn;
 	char ent[12];
 	int en;
-	char skip_until[12];     /* "script", "style", "head", "title" */
+	char skip_until[12];
 	int space_pending;
-	int nl;                  /* newlines just written (0 = mid-line) */
+	int at_line_start;       /* nothing written on this line yet */
+	int blank;               /* a blank line has just been written */
 	int started;
 	int pre;
-	char href[LINK_MAX];
+	int heading;             /* 1..3 while inside h1..h6 */
+	int quote;               /* blockquote depth */
+	int list_depth;
+	int list_type[MAX_DEPTH];/* 0 ul, 1 ol */
+	int list_count[MAX_DEPTH];
+	int li_pending;          /* the next line starts a list item: show its marker */
+	int bold, italic;        /* nesting counts */
 	int in_link;
 	int nlinks;
 	char *links[MAX_LINKS];
-	int dashes;              /* for <!-- ... --> */
+	int dashes;
 	};
 
 typedef void (*OutFn)(const char *s, int n, void *ctx);
@@ -41,7 +52,7 @@ typedef void (*OutFn)(const char *s, int n, void *ctx);
 HtmlConv *html_new(void)
 {
 	HtmlConv *h = (HtmlConv *)calloc(1, sizeof(HtmlConv));
-	if (h) h->nl = 2;
+	if (h) { h->at_line_start = 1; h->blank = 1; }
 	return h;
 }
 
@@ -53,23 +64,71 @@ void html_free(HtmlConv *h)
 	free(h);
 }
 
+static void out_s(OutFn out, void *ctx, const char *s) { out(s, (int)strlen(s), ctx); }
+
+/* the block code that starts a line, from where we are */
+static void line_prefix(HtmlConv *h, OutFn out, void *ctx)
+{
+	char b[24];
+	if (h->pre) { out_s(out, ctx, "\x01" "c"); return; }
+	if (h->heading) { sprintf(b, "\x01h%d", h->heading); out_s(out, ctx, b); return; }
+	if (h->list_depth > 0) {
+		int d = h->list_depth > 9 ? 9 : h->list_depth;
+		if (h->li_pending) {
+			int t = h->list_type[h->list_depth - 1];
+			if (t == 1) sprintf(b, "\x01l%d%d.\x02", d, h->list_count[h->list_depth - 1]);
+			else sprintf(b, "\x01l%d\x95\x02", d);
+			h->li_pending = 0;
+		} else sprintf(b, "\x01l%d\x02", d);
+		out_s(out, ctx, b);
+		return;
+	}
+	if (h->quote) { sprintf(b, "\x01q%d", h->quote > 9 ? 9 : h->quote); out_s(out, ctx, b); return; }
+	out_s(out, ctx, "\x01p");
+}
+
+/* re-open styles on a new line (each line is laid out on its own) */
+static void restyle(HtmlConv *h, OutFn out, void *ctx)
+{
+	if (h->bold) out_s(out, ctx, "\x11");
+	if (h->italic) out_s(out, ctx, "\x13");
+}
+
 static void emit_char(HtmlConv *h, char c, OutFn out, void *ctx)
 {
-	if (h->space_pending && h->nl == 0 && c != '\n') out(" ", 1, ctx);
+	if (h->at_line_start) {
+		line_prefix(h, out, ctx);
+		restyle(h, out, ctx);
+		h->at_line_start = 0;
+		h->blank = 0;
+		h->space_pending = 0;
+	}
+	if (h->space_pending) out(" ", 1, ctx);
 	h->space_pending = 0;
 	out(&c, 1, ctx);
-	h->nl = 0;
 	h->started = 1;
 }
 
 static void text_char(HtmlConv *h, char c, OutFn out, void *ctx)
 {
-	if (!h->pre && (c == ' ' || c == '\t' || c == '\r' || c == '\n')) {
-		if (h->started) h->space_pending = 1;
+	if ((unsigned char)c < 0x20 && c != '\n' && c != '\t' && c != '\r') c = ' ';
+	if (h->pre) {
+		if (c == '\r') return;
+		if (c == '\n') {
+			if (h->at_line_start) { line_prefix(h, out, ctx); h->at_line_start = 0; }
+			out("\n", 1, ctx);
+			h->at_line_start = 1;
+			return;
+		}
+		if (c == '\t') { int i; for (i = 0; i < 4; i++) emit_char(h, ' ', out, ctx); return; }
+		if (c == ' ') { emit_char(h, ' ', out, ctx); return; }
+		emit_char(h, c, out, ctx);
 		return;
 	}
-	if (h->pre && c == '\r') return;
-	if (h->pre && c == '\n') { out("\n", 1, ctx); h->nl++; h->space_pending = 0; return; }
+	if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
+		if (!h->at_line_start) h->space_pending = 1;
+		return;
+	}
 	emit_char(h, c, out, ctx);
 }
 
@@ -78,12 +137,22 @@ static void text_str(HtmlConv *h, const char *s, OutFn out, void *ctx)
 	while (*s) text_char(h, *s++, out, ctx);
 }
 
+/* ends the current line; want = 2 also leaves a blank line */
 static void newline(HtmlConv *h, int want, OutFn out, void *ctx)
 {
-	/* want = 1: end the line; 2: leave a blank line */
 	h->space_pending = 0;
-	if (!h->started) return;
-	while (h->nl < want) { out("\n", 1, ctx); h->nl++; }
+	if (!h->at_line_start) {
+		if (h->in_link) out_s(out, ctx, "\x17");
+		if (h->italic) out_s(out, ctx, "\x14");
+		if (h->bold) out_s(out, ctx, "\x12");
+		out("\n", 1, ctx);
+		h->at_line_start = 1;
+		if (h->in_link) h->in_link = 0;     /* a link doesn't cross lines */
+	}
+	if (want == 2 && h->started && !h->blank) {
+		out("\n", 1, ctx);
+		h->blank = 1;
+	}
 }
 
 static void put_ucs(HtmlConv *h, unsigned int u, OutFn out, void *ctx)
@@ -94,7 +163,7 @@ static void put_ucs(HtmlConv *h, unsigned int u, OutFn out, void *ctx)
 	if (u == 0x200b || u == 0x200c || u == 0x200d || u == 0xfeff || u == 0x034f || u == 0xad) return;
 	if (u == 0x2010 || u == 0x2011 || u == 0x2212) { emit_char(h, '-', out, ctx); return; }
 	if (u == 0x2002 || u == 0x2003 || u == 0x2009) { text_char(h, ' ', out, ctx); return; }
-	if (u >= 0x1f000) return;
+	if (u >= 0x1f000 || (u >= 0x2600 && u < 0x2800)) return;
 	emit_char(h, '?', out, ctx);
 }
 
@@ -124,7 +193,6 @@ static void flush_entity(HtmlConv *h, OutFn out, void *ctx)
 		if (h->ent[1] == 'x' || h->ent[1] == 'X') u = (unsigned int)strtoul(h->ent + 2, 0, 16);
 		else u = (unsigned int)strtoul(h->ent + 1, 0, 10);
 		ok = u > 0;
-		/* numeric references in 128..159 mean the cp1252 character */
 		if (u >= 0x80 && u < 0xa0) u = cs_cp1252_to_ucs((unsigned char)u);
 	} else {
 		for (i = 0; k_ents[i].name; i++)
@@ -146,7 +214,7 @@ static int attr(const char *tag, const char *name, char *out, int max)
 	out[0] = 0;
 	while ((p = pm_stristr(p, name)) != 0) {
 		const char *q = p + nl;
-		if (p > tag && (p[-1] == ' ' || p[-1] == '\t' || p[-1] == '\n' || p[-1] == '\r')) {
+		if (p > tag && (p[-1] == ' ' || p[-1] == '\t' || p[-1] == '\n' || p[-1] == '\r' || p[-1] == '"' || p[-1] == '\'')) {
 			while (*q == ' ') q++;
 			if (*q == '=') {
 				int k = 0;
@@ -167,6 +235,8 @@ static int attr(const char *tag, const char *name, char *out, int max)
 	return 0;
 }
 
+static int is(const char *name, const char *a) { return !strcmp(name, a); }
+
 static void handle_tag(HtmlConv *h, OutFn out, void *ctx)
 {
 	char name[16];
@@ -180,53 +250,129 @@ static void handle_tag(HtmlConv *h, OutFn out, void *ctx)
 		name[i++] = c;
 	}
 	name[i] = 0;
+	h->tn = 0;
 
-	if (!close && (!strcmp(name, "script") || !strcmp(name, "style") || !strcmp(name, "head") || !strcmp(name, "title"))) {
+	if (!close && (is(name, "script") || is(name, "style") || is(name, "head") || is(name, "title"))) {
 		strcpy(h->skip_until, name);
 		h->state = S_SKIP;
-		h->tn = 0;
 		return;
 	}
-	if (!strcmp(name, "br")) { out("\n", 1, ctx); h->nl++; h->space_pending = 0; h->started = 1; }
-	else if (!strcmp(name, "p") || !strcmp(name, "h1") || !strcmp(name, "h2") || !strcmp(name, "h3") ||
-	         !strcmp(name, "h4") || !strcmp(name, "h5") || !strcmp(name, "h6") || !strcmp(name, "blockquote") ||
-	         !strcmp(name, "table") || !strcmp(name, "ul") || !strcmp(name, "ol"))
-		newline(h, 2, out, ctx);
-	else if (!strcmp(name, "div") || !strcmp(name, "tr") || !strcmp(name, "section") || !strcmp(name, "article") ||
-	         !strcmp(name, "header") || !strcmp(name, "footer") || !strcmp(name, "center") || !strcmp(name, "dt") ||
-	         !strcmp(name, "dd") || !strcmp(name, "address") || !strcmp(name, "form"))
+	if (is(name, "br")) { newline(h, 1, out, ctx); return; }
+	if (is(name, "p") || is(name, "table") || is(name, "center") || is(name, "form")) { newline(h, 2, out, ctx); return; }
+	if (is(name, "div") || is(name, "tr") || is(name, "section") || is(name, "article") || is(name, "header") ||
+	    is(name, "footer") || is(name, "dt") || is(name, "dd") || is(name, "address") || is(name, "td") ||
+	    is(name, "th") || is(name, "caption")) {
+		/* table cells: each becomes its own line (layout tables read best so) */
 		newline(h, 1, out, ctx);
-	else if (!strcmp(name, "pre")) { newline(h, 1, out, ctx); h->pre = !close; }
-	else if (!strcmp(name, "li") && !close) { newline(h, 1, out, ctx); text_str(h, "* ", out, ctx); }
-	else if (!strcmp(name, "hr")) { newline(h, 1, out, ctx); text_str(h, "--------", out, ctx); newline(h, 1, out, ctx); }
-	else if ((!strcmp(name, "td") || !strcmp(name, "th")) && close) h->space_pending = 1;
-	else if (!strcmp(name, "img") && !close) {
-		char alt[80];
-		if (attr(h->tag, "alt", alt, sizeof(alt)) && alt[0]) {
-			text_char(h, '[', out, ctx);
-			for (i = 0; alt[i]; i++) text_char(h, alt[i], out, ctx);
-			text_char(h, ']', out, ctx);
+		return;
+	}
+	if (name[0] == 'h' && name[1] >= '1' && name[1] <= '6' && !name[2]) {
+		newline(h, 2, out, ctx);
+		h->heading = close ? 0 : (name[1] == '1' ? 1 : name[1] == '2' ? 2 : 3);
+		return;
+	}
+	if (is(name, "blockquote")) {
+		newline(h, 2, out, ctx);
+		if (close) { if (h->quote) h->quote--; }
+		else h->quote++;
+		return;
+	}
+	if (is(name, "pre")) {
+		newline(h, 2, out, ctx);
+		h->pre = !close;
+		return;
+	}
+	if (is(name, "ul") || is(name, "ol")) {
+		if (h->list_depth == 0) newline(h, 2, out, ctx); else newline(h, 1, out, ctx);
+		if (close) { if (h->list_depth) h->list_depth--; }
+		else if (h->list_depth < MAX_DEPTH) {
+			h->list_type[h->list_depth] = name[0] == 'o';
+			h->list_count[h->list_depth] = 0;
+			h->list_depth++;
 		}
-	} else if (!strcmp(name, "a")) {
+		return;
+	}
+	if (is(name, "li")) {
+		newline(h, 1, out, ctx);
 		if (!close) {
-			h->in_link = attr(h->tag, "href", h->href, sizeof(h->href)) &&
-				(!pm_strncasecmp(h->href, "http", 4) || !pm_strncasecmp(h->href, "mailto:", 7));
-		} else if (h->in_link) {
-			h->in_link = 0;
-			if (h->nlinks < MAX_LINKS) {
-				char n[8];
-				h->links[h->nlinks] = (char *)malloc(strlen(h->href) + 1);
+			if (h->list_depth == 0) { h->list_depth = 1; h->list_type[0] = 0; h->list_count[0] = 0; }
+			h->list_count[h->list_depth - 1]++;
+			h->li_pending = 1;
+		}
+		return;
+	}
+	if (is(name, "hr")) {
+		newline(h, 1, out, ctx);
+		out_s(out, ctx, "\x01r\n");
+		h->blank = 0;
+		return;
+	}
+	if (is(name, "b") || is(name, "strong")) {
+		if (close) { if (h->bold) { h->bold--; if (!h->bold && !h->at_line_start) out_s(out, ctx, "\x12"); } }
+		else {
+			if (!h->bold && !h->at_line_start) {
+				if (h->space_pending) { out(" ", 1, ctx); h->space_pending = 0; }
+				out_s(out, ctx, "\x11");
+			}
+			h->bold++;
+		}
+		return;
+	}
+	if (is(name, "i") || is(name, "em") || is(name, "cite")) {
+		if (close) { if (h->italic) { h->italic--; if (!h->italic && !h->at_line_start) out_s(out, ctx, "\x14"); } }
+		else {
+			if (!h->italic && !h->at_line_start) {
+				if (h->space_pending) { out(" ", 1, ctx); h->space_pending = 0; }
+				out_s(out, ctx, "\x13");
+			}
+			h->italic++;
+		}
+		return;
+	}
+	if (is(name, "img") && !close) {
+		char alt[100], w[12], hgt[12];
+		attr(h->tag, "width", w, sizeof(w));
+		attr(h->tag, "height", hgt, sizeof(hgt));
+		if ((w[0] && atoi(w) <= 2) || (hgt[0] && atoi(hgt) <= 2)) return;     /* tracking pixels */
+		if (!attr(h->tag, "alt", alt, sizeof(alt)) || !alt[0]) return;
+		newline(h, 1, out, ctx);
+		out_s(out, ctx, "\x01i ");
+		{
+			/* alt text is HTML too: keep it simple */
+			int k;
+			for (k = 0; alt[k]; k++) if ((unsigned char)alt[k] < 0x20) alt[k] = ' ';
+		}
+		out_s(out, ctx, alt);
+		out_s(out, ctx, "\n");
+		h->at_line_start = 1;
+		h->blank = 0;
+		return;
+	}
+	if (is(name, "a")) {
+		if (!close) {
+			char href[LINK_MAX];
+			if (h->in_link) { out_s(out, ctx, "\x17"); h->in_link = 0; }
+			if (attr(h->tag, "href", href, sizeof(href)) &&
+			    (!pm_strncasecmp(href, "http", 4) || !pm_strncasecmp(href, "mailto:", 7)) &&
+			    h->nlinks < MAX_LINKS) {
+				char b[12];
+				h->links[h->nlinks] = (char *)malloc(strlen(href) + 1);
 				if (h->links[h->nlinks]) {
-					strcpy(h->links[h->nlinks], h->href);
+					strcpy(h->links[h->nlinks], href);
 					h->nlinks++;
-					sprintf(n, "[%d]", h->nlinks);
-					h->space_pending = 0;
-					out(n, (int)strlen(n), ctx);
+					if (h->at_line_start) { line_prefix(h, out, ctx); restyle(h, out, ctx); h->at_line_start = 0; h->blank = 0; }
+					if (h->space_pending) { out(" ", 1, ctx); h->space_pending = 0; }
+					sprintf(b, "\x15%d\x16", h->nlinks);
+					out_s(out, ctx, b);
+					h->in_link = 1;
 				}
 			}
+		} else if (h->in_link) {
+			out_s(out, ctx, "\x17");
+			h->in_link = 0;
 		}
+		return;
 	}
-	h->tn = 0;
 }
 
 void html_feed(HtmlConv *h, const char *in, int n, OutFn out, void *ctx)
@@ -245,9 +391,9 @@ void html_feed(HtmlConv *h, const char *in, int n, OutFn out, void *ctx)
 			else if (h->en < (int)sizeof(h->ent) - 2 && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '#'))
 				h->ent[h->en++] = c;
 			else {
-				flush_entity(h, out, ctx);           /* "&foo " - not an entity after all */
+				flush_entity(h, out, ctx);
 				h->state = S_TEXT;
-				i--;                                  /* look at c again */
+				i--;
 			}
 			break;
 		case S_TAG:
@@ -260,7 +406,6 @@ void html_feed(HtmlConv *h, const char *in, int n, OutFn out, void *ctx)
 			h->dashes = (c == '-') ? h->dashes + 1 : 0;
 			break;
 		case S_SKIP:
-			/* wait for </name> */
 			if (c == '<') { h->tn = 0; h->tag[h->tn++] = c; }
 			else if (h->tn > 0 && h->tn < TAG_MAX - 1) {
 				h->tag[h->tn++] = c;
@@ -281,15 +426,13 @@ void html_end(HtmlConv *h, OutFn out, void *ctx)
 {
 	int i;
 	if (h->state == S_ENT) flush_entity(h, out, ctx);
-	if (h->nlinks) {
-		newline(h, 2, out, ctx);
-		out("Links:\n", 7, ctx);
-		for (i = 0; i < h->nlinks; i++) {
-			char n[12];
-			sprintf(n, "[%d] ", i + 1);
-			out(n, (int)strlen(n), ctx);
-			out(h->links[i], (int)strlen(h->links[i]), ctx);
-			out("\n", 1, ctx);
-		}
+	newline(h, 1, out, ctx);
+	/* the links' addresses, for the app (not shown) */
+	for (i = 0; i < h->nlinks; i++) {
+		char n[16];
+		sprintf(n, "\x01u%d ", i + 1);
+		out_s(out, ctx, n);
+		out_s(out, ctx, h->links[i]);
+		out("\n", 1, ctx);
 	}
 }
