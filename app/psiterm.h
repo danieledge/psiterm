@@ -172,13 +172,15 @@ class CToolDialog : public CEikDialog
 	{
 public:
 	CToolDialog(CTermView& aView, const TDesC& aTitle, TBool aFinished)
-		: iView(aView), iTitle(aTitle), iFinished(aFinished) {}
+		: iView(aView), iTitle(aTitle), iFinished(aFinished), iLaidOut(EFalse) {}
 	void RefreshL();                  // show the latest output
 	void FinishL();                   // the job has ended: Stop -> Close
 	void CloseL() { TryExitL(EEikBidOk); }
 private:
 	void SetSizeAndPositionL(const TSize& aSize);   // never larger than the screen
 	void SetButtonTextL(const TDesC& aText);
+	void PostLayoutDynInitL();
+	TBool iLaidOut;
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
 	CTermView& iView;

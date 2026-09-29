@@ -1,4 +1,4 @@
-PSITERM 0.31 - FIRST RUN CHECKLIST
+PSITERM 0.32 - FIRST RUN CHECKLIST
 =================================
 
 BEFORE YOU START
@@ -11,7 +11,7 @@ BEFORE YOU START
    (Replaces any older PsiTerm.) PsiTerm is on the Extras bar.
 
 2. FIRST LAUNCH
-   Open PsiTerm. You should see "PsiTerm 0.31" and the screen size.
+   Open PsiTerm. You should see "PsiTerm 0.32" and the screen size.
    Menu > Settings > Connection settings: the same baud
    rate as the modem,
    Flow control: None.
