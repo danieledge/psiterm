@@ -41,6 +41,9 @@ and Claude Code - on a 1999 palmtop.
   optional per-host command on login such as `tmux new -A -s psion` to land back where
   you were
 - Terminus font in four sizes (plus Courier), optional bold, 16 greys
+- Stylus as a mouse when a program asks for one (tmux with mouse on, vim,
+  htop): tap to click - panes, tmux windows, buttons - and drag up or down to
+  scroll. Shift+stylus still selects text
 - Scrollback, pen selection, copy/paste with the system clipboard
 - Box drawing, block and Braille graphics drawn natively
 - Signed over-the-air updates straight from GitHub (TLS 1.3 on a 36 MHz ARM)

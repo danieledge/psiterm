@@ -167,7 +167,8 @@ RESOURCE MENU_PANE r_pt_tmux_menu
 		MENU_ITEM { cascade=r_pt_tmux_win_menu; txt="Windows"; },
 		MENU_ITEM { cascade=r_pt_tmux_pane_menu; txt="Panes"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdTmuxCopy; txt="Scroll / copy mode"; extratxt="["; },
-		MENU_ITEM { command=EPtCmdTmuxDetach; txt="Detach"; extratxt="d"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxDetach; txt="Detach"; extratxt="d"; },
+		MENU_ITEM { command=EPtCmdTmuxMouse; txt="Stylus (mouse) on/off"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { cascade=r_pt_tmux_prefix_menu; txt="Prefix key"; }
 		};
 	}

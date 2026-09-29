@@ -492,7 +492,10 @@ private:
 	// selection, in absolute line numbers (stable while output scrolls)
 	TBool iSelActive;
 	TInt iSelLine0, iSelCol0, iSelLine1, iSelCol1;
-	enum { EPenNone, EPenSelect, EPenScroll } iPenMode;
+	enum { EPenNone, EPenSelect, EPenScroll, EPenMouse } iPenMode;
+	TInt iMouseMode;          // VTERM_PROP_MOUSE_*: the program wants mouse events
+	TInt iPenRow0, iPenCol0;
+	TBool iPenWheeled;
 	TInt iPenY0;
 	TInt iPenOffset0;
 

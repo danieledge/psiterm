@@ -60,7 +60,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.44");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.45");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -537,12 +537,13 @@ void CTermView::SerialDataL(const TDesC8& aData)
 	// (and the status line only says "Modem connected") when it is online
 	iLastRx = User::TickCount();
 	TBuf8<64> look(iRxTail);
-	look.Append(aData.Right(look.MaxLength() - look.Length()));
+	TInt room = look.MaxLength() - look.Length();
+	look.Append(aData.Right(aData.Length() < room ? aData.Length() : room));
 	TInt on = LastFind(look, _L8("CONNECT"));
 	TInt off = LastFind(look, _L8("NO CARRIER"));
 	if (on >= 0 || off >= 0)
 		iModemOnline = (on > off);
-	iRxTail = look.Right(12);
+	iRxTail = look.Right(look.Length() < 12 ? look.Length() : 12);
 	FeedTerminal(aData.Ptr(), aData.Length());
 	}
 
@@ -814,6 +815,8 @@ int CTermView::CbSetTermProp(VTermProp aProp, VTermValue* aVal, void* aUser)
 	CTermView* self = (CTermView*)aUser;
 	if (aProp == VTERM_PROP_CURSORVISIBLE)
 		self->iCurVisible = aVal->boolean;
+	else if (aProp == VTERM_PROP_MOUSE)
+		self->iMouseMode = aVal->number;    // e.g. tmux with "set -g mouse on"
 	return 1;
 	}
 
@@ -1994,6 +1997,53 @@ void CTermView::HandlePointerEventL(const TPointerEvent& aEvent)
 	if (col >= iCols) col = iCols - 1;
 	TInt rowC = row < 0 ? 0 : (row >= iRows ? iRows - 1 : row);
 
+	// The program asked for the mouse (tmux "mouse on", vim, htop...): a tap
+	// is a click, a drag up or down is the scroll wheel. Shift+pen still
+	// selects text here, as in xterm.
+	TBool mouse = (iMouseMode != VTERM_PROP_MOUSE_NONE) && SshLoggedIn() && iScrollOffset == 0
+		&& !(aEvent.iModifiers & EModifierShift);
+	if (aEvent.iType == TPointerEvent::EButton1Down && mouse && row >= 0 && row < iRows)
+		{
+		ClearSelection();
+		iPenMode = EPenMouse;
+		iPenY0 = p.iY;
+		iPenRow0 = row;
+		iPenCol0 = col;
+		iPenWheeled = EFalse;
+		return;
+		}
+	if (iPenMode == EPenMouse)
+		{
+		if (aEvent.iType == TPointerEvent::EDrag)
+			{
+			// a row's height of movement = one wheel step (4 up, 5 down)
+			TInt steps = (p.iY - iPenY0) / iCellH;
+			if (steps != 0)
+				{
+				vterm_mouse_move(iVt, iPenRow0, iPenCol0, VTERM_MOD_NONE);
+				for (TInt i = 0; i < (steps < 0 ? -steps : steps) && i < 20; i++)
+					{
+					// pen moves down = see older text = wheel up
+					vterm_mouse_button(iVt, steps > 0 ? 4 : 5, ETrue, VTERM_MOD_NONE);
+					vterm_mouse_button(iVt, steps > 0 ? 4 : 5, EFalse, VTERM_MOD_NONE);
+					}
+				iPenY0 += steps * iCellH;
+				iPenWheeled = ETrue;
+				}
+			}
+		else if (aEvent.iType == TPointerEvent::EButton1Up)
+			{
+			if (!iPenWheeled)
+				{
+				vterm_mouse_move(iVt, iPenRow0, iPenCol0, VTERM_MOD_NONE);
+				vterm_mouse_button(iVt, 1, ETrue, VTERM_MOD_NONE);
+				vterm_mouse_button(iVt, 1, EFalse, VTERM_MOD_NONE);
+				}
+			iPenMode = EPenNone;
+			}
+		return;
+		}
+
 	switch (aEvent.iType)
 		{
 	case TPointerEvent::EButton1Down:
@@ -2618,10 +2668,20 @@ void CTermView::LaunchSshL(TInt aMode)
 	TFileName exe(parse.DriveAndPath());
 	exe.Append(KSshExeName);
 	r = iSshProcess.Create(exe, KNullDesC);
+	// not there (a half-finished install?): try the same folder on C: and D:
+	for (TInt d = 0; r == KErrNotFound && d < 2; d++)
+		{
+		exe[0] = (TText)(d == 0 ? 'C' : 'D');
+		r = iSshProcess.Create(exe, KNullDesC);
+		}
 	if (r != KErrNone)
 		{
-		TBuf8<96> msg;
-		msg.Format(_L8("\r\n[SSH: could not start psissh.exe, error %d]\r\n"), r);
+		TBuf8<200> msg;
+		if (r == KErrNotFound)
+			msg.Format(_L8("\r\n[PsiTerm's SSH program (psissh.exe) is missing or cannot load.\r\n"
+				" Please reinstall PsiTerm from its .sis file.]\r\n"));
+		else
+			msg.Format(_L8("\r\n[SSH: could not start psissh.exe, error %d]\r\n"), r);
 		LocalMessage(msg);
 		iChunk.Close();
 		iChunkOpen = EFalse;
@@ -2780,6 +2840,7 @@ void CTermView::SshProcessEnded()
 		}
 	iSshActive = EFalse;
 	iModemOnline = EFalse;              // psissh hangs up as it ends
+	iMouseMode = VTERM_PROP_MOUSE_NONE;  // whatever asked for the mouse has gone
 	iLastRx = 0;
 	iRxTail.Zero();
 	TBuf8<160> msg;
@@ -4248,6 +4309,11 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdTmuxCopy:    SendTmux('['); break;
 	case EPtCmdTmuxRename:  SendTmux(','); break;
 	case EPtCmdTmuxDetach:  SendTmux('d'); break;
+	case EPtCmdTmuxMouse:
+		// tmux's command prompt: "set -g mouse" with no value flips it
+		SendTmux(':');
+		iView->SendString(_L8("set -g mouse\r"));
+		break;
 	case EPtCmdTmuxPrefixB:
 	case EPtCmdTmuxPrefixA:
 		s.iTmuxPrefix = (aCommand == EPtCmdTmuxPrefixA);

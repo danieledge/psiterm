@@ -92,6 +92,7 @@ enum TPsiTermCommands
 	EPtCmdTmuxCopy,
 	EPtCmdTmuxRename,
 	EPtCmdTmuxDetach,
+	EPtCmdTmuxMouse,
 	EPtCmdTmuxPrefixB,
 	EPtCmdTmuxPrefixA,
 	EPtCmdAppearance,
