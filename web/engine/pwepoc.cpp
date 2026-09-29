@@ -30,15 +30,37 @@ enum
 	};
 
 static PwShared* gPw = 0;
+static int gInitDone = 0;
+static int gInitResult = -1;
+static PwShared* gDummy = 0;       // stands in if PsiWeb.app's chunk is missing
 static pwb_event gQ[8];            // events expanded from one shared event
 static int gQn = 0;
 static int gCtrlDown = 0;
 
+// NetSurf asks for settings (resource folder, home page, zoom...) long
+// before it opens the screen, so the chunk is opened on first use - never
+// returns NULL.
 static PwShared* Pw()
 	{
-	if (!gPw)
-		gPw = (PwShared*)pg_shared();
-	return gPw;
+	if (gPw)
+		return gPw;
+	if (!gInitDone)
+		{
+		gInitDone = 1;
+		gInitResult = pg_init();       // opens the chunk, then the serial port
+		PwShared* s = (PwShared*)pg_shared();
+		if (s && s->magic == PW_MAGIC)
+			gPw = s;
+		}
+	if (gPw)
+		return gPw;
+	if (!gDummy)
+		{
+		gDummy = (PwShared*)User::Alloc(sizeof(PwShared));
+		if (gDummy)
+			Mem::FillZ(gDummy, sizeof(PwShared));
+		}
+	return gDummy;                     // (only NULL if even that failed)
 	}
 
 static void Push(int aType, int aCode, int aX, int aY)
@@ -63,9 +85,10 @@ static void SetText(char* aDst, int aMax, const char* aSrc)
 
 extern "C" int pwb_open(int* aW, int* aH)
 	{
-	int r = pg_init();
-	if (!Pw() || Pw()->magic != PW_MAGIC)
-		return -1;
+	Pw();
+	int r = gInitResult;
+	if (!gPw)
+		return -1;                     // not started by PsiWeb.app
 	if (r != 0)
 		{
 		// psiglue could not open the serial port: say why, for the app
@@ -239,7 +262,7 @@ extern "C" void pwb_set_nav(int aBack, int aFwd) { Pw()->can_back = aBack; Pw()-
 
 extern "C" void pwb_fatal(const char* aWhy)
 	{
-	if ((gPw || pg_shared()) && !Pw()->exit_msg[0])
+	if (gPw && !gPw->exit_msg[0])
 		SetText(Pw()->exit_msg, sizeof(Pw()->exit_msg), aWhy);
 	}
 

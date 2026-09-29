@@ -103,6 +103,7 @@ RESOURCE MENU_PANE r_pw_tools_menu
 		{
 		MENU_ITEM { command=EPwCmdConnSettings; txt="Connection settings..."; },
 		MENU_ITEM { command=EPwCmdBrowserSettings; txt="Proxy and home page..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdUpdate; txt="Update PsiWeb"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPwCmdRestart; txt="Restart browser engine"; }
 		};
 	}

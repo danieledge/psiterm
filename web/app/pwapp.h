@@ -72,6 +72,7 @@ public:
 	void Key(TUint aCode, TUint aMods);
 	void EngineEnded();
 	void ShowMessage(const TDesC& aLine1, const TDesC& aLine2);
+	void StartUpdateL();
 private:
 	void Draw(const TRect& aRect) const;
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
@@ -80,6 +81,8 @@ private:
 	void AddEntropy(TUint aValue);
 	static TInt TickCallback(TAny* aSelf);
 	void Tick();
+	void UpdateTickL();
+	void StartInstallerL();
 private:
 	TPwSettings iSettings;
 	CFbsBitmap* iBitmap;
@@ -95,6 +98,9 @@ private:
 	TBuf<80> iMsg1;
 	TBuf<120> iMsg2;
 	TBool iShowMsg;
+	TInt iUpdState;            // last PW_UPD_* seen
+	TBuf<128> iUpdMsg;
+	TFileName iUpdateFile;
 	};
 
 class CPwInfoDialog : public CEikDialog

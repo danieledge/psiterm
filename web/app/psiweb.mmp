@@ -14,4 +14,4 @@ USERINCLUDE   \ptproj\psiweb
 SYSTEMINCLUDE \ptproj\psiwebinc \ptproj\psitermssh \epoc32\include\libc \epoc32\include
 
 LIBRARY       euser.lib efsrv.lib apparc.lib cone.lib eikon.lib ws32.lib gdi.lib
-LIBRARY       fbscli.lib bafl.lib
+LIBRARY       fbscli.lib bafl.lib apgrfx.lib

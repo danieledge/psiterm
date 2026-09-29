@@ -5,11 +5,13 @@
 #include "psiweb.h"
 #include "fb/pwback.h"
 
+char *strcpy(char *d, const char *s);
+
 int emu_hc(int op, int a, int b, int c, int d);
 void emu_mem_report(void);
 enum {
 	HB = 200, HB_OPEN = HB, HB_PRESENT, HB_EVENT, HB_CMD, HB_STATUS, HB_TITLE,
-	HB_URL, HB_BUSY, HB_READY, HB_MS, HB_CONFIG,
+	HB_URL, HB_BUSY, HB_READY, HB_MS, HB_CONFIG, HB_UPDCFG,
 	HP = 300, HP_DIAL = HP, HP_HANGUP, HP_AVAIL, HP_READ, HP_WRITE, HP_WAIT, HP_ENTROPY
 };
 
@@ -24,6 +26,8 @@ int pwb_open(int *w, int *h)
 	*w = 640; *h = 240;
 	/* the harness fills in proxy settings etc. */
 	emu_hc(HB_CONFIG, (int)&g_sh.use_proxy, (int)g_sh.proxy_host, (int)&g_sh.proxy_port, (int)&g_sh.net.net_mode);
+	emu_hc(HB_UPDCFG, (int)&g_sh.upd_source, (int)g_sh.upd_host, (int)&g_sh.upd_port, (int)g_sh.net.version);
+	strcpy(g_sh.net.save_as, "C:\\PsiWeb-update.sis");
 	return emu_hc(HB_OPEN, (int)g_fb4, PW_STRIDE, 0, 0);
 }
 void pwb_close(void) { emu_mem_report(); }

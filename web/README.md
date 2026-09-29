@@ -5,7 +5,7 @@ A modern web browser for the **Psion Series 5mx**: [NetSurf](https://www.netsurf
 EPOC R5 toolchain, running on PsiTerm's networking - the same WiFi modem or
 dial-up link, and PsiTerm's TLS 1.3 client for HTTPS.
 
-**Status: 0.1, not yet run on a real Psion.** Everything builds, and the
+**Status: 0.2.** 0.1 crashed at start on a real 5mx (KERN-EXEC 3: settings read before the shared chunk was opened) - fixed in 0.2. Everything builds, and the
 exact ARM code that goes into `psiweb.exe` has been run in an ARM emulator
 (see *Testing*): it renders pages, follows links and redirects, and fetches
 over HTTP and HTTPS. `PsiWeb.app` (the EPOC front end) compiles but has
@@ -40,6 +40,22 @@ connection open for the whole session, so the modem dials once instead of
 once per page. Without a proxy, `http://` goes direct and `https://` uses
 PsiTerm's TLS 1.3 client (X25519 + ChaCha20-Poly1305; certificates are
 **not** checked, as in PsiTerm's updater).
+
+### Updating
+
+**Tools > Update PsiWeb** works like PsiTerm's updater: it reads
+`dist/PsiWeb-version.txt` from GitHub, downloads `dist/PsiWeb.sis` in
+64 KB pieces (retrying a piece that breaks off) to D: (or C:), checks the
+Ed25519 signature in `dist/PsiWeb.sis.sig` against PsiTerm's release key
+built into `psiweb.exe`, then offers to run the installer. With a proxy set
+it goes through the proxy (no TLS on the Psion); otherwise it uses TLS 1.3
+directly. Esc cancels.
+
+To publish a release: set the version in `web/app/psiweb.cpp` (KVersion),
+`web/pkg/psiweb.pkg` and `dist/PsiWeb-version.txt`, build, then
+`tools/release/sign.py --product PsiWeb dist/PsiWeb.sis <version>` and commit
+`dist/PsiWeb.sis`, `.sig` and `-version.txt`. The signed text starts
+"PsiWeb update", so a PsiTerm signature can never pass for a PsiWeb one.
 
 ### What to expect
 

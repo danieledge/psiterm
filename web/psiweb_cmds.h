@@ -18,7 +18,18 @@ enum
 	PW_CMD_TOP,
 	PW_CMD_BOTTOM,
 	PW_CMD_IMAGES,                  /* cmd_arg = "1" load images, "0" don't */
-	PW_CMD_QUIT
+	PW_CMD_QUIT,
+	PW_CMD_UPDATE                   /* download a newer PsiWeb.sis (pwupdate.c) */
+	};
+
+/* update_state */
+enum
+	{
+	PW_UPD_IDLE = 0,
+	PW_UPD_RUNNING,
+	PW_UPD_CURRENT,                 /* already the newest version */
+	PW_UPD_READY,                   /* downloaded to net.save_as, signature OK */
+	PW_UPD_FAILED
 	};
 
 #endif

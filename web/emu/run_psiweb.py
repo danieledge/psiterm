@@ -256,6 +256,13 @@ def hc(op, a, b, c, d):
             wr(a, struct.pack("<i", 1)); wr(b, h.encode() + b"\0"); wr(c, struct.pack("<i", int(p or 8080)))
         wr(d, struct.pack("<i", 1))                  # "Psion TCP/IP": no in-band NO CARRIER
         return 0
+    if op == 211:                                    # update config
+        src = os.environ.get("PW_UPD", "")           # "host:port" = local server
+        if src:
+            h, _, p = src.partition(":")
+            wr(a, struct.pack("<i", 1)); wr(b, h.encode() + b"\0"); wr(c, struct.pack("<i", int(p or 8686)))
+        wr(d, os.environ.get("PW_VERSION", "0.1").encode() + b"\0")
+        return 0
     # ---- psiglue
     if op == 300: return pg_dial(cstr(a), b, c, d)
     if op == 301:
@@ -350,6 +357,20 @@ if "--allocs" in args:
         for site, n in sorted(tot.items(), key=lambda x: -x[1])[:25]:
             print("  %8d KB  %s" % (n // 1024, site))
     atexit.register(report)
+
+# --align: report unaligned word/halfword accesses. The Psion's ARM710T
+# does not fault on them - a word load returns rotated data - so such code
+# runs wrongly on the Psion while working in this emulator.
+if "--align" in args:
+    from unicorn import UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE
+    seen = {}
+    def on_mem(uc_, access, address, size, value, user):
+        if (size == 4 and address & 3) or (size == 2 and address & 1):
+            pc = uc.reg_read(UC_ARM_REG_PC)
+            if pc not in seen:
+                seen[pc] = 1
+                log("UNALIGNED %s size %d at %08x, pc %s" % ("write" if access == 17 else "read", size, address, where(pc)))
+    uc.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, on_mem)
 
 argv0 = SCRATCH + 0x100
 wr(argv0, b"psiweb\0")

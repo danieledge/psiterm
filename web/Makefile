@@ -34,11 +34,11 @@ CXXFLAGS := $(ARCH) $(DEFS) -Wno-ctor-dtor-privacy -fcheck-new -fvtable-thunks -
 LTC     := $(TOP)/ssh/db/libtomcrypt/src
 LTCFLAGS := $(ARCH) $(DEFS) -std=gnu99 -fno-builtin -w -I$(WEB)/tls -I$(WEB)/compat -I$(LTC)/headers -I$(E)/include/libc -I$(E)/include -DLTC_SOURCE
 LTC_SRCS := stream/chacha/chacha_crypt stream/chacha/chacha_ivctr32 stream/chacha/chacha_keystream \
-	stream/chacha/chacha_setup stream/chacha/chacha_done mac/poly1305/poly1305 hashes/sha2/sha256 \
+	stream/chacha/chacha_setup stream/chacha/chacha_done mac/poly1305/poly1305 hashes/sha2/sha256 hashes/sha2/sha512 \
 	misc/zeromem misc/burn_stack misc/crypt/crypt_argchk misc/compare_testvector
 Z_SRCS  := adler32 crc32 inflate inftrees inffast zutil
 PLAT_OBJS := $(O)/web/pwepoc.o $(O)/web/psiglue.o $(O)/web/nscompat.o $(O)/web/nsprintf.o \
-	$(O)/web/tls13.o $(O)/web/x25519.o $(O)/web/pwrandom.o \
+	$(O)/web/tls13.o $(O)/web/x25519.o $(O)/web/pwrandom.o $(O)/web/pwupdate.o \
 	$(addprefix $(O)/ltc/,$(subst /,__,$(LTC_SRCS:=.o))) $(addprefix $(O)/zlib/,$(Z_SRCS:=.o))
 LIBGCC  := $(SDK)/gcc-3.0-psion-98r2-9/lib/gcc-lib/arm-epoc-pe/3.0-psion-98r2/libgcc.a
 SYSLIBS := $(REL)/estlib.lib $(REL)/euser.lib $(REL)/c32.lib $(REL)/efsrv.lib $(REL)/esock.lib $(REL)/insock.lib $(LIBGCC)
@@ -90,7 +90,13 @@ $(O)/web/%.o: compat/%.c
 $(O)/web/tls13.o: $(TOP)/ssh/tls13.c tls/includes.h
 	@mkdir -p $(dir $@)
 	$(TCC) -c $(LTCFLAGS) -I$(TOP)/ssh/db/src $< -o $@
-$(O)/web/%.o: tls/%.c tls/includes.h
+$(O)/web/pwupdate.o: engine/pwupdate.c engine/pwnet.h psiweb.h psiweb_cmds.h tls/includes.h
+	@mkdir -p $(dir $@)
+	$(TCC) -c $(LTCFLAGS) -I$(TOP)/ssh $< -o $@
+$(O)/emu/pwupdate_test.o: engine/pwupdate.c engine/pwnet.h psiweb.h psiweb_cmds.h tls/includes.h
+	@mkdir -p $(dir $@)
+	$(TCC) -c $(LTCFLAGS) -I$(TOP)/ssh -DPW_TEST_KEY $< -o $@
+$(O)/web/%.o: tls/%.c tls/includes.h tls/options.h
 	@mkdir -p $(dir $@)
 	$(TCC) -c $(LTCFLAGS) -I$(TOP)/ssh/db/src $< -o $@
 $(O)/ltc/%.o:
@@ -104,8 +110,8 @@ LINKOBJS = $(REL)/eexe.o $(ALL_OBJS) $(REL)/ecrt0.o $(SYSLIBS)
 
 # psiweb-emu.pe: the same ARM objects with emu/ standing in for EPOC, to run
 # in an ARM emulator on a PC (emu/run_psiweb.py)
-EMU_OBJS := $(filter-out $(O)/web/pwepoc.o $(O)/web/psiglue.o,$(ALL_OBJS)) \
-	$(O)/emu/emu_rt.o $(O)/emu/emu_hc.o $(O)/emu/emu_back.o
+EMU_OBJS := $(filter-out $(O)/web/pwepoc.o $(O)/web/psiglue.o $(O)/web/pwupdate.o,$(ALL_OBJS)) \
+	$(O)/emu/emu_rt.o $(O)/emu/emu_hc.o $(O)/emu/emu_back.o $(O)/emu/pwupdate_test.o
 $(O)/emu/%.o: emu/%.c
 	@mkdir -p $(dir $@)
 	$(TCC) -c $(ARCH) -O2 -fno-builtin -w -D__EPOC32__ -I$(WEB) -I$(TOP)/ssh -I$(E)/include/libc $< -o $@

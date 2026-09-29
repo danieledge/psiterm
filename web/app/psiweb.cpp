@@ -7,11 +7,12 @@
 #include <eikedwin.h>
 #include <eiklabel.h>
 #include <eikmfne.h>
+#include <apgcli.h>
 #include "pwapp.h"
 
 _LIT(KEngineExe, "psiweb.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiWeb\\PsiWeb.ini");
-_LIT(KVersion, "0.1");
+_LIT(KVersion, "0.2");          // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt
 _LIT(KDefaultHome, "http://68k.news/");
 const TInt KZoomSteps[] = { 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200 };
 const TInt KZoomCount = 11;
@@ -145,6 +146,12 @@ void CPwView::StartEngineL()
 	s->proxy_port = iSettings.iProxyPort;
 	s->load_images = iSettings.iImages;
 	s->zoom = iSettings.iZoom;
+	CopyToC(s->net.version, sizeof(s->net.version), KVersion);
+	// updates are saved to the CF card if there is one (D:), else C:
+	TVolumeInfo vol;
+	iUpdateFile.Copy(iCoeEnv->FsSession().Volume(vol, EDriveD) == KErrNone
+		? _L("D:\\PsiWeb-update.sis") : _L("C:\\PsiWeb-update.sis"));
+	CopyToC(s->net.save_as, sizeof(s->net.save_as), iUpdateFile);
 	CopyToC(s->home_url, sizeof(s->home_url), iSettings.iHome);
 
 	// the engine and its resources (Messages, CSS) live next to the app
@@ -246,7 +253,12 @@ TInt CPwView::TickCallback(TAny* aSelf)
 void CPwView::Tick()
 	{
 	PwShared* s = iShared;
-	if (!s || s->frame_seq == iLastFrame)
+	if (s && (iUpdState == PW_UPD_RUNNING || s->update_state != iUpdState))
+		{
+		TRAPD(err, UpdateTickL());
+		(void)err;
+		}
+	if (!s || s->frame_seq == iLastFrame || iUpdState == PW_UPD_RUNNING)
 		return;
 	iLastFrame = s->frame_seq;
 	TInt y0 = s->dirty_y0, y1 = s->dirty_y1;
@@ -272,6 +284,84 @@ void CPwView::Tick()
 	ActivateGc();
 	SystemGc().BitBlt(r.iTl, iBitmap, r);
 	DeactivateGc();
+	}
+
+// ----- Update PsiWeb ------------------------------------------------------------
+
+void CPwView::StartUpdateL()
+	{
+	if (!iRunning)
+		{
+		iEikonEnv->InfoMsg(_L("The browser engine is not running"));
+		return;
+		}
+	if (iUpdState == PW_UPD_RUNNING)
+		return;
+	iShared->update_state = PW_UPD_RUNNING;
+	iUpdState = -1;                      // show the progress screen at once
+	Command(PW_CMD_UPDATE, KNullDesC);
+	}
+
+// progress while the engine downloads; the outcome when it has finished
+void CPwView::UpdateTickL()
+	{
+	PwShared* s = iShared;
+	TInt st = s->update_state;
+	TBuf<128> msg;
+	FromUtf8(msg, s->update_msg);
+	if (st == PW_UPD_RUNNING)
+		{
+		if (iUpdState != PW_UPD_RUNNING || msg != iUpdMsg)
+			{
+			iUpdState = PW_UPD_RUNNING;
+			iUpdMsg = msg;
+			ShowMessage(_L("Updating PsiWeb  (Esc to stop)"), msg);
+			}
+		return;
+		}
+	TInt was = iUpdState;
+	iUpdState = st;
+	if (was != PW_UPD_RUNNING && was != -1)
+		return;
+	iShowMsg = EFalse;
+	DrawNow();                           // the page again
+	if (st == PW_UPD_READY)
+		{
+		TBuf<64> q;
+		TBuf<16> v;
+		FromUtf8(v, s->update_version);
+		q.Format(_L("Install PsiWeb %S now?"), &v);
+		if (iEikonEnv->QueryWinL(q, _L("PsiWeb will close while it installs")))
+			StartInstallerL();
+		else
+			iEikonEnv->InfoWinL(_L("Update saved"), iUpdateFile);
+		}
+	else if (st == PW_UPD_CURRENT)
+		iEikonEnv->InfoMsg(msg);
+	else if (st == PW_UPD_FAILED)
+		iEikonEnv->InfoWinL(_L("Update PsiWeb"), msg);
+	}
+
+void CPwView::StartInstallerL()
+	{
+	StopEngine();                        // psiweb.exe is one of the files replaced
+	TInt err;
+	RApaLsSession ls;
+	err = ls.Connect();
+	if (err == KErrNone)
+		{
+		TThreadId tid;
+		err = ls.StartDocument(iUpdateFile, TUid::Uid(0x10000419), tid);
+		ls.Close();
+		}
+	if (err == KErrNone)
+		{
+		iEikonEnv->EikAppUi()->HandleCommandL(EEikCmdExit);
+		return;
+		}
+	TBuf<160> m;
+	m.Format(_L("Could not start the installer (%d). Open %S from the System screen."), err, &iUpdateFile);
+	iEikonEnv->InfoWinL(_L("Update downloaded"), m);
 	}
 
 void CPwView::Draw(const TRect& aRect) const
@@ -351,6 +441,13 @@ TKeyResponse CPwView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 				return EKeyWasNotConsumed;
 			}
 		}
+	if (code == EKeyEscape && iUpdState == PW_UPD_RUNNING)
+		{
+		iShared->net.quit = 1;           // the updater gives up and says so
+		return EKeyWasConsumed;
+		}
+	if (iUpdState == PW_UPD_RUNNING)
+		return EKeyWasConsumed;
 	if (code == EKeyEscape && iShared->busy)
 		{
 		Command(PW_CMD_STOP, KNullDesC);
@@ -679,6 +776,9 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 			}
 		break;
 		}
+	case EPwCmdUpdate:
+		iView->StartUpdateL();
+		break;
 	case EPwCmdRestart:
 		iView->StopEngine();
 		iView->StartEngineL();

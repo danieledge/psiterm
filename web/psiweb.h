@@ -99,6 +99,15 @@ typedef struct
 	volatile int can_back;
 	volatile int can_forward;
 	volatile unsigned int free_ram;    /* bytes, for the status line */
+
+	/* Update PsiWeb (engine/pwupdate.c). The app also sets net.version
+	   (its own version) and net.save_as (where the .sis goes). */
+	int upd_source;                    /* 0 = GitHub, 1 = PsiTerm's local server */
+	char upd_host[64];
+	int upd_port;
+	volatile int update_state;         /* PW_UPD_* (psiweb) */
+	char update_msg[128];
+	char update_version[16];
 	volatile unsigned int heap_used;
 
 	unsigned char fb[PW_MAX_H * PW_STRIDE];

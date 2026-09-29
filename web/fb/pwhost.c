@@ -210,6 +210,7 @@ void pwb_set_busy(int b)
 }
 void pwb_set_nav(int b, int f) { (void)b; (void)f; }
 void pwb_fatal(const char *s) { fprintf(stderr, "[fatal] %s\n", s); }
+int pw_update_run(void) { fprintf(stderr, "[host] no updater in the PC build\n"); return 4; }
 void pwb_ready(void) { fprintf(stderr, "[host] ready\n"); }
 const char *pwb_home_url(void) { return getenv("PW_HOME") ? getenv("PW_HOME") : "about:blank"; }
 const char *pwb_res_dir(void) { return getenv("PW_RES") ? getenv("PW_RES") : "res/"; }

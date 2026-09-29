@@ -85,7 +85,7 @@ index 23cbb4f..a4fcf98 100644
  
  struct gui_fetch_table *framebuffer_fetch_table = &fetch_table;
 diff --git a/frontends/framebuffer/gui.c b/frontends/framebuffer/gui.c
-index 5bfc822..92cac62 100644
+index 5bfc822..8037282 100644
 --- a/frontends/framebuffer/gui.c
 +++ b/frontends/framebuffer/gui.c
 @@ -18,7 +18,9 @@
@@ -303,7 +303,7 @@ index 5bfc822..92cac62 100644
  
  	urldb_load_cookies(nsoption_charp(cookie_file));
  
-@@ -2324,3 +2423,76 @@ void gui_resize(fbtk_widget_t *root, int width, int height)
+@@ -2324,3 +2423,82 @@ void gui_resize(fbtk_widget_t *root, int width, int height)
   * c-basic-offset:8
   * End:
   */
@@ -371,6 +371,12 @@ index 5bfc822..92cac62 100644
 +	case PW_CMD_PAGEDOWN:
 +		widget_scroll_y(gw, fbtk_get_height(gw->browser), false);
 +		break;
++	case PW_CMD_UPDATE: {
++		extern int pw_update_run(void);
++		browser_window_stop(bw);      /* the updater needs the connection */
++		pw_update_run();
++		break;
++	}
 +	case PW_CMD_IMAGES:
 +		nsoption_set_bool(foreground_images, arg[0] == '1');
 +		nsoption_set_bool(background_images, arg[0] == '1');

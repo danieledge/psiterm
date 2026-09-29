@@ -18,7 +18,8 @@ enum TPwCommands
 	EPwCmdBrowserSettings,
 	EPwCmdPageInfo,
 	EPwCmdRestart,
-	EPwCmdAbout
+	EPwCmdAbout,
+	EPwCmdUpdate
 	};
 
 enum TPwDialogControls
