@@ -895,7 +895,13 @@ static int run_update(void)
 
 	sprintf(msg, "Checking %s://%s%s ...\r\n", scheme, s->host, s->path);
 	pg_out_write(msg, strlen(msg));
-	if (fetch_small("version.txt", remote, sizeof(remote), why, sizeof(why)) < 0) goto fail;
+	/* GitHub's CDN caches each file for up to 5 minutes, independently, so
+	   right after a release version.txt, the .sig and the .sis can disagree.
+	   A query string makes it fetch a fresh copy: a changing one for
+	   version.txt, the version for the rest. (Not for a local server.) */
+	if (g_tls) sprintf(path, "version.txt?t=%lu", (unsigned long)time(NULL));
+	else strcpy(path, "version.txt");
+	if (fetch_small(path, remote, sizeof(remote), why, sizeof(why)) < 0) goto fail;
 	for (n = 0; remote[n] && remote[n] != '\r' && remote[n] != '\n' && remote[n] != ' '; n++) ;
 	remote[n] = 0;
 	if (!n) { sprintf(why, "version.txt was empty"); goto fail; }
@@ -907,12 +913,17 @@ static int run_update(void)
 	sprintf(msg, "Version %s is available (you have %s).\r\n", remote, s->version);
 	pg_out_write(msg, strlen(msg));
 
-	if (fetch_small("PsiTerm.sis.sig", sigtxt, sizeof(sigtxt), why, sizeof(why)) < 0) {
+	if (g_tls) sprintf(path, "PsiTerm.sis.sig?v=%s", remote);
+	else strcpy(path, "PsiTerm.sis.sig");
+	if (fetch_small(path, sigtxt, sizeof(sigtxt), why, sizeof(why)) < 0) {
 		sprintf(why, "no release signature on the server (PsiTerm.sis.sig)");
 		goto fail;
 	}
 	if (parse_sig(sigtxt, sigver, sizeof(sigver), sig) != 0) { sprintf(why, "the release signature file is damaged"); goto fail; }
-	if (strcmp(sigver, remote) != 0) { sprintf(why, "signature is for %.10s, not %.10s", sigver, remote); goto fail; }
+	if (strcmp(sigver, remote) != 0) {
+		sprintf(why, "the server's copies are still updating (%.10s vs %.10s) - try again in a few minutes", sigver, remote);
+		goto fail;
+	}
 	pg_out_write("Downloading...\r\n", 16);
 
 	/* In pieces, each held in memory until complete and then written, and
@@ -927,7 +938,7 @@ static int run_update(void)
 			int k;
 			if (total >= 0 && got >= total) break;
 			if (g_tls) {
-				sprintf(path, "%sPsiTerm.sis", s->path);
+				sprintf(path, "%sPsiTerm.sis?v=%s", s->path, remote);
 				clen = http_request(path, got, chunk, why, sizeof(why));
 			} else {
 				sprintf(path, "%sPsiTerm.sis?o=%ld&n=%d", s->path, got, chunk);
