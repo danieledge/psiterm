@@ -57,6 +57,7 @@ struct TPsiSettings
 	TInt iTmuxPrefix;     // 0 = Ctrl+B, 1 = Ctrl+A
 	TInt iBell;           // 0 = beep, 1 = silent
 	TInt iStartScreen;    // 1 = start screen (host menu) when not connected
+	TInt iTmuxTabs;       // 1 = draw tmux's window list as tabs
 	};
 
 // ---------------------------------------------------------------------------
@@ -376,9 +377,14 @@ public:
 	TBool SshActive() const { return iSshActive; }
 	TBool ModemOnline() const;
 	TBool SshLoggedIn() const;
+	TBool InTmux() const { return iTabRow >= 0; }
+	void TmuxNextWindow(TBool aBack);
 	TBool HaveLoginKey() const;
 	void ShowLoginKeyL();          // the public key and how to use it
-	void StartKeyGenL();           // make the key (psissh mode 4)
+	void StartKeyGenL();
+	void ParseTmuxTabs();
+	void DrawTabs(CWindowGc& aGc) const;
+	void SelectTmuxWindow(TInt aIndex);           // make the key (psissh mode 4)
 	void InstallLoginKeyL();       // type the authorized_keys command into the session
 	static TInt PumpCallback(TAny* aSelf);
 
@@ -493,7 +499,16 @@ private:
 	TBool iSelActive;
 	TInt iSelLine0, iSelCol0, iSelLine1, iSelCol1;
 	enum { EPenNone, EPenSelect, EPenScroll, EPenMouse } iPenMode;
-	TInt iMouseMode;          // VTERM_PROP_MOUSE_*: the program wants mouse events
+	TInt iMouseMode;
+	// tmux windows as tabs (read from tmux's status line)
+	struct TTmuxTab { TInt iIndex; TBuf<20> iName; TBool iCurrent; TInt iX0; TInt iX1; };
+	enum { KMaxTabs = 12 };
+	TTmuxTab iTabs[KMaxTabs];
+	TInt iTabCount;
+	TInt iTabRow;             // the screen row tmux's status line is on; -1 = no tmux seen
+	TBool iTabsDrawn;         // PsiTerm draws its tab bar over that row
+	TBuf<200> iTabSig;        // what was parsed last, to notice changes
+	TBool iPenOnTabs;          // VTERM_PROP_MOUSE_*: the program wants mouse events
 	TInt iPenRow0, iPenCol0;
 	TBool iPenWheeled;
 	TInt iPenY0;

@@ -60,7 +60,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.46");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.47");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -350,6 +350,7 @@ void CTermView::ReleaseFont()
 void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	{
 	iSettings = aSettings;
+	iTabRow = -1;
 	CreateBackedUpWindowL(iCoeEnv->RootWin(), EGray16);
 	SetRectL(aRect);
 	EnableDragEvents();                      // pen drag selects text
@@ -1018,6 +1019,7 @@ void CTermView::Tick()
 		BeginPaint();
 		EndPaint();
 		}
+	ParseTmuxTabs();
 	if (iStatusH)
 		{
 		TBuf<120> text;
@@ -1040,8 +1042,8 @@ void CTermView::StartTick()
 		return;
 	iTick->Cancel();
 	iBlinkHidden = EFalse;
-	if (iStatusH || iSettings.iBlink)
-		iTick->Start(500000, 500000, TCallBack(TickCallback, this));
+	// always: the status line, the cursor blink and the tmux tabs
+	iTick->Start(500000, 500000, TCallBack(TickCallback, this));
 	}
 
 void CTermView::ApplyAppearanceL()
@@ -1058,6 +1060,173 @@ void CTermView::ApplyAppearanceL()
 		else if (!iSettings.iStartScreen)
 			iWelcome = EFalse;
 		}
+	}
+
+// ----- tmux windows as tabs ------------------------------------------------------
+// tmux's default status line reads "[session] 0:bash* 1:vim- 2:top  "host" 12:00".
+// When PsiTerm sees one (bottom row, or top) during an SSH session it draws the
+// window list as tabs over it: tap a tab to go to that window, Ctrl+Tab and
+// Shift+Ctrl+Tab for the next / previous one.
+
+static TBool IsTmuxFlag(TUint aCh)
+	{
+	return aCh == '*' || aCh == '-' || aCh == '#' || aCh == '!' || aCh == '~';
+	}
+
+void CTermView::ParseTmuxTabs()
+	{
+	TTmuxTab tabs[KMaxTabs];
+	TInt count = 0;
+	TInt row = -1;
+	if (SshLoggedIn() && iScreen)
+		{
+		for (TInt pass = 0; pass < 2 && row < 0; pass++)
+			{
+			TInt r = pass == 0 ? iRows - 1 : 0;
+			TBuf<200> line;
+			for (TInt c = 0; c < iCols && c < line.MaxLength(); c++)
+				{
+				VTermPos pos;
+				pos.row = r;
+				pos.col = c;
+				VTermScreenCell cell;
+				TUint ch = vterm_screen_get_cell(iScreen, pos, &cell) ? cell.chars[0] : 0;
+				line.Append((TText)(ch >= 0x20 && ch < 0x7f ? ch : (ch == 0 ? ' ' : '?')));
+				}
+			if (line.Length() < 6 || line[0] != '[')
+				continue;
+			TInt close = line.Locate(']');
+			if (close < 1 || close > 32)
+				continue;
+			TInt i = close + 1, n = 0, current = 0;
+			while (i < line.Length() && n < KMaxTabs)
+				{
+				while (i < line.Length() && line[i] == ' ')
+					i++;
+				if (i >= line.Length() || line[i] == '"')
+					break;                            // the right-hand side
+				TInt s = i;
+				while (i < line.Length() && line[i] != ' ')
+					i++;
+				// N:name + flags
+				TInt d = s, idx = 0;
+				while (d < i && line[d] >= '0' && line[d] <= '9')
+					idx = idx * 10 + (line[d++] - '0');
+				if (d == s || d >= i || line[d] != ':')
+					break;
+				TInt nameStart = d + 1, end = i;
+				TBool cur = EFalse;
+				while (end > nameStart && (IsTmuxFlag(line[end - 1])
+					|| ((line[end - 1] == 'Z' || line[end - 1] == 'M') && end - 2 >= nameStart
+						&& (IsTmuxFlag(line[end - 2]) || line[end - 2] == 'M'))))
+					{
+					if (line[end - 1] == '*')
+						cur = ETrue;
+					end--;
+					}
+				if (end <= nameStart)
+					break;
+				tabs[n].iIndex = idx;
+				tabs[n].iName.Copy(line.Mid(nameStart, end - nameStart > 20 ? 20 : end - nameStart));
+				tabs[n].iCurrent = cur;
+				tabs[n].iX0 = tabs[n].iX1 = 0;
+				if (cur)
+					current++;
+				n++;
+				}
+			if (n >= 1 && current == 1)
+				{
+				row = r;
+				count = n;
+				}
+			}
+		}
+	TBuf<200> sig;
+	sig.AppendNum(row);
+	for (TInt t = 0; t < count && sig.Length() < 170; t++)
+		{
+		sig.Append(tabs[t].iCurrent ? '*' : ' ');
+		sig.AppendNum(tabs[t].iIndex);
+		sig.Append(LeftSafe(tabs[t].iName, 8));
+		}
+	TBool drawn = iSettings.iTmuxTabs && row >= 0;
+	if (sig == iTabSig && drawn == iTabsDrawn)
+		return;
+	TInt oldRow = iTabsDrawn ? iTabRow : -1;
+	iTabSig = sig;
+	iTabRow = row;
+	iTabCount = count;
+	for (TInt t = 0; t < count; t++)
+		iTabs[t] = tabs[t];
+	iTabsDrawn = drawn;
+	if (iPaintGc || iScrollOffset > 0)
+		return;
+	if (oldRow >= 0 && oldRow != row)
+		RepaintRows(oldRow, oldRow);
+	if (drawn)
+		RepaintRows(row, row);
+	}
+
+void CTermView::DrawTabs(CWindowGc& aGc) const
+	{
+	TInt y0 = iOriginY + iTabRow * iCellH;
+	TRect bar(Rect().iTl.iX, y0, Rect().iBr.iX, y0 + iCellH);
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(Grey(11));
+	aGc.DrawRect(bar);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	TInt x = bar.iTl.iX + 2;
+	CTermView* self = CONST_CAST(CTermView*, this);
+	for (TInt i = 0; i < iTabCount; i++)
+		{
+		TBuf<28> label;
+		label.AppendNum(iTabs[i].iIndex);
+		label.Append(' ');
+		label.Append(iTabs[i].iName);
+		TInt w = iFont->TextWidthInPixels(label) + 12;
+		if (x + w > bar.iBr.iX - 2)
+			w = bar.iBr.iX - 2 - x;
+		if (w < 16)
+			break;
+		TRect t(x, y0 + 1, x + w, y0 + iCellH);
+		if (iTabs[i].iCurrent)
+			{
+			aGc.SetBrushColor(Grey(0));
+			aGc.SetPenColor(Grey(15));
+			}
+		else
+			{
+			aGc.SetBrushColor(Grey(14));
+			aGc.SetPenColor(Grey(0));
+			}
+		aGc.DrawText(label, t, iAscent - 1, CGraphicsContext::ELeft, 6);
+		self->iTabs[i].iX0 = x;
+		self->iTabs[i].iX1 = x + w;
+		x += w + 3;
+		}
+	for (TInt j = 0; j < iTabCount; j++)       // tabs that did not fit: not tappable
+		if (iTabs[j].iX1 > bar.iBr.iX || iTabs[j].iX0 >= x)
+			self->iTabs[j].iX0 = self->iTabs[j].iX1 = 0;
+	}
+
+void CTermView::SelectTmuxWindow(TInt aIndex)
+	{
+	SendCtrl(iSettings.iTmuxPrefix ? 'A' : 'B');
+	if (aIndex >= 0 && aIndex <= 9)
+		SendChar('0' + aIndex);
+	else
+		{
+		TBuf8<32> cmd;
+		cmd.Format(_L8(":select-window -t :%d\r"), aIndex);
+		SendString(cmd);
+		}
+	}
+
+void CTermView::TmuxNextWindow(TBool aBack)
+	{
+	SendCtrl(iSettings.iTmuxPrefix ? 'A' : 'B');
+	SendChar(aBack ? 'p' : 'n');
 	}
 
 // ----- welcome screen -------------------------------------------------------------
@@ -1183,6 +1352,11 @@ void CTermView::DrawCells(CWindowGc& aGc, TInt aRow0, TInt aCol0, TInt aRow1, TI
 	const TUint KRunFlags = KSbBold | KSbUnderline | KSbStrike;
 	for (TInt r = aRow0; r < aRow1; r++)
 		{
+		if (iTabsDrawn && r == iTabRow && iScrollOffset == 0)
+			{
+			DrawTabs(aGc);                // tmux's status line, drawn as tabs
+			continue;
+			}
 		TInt c = aCol0;
 		TLook look;
 		TInt byte = -1;
@@ -1825,6 +1999,12 @@ TKeyResponse CTermView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aT
 		if (iScrollOffset > 0)
 			ScrollTo(0);
 		}
+	// Ctrl+Tab / Shift+Ctrl+Tab: next / previous tmux window
+	if (code == EKeyTab && (mods & EModifierCtrl) && SshLoggedIn() && InTmux())
+		{
+		TmuxNextWindow(mods & EModifierShift);
+		return EKeyWasConsumed;
+		}
 	TInt vm = VTERM_MOD_NONE;
 	if (mods & EModifierShift) vm |= VTERM_MOD_SHIFT;
 	if (mods & EModifierCtrl) vm |= VTERM_MOD_CTRL;
@@ -1997,6 +2177,24 @@ void CTermView::HandlePointerEventL(const TPointerEvent& aEvent)
 	if (col >= iCols) col = iCols - 1;
 	TInt rowC = row < 0 ? 0 : (row >= iRows ? iRows - 1 : row);
 
+	// a tap on a tab switches to that tmux window
+	if (iTabsDrawn && row == iTabRow && iScrollOffset == 0 && aEvent.iType == TPointerEvent::EButton1Down)
+		{
+		iPenOnTabs = ETrue;
+		for (TInt i = 0; i < iTabCount; i++)
+			if (p.iX >= iTabs[i].iX0 && p.iX < iTabs[i].iX1)
+				{
+				SelectTmuxWindow(iTabs[i].iIndex);
+				break;
+				}
+		return;
+		}
+	if (iPenOnTabs)
+		{
+		if (aEvent.iType == TPointerEvent::EButton1Up)
+			iPenOnTabs = EFalse;
+		return;
+		}
 	// The program asked for the mouse (tmux "mouse on", vim, htop...): a tap
 	// is a click, a drag up or down is the scroll wheel. Shift+pen still
 	// selects text here, as in xterm.
@@ -2841,6 +3039,7 @@ void CTermView::SshProcessEnded()
 	iSshActive = EFalse;
 	iModemOnline = EFalse;              // psissh hangs up as it ends
 	iMouseMode = VTERM_PROP_MOUSE_NONE;  // whatever asked for the mouse has gone
+	ParseTmuxTabs();                     // no session: no tabs
 	iLastRx = 0;
 	iRxTail.Zero();
 	TBuf8<160> msg;
@@ -3882,6 +4081,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iTmuxPrefix = 0;
 	aSettings.iBell = 0;
 	aSettings.iStartScreen = 1;
+	aSettings.iTmuxTabs = 1;
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
@@ -3955,6 +4155,8 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 											aSettings.iBell = data[pos + 5] ? 1 : 0;
 										if (pos + 6 < data.Length())   // v10: start screen
 											aSettings.iStartScreen = data[pos + 6] ? 1 : 0;
+										if (pos + 7 < data.Length())   // v11: tmux tabs
+											aSettings.iTmuxTabs = data[pos + 7] ? 1 : 0;
 										}
 									}
 								}
@@ -4006,6 +4208,7 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append((TUint8)(aSettings.iTmuxPrefix ? 1 : 0));
 	data.Append((TUint8)(aSettings.iBell ? 1 : 0));
 	data.Append((TUint8)(aSettings.iStartScreen ? 1 : 0));
+	data.Append((TUint8)(aSettings.iTmuxTabs ? 1 : 0));
 	file.Write(data);
 	file.Close();
 	}
@@ -4167,6 +4370,9 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 	if (aMenuId == R_PT_TMUX_MENU || aMenuId == R_PT_TMUX_WIN_MENU
 		|| aMenuId == R_PT_TMUX_PANE_MENU || aMenuId == R_PT_CLAUDE_MENU)
 		{
+		if (aMenuId == R_PT_TMUX_MENU)
+			aMenuPane->SetItemButtonState(EPtCmdTmuxTabs,
+				iView->Settings().iTmuxTabs ? EEikMenuItemSymbolOn : 0);
 		if (!iView->SshLoggedIn())
 			{
 			static const TInt KTmux[] = { EPtCmdTmuxCopy, EPtCmdTmuxDetach, EPtCmdTmuxMouse };
@@ -4339,6 +4545,12 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdTmuxCopy:    SendTmux('['); break;
 	case EPtCmdTmuxRename:  SendTmux(','); break;
 	case EPtCmdTmuxDetach:  SendTmux('d'); break;
+	case EPtCmdTmuxTabs:
+		s.iTmuxTabs = !s.iTmuxTabs;
+		SaveSettings(s);
+		iView->ParseTmuxTabs();
+		iView->DrawNow();
+		break;
 	case EPtCmdTmuxMouse:
 		// tmux's command prompt: "set -g mouse" with no value flips it
 		SendTmux(':');
