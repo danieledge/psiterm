@@ -1,5 +1,12 @@
 # PsiTerm
 
+> **Alpha - pre-v1. Expect bugs!** PsiTerm is new and changing fast. It works
+> well enough for daily SSH, tmux and Claude Code on a real 5mx, but things
+> will break. Bug reports (a photo of the screen is perfect) are very welcome
+> via [GitHub issues](https://github.com/danieledge/psiterm/issues).
+
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support-FFDD00?logo=buymeacoffee&logoColor=000)](https://buymeacoffee.com/danedge)
+
 An SSH terminal for the **Psion Series 5mx** (EPOC R5, 36 MHz ARM710T).
 
 PsiTerm is a native EPOC terminal app (libvterm-based, xterm-256color) that
@@ -79,6 +86,11 @@ files.
 Settings > Update source can point PsiTerm at a local server instead
 (`server/psion-update.sh`, plain HTTP). The same server receives the Debug
 screenshots, a developer feature.
+
+## Support
+
+If PsiTerm brings your Psion back to life and you'd like to say thanks,
+you can [buy me a coffee](https://buymeacoffee.com/danedge).
 
 ## Licence
 
