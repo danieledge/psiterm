@@ -55,6 +55,7 @@ struct TPsiSettings
 	TInt iBlink;          // 1 = blinking cursor
 	TInt iStatus;         // 1 = status line at the bottom
 	TInt iTmuxPrefix;     // 0 = Ctrl+B, 1 = Ctrl+A
+	TInt iBell;           // 0 = beep, 1 = silent
 	};
 
 // ---------------------------------------------------------------------------
@@ -532,6 +533,7 @@ private:
 	void TakeScreenshotL();
 	void ShotDir(TDes& aDir);
 	TInt DeleteShots();
+	TUint iLastBell;          // tick of the last beep
 	TBuf<100> iLoginCmd;      // the connected host's command on login
 	TBuf8<64> iSshPassword;   // saved password for the next launch, then wiped
 	// auto-reconnect

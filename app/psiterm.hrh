@@ -130,6 +130,7 @@ enum TPsiTermDialogControls
 	EPtDlgCursor,
 	EPtDlgBlink,
 	EPtDlgStatus,
+	EPtDlgBell,
 	EPtDlgBold,
 	EPtDlgSnipHint
 	};

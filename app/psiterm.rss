@@ -356,7 +356,8 @@ RESOURCE DIALOG r_pt_appearance_dialog
 		DLG_LINE { type=EEikCtChoiceList; prompt="Theme"; id=EPtDlgTheme; control=CHOICELIST { array_id=r_pt_theme_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Cursor"; id=EPtDlgCursor; control=CHOICELIST { array_id=r_pt_cursor_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Blinking cursor"; id=EPtDlgBlink; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Status line"; id=EPtDlgStatus; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Status line"; id=EPtDlgStatus; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Beep on bell"; id=EPtDlgBell; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
 		};
 	}
 

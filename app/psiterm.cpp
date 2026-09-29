@@ -59,7 +59,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.38");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.39");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -784,8 +784,17 @@ int CTermView::CbSetTermProp(VTermProp aProp, VTermValue* aVal, void* aUser)
 	return 1;
 	}
 
-int CTermView::CbBell(void* /*aUser*/)
+int CTermView::CbBell(void* aUser)
 	{
+	CTermView* self = (CTermView*)aUser;
+	// only for a live SSH session (not stray modem data), only if wanted,
+	// and at most a few a second so a burst of bells is one beep
+	if (!self->iSshActive || self->iSettings.iBell)
+		return 1;
+	TUint now = User::TickCount();
+	if (now - self->iLastBell < 16)          // ticks are 1/64 s
+		return 1;
+	self->iLastBell = now;
 	CEikonEnv::Beep();
 	return 1;
 	}
@@ -3354,6 +3363,7 @@ void CAppearanceDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPtDlgCursor))->SetCurrentItem(iSettings.iCursor);
 	((CEikChoiceList*)Control(EPtDlgBlink))->SetCurrentItem(iSettings.iBlink ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgStatus))->SetCurrentItem(iSettings.iStatus ? 1 : 0);
+	((CEikChoiceList*)Control(EPtDlgBell))->SetCurrentItem(iSettings.iBell ? 0 : 1);
 	}
 
 TBool CAppearanceDialog::OkToExitL(TInt /*aButtonId*/)
@@ -3362,6 +3372,7 @@ TBool CAppearanceDialog::OkToExitL(TInt /*aButtonId*/)
 	iSettings.iCursor = ((CEikChoiceList*)Control(EPtDlgCursor))->CurrentItem();
 	iSettings.iBlink = ((CEikChoiceList*)Control(EPtDlgBlink))->CurrentItem() == 1;
 	iSettings.iStatus = ((CEikChoiceList*)Control(EPtDlgStatus))->CurrentItem() == 1;
+	iSettings.iBell = ((CEikChoiceList*)Control(EPtDlgBell))->CurrentItem() == 1 ? 0 : 1;
 	return ETrue;
 	}
 
@@ -3608,6 +3619,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iBlink = 0;
 	aSettings.iStatus = 1;
 	aSettings.iTmuxPrefix = 0;
+	aSettings.iBell = 0;
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
@@ -3677,6 +3689,8 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 										aSettings.iBlink = data[pos + 2] ? 1 : 0;
 										aSettings.iStatus = data[pos + 3] ? 1 : 0;
 										aSettings.iTmuxPrefix = data[pos + 4] ? 1 : 0;
+										if (pos + 5 < data.Length())   // v9: bell
+											aSettings.iBell = data[pos + 5] ? 1 : 0;
 										}
 									}
 								}
@@ -3726,6 +3740,7 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append((TUint8)(aSettings.iBlink ? 1 : 0));
 	data.Append((TUint8)(aSettings.iStatus ? 1 : 0));
 	data.Append((TUint8)(aSettings.iTmuxPrefix ? 1 : 0));
+	data.Append((TUint8)(aSettings.iBell ? 1 : 0));
 	file.Write(data);
 	file.Close();
 	}
