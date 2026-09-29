@@ -448,33 +448,54 @@ RESOURCE ARRAY r_pm_zones
 		};
 	}
 
-RESOURCE DIALOG r_pm_event_dialog
+
+// ----------------------------------------------------------------- writing
+
+RESOURCE HOTKEYS r_pm_compose_hotkeys
 	{
-	title="New event";
-	flags=EEikDialogFlagWait;
-	buttons=R_EIK_BUTTONS_CANCEL_OK;
-	items=
+	control=
 		{
-		DLG_LINE { type=EEikCtEdwin; prompt="What"; id=EPmDlgEvTitle;
-			control=EDWIN { width=24; maxlength=180; }; },
-		DLG_LINE { type=EEikCtDateEditor; prompt="Date"; id=EPmDlgEvDate;
-			control=DATE_EDITOR { minDate=DATE { year=1990; }; maxDate=DATE { year=2099; month=11; day=30; }; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="All day"; id=EPmDlgEvAllDay;
-			control=CHOICELIST { array_id=r_pm_yesno_array; }; },
-		DLG_LINE { type=EEikCtTimeEditor; prompt="From"; id=EPmDlgEvStart;
-			control=TIME_EDITOR { minTime=TIME {}; maxTime=TIME { hour=23; minute=59; second=59; }; flags=EEikTimeWithoutSecondsField; }; },
-		DLG_LINE { type=EEikCtTimeEditor; prompt="To"; id=EPmDlgEvEnd;
-			control=TIME_EDITOR { minTime=TIME {}; maxTime=TIME { hour=23; minute=59; second=59; }; flags=EEikTimeWithoutSecondsField; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Where"; id=EPmDlgEvLoc;
-			control=EDWIN { width=24; maxlength=110; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Alarm"; id=EPmDlgEvAlarm;
-			control=CHOICELIST { array_id=r_pm_alarm_array; }; }
+		HOTKEY { command=EPmCmdSend; key='s'; },
+		HOTKEY { command=EPmCmdSaveDraft; key='d'; },
+		HOTKEY { command=EPmCmdAttachFile; key='a'; },
+		HOTKEY { command=EPmCmdRemoveAttach; key='u'; },
+		HOTKEY { command=EEikCmdExit; key='e'; }
 		};
 	}
 
-RESOURCE ARRAY r_pm_alarm_array
+RESOURCE MENU_BAR r_pm_compose_menubar
 	{
-	items={ LBUF { txt="None"; }, LBUF { txt="When it starts"; }, LBUF { txt="5 minutes before"; },
-		LBUF { txt="15 minutes before"; }, LBUF { txt="30 minutes before"; }, LBUF { txt="1 hour before"; },
-		LBUF { txt="1 day before"; } };
+	titles=
+		{
+		MENU_TITLE { menu_pane=r_pm_compose_menu; txt="Message"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pm_compose_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdSend; txt="Send"; },
+		MENU_ITEM { command=EPmCmdSaveDraft; txt="Keep in the outbox"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdAttachFile; txt="Attach a file..."; },
+		MENU_ITEM { command=EPmCmdRemoveAttach; txt="Take off the last attachment"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdDiscard; txt="Throw away"; }
+		};
+	}
+
+RESOURCE MENU_BAR r_pm_event_menubar
+	{
+	titles=
+		{
+		MENU_TITLE { menu_pane=r_pm_event_menu; txt="Event"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pm_event_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdSend; txt="Save"; },
+		MENU_ITEM { command=EPmCmdDiscard; txt="Cancel"; }
+		};
 	}

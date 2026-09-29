@@ -114,8 +114,12 @@ lists, anniversaries, more than one calendar account.
 | In the calendar: M / N (or Ctrl+N) / Enter | month or week / new event / the event in full |
 | Tab or Left in the message list | the folder column |
 
-In the message editor: Ctrl+S sends, Ctrl+D saves to the outbox, Ctrl+A
-attaches a file, Ctrl+U removes the last attachment.
+Writing a message is a PsiMail screen too: To, Cc and Subject as lines,
+the text below. Tab (or Enter in a field) moves on; Ctrl+S sends, Ctrl+D
+keeps it in the outbox, Ctrl+A attaches a file, Ctrl+U takes the last one
+off (or tap its chip); Esc twice throws it away. A new event (N in the
+calendar) works the same way: Up/Down between the lines, Left/Right (or +
+and -) to change the date, times and alarm, Enter to save.
 
 ## How it works
 

@@ -13,6 +13,7 @@
 #include <string.h>
 #include <time.h>
 #include "pmui.h"
+#include "pmfonts.h"
 
 static unsigned char g_bits[320 * 240];
 void* ui_alloc(int n) { return malloc(n); }
@@ -130,6 +131,73 @@ int main(int argc, char** argv)
 	PmCanvas c;
 	gfx_init(&c, g_bits, 640, 240, 320);
 	if (getenv("MONO")) c.mono = 1;
+	if (!strcmp(argv[2], "splash"))
+		{
+		ui_splash(&c, "Starting the mail engine...", 27);
+		save(argv[3]);
+		return 0;
+		}
+	if (!strcmp(argv[2], "compose"))
+		{
+		/* uishot - compose OUT.pgm [FOCUS] [ATTACH] */
+		int focus = argc > 4 ? atoi(argv[4]) : 3;
+		PmComposeLayout l;
+		int natt = argc > 5 ? 2 : 0;
+		ui_compose_layout(640, 240, natt, &l);
+		static PmEditor to, cc, subj, body;
+		ed_init(&to, 1, 500, &KFontR12, l.fieldW, 18);
+		ed_init(&cc, 1, 500, &KFontR12, l.fieldW, 18);
+		ed_init(&subj, 1, 200, &KFontS12, l.fieldW, 18);
+		ed_init(&body, 0, 64000, &KFontR13, l.bodyW, l.lineH);
+		const char* t = "Bob Smith <bob@example.org>";
+		ed_set(&to, t, strlen(t));
+		t = "Re: Tomorrow";
+		ed_set(&subj, t, strlen(t));
+		t = "Hi Bob,\n\nSeven is perfect - I'll bring the Psion so you can see the new mail program. "
+			"It does calendars now too, straight into the Agenda.\n\nDan\n\n"
+			"On Tue, Bob Smith wrote:\n> Sounds good, see you at 7.\n> Bob";
+		ed_set(&body, t, strlen(t));
+		body.cur = 142;
+		PmUiAttachment att[2] = { { "report.pdf", 10, "11 KB", 5 }, { "notes.txt", 9, "2 KB", 4 } };
+		PmUiCompose k;
+		memset(&k, 0, sizeof(k));
+		k.title = "Reply"; k.tlen = 5;
+		k.field[0] = &to; k.field[1] = &cc; k.field[2] = &subj; k.body = &body;
+		k.focus = focus;
+		k.att = att; k.natt = natt;
+		if (getenv("STATUS")) { k.status = getenv("STATUS"); k.statlen = strlen(k.status); }
+		ui_compose(&c, &k);
+		if (getenv("TOAST")) ui_toast(&c, getenv("TOAST"), strlen(getenv("TOAST")));
+		save(argv[3]);
+		return 0;
+		}
+	if (!strcmp(argv[2], "newevent"))
+		{
+		/* uishot - newevent OUT.pgm [FOCUS] [ALLDAY] */
+		int tx, tw, wx, ww;
+		ui_event_edit_layout(640, &tx, &tw, &wx, &ww);
+		static PmEditor title, where;
+		ed_init(&title, 1, 180, &KFontS20, tw, 28);
+		ed_init(&where, 1, 110, &KFontR13, ww, 20);
+		const char* t = "Psion users meetup";
+		ed_set(&title, t, strlen(t));
+		title.cur = title.len;
+		t = "The Jerusalem Tavern";
+		if (!getenv("EMPTY")) ed_set(&where, t, strlen(t));
+		else { title.len = 0; title.cur = 0; }
+		PmUiEventEdit k;
+		memset(&k, 0, sizeof(k));
+		k.title = &title; k.where = &where;
+		k.date = "Thursday 1 October 2026"; k.dlen = 23;
+		k.allday = argc > 5;
+		k.from = "19:30"; k.fromLen = 5; k.to = "22:00"; k.toLen = 5;
+		k.alarm = "30 minutes before"; k.alen = 17;
+		k.cal = "To the Agenda, then Work"; k.clen = 24;
+		k.focus = argc > 4 ? atoi(argv[4]) : 0;
+		ui_event_edit(&c, &k);
+		save(argv[3]);
+		return 0;
+		}
 	if (!strcmp(argv[2], "welcome"))
 		{
 		const char* a = "Set up your mail with Tools > New account (Ctrl+K).";

@@ -105,13 +105,16 @@ private:
 class CPmView : public CCoeControl, public MPmCalObserver
 	{
 public:
-	enum TMode { EList, EMessage, EOutbox, ENoAccount, ECalendar, ECalEvent };
+	enum TMode { EList, EMessage, EOutbox, ENoAccount, ECalendar, ECalEvent, ECompose, EEventEdit };
 	~CPmView();
 	void ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSettings& aCal);
 	void CalendarSyncL();                    // ask the engine, then update the Agenda
 	void ShowCalendarL();                    // the calendar screen
 	void ToggleMonthL();
 	void NewEventL();                        // straight into the Agenda (then synced)
+	void ComposeL(CPmDraft* aDraft, const TDesC& aTitle);   // takes the draft
+	TBool ModalCommandL(TInt aCommand);      // compose / new event: their menus
+	TBool InScreenOfItsOwn() const { return iMode == ECompose || iMode == EEventEdit; }
 	TBool CalendarBusy() const { return iCalPending || (iCalSync && iCalSync->Running()); }
 	void StoreDirectory(TDes& aDir) const { StoreDir(aDir); }
 	// MPmCalObserver
@@ -206,6 +209,25 @@ private:
 	void RenderEvent();
 	void FillCalendar(PmUiCalendar& k);
 	TKeyResponse CalendarKeyL(TUint aCode);
+	// writing (pmwrite.cpp)
+	void UseMenus(TBool aOwn, TInt aMenuBar, TInt aHotKeys);
+	void ComposeAttachmentsL();
+	void ComposeCollect();
+	void EndComposeL(TInt aHow);
+	void ComposeAttachL();
+	void ComposeRemoveAttachL(TInt aIndex);
+	void FillCompose(PmUiCompose& k);
+	void RenderCompose();
+	TKeyResponse ComposeKeyL(TUint aCode, TUint aMods);
+	void ComposePointerL(const TPoint& aPoint);
+	void EventEditTexts();
+	void FillEventEdit(PmUiEventEdit& k);
+	void RenderEventEdit();
+	void EndEventEditL(TBool aSave);
+	TInt EventNextField(TInt aDir);
+	void EventStep(TInt aDir);
+	TKeyResponse EventEditKeyL(TUint aCode, TUint aMods);
+	void EventEditPointerL(const TPoint& aPoint);
 	TKeyResponse EventKeyL(TUint aCode);
 	void CalendarPointerL(const TPoint& aPoint);
 private:
@@ -267,6 +289,7 @@ private:
 	// the calendar screen
 	PmCalModel iCalModel;
 	TBool iCalLoaded;
+	TBool iSplashDone;               // the start-up screen has gone
 	TInt iCalToday;                  // days since 1970
 	TInt iCalNow;                    // minutes since midnight
 	TInt iCalDay;                    // the day shown
@@ -276,6 +299,23 @@ private:
 	PmUiEvent iCalEvents[40];
 	PmCalText iCalText;
 	PmCalText iCalText2;
+	// writing
+	CPmDraft* iDraft;
+	PmEditor iEd[6];                 // To, Cc, Subject, text; event name, place
+	TBool iEdOpen, iEvOpen;
+	TInt iCmpFocus;
+	TBool iCmpChanged, iCmpDiscard;
+	TMode iCmpReturn;
+	TBuf<30> iCmpTitle;
+	CDesCArrayFlat* iCmpNames;
+	CDesCArrayFlat* iCmpSizes;
+	PmUiAttachment iCmpAtt[8];
+	TInt iEvDay, iEvFrom, iEvTo, iEvAlarm, iEvFocus;
+	TBool iEvAllDay;
+	TBuf<48> iEvDate;
+	TBuf<8> iEvFromText, iEvToText;
+	TBuf<30> iEvAlarmText;
+	TBuf<80> iEvCal;
 	PmUiRow iUiRows[12];
 	TBuf<16> iDates[12];
 	PmUiAttachment iUiAtt[8];
@@ -369,28 +409,6 @@ private:
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
 	TPmSettings& iSettings;
-	};
-
-// a new Agenda entry
-struct TPmNewEvent
-	{
-	TBuf<180> iTitle;
-	TBuf<110> iLocation;
-	TTime iDate, iStart, iEnd;
-	TInt iAllDay;
-	TInt iAlarm;                     // choice index
-	};
-
-class CPmEventDialog : public CEikDialog
-	{
-public:
-	CPmEventDialog(TPmNewEvent& aEvent) : iEv(aEvent) {}
-private:
-	void PreLayoutDynInitL();
-	void HandleControlStateChangeL(TInt aControlId);
-	TBool OkToExitL(TInt aButtonId);
-	void Dim();
-	TPmNewEvent& iEv;
 	};
 
 class CPmCalDialog : public CEikDialog

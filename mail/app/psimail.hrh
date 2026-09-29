@@ -40,7 +40,12 @@ enum TPmCommands
 	EPmCmdCalSettings,
 	EPmCmdShowCalendar,
 	EPmCmdNewEvent,
-	EPmCmdMonth
+	EPmCmdMonth,
+	EPmCmdSend,
+	EPmCmdSaveDraft,
+	EPmCmdAttachFile,
+	EPmCmdRemoveAttach,
+	EPmCmdDiscard
 	};
 
 enum TPmDialogControls

@@ -182,6 +182,11 @@ CPmView::~CPmView()
 	delete iAttNames;
 	delete iAttSizes;
 	delete iAttParts;
+	delete iCmpNames;
+	delete iCmpSizes;
+	delete iDraft;
+	if (iEdOpen) for (TInt i = 0; i < 4; i++) ed_free(&iEd[i]);
+	if (iEvOpen) { ed_free(&iEd[4]); ed_free(&iEd[5]); }
 	delete iBitmap;
 	User::Free(iBits);
 	if (iChunkOpen)
@@ -206,6 +211,8 @@ void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSetti
 	iAttNames = new(ELeave) CDesCArrayFlat(4);
 	iAttSizes = new(ELeave) CDesCArrayFlat(4);
 	iAttParts = new(ELeave) CDesC8ArrayFlat(4);
+	iCmpNames = new(ELeave) CDesCArrayFlat(4);
+	iCmpSizes = new(ELeave) CDesCArrayFlat(4);
 
 	TSize size = aRect.Size();
 	if (size.iWidth > 640) size.iWidth = 640;
@@ -1427,6 +1434,12 @@ void CPmView::TickL()
 		iStatusUntil = 0;
 		redraw = ETrue;
 		}
+	// the engine is up: from the start-up screen to the mail
+	if (!iSplashDone && s->state != PM_STATE_STARTING)
+		{
+		iSplashDone = ETrue;
+		redraw = ETrue;
+		}
 	if (redraw)
 		Render();
 	}
@@ -1830,7 +1843,13 @@ void CPmView::RenderReader()
 void CPmView::Render()
 	{
 	iCanvas.mono = iSettings->iMono;
-	switch (iMode)
+	TBool splash = !iSplashDone && iRunning && iShared && iShared->state == PM_STATE_STARTING;
+	if (splash)
+		{
+		const TDesC& t = _L("Starting the mail engine...");
+		ui_splash(&iCanvas, CStr(t), t.Length());
+		}
+	else switch (iMode)
 		{
 	case EMessage:
 		RenderReader();
@@ -1840,6 +1859,12 @@ void CPmView::Render()
 		break;
 	case ECalEvent:
 		RenderEvent();
+		break;
+	case ECompose:
+		RenderCompose();
+		break;
+	case EEventEdit:
+		RenderEventEdit();
 		break;
 	case ENoAccount:
 		{
@@ -1948,6 +1973,10 @@ TKeyResponse CPmView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 	AddEntropy(code);
 	if (aKeyEvent.iModifiers & EModifierCtrl)
 		return EKeyWasNotConsumed;         // the menu's hotkeys
+	if (iMode == ECompose)
+		return ComposeKeyL(code, aKeyEvent.iModifiers);
+	if (iMode == EEventEdit)
+		return EventEditKeyL(code, aKeyEvent.iModifiers);
 	if (code == EKeyEscape && Busy())
 		{
 		iShared->net.quit = 1;             // stop what the engine is doing
@@ -2088,6 +2117,16 @@ void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
 	if (aEvent.iType != TPointerEvent::EButton1Down)
 		return;
 	TInt index = -1;
+	if (iMode == ECompose)
+		{
+		ComposePointerL(p);
+		return;
+		}
+	if (iMode == EEventEdit)
+		{
+		EventEditPointerL(p);
+		return;
+		}
 	if (iMode == ECalendar || iMode == ECalEvent)
 		{
 		CalendarPointerL(p);
@@ -2673,53 +2712,6 @@ void CPmAppUi::EditCalendarL()
 		iView->CalendarSyncL();
 	}
 
-// ----- a new event
-
-void CPmEventDialog::PreLayoutDynInitL()
-	{
-	SetEdwinTextL(EPmDlgEvTitle, &iEv.iTitle);
-	SetEdwinTextL(EPmDlgEvLoc, &iEv.iLocation);
-	((CEikDateEditor*)Control(EPmDlgEvDate))->SetDate(iEv.iDate);
-	((CEikTimeEditor*)Control(EPmDlgEvStart))->SetTime(iEv.iStart);
-	((CEikTimeEditor*)Control(EPmDlgEvEnd))->SetTime(iEv.iEnd);
-	SetChoiceListCurrentItem(EPmDlgEvAllDay, iEv.iAllDay ? 1 : 0);
-	SetChoiceListCurrentItem(EPmDlgEvAlarm, iEv.iAlarm);
-	Dim();
-	}
-
-// no times for an all-day event
-void CPmEventDialog::Dim()
-	{
-	TBool allday = ChoiceListCurrentItem(EPmDlgEvAllDay) == 1;
-	SetLineDimmedNow(EPmDlgEvStart, allday);
-	SetLineDimmedNow(EPmDlgEvEnd, allday);
-	}
-
-void CPmEventDialog::HandleControlStateChangeL(TInt aControlId)
-	{
-	if (aControlId == EPmDlgEvAllDay)
-		Dim();
-	}
-
-TBool CPmEventDialog::OkToExitL(TInt /*aButtonId*/)
-	{
-	GetEdwinText(iEv.iTitle, EPmDlgEvTitle);
-	iEv.iTitle.Trim();
-	if (iEv.iTitle.Length() == 0)
-		{
-		iEikonEnv->InfoMsg(_L("Say what the event is"));
-		return EFalse;
-		}
-	GetEdwinText(iEv.iLocation, EPmDlgEvLoc);
-	iEv.iLocation.Trim();
-	iEv.iDate = ((CEikDateEditor*)Control(EPmDlgEvDate))->Date();
-	iEv.iStart = ((CEikTimeEditor*)Control(EPmDlgEvStart))->Time();
-	iEv.iEnd = ((CEikTimeEditor*)Control(EPmDlgEvEnd))->Time();
-	iEv.iAllDay = ChoiceListCurrentItem(EPmDlgEvAllDay);
-	iEv.iAlarm = ChoiceListCurrentItem(EPmDlgEvAlarm);
-	return ETrue;
-	}
-
 CPmCalDialog::~CPmCalDialog()
 	{
 	delete iIds;
@@ -2879,12 +2871,8 @@ void CPmAppUi::AddSignature(CPmDraft& /*aDraft*/, TDes& aBody)
 
 void CPmAppUi::ComposeL(CPmDraft* aDraft, const TDesC& aTitle)
 	{
-	CleanupStack::PushL(aDraft);
-	CPmComposeDialog* dlg = new(ELeave) CPmComposeDialog(*aDraft, aTitle);
-	TInt r = dlg->ExecuteLD(R_PM_COMPOSE_DIALOG);
-	if (r == EPmBidSend || r == EPmBidSave)
-		iView->SaveDraftL(*aDraft, r == EPmBidSend);
-	CleanupStack::PopAndDestroy();
+	// a screen of PsiMail's own (pmwrite.cpp): it takes the draft
+	iView->ComposeL(aDraft, aTitle);
 	}
 
 void CPmAppUi::NewMessageL()
@@ -3253,6 +3241,8 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 
 void CPmAppUi::HandleCommandL(TInt aCommand)
 	{
+	if (iView->ModalCommandL(aCommand))
+		return;
 	CPmView::TMode m = iView->Mode();
 	if (m == CPmView::ENoAccount && aCommand == EPmCmdEditAccount)
 		aCommand = EPmCmdNewAccount;

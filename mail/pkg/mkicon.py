@@ -8,22 +8,26 @@ from aif import write_aif
 K, D, L, W = 0, 85, 170, 255
 
 def icon(n):
-    im = Image.new("L", (n, n), W)
-    mk = Image.new("1", (n, n), 1)
-    d, m = ImageDraw.Draw(im), ImageDraw.Draw(mk)
-    s = n / 48.0
+    """PsiMail's look: a dark rounded square with a white envelope, drawn
+    4x larger and scaled down so the edges come out in the greys between."""
+    S = 4
+    N = n * S
+    s = N / 48.0
     R = lambda v: int(round(v * s))
-    t = max(1, R(2.5))
-    x0, y0, x1, y1 = R(3), R(10), n - 1 - R(3), n - 1 - R(10)
-    d.rectangle([x0, y0, x1, y1], fill=W, outline=K)
-    m.rectangle([x0, y0, x1, y1], fill=0)
-    for k in range(1, t):
-        d.rectangle([x0 + k, y0 + k, x1 - k, y1 - k], outline=K)
-    cx, cy = n // 2, y0 + (y1 - y0) * 3 // 5
-    d.polygon([(x0 + t, y0 + t), (x1 - t, y0 + t), (cx, cy)], fill=L)
-    d.line([(x0, y0), (cx, cy), (x1, y0)], fill=K, width=t)
-    d.line([(x0, y1), (cx - R(6), cy - R(4))], fill=D, width=max(1, t - 1))
-    d.line([(x1, y1), (cx + R(6), cy - R(4))], fill=D, width=max(1, t - 1))
+    big = Image.new("L", (N, N), W)
+    d = ImageDraw.Draw(big)
+    d.rounded_rectangle([R(2), R(2), N - 1 - R(2), N - 1 - R(2)], radius=R(11), fill=K)
+    # the envelope
+    x0, y0, x1, y1 = R(10), R(15), N - 1 - R(10), N - 1 - R(15)
+    d.rounded_rectangle([x0, y0, x1, y1], radius=R(2.5), fill=W)
+    cx, cy = N // 2, y0 + (y1 - y0) * 11 // 20
+    d.line([(x0 + R(1), y0 + R(1)), (cx, cy), (x1 - R(1), y0 + R(1))], fill=D, width=max(S, R(2.5)))
+    im = big.resize((n, n), Image.LANCZOS)
+    # 4 greys, as the Psion shows icons
+    im = im.point(lambda v: min((K, D, L, W), key=lambda g: abs(g - v)))
+    mk = Image.new("L", (N, N), 255)
+    ImageDraw.Draw(mk).rounded_rectangle([R(2), R(2), N - 1 - R(2), N - 1 - R(2)], radius=R(11), fill=0)
+    mk = mk.resize((n, n), Image.LANCZOS).point(lambda v: 0 if v < 160 else 255).convert("1")
     return im, mk
 
 if __name__ == "__main__":

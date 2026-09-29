@@ -451,3 +451,10 @@ void calm_month(const PmCalModel* m, long today, long sel, PmUiCalendar* k)
 		}
 	k->mSel = (int)(sel - start);
 	}
+
+int calm_date_text(long day, char* out, int max)
+	{
+	Str o = { out, 0, max };
+	day_title(o, day, 1);
+	return o.n;
+	}

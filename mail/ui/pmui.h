@@ -80,10 +80,11 @@ void ui_mailbox(PmCanvas* c, const PmUiMailbox* m);
 enum { EHitNone, EHitFolder, EHitRow, EHitRefresh, EHitNew, EHitSearch, EHitBack, EHitReply,
        EHitReplyAll, EHitForward, EHitDelete, EHitArchive, EHitFlag, EHitLink, EHitAttach,
        EHitWeb, EHitCalendar, EHitTop, EHitBottom, EHitDay, EHitPrev, EHitNext, EHitToday,
-       EHitSync, EHitMonth, EHitAdd };
+       EHitSync, EHitMonth, EHitAdd, EHitSend, EHitSave, EHitField, EHitBody, EHitCancel };
 int  ui_mailbox_hit(int aW, int aH, const PmUiMailbox* m, int x, int y, int* aIndex);
 /* the folder column alone (also beside the calendar) */
 void ui_sidebar(PmCanvas* c, const PmUiMailbox* m);
+
 
 /* ---- the calendar (pmcalui.cpp): a week strip and the chosen day's events */
 
@@ -195,6 +196,7 @@ void calm_view(const PmCalModel* m, long today, int now, long sel, PmUiCalendar*
 void calm_event_view(const PmUiEvent* e, long day, PmUiEventView* v, PmCalText* t);
 /* the month around day 'sel' (after calm_view) */
 void calm_month(const PmCalModel* m, long today, long sel, PmUiCalendar* k);
+int  calm_date_text(long day, char* out, int max);   /* "Thursday 1 October 2026" */
 
 
 
@@ -265,5 +267,73 @@ void ui_welcome(PmCanvas* c, const char* line1, int l1, const char* line2, int l
 
 /* ---- a small dark message box at the bottom (e.g. "Moved to the Trash") */
 void ui_toast(PmCanvas* c, const char* s, int n);
+
+/* ---- a text editor in PsiMail's type (pmedit.cpp) */
+struct PmEditor
+	{
+	char* text; int len, cap, max;
+	int cur;                           /* the caret */
+	int single;                        /* one line (scrolls sideways) */
+	const PmFont* font; int width, lineH;
+	int* lines; int nlines, lcap;      /* where the wrapped lines start */
+	int top;                           /* first line shown (single: x scroll) */
+	int wantX;                         /* up/down keep to this x */
+	};
+enum { EdLeft = 1, EdRight, EdUp, EdDown, EdHome, EdEnd, EdPgUp, EdPgDn, EdBack, EdDel, EdEnter, EdDocStart, EdDocEnd };
+void ed_init(PmEditor* e, int single, int max, const PmFont* f, int width, int lineH);
+void ed_free(PmEditor* e);
+int  ed_set(PmEditor* e, const char* s, int n);
+void ed_layout(PmEditor* e, int width);
+int  ed_char(PmEditor* e, int ch);
+int  ed_insert(PmEditor* e, const char* s, int n);
+int  ed_key(PmEditor* e, int key, int page);  /* 1 if it did something */
+int  ed_on_first_line(const PmEditor* e);
+int  ed_on_last_line(const PmEditor* e);
+int  ed_line_of(const PmEditor* e, int pos);
+void ed_draw(PmCanvas* c, PmEditor* e, int x, int y, int h, int grey, int focus);
+void ed_click(PmEditor* e, int x, int y);
+int  ed_height(const PmEditor* e);
+
+/* ---- writing a message (pmcompose.cpp) */
+struct PmUiCompose
+	{
+	const char* title; int tlen;       /* "New message", "Reply" ... */
+	const char* from; int flen;        /* the account */
+	PmEditor* field[3];                /* To, Cc, Subject */
+	PmEditor* body;
+	int focus;                         /* 0..2 a field, 3 the text */
+	const PmUiAttachment* att; int natt;
+	const char* status; int statlen;
+	int busy;
+	};
+/* where the editors go, for this screen size */
+struct PmComposeLayout { int fieldX, fieldW, bodyX, bodyW, bodyTop, bodyH, lineH; };
+void ui_compose_layout(int w, int h, int natt, PmComposeLayout* l);
+void ui_compose(PmCanvas* c, const PmUiCompose* k);
+/* index: the field (EHitField), or x|y<<16 inside the text (EHitBody), or the attachment (EHitAttach) */
+int  ui_compose_hit(int aW, int aH, const PmUiCompose* k, int x, int y, int* aIndex);
+
+/* ---- a new event (pmcompose.cpp) */
+enum { EvTitle, EvDate, EvAllDay, EvFrom, EvTo, EvWhere, EvAlarm, EvCount };
+struct PmUiEventEdit
+	{
+	PmEditor* title;
+	PmEditor* where;
+	const char* date; int dlen;
+	int allday;
+	const char* from; int fromLen;
+	const char* to; int toLen;
+	const char* alarm; int alen;
+	const char* cal; int clen;         /* "Added to the Agenda, then Work" */
+	int focus;                         /* Ev* */
+	const char* status; int statlen;
+	};
+void ui_event_edit_layout(int w, int* titleX, int* titleW, int* whereX, int* whereW);
+void ui_event_edit(PmCanvas* c, const PmUiEventEdit* k);
+/* EHitField (index Ev*), EHitPrev/EHitNext (index Ev*), EHitSave, EHitCancel */
+int  ui_event_edit_hit(int aW, int aH, const PmUiEventEdit* k, int x, int y, int* aIndex);
+
+/* ---- starting up */
+void ui_splash(PmCanvas* c, const char* s, int n);
 
 #endif
