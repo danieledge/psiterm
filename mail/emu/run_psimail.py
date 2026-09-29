@@ -69,7 +69,8 @@ files, next_fd = {}, [10]
 mem = {"in_use": 0, "peak": 0, "arena": 0, "n": 0}
 RES = ["OK", "FAILED", "OFFLINE", "CANCELLED", "UNTRUSTED", "NEED_PASS", "LOGIN_FAILED"]
 OPS = {"folders": 1, "sync": 2, "older": 3, "body": 4, "full": 5, "attach": 6, "flag": 7, "move": 8,
-       "search": 9, "send": 10, "sendrecv": 11, "hangup": 12, "trust": 13, "trustlast": 13, "expunge": 14}
+       "search": 9, "send": 10, "sendrecv": 11, "hangup": 12, "trust": 13, "trustlast": 13, "expunge": 14,
+       "cal": 15, "calendars": 15}
 cmds, cur = [], []
 for w in WORDS + [","]:
     if w == ",":
@@ -86,6 +87,9 @@ CONFIG = {
     "imap_host": env("PM_HOST", "127.0.0.1"), "imap_port": env("PM_PORT", "993"), "imap_tls": env("PM_TLS", "1"),
     "smtp_host": env("PM_SMTP", env("PM_HOST", "127.0.0.1")), "smtp_port": env("PM_SMTP_PORT", "465"),
     "smtp_tls": env("PM_SMTP_TLS", "1"), "user": env("PM_USER", "test@example.com"), "pass": env("PM_PASS", ""),
+    "cal_host": env("PM_CAL_HOST", "caldav.fastmail.com"), "cal_port": env("PM_CAL_PORT", "443"),
+    "cal_plain": env("PM_CAL_PLAIN", "0"), "cal_path": env("PM_CAL_PATH", ""), "cal_zone": env("PM_CAL_ZONE", "1"),
+    "cal_back": env("PM_CAL_BACK", "30"), "cal_ahead": env("PM_CAL_AHEAD", "180"),
     "sync_count": env("PM_COUNT", "50"), "max_body_kb": env("PM_BODY_KB", "64"), "save_sent": env("PM_SAVE_SENT", "1"),
 }
 
@@ -183,6 +187,7 @@ def hc(op, a, b, c, d):
         if w[0] in ("search",): arg = rest[1]
         elif w[0] in ("trust",): arg, folder = rest[0], ""
         elif w[0] == "trustlast": folder = ""
+        elif w[0] in ("cal", "calendars"): folder, arg = "", ("list" if w[0] == "calendars" else "")
         else:
             uid = int(rest[1] or 0); arg = rest[2]
         log(">", " ".join(w))
@@ -218,7 +223,9 @@ def hc(op, a, b, c, d):
         n = min(b, len(net["rx"])); wr(a, bytes(net["rx"][:n])); del net["rx"][:n]; return n
     if op == 304:
         if not net["sock"]: return u32(-1)
-        net["sock"].sendall(rd(a, b)); return b
+        try: net["sock"].sendall(rd(a, b))
+        except OSError: net["closed"] = True; return u32(-1)
+        return b
     if op == 305:                                    # wait(ms, net, kbd)
         ms = s32(a)
         if not b: time.sleep(max(ms, 0) / 1000.0); return 0

@@ -89,6 +89,14 @@ int main(int argc, char **argv)
 	a->sync_count = geti("sync_count", 50);
 	a->max_body_kb = geti("max_body_kb", 64);
 	a->save_sent = geti("save_sent", 1);
+	g_sh.cal.enabled = 1;
+	gets_("cal_host", g_sh.cal.host, sizeof(g_sh.cal.host));
+	g_sh.cal.port = geti("cal_port", 443);
+	g_sh.cal.plain = geti("cal_plain", 0);
+	gets_("cal_path", g_sh.cal.path, sizeof(g_sh.cal.path));
+	g_sh.cal.zone = geti("cal_zone", 1);
+	g_sh.cal.days_back = geti("cal_back", 30);
+	g_sh.cal.days_ahead = geti("cal_ahead", 180);
 	for (;;) {
 		memset(&c, 0, sizeof(c));
 		c.op = emu_hc(HM_NEXT, (int)&c.uid, (int)c.folder, (int)c.arg, 0);

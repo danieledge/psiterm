@@ -12,6 +12,7 @@
  * PM_EMAIL PM_NAME PM_SAVE_SENT PM_COUNT PM_BODY_KB. PM_OFFLINE=1 works offline.
  */
 #include <stdio.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
@@ -93,6 +94,7 @@ int main(int argc, char **argv)
 	int i = 1, rc = 0;
 	const char *store = "/tmp/psimail-store/";
 	if (i + 1 < argc && !strcmp(argv[i], "-s")) { store = argv[i + 1]; i += 2; }
+	signal(SIGPIPE, SIG_IGN);
 	g_sh.magic = PM_MAGIC;
 	g_sh.net.magic = PSI_SHARED_MAGIC;
 	g_sh.net.net_mode = 1;
@@ -115,6 +117,14 @@ int main(int argc, char **argv)
 	a->sync_count = atoi(env("PM_COUNT", "50"));
 	a->max_body_kb = atoi(env("PM_BODY_KB", "64"));
 	a->save_sent = atoi(env("PM_SAVE_SENT", "1"));
+	g_sh.cal.enabled = 1;
+	pm_copy(g_sh.cal.host, env("PM_CAL_HOST", "caldav.fastmail.com"), sizeof(g_sh.cal.host));
+	g_sh.cal.port = atoi(env("PM_CAL_PORT", "443"));
+	g_sh.cal.plain = atoi(env("PM_CAL_PLAIN", "0"));
+	pm_copy(g_sh.cal.path, env("PM_CAL_PATH", ""), sizeof(g_sh.cal.path));
+	g_sh.cal.zone = atoi(env("PM_CAL_ZONE", "1"));
+	g_sh.cal.days_back = atoi(env("PM_CAL_BACK", "30"));
+	g_sh.cal.days_ahead = atoi(env("PM_CAL_AHEAD", "180"));
 
 	while (i < argc) {
 		PmCmd c;
@@ -138,6 +148,8 @@ int main(int argc, char **argv)
 		else if (!strcmp(op, "send")) c.op = PM_CMD_SEND;
 		else if (!strcmp(op, "sendrecv")) c.op = PM_CMD_SENDRECV;
 		else if (!strcmp(op, "expunge")) c.op = PM_CMD_EXPUNGE;
+		else if (!strcmp(op, "cal")) { c.op = PM_CMD_CALSYNC; c.folder[0] = 0; }
+		else if (!strcmp(op, "calendars")) { c.op = PM_CMD_CALSYNC; pm_copy(c.arg, "list", sizeof(c.arg)); c.folder[0] = 0; }
 		else if (!strcmp(op, "hangup")) c.op = PM_CMD_HANGUP;
 		else if (!strcmp(op, "trust")) { c.op = PM_CMD_TRUST; pm_copy(c.arg, args[0], sizeof(c.arg)); c.folder[0] = 0; }
 		else if (!strcmp(op, "trustlast")) { c.op = PM_CMD_TRUST; pm_copy(c.arg, g_sh.trust_host, sizeof(c.arg)); c.folder[0] = 0; }

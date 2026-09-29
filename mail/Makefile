@@ -8,7 +8,8 @@ O       := $(TOP)/build/mail-$(TARGET)
 LTC     := $(TOP)/ssh/db/libtomcrypt/src
 LTM     := $(TOP)/ssh/db/libtommath
 
-ENGINE  := pmmain imap imapparse smtp compose mime charset html store pmnet certcheck pmrsa
+ENGINE  := pmmain imap imapparse smtp compose mime charset html store pmnet certcheck pmrsa \
+           caldav caltz ics http xmlscan
 LTC_SRCS := stream/chacha/chacha_crypt stream/chacha/chacha_ivctr32 stream/chacha/chacha_keystream \
 	stream/chacha/chacha_setup stream/chacha/chacha_done mac/poly1305/poly1305 hashes/sha2/sha256 \
 	hashes/sha2/sha384 hashes/sha2/sha512 misc/zeromem misc/burn_stack misc/crypt/crypt_argchk misc/compare_testvector

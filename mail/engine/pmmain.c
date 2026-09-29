@@ -11,6 +11,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include "pm.h"
+#include "cal.h"
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -205,6 +206,7 @@ static int run(PmCmd *c, char *why, int whymax)
 		s->trust_fp[0] = 0;
 		return PM_RES_OK;
 	}
+	if (c->op == PM_CMD_CALSYNC) return cal_sync(!strcmp(c->arg, "list"), why, whymax);
 	if (a < 0 || a >= PM_MAX_ACCOUNTS || !s->acct[a].used) { snprintf(why, whymax, "No such account"); return PM_RES_FAILED; }
 	st_check_account(a);
 	switch (c->op) {

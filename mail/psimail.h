@@ -50,6 +50,23 @@ typedef struct
 	char signature[160];         /* added to new messages ("\n" = new line) */
 	} PmAccount;
 
+/* the calendar: CalDAV (Fastmail: caldav.fastmail.com), kept in step with
+   the Psion's Agenda by the app (engine/caldav.c has the files) */
+typedef struct
+	{
+	int enabled;
+	int acct;                    /* whose user name and password, unless below */
+	char host[64];               /* "caldav.fastmail.com" */
+	int port;                    /* 443 */
+	int plain;                   /* tests only: no TLS */
+	char path[128];              /* where to look for calendars: "" = discover */
+	char user[96];               /* "" = the account's */
+	char pass[64];               /* "" = the account's */
+	int zone;                    /* the Psion's time zone (engine/caltz.c) */
+	int days_back;               /* events from this many days ago (30) */
+	int days_ahead;              /* to this many days ahead (180) */
+	} PmCalendar;
+
 /* commands: the app fills in a PmCmd at cmd[cmd_head % PM_CMDQ], then
    increments cmd_head. The engine takes them in order. */
 enum
@@ -69,6 +86,7 @@ enum
 	PM_CMD_HANGUP,           /* close connections and free the serial port */
 	PM_CMD_TRUST,            /* arg = "host:port": accept its certificate (pin) */
 	PM_CMD_EXPUNGE,          /* folder: remove messages marked deleted */
+	PM_CMD_CALSYNC,          /* calendar: send push.txt, fetch changes (arg "list": calendars only) */
 	PM_CMD_QUIT
 	};
 
@@ -112,6 +130,7 @@ typedef struct
 	int offline;                    /* 1 = never dial: queue changes */
 	PmAccount acct[PM_MAX_ACCOUNTS];
 	volatile unsigned int acct_seq; /* app bumps after changing acct[] */
+	PmCalendar cal;
 
 	/* command queue */
 	volatile unsigned int cmd_head; /* app */
