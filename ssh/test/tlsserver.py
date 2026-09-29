@@ -12,7 +12,7 @@ class H(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def log_message(self, fmt, *a): sys.stderr.write("tls: " + (fmt % a) + "\n")
     def do_GET(self):
-        fn = os.path.join(ROOT, self.path.lstrip("/"))
+        fn = os.path.join(ROOT, self.path.split("?")[0].lstrip("/"))   # query ignored, like GitHub
         if not os.path.isfile(fn):
             self.send_response(404); self.send_header("Content-Length", "0"); self.end_headers(); return
         d = open(fn, "rb").read()

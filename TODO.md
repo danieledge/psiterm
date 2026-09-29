@@ -2,15 +2,10 @@
 
 ## Bugs
 
-- **Screen shifts off the display, then the menu no longer opens.** Seen on a
-  5mx (photo, 29 Sep 2026): the terminal text is drawn offset up and to the left
-  (first lines cut off at the top, first characters cut off at the left); after
-  that the Menu key does nothing. Screen showed Serial port info output plus two
-  lines ending "(-5)" (KErrNotSupported). Happens "sometimes"; trigger unknown.
-  Suspects: view origin/extent after a zoom or font change, a mis-sized redraw
-  after a dialog, or an invisible modal dialog (which would also block the menu).
-  Next: a screenshot (Debug > Screenshot) when it happens, and note what was done
-  just before.
+- ~~Screen shifts off the display, then the menu no longer opens.~~ Fixed in
+  0.25: the Debug/update window was bigger than the 640x240 screen, so EIKON
+  centred it partly off-screen (title and buttons hidden, modal so the menu
+  was blocked). The window is now smaller and clamped to the screen.
 
 ## Ideas
 

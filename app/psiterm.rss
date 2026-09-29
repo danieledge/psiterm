@@ -95,7 +95,7 @@ RESOURCE DIALOG r_pt_tool_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; id=EPtDlgDebugText;
-			control=EDWIN { width=62; lines=11; maxlength=8000;
+			control=EDWIN { width=40; lines=7; maxlength=8000;
 				flags=EEikEdwinReadOnly|EEikEdwinNoAutoSelection; }; }
 		};
 	}
@@ -104,8 +104,7 @@ RESOURCE DLG_BUTTONS r_pt_tool_buttons
 	{
 	buttons=
 		{
-		DLG_BUTTON { id=EPtBidStop; button=CMBUT { txt="Stop"; }; hotkey=EEikBidCancel; flags=0; },
-		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Close"; }; hotkey=EEikBidOk; flags=0; }
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Stop"; }; hotkey=EEikBidOk; flags=0; }
 		};
 	}
 
@@ -257,9 +256,11 @@ RESOURCE DIALOG r_pt_about_dialog
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAboutStatus; control=LABEL { reserve_length=48; txt="-"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout4; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Dropbear SSH (c) Matt Johnston - MIT licence"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout5; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="libvterm (c) Paul Evans - MIT licence"; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout6; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="LibTomCrypt, LibTomMath - public domain"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout6; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="LibTomCrypt, LibTomMath, TweetNaCl - public domain"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout7; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="zlib (c) Jean-loup Gailly and Mark Adler"; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout8; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Terminus font (c) Dimitar Zhekov - SIL OFL 1.1"; }; }
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout8; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Terminus font (c) Dimitar Zhekov - SIL OFL 1.1"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout9; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Updates: PsiTerm's TLS 1.3 client, Ed25519-signed releases"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout10; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="github.com/danieledge/psiterm - MIT licence"; }; }
 		};
 	}
 

@@ -3,6 +3,7 @@
 | Component | Where | Licence |
 |---|---|---|
 | [Dropbear SSH](https://github.com/mkj/dropbear) (client), incl. LibTomCrypt and LibTomMath | `ssh/db/` | MIT-style / public domain - see `ssh/db/LICENSE` |
+| [TweetNaCl](https://tweetnacl.cr.yp.to/) (X25519 and Ed25519, as modified in Dropbear) | `ssh/db/src/curve25519.c` | public domain |
 | [libvterm](https://www.leonerd.org.uk/code/libvterm/) (upstream `934bc2fb`, Psion changes in `docs/patches/libvterm-psion.diff`) | `libvterm/` | MIT - see `libvterm/LICENSE` |
 | [zlib](https://zlib.net/) | `ssh/zlib/` | zlib licence - see `ssh/zlib/LICENSE` |
 | [NetSurf](https://www.netsurf-browser.org/) and its libraries (libcss, libdom, hubbub, libparserutils, libwapcaplet, libnsfb, libnsutils, libnslog, libnsgif, libnsbmp, libnspsl), [utf8proc](https://github.com/JuliaStrings/utf8proc) - PsiWeb only | fetched by `web/netsurf.sh`, Psion changes in `web/patches/` | NetSurf GPL v2; libraries MIT-style - so `psiweb.exe` is GPL v2 |
@@ -11,3 +12,6 @@
 Dropbear is vendored from upstream commit `59870ad4` (2026-08-31) with Psion
 changes - the diff is in `docs/patches/dropbear-psion.diff` (plus the new file
 `ssh/db/src/curve25519_gf32.h`). zlib is upstream commit `767c4c94`.
+
+The TLS 1.3 client used for updates (`ssh/tls13.c`) is PsiTerm's own code
+(MIT), built on the LibTomCrypt and TweetNaCl code above.

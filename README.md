@@ -1,5 +1,17 @@
 # PsiTerm
 
+> **Alpha - pre-v1. Expect bugs!** PsiTerm is new and changing fast. It works
+> well enough for daily SSH, tmux and Claude Code on a real 5mx, but things
+> will break. Bug reports (a photo of the screen is perfect) are very welcome
+> via [GitHub issues](https://github.com/danieledge/psiterm/issues).
+
+[![Download PsiTerm.sis](https://img.shields.io/badge/Download-PsiTerm.sis-2ea44f?logo=github)](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis)
+[![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support-FFDD00?logo=buymeacoffee&logoColor=000)](https://buymeacoffee.com/danedge)
+
+**Download:** [PsiTerm.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis)
+(always the latest version - see [`dist/version.txt`](dist/version.txt)).
+Once installed, PsiTerm updates itself: Terminal > Update PsiTerm.
+
 An SSH terminal for the **Psion Series 5mx** (EPOC R5, 36 MHz ARM710T).
 
 PsiTerm is a native EPOC terminal app (libvterm-based, xterm-256color) that
@@ -32,8 +44,9 @@ modem/dial-up link and TLS 1.3 client - see [web/README.md](web/README.md)
 
 ## Install
 
-Copy `dist/PsiTerm.sis` to the Psion and open it (install to D: if you have a
-CF card). Then see `docs/FIRSTRUN.TXT` for a step-by-step first run.
+Download [`PsiTerm.sis`](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis),
+copy it to the Psion (e.g. via a CF card or PsiWin) and open it - install to D:
+if you have a CF card. Then see `docs/FIRSTRUN.TXT` for a step-by-step first run.
 
 ## Building
 
@@ -74,13 +87,22 @@ public key built into `ssh/psishim.c` before installing anything. The Psion
 does not check TLS certificates (no CA store, too slow), so the signature is
 what makes updates trustworthy, from GitHub or anywhere else.
 
-To make a release: build, then
+To make a release: build, run
 `tools/release/sign.py dist/PsiTerm.sis <version>` with the release key
-(kept outside the repository), and commit `dist/`.
+(kept outside the repository), set `dist/version.txt`, commit, and **tag the
+commit `v<version>`** and push the tag. PsiTerm reads `version.txt` from
+`main`, then fetches the signature and the .sis from the tag
+(`.../v0.31/dist/`), so GitHub's 5-minute cache can never mix old and new
+files.
 
 Settings > Update source can point PsiTerm at a local server instead
 (`server/psion-update.sh`, plain HTTP). The same server receives the Debug
 screenshots, a developer feature.
+
+## Support
+
+If PsiTerm brings your Psion back to life and you'd like to say thanks,
+you can [buy me a coffee](https://buymeacoffee.com/danedge).
 
 ## Licence
 

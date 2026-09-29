@@ -18,6 +18,9 @@
 #include <eikdll.h>
 #include <apgcli.h>
 #include <eikedwin.h>
+#include <eikcmbut.h>
+#include <eiksbfrm.h>
+#include <eikbtpan.h>
 #include "psiterm.h"
 
 #ifndef TRAP_IGNORE
@@ -55,7 +58,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.24");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.34");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -2680,6 +2683,14 @@ CAboutDialog::CAboutDialog(const TDesC& aStatus)
 	{
 	}
 
+void CAboutDialog::SetSizeAndPositionL(const TSize& aSize)
+	{
+	TSize screen = iEikonEnv->ScreenDevice()->SizeInPixels();
+	TSize size(aSize.iWidth < screen.iWidth - 8 ? aSize.iWidth : screen.iWidth - 8,
+		aSize.iHeight < screen.iHeight - 8 ? aSize.iHeight : screen.iHeight - 8);
+	SetCornerAndSizeL(EHCenterVCenter, size);
+	}
+
 void CAboutDialog::PreLayoutDynInitL()
 	{
 	TBuf<32> title(_L("PsiTerm "));
@@ -2709,11 +2720,42 @@ TBool CConnDialog::OkToExitL(TInt /*aButtonId*/)
 	return ETrue;
 	}
 
+// EIKON sizes a dialog to its contents and centres it; if that is bigger
+// than the 640x240 screen the title and buttons end up off-screen and the
+// (modal) dialog looks like a frozen, shifted terminal. Keep it on screen.
+void CToolDialog::SetSizeAndPositionL(const TSize& aSize)
+	{
+	TSize screen = iEikonEnv->ScreenDevice()->SizeInPixels();
+	TSize size(aSize.iWidth < screen.iWidth - 8 ? aSize.iWidth : screen.iWidth - 8,
+		aSize.iHeight < screen.iHeight - 8 ? aSize.iHeight : screen.iHeight - 8);
+	SetCornerAndSizeL(EHCenterVCenter, size);   // what CEikDialog does, clamped
+	}
+
+// One button: "Stop" while the job runs, "Close" afterwards (a hidden
+// second button would still take its space and push this one off centre)
+void CToolDialog::SetButtonTextL(const TDesC& aText)
+	{
+	CEikCommandButtonBase* b = ButtonPanel()->ButtonById(EEikBidOk);
+	if (b)
+		{
+		((CEikCommandButton*)b)->SetTextL(aText);
+		b->DrawNow();
+		}
+	}
+
 void CToolDialog::PreLayoutDynInitL()
 	{
 	SetTitleL(iTitle);
-	MakePanelButtonVisible(iFinished ? EPtBidStop : EEikBidOk, EFalse);
+	if (iFinished)
+		SetButtonTextL(_L("Close"));
 	RefreshL();
+	}
+
+// No scroll bar: adding one to this editor crashed PsiTerm as the window
+// opened (KERN-EXEC 3 in 0.29-0.31). The text scrolls with the arrow keys.
+void CToolDialog::PostLayoutDynInitL()
+	{
+	iLaidOut = ETrue;
 	}
 
 void CToolDialog::RefreshL()
@@ -2732,9 +2774,7 @@ void CToolDialog::FinishL()
 		return;
 	iFinished = ETrue;
 	RefreshL();
-	MakePanelButtonVisible(EPtBidStop, EFalse);
-	MakePanelButtonVisible(EEikBidOk, ETrue);
-	DrawNow();
+	SetButtonTextL(_L("Close"));
 	}
 
 TBool CToolDialog::OkToExitL(TInt /*aButtonId*/)

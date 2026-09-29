@@ -92,7 +92,8 @@ enum TPsiTermDialogControls
 	EPtDlgStartCmd,
 	EPtDlgSource,
 	EPtDlgAbout1, EPtDlgAbout2, EPtDlgAbout3, EPtDlgAbout4,
-	EPtDlgAbout5, EPtDlgAbout6, EPtDlgAbout7, EPtDlgAbout8
+	EPtDlgAbout5, EPtDlgAbout6, EPtDlgAbout7, EPtDlgAbout8,
+	EPtDlgAbout9, EPtDlgAbout10
 	};
 
 enum TPsiTermDialogButtons
