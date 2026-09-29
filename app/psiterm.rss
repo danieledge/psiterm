@@ -275,6 +275,11 @@ RESOURCE ARRAY r_pt_flow_array
 	items={ LBUF { txt="None"; }, LBUF { txt="RTS/CTS"; } };
 	}
 
+RESOURCE ARRAY r_pt_auth_array
+	{
+	items={ LBUF { txt="SSH key"; }, LBUF { txt="Password (ask)"; }, LBUF { txt="Saved password"; } };
+	}
+
 RESOURCE ARRAY r_pt_noyes_array
 	{
 	items={ LBUF { txt="No"; }, LBUF { txt="Yes"; } };
@@ -387,8 +392,8 @@ RESOURCE DIALOG r_pt_host_edit_dialog
 		DLG_LINE { type=EEikCtEdwin; prompt="Host (host:port)"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=106; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="User"; id=EPtDlgUser; control=EDWIN { width=22; maxlength=60; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Command on login"; id=EPtDlgStartCmd; control=EDWIN { width=22; maxlength=100; }; },
-		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPtDlgPassword; control=SECRETED { num_letters=32; }; },
-		DLG_LINE { type=EEikCtCheckBox; prompt="Remember password"; id=EPtDlgRemember; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Log in with"; id=EPtDlgAuth; control=CHOICELIST { array_id=r_pt_auth_array; }; },
+		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPtDlgPassword; control=SECRETED { num_letters=32; }; }
 		};
 	}
 

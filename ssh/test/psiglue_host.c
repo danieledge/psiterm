@@ -47,6 +47,7 @@ int pg_init(void)
 	g.net_mode = getenv("PSI_NET") ? 1 : 0;
 	if (getenv("PSI_CMD")) strncpy(g.command, getenv("PSI_CMD"), sizeof(g.command) - 1);
 	g.tls = getenv("PSI_TLS") ? 1 : 0;
+	g.use_key = getenv("PSI_NOKEY") ? 0 : 1;
 	if (getenv("PSI_KEYGEN")) g.mode = 4;
 	else if (getenv("PSI_UPLOAD")) {
 		g.mode = 3;

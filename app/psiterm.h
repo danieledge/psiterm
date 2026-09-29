@@ -214,6 +214,7 @@ struct THostEntry
 	TBuf<63> iPassword;   // empty = ask when connecting
 	TInt iPort;
 	TBuf<100> iCommand;   // run on login, e.g. tmux new -A -s psion (optional)
+	TInt iAuth;           // log in with: 0 = SSH key, 1 = password (ask), 2 = saved password
 	};
 
 class CHostList : public CBase
@@ -367,6 +368,7 @@ public:
 	void StartSshL();
 	void SetSshPassword(const TDesC& aPassword) { iSshPassword.Copy(aPassword); }
 	void SetLoginCommand(const TDesC& aCommand) { iLoginCmd.Copy(aCommand); }
+	void SetUseKey(TBool aUseKey) { iUseKey = aUseKey; }
 	void StartSpeedTestL();
 	void StartUpdateL();
 	void ScreenshotL();                 // after a short delay (menu gone)
@@ -563,6 +565,7 @@ private:
 	TUint iLastRx;            // tick of the last serial data outside SSH
 	TBuf8<16> iRxTail;        // end of the last serial data, for split words
 	TUint iLastBell;          // tick of the last beep
+	TBool iUseKey;            // offer the login key to this host
 	TBuf<100> iLoginCmd;      // the connected host's command on login
 	TBuf8<64> iSshPassword;   // saved password for the next launch, then wiped
 	// auto-reconnect

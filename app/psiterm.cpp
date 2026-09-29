@@ -60,7 +60,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.47");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.48");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -2494,8 +2494,9 @@ static void AppendKeyHelp(TDes8& aOut, const TDesC8& aKey)
 	aOut.Append(_L8("\r\nYour SSH login key (public half):\r\n\r\n"));
 	aOut.Append(aKey);
 	aOut.Append(_L8("\r\n\r\nTo use it with a server: connect with your password, then choose "
-		"Terminal > Install login key on server (at a shell prompt). After that "
-		"PsiTerm logs in with the key - no password needed.\r\n\r\n"
+		"Terminal > Install login key on server (at a shell prompt). That also "
+		"sets the host to \"Log in with: SSH key\" (SSH to... > Edit), so from "
+		"then on no password is needed.\r\n\r\n"
 		"The key is also saved in C:\\System\\Apps\\PsiTerm\\id_ed25519.pub. "
 		"If this Psion is lost, remove that line from the server's "
 		"~/.ssh/authorized_keys.\r\n"));
@@ -2797,6 +2798,7 @@ void CTermView::LaunchSshL(TInt aMode)
 	Mem::Copy(iShared->entropy, iEntropy, PSI_ENTROPY_SIZE);
 	iShared->entropy_len = PSI_ENTROPY_SIZE;
 	iShared->mode = aMode;
+	iShared->use_key = iUseKey ? 1 : 0;
 	iLaunchMode = aMode;
 	iShared->net_mode = (aMode != 1 && aMode != 4 && iSettings.iNetMode) ? 1 : 0;
 	if (aMode == 3)
@@ -3259,7 +3261,7 @@ void CHostList::Load()
 	TPtr8 data(buf->Des());
 	TInt r = file.Read(data);
 	file.Close();
-	if (r != KErrNone || data.Length() < 9 || data[0] != 'P' || data[1] != 'H' || (data[2] != 1 && data[2] != 2))
+	if (r != KErrNone || data.Length() < 9 || data[0] != 'P' || data[1] != 'H' || (data[2] < 1 || data[2] > 3))
 		{
 		delete buf;
 		return;
@@ -3289,6 +3291,11 @@ void CHostList::Load()
 		pw.FillZ();
 		if (fileVer >= 2 && !GetStr(data, pos, e.iCommand))
 			break;
+		// before v3 a saved password meant "use it"; otherwise the key was
+		// tried first, then the password asked for
+		e.iAuth = e.iPassword.Length() ? 2 : 0;
+		if (fileVer >= 3 && pos < data.Length())
+			e.iAuth = data[pos++] <= 2 ? data[pos - 1] : 0;
 		TRAPD(err, iEntries->AppendL(e));
 		e.iPassword.FillZ();
 		if (err != KErrNone)
@@ -3313,7 +3320,7 @@ TInt CHostList::Save()
 	TUint32 key = KeyFor(salt);
 	data.Append('P');
 	data.Append('H');
-	data.Append(2);
+	data.Append(3);
 	data.Append((TUint8)iEntries->Count());
 	data.Append((TUint8)iLast);
 	for (TInt b = 0; b < 4; b++)
@@ -3333,6 +3340,7 @@ TInt CHostList::Save()
 		data.Append(pw);
 		pw.FillZ();
 		PutStr(data, e.iCommand);
+		data.Append((TUint8)e.iAuth);
 		}
 	iFs.MkDirAll(KHostsFile);
 	RFile file;
@@ -3689,8 +3697,7 @@ void CHostEditDialog::PreLayoutDynInitL()
 	SetEdwinTextL(EPtDlgStartCmd, &iEntry.iCommand);
 	// (the secret editor holds at most CEikSecretEditor::EMaxSecEdLength = 32
 	//  characters; its limit is set in the resource - more panics EIKON 12)
-	SetCheckBoxState(EPtDlgRemember,
-		iEntry.iPassword.Length() ? CEikButtonBase::ESet : CEikButtonBase::EClear);
+	((CEikChoiceList*)Control(EPtDlgAuth))->SetCurrentItem(iEntry.iAuth >= 0 && iEntry.iAuth <= 2 ? iEntry.iAuth : 1);
 	}
 
 TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
@@ -3738,16 +3745,25 @@ TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
 	iEntry.iCommand.Trim();
 	TBuf<63> typed;
 	GetSecretEditorText(typed, EPtDlgPassword);
-	if (CheckBoxState(EPtDlgRemember) == CEikButtonBase::ESet)
+	TInt auth = ((CEikChoiceList*)Control(EPtDlgAuth))->CurrentItem();
+	if (auth == 2)
 		{
 		if (typed.Length())                 // blank keeps the saved password
 			iEntry.iPassword = typed;
+		if (iEntry.iPassword.Length() == 0)
+			{
+			typed.FillZ();
+			CEikonEnv::Static()->InfoMsg(_L("Type the password to save"));
+			TryChangeFocusToL(EPtDlgPassword);
+			return EFalse;
+			}
 		}
 	else
 		{
-		iEntry.iPassword.FillZ();
+		iEntry.iPassword.FillZ();          // the key, or ask each time
 		iEntry.iPassword.Zero();
 		}
+	iEntry.iAuth = auth;
 	typed.FillZ();
 	return ETrue;
 	}
@@ -3934,6 +3950,7 @@ void CPsiTermAppUi::ConstructL()
 		{
 		// carry over the host from PsiTerm 0.3's single "SSH to" setting
 		THostEntry e;
+		e.iAuth = 1;
 		e.iName = LeftSafe(settings.iSshHost, 24);
 		e.iHost = settings.iSshHost;
 		e.iUser = settings.iSshUser;
@@ -3993,6 +4010,7 @@ void CPsiTermAppUi::SshToL()
 			{
 			THostEntry e;
 			e.iPort = 22;
+			e.iAuth = iView->HaveLoginKey() ? 0 : 1;
 			if (!EditHostL(e))
 				return;
 			iHosts->AddL(e);
@@ -4020,6 +4038,7 @@ void CPsiTermAppUi::SshToL()
 				}
 			THostEntry e;
 			e.iPort = 22;
+			e.iAuth = iView->HaveLoginKey() ? 0 : 1;
 			e.iUser = iHosts->At(index).iUser;     // most people reuse a user name
 			if (EditHostL(e))
 				{
@@ -4240,6 +4259,7 @@ void CPsiTermAppUi::ConnectHostL(TInt aIndex)
 	SaveSettings(s);
 	iView->SetSshPassword(e.iPassword);
 	iView->SetLoginCommand(e.iCommand);
+	iView->SetUseKey(e.iAuth == 0);
 	iView->StartSshL();
 	}
 
@@ -4451,6 +4471,19 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPtCmdInstallKey:
 		iView->InstallLoginKeyL();
+		{
+		// and log in to this host with the key from now on
+		TInt i = iHosts->iLast;
+		if (i >= 0 && i < iHosts->Count() && iHosts->At(i).iHost == s.iSshHost
+			&& iHosts->At(i).iUser == s.iSshUser && iHosts->At(i).iAuth != 0)
+			{
+			iHosts->At(i).iAuth = 0;
+			iHosts->At(i).iPassword.FillZ();
+			iHosts->At(i).iPassword.Zero();
+			iHosts->Save();
+			iEikonEnv->InfoMsg(_L("This host now logs in with the key"));
+			}
+		}
 		break;
 	case EPtCmdSerialInfo:
 		if (ConfirmDisconnectL(aCommand))

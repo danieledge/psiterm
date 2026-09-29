@@ -1191,7 +1191,7 @@ int main(int argc, char **argv)
 	dargv[dargc++] = portstr;
 	dargv[dargc++] = "-K";                 /* keepalive: notice a dead link in ~30 s */
 	dargv[dargc++] = "10";
-	if (psi_have_key(pg_home(), keyfile, sizeof(keyfile))) {
+	if (s->use_key && psi_have_key(pg_home(), keyfile, sizeof(keyfile))) {
 		dargv[dargc++] = "-i";             /* the login key: tried before the password */
 		dargv[dargc++] = keyfile;
 	}

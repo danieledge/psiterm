@@ -1,7 +1,7 @@
-; PsiTerm 0.47 installer for Psion Series 5mx (EPOC R5)
+; PsiTerm 0.48 installer for Psion Series 5mx (EPOC R5)
 ; PsiTerm: libvterm terminal.  psissh.exe: Dropbear SSH client.
 &EN
-#{"PsiTerm"},(0x01000A77),0,47,0
+#{"PsiTerm"},(0x01000A77),0,48,0
 "psiterm.app"-"!:\System\Apps\PsiTerm\PsiTerm.app"
 "psiterm.rsc"-"!:\System\Apps\PsiTerm\PsiTerm.rsc"
 "psissh.exe"-"!:\System\Apps\PsiTerm\psissh.exe"

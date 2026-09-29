@@ -66,6 +66,7 @@ typedef struct
 	                                  dropped, 2 = could not dial/connect */
 	char command[128];             /* optional remote command, e.g. tmux new -A -s psion */
 	int tls;                       /* update over HTTPS (TLS 1.3), e.g. from GitHub (0.23) */
+	int use_key;                   /* offer the SSH login key to this host (0.48) */
 	} PsiShared;
 
 #endif

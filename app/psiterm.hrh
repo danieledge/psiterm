@@ -112,6 +112,7 @@ enum TPsiTermDialogControls
 	EPtDlgName,
 	EPtDlgPassword,
 	EPtDlgRemember,
+	EPtDlgAuth,
 	EPtDlgHostList,
 	EPtDlgAboutStatus,
 	EPtDlgDebugText,
