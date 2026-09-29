@@ -26,7 +26,14 @@ and Claude Code - on a 1999 palmtop.
 
 ## Features
 
-- SSH with saved hosts and (optionally) saved passwords
+- SSH with saved hosts and (optionally) saved passwords; a start screen to
+  connect with one key (1-9)
+- Snippets: your own commands and prompts on a menu and on Shift+Ctrl
+  hotkeys, with escapes for any key sequence (`\n`, `^C`, `\e`)
+- Claude Code keys (interrupt, rewind, switch mode, /clear, /compact...) and a
+  tmux menu (windows, splits, panes, zoom, scroll mode, detach)
+- Themes (classic, inverted, high contrast, soft), cursor styles, and a status
+  line with the connection state and clock
 - Auto-reconnect when a session drops (Psion switched off, WiFi gone), with an
   optional command on login such as `tmux new -A -s psion` to land back where
   you were

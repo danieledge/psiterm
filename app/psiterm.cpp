@@ -44,6 +44,7 @@ const TInt KZoomPixels[KZoomLevels] = { 8, 12, 14, 16, 18 };
 const TInt KDefaultZoom = 1;             // Terminus 6x12: 106 x 20
 _LIT(KIniFile, "C:\\System\\Apps\\PsiTerm\\PsiTerm.ini");
 _LIT(KHostsFile, "C:\\System\\Apps\\PsiTerm\\Hosts.dat");
+_LIT(KSnippetsFile, "C:\\System\\Apps\\PsiTerm\\Snippets.dat");
 _LIT8(KHangupEscape, "+++");
 _LIT8(KHangupCommand, "ATH\r");
 
@@ -58,7 +59,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.34");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.35");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -71,6 +72,13 @@ static TBps BaudFromIndex(TInt aIndex)
 	default: return EBps115200;
 		}
 	}
+
+static TPtrC LeftSafe(const TDesC& aText, TInt aMax)
+	{
+	return aText.Left(aText.Length() < aMax ? aText.Length() : aMax);
+	}
+
+_LIT(KPppSuffix, " (Psion Internet)");
 
 static TInt BaudValue(TInt aIndex)
 	{
@@ -311,6 +319,7 @@ CTermView::~CTermView()
 	delete iWatcher;
 	delete iShotTimer;
 	delete iPendingIdle;
+	delete iTick;
 	delete iReconnectTimer;
 	delete iDebugText;
 	if (iSshActive)
@@ -397,16 +406,8 @@ void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	iSerial = CSerialPort::NewL(*this);
 	ApplySerialSettings();
 
-	TPtrC8 flowName(iSettings.iRtsCts ? _L8("RTS/CTS") : _L8("no flow control"));
-	TBuf8<160> banner;
-	TPtrC version(KPsiTermVersion);
-	banner.Format(_L8("\x1b[7m PsiTerm %S \x1b[0m  %d baud, %S, %dx%d\r\n"
-		"Menu key for options.  Shift+Ctrl+S: SSH to a server.\r\n\r\n"),
-		&version,
-		BaudValue(iSettings.iBaudIndex),
-		&flowName,
-		iCols, iRows);
-	LocalMessage(banner);
+	ShowWelcome();
+	StartTick();
 	}
 
 void CTermView::ApplySerialSettings()
@@ -483,6 +484,13 @@ void CTermView::SetFontL(TInt aZoom)
 		}
 
 	TSize size = Rect().Size();
+	// the status line takes a slim strip at the bottom
+	iStatusH = 0;
+	if (iSettings.iStatus)
+		{
+		iStatusH = iEikonEnv->AnnotationFont()->HeightInPixels() + 4;
+		size.iHeight -= iStatusH;
+		}
 	iCols = size.iWidth / iCellW;
 	iRows = size.iHeight / iCellH;
 	if (iCols > 160) iCols = 160;
@@ -862,11 +870,215 @@ void CTermView::Draw(const TRect& /*aRect*/) const
 	gc.UseFont(iFont);
 	gc.SetPenStyle(CGraphicsContext::ENullPen);
 	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	gc.SetBrushColor(TRgb::Gray16(15));
+	gc.SetBrushColor(Grey(15));
 	gc.DrawRect(Rect());
 	CONST_CAST(CTermView*, this)->iDamaged = EFalse;
 	DrawAll(gc);
 	DrawCursor(gc);
+	DrawStatus(gc);
+	gc.UseFont(iFont);
+	}
+
+// ----- status line --------------------------------------------------------------
+// Connection state on the left, the time on the right. aSplit = where the
+// right-hand part starts in aText.
+void CTermView::StatusText(TDes& aText, TInt& aSplit) const
+	{
+	aText.Zero();
+	TBuf<40> host;
+	host.Copy(LeftSafe(iSettings.iSshHost, 30));
+	if (iReconnectWait)
+		{
+		TTime now;
+		now.HomeTime();
+		TTimeIntervalSeconds left(0);
+		if (iReconnectAt.SecondsFrom(now, left) != KErrNone || left.Int() < 0)
+			left = 0;
+		aText.Format(_L("Connection lost - reconnecting in %ds   Enter: now  Esc: stop"), left.Int());
+		}
+	else if (iSshActive)
+		{
+		TInt state = iShared ? iShared->state : PSI_STATE_STARTING;
+		if (iLaunchMode == 1) aText.Append(_L("Running the speed test..."));
+		else if (iLaunchMode == 2) aText.Append(_L("Updating PsiTerm..."));
+		else if (iLaunchMode == 3) aText.Append(_L("Sending screenshots..."));
+		else if (state == PSI_STATE_DIALING) aText.Format(_L("Connecting to %S..."), &host);
+		else if (state == PSI_STATE_KEYEX) aText.Format(_L("Securing the connection to %S..."), &host);
+		else if (state == PSI_STATE_CONNECTED)
+			{
+			TBuf<24> user;
+			user.Copy(LeftSafe(iSettings.iSshUser, 20));
+			aText.Format(_L("\x95 %S@%S   SSH"), &user, &host);
+			}
+		else aText.Append(_L("Starting SSH..."));
+		}
+	else
+		aText.Format(_L("Not connected   %d baud%S"), BaudValue(iSettings.iBaudIndex),
+			iSettings.iNetMode ? &KPppSuffix : &KNullDesC);
+	aSplit = aText.Length();
+	TTime now;
+	now.HomeTime();
+	TDateTime t = now.DateTime();
+	aText.AppendFormat(_L("%02d:%02d"), t.Hour(), t.Minute());
+	}
+
+void CTermView::DrawStatus(CWindowGc& aGc) const
+	{
+	if (!iStatusH)
+		return;
+	TBuf<120> text;
+	TInt split;
+	StatusText(text, split);
+	CONST_CAST(CTermView*, this)->iStatusDrawn = text;
+	const CFont* font = iEikonEnv->AnnotationFont();
+	TRect bar(Rect().iTl.iX, Rect().iBr.iY - iStatusH, Rect().iBr.iX, Rect().iBr.iY);
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(Grey(4));
+	aGc.DrawRect(bar);
+	aGc.UseFont(font);
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.SetPenColor(Grey(15));
+	TInt y = bar.iTl.iY + 2 + font->AscentInPixels();
+	TPtrC left(text.Left(split));
+	TPtrC right(text.Mid(split));
+	aGc.DrawText(left, TPoint(bar.iTl.iX + 6, y));
+	aGc.DrawText(right, TPoint(bar.iBr.iX - 6 - font->TextWidthInPixels(right), y));
+	aGc.DiscardFont();
+	}
+
+// Every 0.5 s: blink the cursor, and refresh the status line if it changed
+TInt CTermView::TickCallback(TAny* aSelf)
+	{
+	((CTermView*)aSelf)->Tick();
+	return 1;
+	}
+
+void CTermView::Tick()
+	{
+	if (!IsActivated() || iPaintGc || iCapture)
+		return;
+	if (iSettings.iBlink && iCurVisible && iScrollOffset == 0)
+		{
+		iBlinkHidden = !iBlinkHidden;
+		BeginPaint();                  // erases the old cursor cell, EndPaint redraws it
+		EndPaint();
+		}
+	else if (iBlinkHidden)
+		{
+		iBlinkHidden = EFalse;
+		BeginPaint();
+		EndPaint();
+		}
+	if (iStatusH)
+		{
+		TBuf<120> text;
+		TInt split;
+		StatusText(text, split);
+		if (text != iStatusDrawn)
+			{
+			ActivateGc();
+			DrawStatus(SystemGc());
+			DeactivateGc();
+			}
+		}
+	}
+
+void CTermView::StartTick()
+	{
+	if (!iTick)
+		iTick = CPeriodic::New(CActive::EPriorityLow);
+	if (!iTick)
+		return;
+	iTick->Cancel();
+	iBlinkHidden = EFalse;
+	if (iStatusH || iSettings.iBlink)
+		iTick->Start(500000, 500000, TCallBack(TickCallback, this));
+	}
+
+void CTermView::ApplyAppearanceL()
+	{
+	iBlinkHidden = EFalse;
+	iCacheValid = EFalse;
+	SetFontL(iSettings.iZoom);      // lays out again (status line on/off) and redraws
+	StartTick();
+	}
+
+// ----- welcome screen -------------------------------------------------------------
+// Written into the terminal as text, so it scrolls away like anything else.
+// While it is showing, 1-9 connect to the saved hosts.
+static void AppendUtf8(TDes8& aOut, TUint aCh)
+	{
+	if (aCh < 0x80)
+		aOut.Append((TUint8)aCh);
+	else if (aCh < 0x800)
+		{
+		aOut.Append((TUint8)(0xC0 | (aCh >> 6)));
+		aOut.Append((TUint8)(0x80 | (aCh & 0x3F)));
+		}
+	else
+		{
+		aOut.Append((TUint8)(0xE0 | (aCh >> 12)));
+		aOut.Append((TUint8)(0x80 | ((aCh >> 6) & 0x3F)));
+		aOut.Append((TUint8)(0x80 | (aCh & 0x3F)));
+		}
+	}
+
+static void AppendText(TDes8& aOut, const TDesC& aText, TInt aWidth)
+	{
+	TInt n = 0;
+	for (TInt i = 0; i < aText.Length() && n < aWidth; i++, n++)
+		AppendUtf8(aOut, PsiCodePageToUnicode(aText[i]));
+	for (; n < aWidth; n++)
+		aOut.Append(' ');
+	}
+
+void CTermView::ShowWelcome()
+	{
+	TInt width = iCols - 4;
+	if (width > 56) width = 56;
+	HBufC8* buf = HBufC8::New(2400);
+	if (!buf)
+		return;
+	TPtr8 w = buf->Des();
+	w.Append(_L8("\r\n  \x1b[7m PsiTerm "));
+	TBuf<8> ver(KPsiTermVersion);
+	AppendText(w, ver, ver.Length());
+	w.Append(_L8(" \x1b[0m  SSH for the Psion Series 5mx\r\n  "));
+	for (TInt i = 0; i < width; i++)
+		AppendUtf8(w, 0x2500);
+	w.Append(_L8("\r\n"));
+	TInt count = iHosts ? iHosts->Count() : 0;
+	if (count == 0)
+		w.Append(_L8("  No saved servers yet: Shift+Ctrl+S to add one.\r\n"));
+	else
+		{
+		for (TInt i = 0; i < count && i < 9; i++)
+			{
+			const THostEntry& e = iHosts->At(i);
+			w.Append(_L8("   \x1b[1m"));
+			w.Append((TUint8)('1' + i));
+			w.Append(_L8("\x1b[0m  "));
+			AppendText(w, e.iName, 14);
+			w.Append(_L8(" \x1b[90m"));
+			TBuf<80> where(e.iUser);
+			where.Append('@');
+			where.Append(LeftSafe(e.iHost, 60));
+			AppendText(w, where, width - 20 > 10 ? width - 20 : 10);
+			w.Append(_L8("\x1b[0m\r\n"));
+			}
+		}
+	w.Append(_L8("  "));
+	for (TInt i = 0; i < width; i++)
+		AppendUtf8(w, 0x2500);
+	w.Append(_L8("\r\n  \x1b[90m"));
+	if (count)
+		w.Append(_L8("1-9 connect   "));
+	w.Append(_L8("Shift+Ctrl+S servers   Menu: everything else\x1b[0m\r\n\r\n"));
+	LocalMessage(w);
+	delete buf;
+	iWelcome = (count > 0);
 	}
 
 void CTermView::DrawAll(CWindowGc& aGc) const
@@ -887,11 +1099,11 @@ void CTermView::DrawScrollIndicator(CWindowGc& aGc) const
 	TRect box(TPoint(x, iOriginY), TSize(w, iCellH));
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	aGc.SetBrushColor(TRgb::Gray16(0));
+	aGc.SetBrushColor(Grey(0));
 	aGc.DrawRect(box);
 	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-	aGc.SetPenColor(TRgb::Gray16(15));
+	aGc.SetPenColor(Grey(15));
 	aGc.DrawText(text, TPoint(x, iOriginY + iAscent));
 	}
 
@@ -961,13 +1173,15 @@ void CTermView::DrawCells(CWindowGc& aGc, TInt aRow0, TInt aCol0, TInt aRow1, TI
 			TInt x1 = x0 + run.Length() * iCellW;
 			aGc.SetPenStyle(CGraphicsContext::ENullPen);
 			aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-			aGc.SetBrushColor(TRgb::Gray16(bg));
+			TInt tf, tb;
+			ThemePair(fg, bg, tf, tb);
+			aGc.SetBrushColor(TRgb::Gray16(tb));
 			aGc.DrawRect(TRect(x0, y0, x1, y0 + iCellH));
 			if (!ink && !ul && !st)
 				continue;
 			aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
 			aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-			aGc.SetPenColor(TRgb::Gray16(fg));
+			aGc.SetPenColor(TRgb::Gray16(tf));
 			if (ink)
 				{
 				TPoint base(x0, y0 + iAscent);
@@ -1158,14 +1372,16 @@ void CTermView::DrawOneCell(CWindowGc& aGc, TInt aRow, TInt aCol, const TLook& a
 		TSize(iCellW, iCellH));
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	aGc.SetBrushColor(TRgb::Gray16(bg));
+	TInt tf, tb;
+	ThemePair(fg, bg, tf, tb);
+	aGc.SetBrushColor(TRgb::Gray16(tb));
 	aGc.DrawRect(box);
 
 	TUint ch = aLook.iCh;
 	if (IsBlankChar(ch))
 		return;
 
-	TRgb fgRgb = TRgb::Gray16(fg);
+	TRgb fgRgb = TRgb::Gray16(tf);
 
 	// Box drawing: real lines
 	TInt seg = PsiBoxSegments(ch);
@@ -1229,7 +1445,7 @@ void CTermView::DrawOneCell(CWindowGc& aGc, TInt aRow, TInt aCol, const TLook& a
 				static const TUint8 KQuad[10] = { 4, 8, 1, 13, 9, 7, 11, 2, 6, 14 };
 				TInt q = KQuad[ch - 0x2596];
 				TInt mx = box.iTl.iX + iCellW / 2, my = box.iTl.iY + iCellH / 2;
-				aGc.SetBrushColor(TRgb::Gray16(level));
+				aGc.SetBrushColor(Grey(level));
 				if (q & 1) aGc.DrawRect(TRect(box.iTl.iX, box.iTl.iY, mx, my));
 				if (q & 2) aGc.DrawRect(TRect(mx, box.iTl.iY, box.iBr.iX, my));
 				if (q & 4) aGc.DrawRect(TRect(box.iTl.iX, my, mx, box.iBr.iY));
@@ -1242,7 +1458,7 @@ void CTermView::DrawOneCell(CWindowGc& aGc, TInt aRow, TInt aCol, const TLook& a
 				r.iBr.iX = box.iTl.iX + (iCellW * (TInt)(0x2590 - ch)) / 8;
 			break;                                                        // 0x2588 = full block
 			}
-		aGc.SetBrushColor(TRgb::Gray16(level));
+		aGc.SetBrushColor(Grey(level));
 		aGc.DrawRect(r);
 		return;
 		}
@@ -1292,18 +1508,52 @@ void CTermView::DrawOneCell(CWindowGc& aGc, TInt aRow, TInt aCol, const TLook& a
 			TPoint(box.iBr.iX, box.iTl.iY + iCellH / 2));
 	}
 
+// ----- themes ----------------------------------------------------------------
+// Greys are 0 (black) .. 15 (white). Themes are applied only when drawing, so
+// switching theme also re-colours the scrollback.
+TInt CTermView::Theme(TInt aGrey) const
+	{
+	if (aGrey < 0) aGrey = 0;
+	if (aGrey > 15) aGrey = 15;
+	switch (iSettings.iTheme)
+		{
+	case 1: return 15 - aGrey;                        // inverted: light on dark
+	case 2: return aGrey < 8 ? 0 : 15;                // high contrast
+	case 3: return 2 + (aGrey * 11 + 7) / 15;         // soft: 2..13
+	default: return aGrey;                            // classic
+		}
+	}
+
+// Text and background together: in high contrast the darker of the two
+// becomes black and the other white, so text can never vanish.
+void CTermView::ThemePair(TInt aFg, TInt aBg, TInt& aThemedFg, TInt& aThemedBg) const
+	{
+	if (iSettings.iTheme == 2 && aFg != aBg)
+		{
+		aThemedFg = aFg < aBg ? 0 : 15;
+		aThemedBg = aFg < aBg ? 15 : 0;
+		return;
+		}
+	aThemedFg = Theme(aFg);
+	aThemedBg = Theme(aBg);
+	}
+
 void CTermView::DrawCursor(CWindowGc& aGc) const
 	{
 	CTermView* self = CONST_CAST(CTermView*, this);
 	self->iDrawnCurRow = iCurRow;
 	self->iDrawnCurCol = iCurCol;
-	self->iDrawnCurVisible = iCurVisible;
+	self->iDrawnCurVisible = iCurVisible && !iBlinkHidden;
 	if (iScrollOffset > 0)
 		self->iDrawnCurVisible = EFalse;
-	if (!iCurVisible || iScrollOffset > 0 || iCurRow >= iRows || iCurCol >= iCols)
+	if (!iCurVisible || iBlinkHidden || iScrollOffset > 0 || iCurRow >= iRows || iCurCol >= iCols)
 		return;
 	TRect box(TPoint(iOriginX + iCurCol * iCellW, iOriginY + iCurRow * iCellH),
 		TSize(iCellW, iCellH));
+	if (iSettings.iCursor == 1)                        // underline
+		box.iTl.iY = box.iBr.iY - (iCellH >= 12 ? 2 : 1) - iCellH / 12;
+	else if (iSettings.iCursor == 2)                   // bar
+		box.iBr.iX = box.iTl.iX + 2;
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 	aGc.SetDrawMode(CGraphicsContext::EDrawModeNOTSCREEN);
@@ -1333,6 +1583,50 @@ void CTermView::SendCtrl(TUint aLetter)
 void CTermView::SendString(const TDesC8& aText)
 	{
 	WriteToHost(aText);
+	}
+
+// Sends a snippet's text: printable characters as typed (so accented letters
+// go out as UTF-8), plus the escapes \n Enter, \e Esc, \t Tab, ^X Ctrl+X,
+// \\ backslash and \^ caret. A ^ not followed by a letter or @[\]_ is sent
+// as it is (HEAD^ works).
+void CTermView::SendSnippetText(const TDesC& aText, TBool aEnter)
+	{
+	if (iSelActive)
+		ClearSelection();
+	if (iScrollOffset > 0)
+		ScrollTo(0);
+	TInt n = aText.Length();
+	for (TInt i = 0; i < n; i++)
+		{
+		TUint c = aText[i];
+		TUint next = (i + 1 < n) ? aText[i + 1] : 0;
+		if (c == '\\' && next)
+			{
+			i++;
+			switch (next)
+				{
+			case 'n': case 'r': SendKey(VTERM_KEY_ENTER, VTERM_MOD_NONE); break;
+			case 'e': SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE); break;
+			case 't': SendKey(VTERM_KEY_TAB, VTERM_MOD_NONE); break;
+			case '\\': case '^': SendChar(next); break;
+			default:                                   // not an escape: send both
+				SendChar('\\');
+				SendChar(PsiCodePageToUnicode(next));
+				break;
+				}
+			continue;
+			}
+		if (c == '^' && ((next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z') ||
+			next == '@' || next == '[' || next == '\\' || next == ']' || next == '_'))
+			{
+			SendCtrl(next);
+			i++;
+			continue;
+			}
+		SendChar(PsiCodePageToUnicode(c));
+		}
+	if (aEnter)
+		SendKey(VTERM_KEY_ENTER, VTERM_MOD_NONE);
 	}
 
 void CTermView::SerialInfo()
@@ -1426,6 +1720,32 @@ TKeyResponse CTermView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aT
 		case EKeyHome:     ScrollTo(iSb.iCount); return EKeyWasConsumed;
 		case EKeyEnd:      ScrollTo(0); return EKeyWasConsumed;
 		default: break;
+			}
+		}
+	// welcome screen: 1-9 connect to that saved host; any other key goes on
+	// as normal (e.g. AT commands to the modem) and ends the welcome
+	if (iWelcome && code != EKeyMenu)
+		{
+		iWelcome = EFalse;
+		if (!iSshActive && !(mods & (EModifierCtrl | EModifierShift)) && code >= '1' && code <= '9'
+			&& iHosts && (TInt)(code - '1') < iHosts->Count())
+			{
+			CEikonEnv::Static()->EikAppUi()->HandleCommandL(EPtCmdHost0 + (code - '1'));
+			return EKeyWasConsumed;
+			}
+		}
+	// Shift+Ctrl + a key: a snippet on that hotkey (menu shortcuts such as
+	// Shift+Ctrl+S never get here - EIKON handles those first)
+	if ((mods & EModifierCtrl) && (mods & EModifierShift) && iSnippets)
+		{
+		TInt key = aKeyEvent.iScanCode;
+		if (key >= 'a' && key <= 'z')
+			key -= 'a' - 'A';
+		TInt idx = iSnippets->FindKey(key);
+		if (idx >= 0)
+			{
+			SendSnippetText(iSnippets->At(idx).iText, iSnippets->At(idx).iEnter);
+			return EKeyWasConsumed;
 			}
 		}
 	if (code != EKeyMenu)
@@ -2240,6 +2560,8 @@ void CTermView::ScheduleReconnect()
 		return;
 	iReconnectTimer->Cancel();
 	iReconnectTimer->Start(secs * 1000000, secs * 1000000, TCallBack(ReconnectCallback, this));
+	iReconnectAt.HomeTime();
+	iReconnectAt += TTimeIntervalSeconds(secs);
 	iReconnectWait = ETrue;
 	}
 
@@ -2341,6 +2663,8 @@ void CTermView::SshProcessEnded()
 			iReconnectTries = 0;
 			iReconnectPw.FillZ();
 			iReconnectPw.Zero();
+			if (!iPendingCmd)
+				ShowWelcome();                   // back to the start screen
 			}
 		}
 	if (iPendingCmd)
@@ -2387,10 +2711,6 @@ void CSshWatcher::DoCancel()
 
 // EPOC R5's TDesC::Left(n) panics (USER 22) when n > Length(), unlike later
 // Symbian versions which clamp. Always go through this.
-static TPtrC LeftSafe(const TDesC& aText, TInt aMax)
-	{
-	return aText.Left(aText.Length() < aMax ? aText.Length() : aMax);
-	}
 
 // ===========================================================================
 // Saved hosts
@@ -2573,6 +2893,267 @@ TInt CHostList::Save()
 	return r;
 	}
 
+// ----- snippets -------------------------------------------------------------
+
+CSnippetList* CSnippetList::NewL(RFs& aFs)
+	{
+	CSnippetList* self = new(ELeave) CSnippetList(aFs);
+	CleanupStack::PushL(self);
+	self->iEntries = new(ELeave) CArrayFixFlat<TSnippet>(4);
+	CleanupStack::Pop();
+	return self;
+	}
+
+CSnippetList::~CSnippetList()
+	{
+	delete iEntries;
+	}
+
+TInt CSnippetList::FindKey(TInt aKey) const
+	{
+	if (aKey == 0)
+		return -1;
+	for (TInt i = 0; i < iEntries->Count(); i++)
+		if ((*iEntries)[i].iKey == aKey)
+			return i;
+	return -1;
+	}
+
+static void AddSnippetL(CArrayFixFlat<TSnippet>& aList, const TDesC& aName,
+	const TDesC& aText, TInt aEnter, TInt aKey)
+	{
+	TSnippet s;
+	s.iName = aName;
+	s.iText = aText;
+	s.iEnter = aEnter;
+	s.iKey = aKey;
+	aList.AppendL(s);
+	}
+
+// A few useful ones to start with; all can be edited or deleted
+void CSnippetList::AddDefaultsL()
+	{
+	AddSnippetL(*iEntries, _L("Claude Code"), _L("claude"), 1, '1');
+	AddSnippetL(*iEntries, _L("Claude: continue"), _L("claude --continue"), 1, '2');
+	AddSnippetL(*iEntries, _L("tmux: attach"), _L("tmux new -A -s psion"), 1, '3');
+	AddSnippetL(*iEntries, _L("Git status"), _L("git status"), 1, 0);
+	AddSnippetL(*iEntries, _L("Disk space"), _L("df -h"), 1, 0);
+	}
+
+// Snippets.dat: "PN" 1 count last, then per snippet:
+//   name text (length-prefixed), enter (1 byte), key (1 byte)
+void CSnippetList::Load()
+	{
+	iEntries->Reset();
+	iLast = 0;
+	RFile file;
+	if (file.Open(iFs, KSnippetsFile, EFileRead) != KErrNone)
+		{
+		TRAP_IGNORE(AddDefaultsL());
+		return;
+		}
+	HBufC8* buf = HBufC8::New(KMaxSnippets * 160 + 16);
+	if (!buf)
+		{
+		file.Close();
+		return;
+		}
+	TPtr8 data(buf->Des());
+	TInt r = file.Read(data);
+	file.Close();
+	if (r == KErrNone && data.Length() >= 5 && data[0] == 'P' && data[1] == 'N' && data[2] == 1)
+		{
+		TInt count = data[3];
+		iLast = data[4];
+		TInt pos = 5;
+		for (TInt i = 0; i < count && i < KMaxSnippets; i++)
+			{
+			TSnippet s;
+			if (!GetStr(data, pos, s.iName) || !GetStr(data, pos, s.iText) || pos + 2 > data.Length())
+				break;
+			s.iEnter = data[pos++] ? 1 : 0;
+			s.iKey = data[pos++];
+			if (SnippetKeyIndex(s.iKey) < 0)
+				s.iKey = 0;
+			TRAPD(err, iEntries->AppendL(s));
+			if (err != KErrNone)
+				break;
+			}
+		}
+	delete buf;
+	if (iLast >= iEntries->Count())
+		iLast = 0;
+	}
+
+TInt CSnippetList::Save()
+	{
+	HBufC8* buf = HBufC8::New(KMaxSnippets * 160 + 16);
+	if (!buf)
+		return KErrNoMemory;
+	TPtr8 data(buf->Des());
+	data.Append('P');
+	data.Append('N');
+	data.Append(1);
+	data.Append((TUint8)iEntries->Count());
+	data.Append((TUint8)iLast);
+	for (TInt i = 0; i < iEntries->Count(); i++)
+		{
+		const TSnippet& s = (*iEntries)[i];
+		PutStr(data, s.iName);
+		PutStr(data, s.iText);
+		data.Append((TUint8)(s.iEnter ? 1 : 0));
+		data.Append((TUint8)s.iKey);
+		}
+	iFs.MkDirAll(KSnippetsFile);
+	RFile file;
+	TInt r = file.Replace(iFs, KSnippetsFile, EFileWrite);
+	if (r == KErrNone)
+		{
+		r = file.Write(data);
+		file.Close();
+		}
+	delete buf;
+	return r;
+	}
+
+// Hotkeys: Shift+Ctrl + 1..9, 0, then the letters the menus leave free
+static const char KSnippetKeys[] = "1234567890ABDFGIJKLMNOQRUWXYZ";
+
+TInt SnippetKeyCount()
+	{
+	return (TInt)sizeof(KSnippetKeys) - 1 + 1;     // + "none"
+	}
+
+TInt SnippetKeyAt(TInt aIndex)
+	{
+	if (aIndex <= 0 || aIndex >= SnippetKeyCount())
+		return 0;
+	return KSnippetKeys[aIndex - 1];
+	}
+
+TInt SnippetKeyIndex(TInt aKey)
+	{
+	if (aKey == 0)
+		return 0;
+	for (TInt i = 1; i < SnippetKeyCount(); i++)
+		if (KSnippetKeys[i - 1] == aKey)
+			return i;
+	return -1;
+	}
+
+void SnippetKeyName(TInt aKey, TDes& aText)
+	{
+	aText.Zero();
+	if (aKey == 0)
+		{
+		aText.Append(_L("None"));
+		return;
+		}
+	aText.Append(_L("Shift+Ctrl+"));
+	aText.Append((TChar)aKey);
+	}
+
+// keeps a dialog on the 640x240 screen (EIKON centres whatever size it asks for)
+static TSize ClampToScreen(const TSize& aSize)
+	{
+	TSize screen = CEikonEnv::Static()->ScreenDevice()->SizeInPixels();
+	return TSize(aSize.iWidth < screen.iWidth - 8 ? aSize.iWidth : screen.iWidth - 8,
+		aSize.iHeight < screen.iHeight - 8 ? aSize.iHeight : screen.iHeight - 8);
+	}
+
+void CSnippetListDialog::SetSizeAndPositionL(const TSize& aSize) { SetCornerAndSizeL(EHCenterVCenter, ClampToScreen(aSize)); }
+
+void CSnippetListDialog::PreLayoutDynInitL()
+	{
+	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(4);
+	CleanupStack::PushL(names);
+	for (TInt i = 0; i < iList.Count(); i++)
+		{
+		const TSnippet& s = iList.At(i);
+		TBuf<40> line;
+		if (s.iKey)
+			{
+			line.Append((TChar)s.iKey);
+			line.Append(_L("  "));
+			}
+		else
+			line.Append(_L("    "));
+		line.Append(s.iName);
+		names->AppendL(line);
+		}
+	CEikChoiceList* list = (CEikChoiceList*)Control(EPtDlgSnipList);
+	list->SetArrayL(names);
+	list->SetArrayExternalOwnership(EFalse);
+	CleanupStack::Pop();                      // names: now owned by the list
+	TInt current = iIndex;
+	if (current < 0 || current >= iList.Count())
+		current = 0;
+	list->SetCurrentItem(current);
+	}
+
+TBool CSnippetListDialog::OkToExitL(TInt aButtonId)
+	{
+	iIndex = ChoiceListCurrentItem(EPtDlgSnipList);
+	iAction = (aButtonId == EEikBidCancel) ? 0 : aButtonId;
+	return ETrue;
+	}
+
+void CSnippetEditDialog::SetSizeAndPositionL(const TSize& aSize) { SetCornerAndSizeL(EHCenterVCenter, ClampToScreen(aSize)); }
+
+void CSnippetEditDialog::PreLayoutDynInitL()
+	{
+	SetEdwinTextL(EPtDlgSnipName, &iEntry.iName);
+	SetEdwinTextL(EPtDlgSnipText, &iEntry.iText);
+	((CEikChoiceList*)Control(EPtDlgSnipEnter))->SetCurrentItem(iEntry.iEnter ? 1 : 0);
+	CDesCArrayFlat* keys = new(ELeave) CDesCArrayFlat(8);
+	CleanupStack::PushL(keys);
+	for (TInt i = 0; i < SnippetKeyCount(); i++)
+		{
+		TBuf<20> name;
+		SnippetKeyName(SnippetKeyAt(i), name);
+		keys->AppendL(name);
+		}
+	CEikChoiceList* list = (CEikChoiceList*)Control(EPtDlgSnipKey);
+	list->SetArrayL(keys);
+	list->SetArrayExternalOwnership(EFalse);
+	CleanupStack::Pop();                      // keys: now owned by the list
+	TInt k = SnippetKeyIndex(iEntry.iKey);
+	list->SetCurrentItem(k > 0 ? k : 0);
+	}
+
+TBool CSnippetEditDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	TBuf<24> name;
+	TBuf<120> text;
+	GetEdwinText(name, EPtDlgSnipName);
+	GetEdwinText(text, EPtDlgSnipText);
+	name.Trim();
+	if (text.Length() == 0)
+		{
+		CEikonEnv::Static()->InfoMsg(_L("Enter the text to send"));
+		TryChangeFocusToL(EPtDlgSnipText);
+		return EFalse;
+		}
+	TInt key = SnippetKeyAt(((CEikChoiceList*)Control(EPtDlgSnipKey))->CurrentItem());
+	TInt other = iList.FindKey(key);
+	if (key && other >= 0 && other != iSelf)
+		{
+		TBuf<60> m(_L("That key is used by "));
+		m.Append(iList.At(other).iName);
+		CEikonEnv::Static()->InfoMsg(m);
+		TryChangeFocusToL(EPtDlgSnipKey);
+		return EFalse;
+		}
+	if (name.Length())
+		iEntry.iName = name;
+	else
+		iEntry.iName = LeftSafe(text, iEntry.iName.MaxLength());
+	iEntry.iText = text;
+	iEntry.iEnter = ((CEikChoiceList*)Control(EPtDlgSnipEnter))->CurrentItem() == 1;
+	iEntry.iKey = key;
+	return ETrue;
+	}
+
 // ----- "SSH to" host list ---------------------------------------------------
 
 CHostListDialog::CHostListDialog(CHostList& aHosts, TInt& aIndex, TInt& aAction)
@@ -2581,6 +3162,11 @@ CHostListDialog::CHostListDialog(CHostList& aHosts, TInt& aIndex, TInt& aAction)
 	iAction = 0;
 	}
 
+void CHostListDialog::SetSizeAndPositionL(const TSize& aSize) { SetCornerAndSizeL(EHCenterVCenter, ClampToScreen(aSize)); }
+void CHostEditDialog::SetSizeAndPositionL(const TSize& aSize) { SetCornerAndSizeL(EHCenterVCenter, ClampToScreen(aSize)); }
+void CConnDialog::SetSizeAndPositionL(const TSize& aSize) { SetCornerAndSizeL(EHCenterVCenter, ClampToScreen(aSize)); }
+void CUpdateDialog::SetSizeAndPositionL(const TSize& aSize) { SetCornerAndSizeL(EHCenterVCenter, ClampToScreen(aSize)); }
+
 void CHostListDialog::PreLayoutDynInitL()
 	{
 	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(4);
@@ -2588,13 +3174,22 @@ void CHostListDialog::PreLayoutDynInitL()
 	for (TInt i = 0; i < iHosts.Count(); i++)
 		{
 		const THostEntry& e = iHosts.At(i);
-		TBuf<40> line;
+		TBuf<48> line;
 		if (e.iName.Length())
 			line = e.iName;
 		else
 			line = LeftSafe(e.iHost, 24);
 		if (e.iPassword.Length())
 			line.Append(_L(" *"));          // has a saved password
+		// "name - user@host", as much as fits
+		TBuf<80> where(e.iUser);
+		where.Append('@');
+		where.Append(LeftSafe(e.iHost, 60));
+		if (e.iName.CompareF(e.iHost) != 0 && line.Length() + 3 < line.MaxLength())
+			{
+			line.Append(_L(" - "));
+			line.Append(LeftSafe(where, line.MaxLength() - line.Length()));
+			}
 		names->AppendL(line);
 		}
 	CEikChoiceList* list = (CEikChoiceList*)Control(EPtDlgHostList);
@@ -2723,6 +3318,25 @@ TBool CConnDialog::OkToExitL(TInt /*aButtonId*/)
 // EIKON sizes a dialog to its contents and centres it; if that is bigger
 // than the 640x240 screen the title and buttons end up off-screen and the
 // (modal) dialog looks like a frozen, shifted terminal. Keep it on screen.
+void CAppearanceDialog::SetSizeAndPositionL(const TSize& aSize) { SetCornerAndSizeL(EHCenterVCenter, ClampToScreen(aSize)); }
+
+void CAppearanceDialog::PreLayoutDynInitL()
+	{
+	((CEikChoiceList*)Control(EPtDlgTheme))->SetCurrentItem(iSettings.iTheme);
+	((CEikChoiceList*)Control(EPtDlgCursor))->SetCurrentItem(iSettings.iCursor);
+	((CEikChoiceList*)Control(EPtDlgBlink))->SetCurrentItem(iSettings.iBlink ? 1 : 0);
+	((CEikChoiceList*)Control(EPtDlgStatus))->SetCurrentItem(iSettings.iStatus ? 1 : 0);
+	}
+
+TBool CAppearanceDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	iSettings.iTheme = ((CEikChoiceList*)Control(EPtDlgTheme))->CurrentItem();
+	iSettings.iCursor = ((CEikChoiceList*)Control(EPtDlgCursor))->CurrentItem();
+	iSettings.iBlink = ((CEikChoiceList*)Control(EPtDlgBlink))->CurrentItem() == 1;
+	iSettings.iStatus = ((CEikChoiceList*)Control(EPtDlgStatus))->CurrentItem() == 1;
+	return ETrue;
+	}
+
 void CToolDialog::SetSizeAndPositionL(const TSize& aSize)
 	{
 	TSize screen = iEikonEnv->ScreenDevice()->SizeInPixels();
@@ -2828,7 +3442,11 @@ void CPsiTermAppUi::ConstructL()
 		iHosts->AddL(e);
 		iHosts->Save();
 		}
+	iSnippets = CSnippetList::NewL(iCoeEnv->FsSession());
+	iSnippets->Load();
 	iView = new(ELeave) CTermView;
+	iView->SetSnippets(iSnippets);
+	iView->SetHosts(iHosts);
 	iView->ConstructL(ClientRect(), settings);
 	AddToStackL(iView);
 	}
@@ -2841,6 +3459,7 @@ CPsiTermAppUi::~CPsiTermAppUi()
 		delete iView;
 		}
 	delete iHosts;
+	delete iSnippets;
 	}
 
 // Add / edit dialog. Returns ETrue if the user pressed OK.
@@ -2924,19 +3543,8 @@ void CPsiTermAppUi::SshToL()
 			break;
 			}
 		default:                                 // Connect
-			{
-			const THostEntry& e = iHosts->At(index);
-			iHosts->iLast = index;
-			iHosts->Save();
-			TPsiSettings& s = iView->Settings();
-			s.iSshHost = e.iHost;
-			s.iSshUser = e.iUser;
-			s.iSshPort = e.iPort;
-			SaveSettings(s);
-			iView->SetSshPassword(e.iPassword);
-			iView->StartSshL();
+			ConnectHostL(index);
 			return;
-			}
 			}
 		}
 	}
@@ -2956,6 +3564,11 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iAutoReconnect = 1;
 	aSettings.iStartCmd.Zero();
 	aSettings.iUpdSource = 0;
+	aSettings.iTheme = 0;
+	aSettings.iCursor = 0;
+	aSettings.iBlink = 0;
+	aSettings.iStatus = 1;
+	aSettings.iTmuxPrefix = 0;
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
@@ -3017,6 +3630,15 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 									pos += clen;
 									if (pos < data.Length())      // v7: update source
 										aSettings.iUpdSource = (data[pos] == 1) ? 1 : 0;
+									pos++;
+									if (pos + 4 < data.Length())  // v8: appearance, tmux
+										{
+										aSettings.iTheme = data[pos] <= 3 ? data[pos] : 0;
+										aSettings.iCursor = data[pos + 1] <= 2 ? data[pos + 1] : 0;
+										aSettings.iBlink = data[pos + 2] ? 1 : 0;
+										aSettings.iStatus = data[pos + 3] ? 1 : 0;
+										aSettings.iTmuxPrefix = data[pos + 4] ? 1 : 0;
+										}
 									}
 								}
 							}
@@ -3060,6 +3682,11 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append((TUint8)tmp.Length());
 	data.Append(tmp);
 	data.Append((TUint8)(aSettings.iUpdSource ? 1 : 0));
+	data.Append((TUint8)aSettings.iTheme);
+	data.Append((TUint8)aSettings.iCursor);
+	data.Append((TUint8)(aSettings.iBlink ? 1 : 0));
+	data.Append((TUint8)(aSettings.iStatus ? 1 : 0));
+	data.Append((TUint8)(aSettings.iTmuxPrefix ? 1 : 0));
 	file.Write(data);
 	file.Close();
 	}
@@ -3076,6 +3703,114 @@ TBool CPsiTermAppUi::ConfirmDisconnectL(TInt aCommand)
 	return EFalse;
 	}
 
+// Connects to saved host aIndex (SSH to... list, or 1-9 on the welcome screen)
+void CPsiTermAppUi::ConnectHostL(TInt aIndex)
+	{
+	if (iView->SshActive() || aIndex < 0 || aIndex >= iHosts->Count())
+		return;
+	const THostEntry& e = iHosts->At(aIndex);
+	iHosts->iLast = aIndex;
+	iHosts->Save();
+	TPsiSettings& s = iView->Settings();
+	s.iSshHost = e.iHost;
+	s.iSshUser = e.iUser;
+	s.iSshPort = e.iPort;
+	SaveSettings(s);
+	iView->SetSshPassword(e.iPassword);
+	iView->StartSshL();
+	}
+
+// tmux commands: the prefix (Ctrl+B or Ctrl+A), then the command key
+void CPsiTermAppUi::SendTmux(TUint aKey)
+	{
+	iView->SendCtrl(iView->Settings().iTmuxPrefix ? 'A' : 'B');
+	iView->SendChar(aKey);
+	}
+
+// Manage snippets: the list (Send / New / Edit / Delete), like SSH to...
+void CPsiTermAppUi::ManageSnippetsL()
+	{
+	for (;;)
+		{
+		if (iSnippets->Count() == 0)
+			{
+			TSnippet e;
+			e.iEnter = 1;
+			e.iKey = 0;
+			if (!EditSnippetL(e, -1))
+				return;
+			iSnippets->AddL(e);
+			iSnippets->iLast = iSnippets->Count() - 1;
+			iSnippets->Save();
+			continue;
+			}
+		TInt index = iSnippets->iLast;
+		TInt action = 0;
+		CSnippetListDialog* dlg = new(ELeave) CSnippetListDialog(*iSnippets, index, action);
+		TInt ok = dlg->ExecuteLD(R_PT_SNIPPETS_DIALOG);
+		if (!ok && action == 0)
+			return;
+		if (index < 0 || index >= iSnippets->Count())
+			index = 0;
+		switch (action)
+			{
+		case EPtBidNew:
+			{
+			if (iSnippets->Count() >= KMaxSnippets)
+				{
+				iEikonEnv->InfoMsg(_L("Snippet list is full - delete one first"));
+				break;
+				}
+			TSnippet e;
+			e.iEnter = 1;
+			e.iKey = 0;
+			if (EditSnippetL(e, -1))
+				{
+				iSnippets->AddL(e);
+				iSnippets->iLast = iSnippets->Count() - 1;
+				iSnippets->Save();
+				}
+			break;
+			}
+		case EPtBidEdit:
+			{
+			TSnippet e = iSnippets->At(index);
+			if (EditSnippetL(e, index))
+				{
+				iSnippets->At(index) = e;
+				iSnippets->iLast = index;
+				iSnippets->Save();
+				}
+			break;
+			}
+		case EPtBidDelete:
+			{
+			TBuf<30> what(iSnippets->At(index).iName);
+			if (CEikonEnv::QueryWinL(_L("Delete this snippet?"), what))
+				{
+				iSnippets->Delete(index);
+				iSnippets->Save();
+				}
+			break;
+			}
+		default:                                 // Send
+			{
+			iSnippets->iLast = index;
+			iSnippets->Save();
+			const TSnippet& e = iSnippets->At(index);
+			iView->SendSnippetText(e.iText, e.iEnter);
+			return;
+			}
+			}
+		}
+	}
+
+TBool CPsiTermAppUi::EditSnippetL(TSnippet& aEntry, TInt aSelf)
+	{
+	CSnippetEditDialog* dlg = new(ELeave) CSnippetEditDialog(aEntry, *iSnippets, aSelf);
+	return dlg->ExecuteLD(R_PT_SNIPPET_EDIT_DIALOG);
+	}
+
 void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 	{
 	if (aMenuId == R_PT_TERM_MENU)
@@ -3084,6 +3819,33 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemDimmed(EPtCmdSsh, ssh);
 		aMenuPane->SetItemDimmed(EPtCmdSshDisconnect, !ssh);
 		aMenuPane->SetItemDimmed(EPtCmdHangup, ssh);
+		return;
+		}
+	if (aMenuId == R_PT_SNIPPETS_MENU)
+		{
+		// your snippets, each with its hotkey shown on the right
+		for (TInt i = 0; i < iSnippets->Count() && i < KMaxSnippets; i++)
+			{
+			const TSnippet& sn = iSnippets->At(i);
+			CEikMenuPane::TItem::SData item;
+			item.iCommandId = EPtCmdSnippet0 + i;
+			item.iCascadeId = 0;
+			item.iFlags = 0;
+			item.iText = sn.iName;
+			item.iExtraText.Zero();
+			if (sn.iKey)
+				{
+				item.iExtraText.Append(_L("Shift+Ctrl+"));
+				item.iExtraText.Append((TChar)sn.iKey);
+				}
+			aMenuPane->AddMenuItemL(item);
+			}
+		return;
+		}
+	if (aMenuId == R_PT_TMUX_MENU)
+		{
+		aMenuPane->SetItemButtonState(iView->Settings().iTmuxPrefix ? EPtCmdTmuxPrefixA : EPtCmdTmuxPrefixB,
+			EEikMenuItemSymbolOn);
 		return;
 		}
 	if (aMenuId != R_PT_SETTINGS_MENU)
@@ -3096,6 +3858,18 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	{
 	TPsiSettings& s = iView->Settings();
+	if (aCommand >= EPtCmdHost0 && aCommand < EPtCmdHost0 + KMaxHosts)
+		{
+		ConnectHostL(aCommand - EPtCmdHost0);
+		return;
+		}
+	if (aCommand >= EPtCmdSnippet0 && aCommand < EPtCmdSnippet0 + KMaxSnippets)
+		{
+		TInt i = aCommand - EPtCmdSnippet0;
+		if (i < iSnippets->Count())
+			iView->SendSnippetText(iSnippets->At(i).iText, iSnippets->At(i).iEnter);
+		return;
+		}
 	switch (aCommand)
 		{
 	case EEikCmdExit:
@@ -3171,6 +3945,45 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		dlg->ExecuteLD(R_PT_ABOUT_DIALOG);
 		break;
 		}
+	case EPtCmdSnippets:    ManageSnippetsL(); break;
+	case EPtCmdAppearance:
+		{
+		CAppearanceDialog* dlg = new(ELeave) CAppearanceDialog(s);
+		if (dlg->ExecuteLD(R_PT_APPEARANCE_DIALOG))
+			{
+			SaveSettings(s);
+			iView->ApplyAppearanceL();
+			}
+		break;
+		}
+	// Claude Code
+	case EPtCmdClaudeEsc:   iView->SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE); break;
+	case EPtCmdClaudeEscEsc:
+		iView->SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE);
+		iView->SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE);
+		break;
+	case EPtCmdClaudeMode:  iView->SendKey(VTERM_KEY_TAB, VTERM_MOD_SHIFT); break;
+	case EPtCmdClaudeClear: iView->SendSnippetText(_L("/clear"), ETrue); break;
+	case EPtCmdClaudeCompact: iView->SendSnippetText(_L("/compact"), ETrue); break;
+	case EPtCmdClaudeResume: iView->SendSnippetText(_L("/resume"), ETrue); break;
+	case EPtCmdClaudeHelp:  iView->SendSnippetText(_L("/help"), ETrue); break;
+	// tmux: the prefix, then the command key
+	case EPtCmdTmuxNew:     SendTmux('c'); break;
+	case EPtCmdTmuxNext:    SendTmux('n'); break;
+	case EPtCmdTmuxPrev:    SendTmux('p'); break;
+	case EPtCmdTmuxChoose:  SendTmux('w'); break;
+	case EPtCmdTmuxSplitH:  SendTmux('"'); break;
+	case EPtCmdTmuxSplitV:  SendTmux('%'); break;
+	case EPtCmdTmuxPane:    SendTmux('o'); break;
+	case EPtCmdTmuxZoom:    SendTmux('z'); break;
+	case EPtCmdTmuxCopy:    SendTmux('['); break;
+	case EPtCmdTmuxRename:  SendTmux(','); break;
+	case EPtCmdTmuxDetach:  SendTmux('d'); break;
+	case EPtCmdTmuxPrefixB:
+	case EPtCmdTmuxPrefixA:
+		s.iTmuxPrefix = (aCommand == EPtCmdTmuxPrefixA);
+		SaveSettings(s);
+		break;
 	case EPtCmdKeyEsc:      iView->SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE); break;
 	case EPtCmdKeyTab:      iView->SendKey(VTERM_KEY_TAB, VTERM_MOD_NONE); break;
 	case EPtCmdKeyShiftTab: iView->SendKey(VTERM_KEY_TAB, VTERM_MOD_SHIFT); break;

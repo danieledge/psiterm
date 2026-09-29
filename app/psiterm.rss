@@ -52,7 +52,8 @@ RESOURCE MENU_BAR r_pt_menubar
 		MENU_TITLE { menu_pane=r_pt_term_menu; txt="Terminal"; },
 		MENU_TITLE { menu_pane=r_pt_edit_menu; txt="Edit"; },
 		MENU_TITLE { menu_pane=r_pt_keys_menu; txt="Keys"; },
-		MENU_TITLE { menu_pane=r_pt_fkeys_menu; txt="F-keys"; },
+		MENU_TITLE { menu_pane=r_pt_snippets_menu; txt="Snippets"; },
+		MENU_TITLE { menu_pane=r_pt_tmux_menu; txt="tmux"; },
 		MENU_TITLE { menu_pane=r_pt_settings_menu; txt="Settings"; },
 		MENU_TITLE { menu_pane=r_pt_debug_menu; txt="Debug"; }
 		};
@@ -127,7 +128,54 @@ RESOURCE MENU_PANE r_pt_keys_menu
 		{
 		MENU_ITEM { command=EPtCmdKeyShiftTab; txt="Shift+Tab"; },
 		MENU_ITEM { command=EPtCmdKeyInsert; txt="Insert"; },
-		MENU_ITEM { command=EPtCmdKeyCtrlBackslash; txt="Ctrl+\\"; }
+		MENU_ITEM { command=EPtCmdKeyCtrlBackslash; txt="Ctrl+\\"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { cascade=r_pt_claude_menu; txt="Claude Code"; },
+		MENU_ITEM { cascade=r_pt_fkeys_menu; txt="Function keys"; }
+		};
+	}
+
+// Claude Code: its keys and the most used commands
+RESOURCE MENU_PANE r_pt_claude_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdClaudeEsc; txt="Interrupt"; extratxt="Esc"; },
+		MENU_ITEM { command=EPtCmdClaudeEscEsc; txt="Rewind"; extratxt="Esc Esc"; },
+		MENU_ITEM { command=EPtCmdClaudeMode; txt="Switch mode"; extratxt="Shift+Tab"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdClaudeClear; txt="/clear"; },
+		MENU_ITEM { command=EPtCmdClaudeCompact; txt="/compact"; },
+		MENU_ITEM { command=EPtCmdClaudeResume; txt="/resume"; },
+		MENU_ITEM { command=EPtCmdClaudeHelp; txt="/help"; }
+		};
+	}
+
+// Snippets: "Manage snippets..." plus your snippets, added at run time
+RESOURCE MENU_PANE r_pt_snippets_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdSnippets; txt="Manage snippets..."; flags=EEikMenuItemSeparatorAfter; }
+		};
+	}
+
+// tmux: sends the prefix (Ctrl+B or Ctrl+A) and the command key
+RESOURCE MENU_PANE r_pt_tmux_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdTmuxNew; txt="New window"; extratxt="c"; },
+		MENU_ITEM { command=EPtCmdTmuxNext; txt="Next window"; extratxt="n"; },
+		MENU_ITEM { command=EPtCmdTmuxPrev; txt="Previous window"; extratxt="p"; },
+		MENU_ITEM { command=EPtCmdTmuxChoose; txt="Choose window"; extratxt="w"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxSplitH; txt="Split top/bottom"; extratxt="\""; },
+		MENU_ITEM { command=EPtCmdTmuxSplitV; txt="Split left/right"; extratxt="%"; },
+		MENU_ITEM { command=EPtCmdTmuxPane; txt="Next pane"; extratxt="o"; },
+		MENU_ITEM { command=EPtCmdTmuxZoom; txt="Zoom pane"; extratxt="z"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxCopy; txt="Scroll / copy mode"; extratxt="["; },
+		MENU_ITEM { command=EPtCmdTmuxRename; txt="Rename window"; extratxt=","; },
+		MENU_ITEM { command=EPtCmdTmuxDetach; txt="Detach"; extratxt="d"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxPrefixB; txt="Prefix Ctrl+B"; flags=EEikMenuItemRadioStart; },
+		MENU_ITEM { command=EPtCmdTmuxPrefixA; txt="Prefix Ctrl+A"; flags=EEikMenuItemRadioEnd; }
 		};
 	}
 
@@ -159,7 +207,8 @@ RESOURCE MENU_PANE r_pt_settings_menu
 		MENU_ITEM { command=EPtCmdZoom2; txt="Terminus 14 (80x17)"; flags=EEikMenuItemRadioMiddle; },
 		MENU_ITEM { command=EPtCmdZoom3; txt="Terminus 16 (80x15)"; flags=EEikMenuItemRadioMiddle; },
 		MENU_ITEM { command=EPtCmdZoom4; txt="Terminus 18 (64x13)"; flags=EEikMenuItemRadioEnd; },
-		MENU_ITEM { command=EPtCmdBold; txt="Bold text"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdBold; txt="Bold text"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdAppearance; txt="Appearance..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdConnSettings; txt="Connection settings..."; },
 		MENU_ITEM { command=EPtCmdUpdateServer; txt="Update source..."; }
 		};
@@ -209,7 +258,7 @@ RESOURCE DIALOG r_pt_hosts_dialog
 	buttons=r_pt_hosts_buttons;
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="Host"; id=EPtDlgHostList; control=CHOICELIST { maxdisplaychar=24; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Host"; id=EPtDlgHostList; control=CHOICELIST { maxdisplaychar=34; }; }
 		};
 	}
 
@@ -226,6 +275,70 @@ RESOURCE DLG_BUTTONS r_pt_hosts_buttons
 	}
 
 // Add or edit one saved host
+// Snippets: pick one and Send, or manage the list
+RESOURCE DIALOG r_pt_snippets_dialog
+	{
+	title="Snippets";
+	flags=EEikDialogFlagWait;
+	buttons=r_pt_snippets_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Snippet"; id=EPtDlgSnipList; control=CHOICELIST { maxdisplaychar=26; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pt_snippets_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPtBidNew; button=CMBUT { txt="New"; }; hotkey='N'; },
+		DLG_BUTTON { id=EPtBidEdit; button=CMBUT { txt="Edit"; }; hotkey='E'; },
+		DLG_BUTTON { id=EPtBidDelete; button=CMBUT { txt="Delete"; }; hotkey='D'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Send"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+RESOURCE DIALOG r_pt_snippet_edit_dialog
+	{
+	title="Snippet";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgSnipName; control=EDWIN { width=22; maxlength=24; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Text"; id=EPtDlgSnipText; control=EDWIN { width=22; maxlength=120; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Then press Enter"; id=EPtDlgSnipEnter; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Hotkey"; id=EPtDlgSnipKey; control=CHOICELIST { maxdisplaychar=14; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgSnipHint; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="In Text: \\n Enter  ^C Ctrl+C  \\e Esc  \\t Tab"; }; }
+		};
+	}
+
+// Theme, cursor, status line
+RESOURCE DIALOG r_pt_appearance_dialog
+	{
+	title="Appearance";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Theme"; id=EPtDlgTheme; control=CHOICELIST { array_id=r_pt_theme_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Cursor"; id=EPtDlgCursor; control=CHOICELIST { array_id=r_pt_cursor_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Blinking cursor"; id=EPtDlgBlink; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Status line"; id=EPtDlgStatus; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pt_theme_array
+	{
+	items={ LBUF { txt="Classic"; }, LBUF { txt="Inverted (light on dark)"; }, LBUF { txt="High contrast"; }, LBUF { txt="Soft"; } };
+	}
+
+RESOURCE ARRAY r_pt_cursor_array
+	{
+	items={ LBUF { txt="Block"; }, LBUF { txt="Underline"; }, LBUF { txt="Bar"; } };
+	}
+
 RESOURCE DIALOG r_pt_host_edit_dialog
 	{
 	title="SSH host";

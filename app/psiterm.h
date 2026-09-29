@@ -49,6 +49,96 @@ struct TPsiSettings
 	TInt iAutoReconnect;  // 1 = redial if a logged-in session drops
 	TBuf<100> iStartCmd;  // optional command run on login, e.g. tmux new -A -s psion
 	TInt iUpdSource;      // 0 = GitHub (HTTPS, default), 1 = the local server iUpdHost
+	// 0.35 appearance and keys
+	TInt iTheme;          // 0 classic, 1 inverted (light on dark), 2 high contrast, 3 soft
+	TInt iCursor;         // 0 block, 1 underline, 2 bar
+	TInt iBlink;          // 1 = blinking cursor
+	TInt iStatus;         // 1 = status line at the bottom
+	TInt iTmuxPrefix;     // 0 = Ctrl+B, 1 = Ctrl+A
+	};
+
+// ---------------------------------------------------------------------------
+// Snippets (C:\System\Apps\PsiTerm\Snippets.dat): named text to send, each
+// optionally on a Shift+Ctrl hotkey. The text understands a few escapes:
+//   \n Enter   \e Esc   \t Tab   ^X Ctrl+X   \\ backslash   \^ caret
+// so a snippet can also be any key sequence (e.g. ^Bc = tmux new window).
+// ---------------------------------------------------------------------------
+const TInt KMaxSnippets = 20;
+
+struct TSnippet
+	{
+	TBuf<24> iName;
+	TBuf<120> iText;
+	TInt iEnter;          // 1 = press Enter after the text
+	TInt iKey;            // Shift+Ctrl hotkey: 0 none, else 'A'..'Z' or '0'..'9'
+	};
+
+class CSnippetList : public CBase
+	{
+public:
+	static CSnippetList* NewL(RFs& aFs);
+	~CSnippetList();
+	void Load();              // or the defaults if there is no file yet
+	TInt Save();
+	TInt Count() const { return iEntries->Count(); }
+	TSnippet& At(TInt aIndex) { return (*iEntries)[aIndex]; }
+	void AddL(const TSnippet& aEntry) { iEntries->AppendL(aEntry); }
+	void Delete(TInt aIndex) { iEntries->Delete(aIndex); }
+	TInt FindKey(TInt aKey) const;   // index of the snippet on this hotkey, or -1
+	TInt iLast;
+private:
+	CSnippetList(RFs& aFs) : iFs(aFs) {}
+	void AddDefaultsL();
+	RFs& iFs;
+	CArrayFixFlat<TSnippet>* iEntries;
+	};
+
+// Hotkeys a snippet can use: Shift+Ctrl + a digit or a letter the menus
+// don't already use (E H S T C V P are menu shortcuts)
+TInt SnippetKeyCount();
+TInt SnippetKeyAt(TInt aIndex);          // 0 = none
+TInt SnippetKeyIndex(TInt aKey);
+void SnippetKeyName(TInt aKey, TDes& aText);
+
+// Manage snippets: pick one, Send it, or add / edit / delete
+class CSnippetListDialog : public CEikDialog
+	{
+public:
+	CSnippetListDialog(CSnippetList& aList, TInt& aIndex, TInt& aAction)
+		: iList(aList), iIndex(aIndex), iAction(aAction) { iAction = 0; }
+private:
+	void SetSizeAndPositionL(const TSize& aSize);
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	CSnippetList& iList;
+	TInt& iIndex;
+	TInt& iAction;
+	};
+
+class CSnippetEditDialog : public CEikDialog
+	{
+public:
+	CSnippetEditDialog(TSnippet& aEntry, CSnippetList& aList, TInt aSelf)
+		: iEntry(aEntry), iList(aList), iSelf(aSelf) {}
+private:
+	void SetSizeAndPositionL(const TSize& aSize);
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	TSnippet& iEntry;
+	CSnippetList& iList;
+	TInt iSelf;           // this snippet's index (-1 new): its own hotkey is not a clash
+	};
+
+// Appearance: theme, cursor, status line, bold
+class CAppearanceDialog : public CEikDialog
+	{
+public:
+	CAppearanceDialog(TPsiSettings& aSettings) : iSettings(aSettings) {}
+private:
+	void SetSizeAndPositionL(const TSize& aSize);
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	TPsiSettings& iSettings;
 	};
 
 // ---------------------------------------------------------------------------
@@ -147,6 +237,7 @@ class CHostListDialog : public CEikDialog
 public:
 	CHostListDialog(CHostList& aHosts, TInt& aIndex, TInt& aAction);
 private:
+	void SetSizeAndPositionL(const TSize& aSize);
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
 	CHostList& iHosts;
@@ -195,6 +286,7 @@ class CConnDialog : public CEikDialog
 public:
 	CConnDialog(TPsiSettings& aSettings) : iSettings(aSettings) {}
 private:
+	void SetSizeAndPositionL(const TSize& aSize);
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
 	TPsiSettings& iSettings;
@@ -206,6 +298,7 @@ public:
 	CUpdateDialog(TInt& aSource, TDes& aHost, TInt& aPort, TBool aNeedHost)
 		: iSource(aSource), iHost(aHost), iPort(aPort), iNeedHost(aNeedHost) {}
 private:
+	void SetSizeAndPositionL(const TSize& aSize);
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
 	TInt& iSource;
@@ -220,6 +313,7 @@ class CHostEditDialog : public CEikDialog
 public:
 	CHostEditDialog(THostEntry& aEntry);
 private:
+	void SetSizeAndPositionL(const TSize& aSize);
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
 	THostEntry& iEntry;
@@ -240,6 +334,11 @@ public:
 	void SendChar(TUint aChar);
 	void SendString(const TDesC8& aText);
 	void SendCtrl(TUint aLetter);
+	void SendSnippetText(const TDesC& aText, TBool aEnter);   // with \n ^X etc.
+	void SetSnippets(CSnippetList* aSnippets) { iSnippets = aSnippets; }
+	void SetHosts(CHostList* aHosts) { iHosts = aHosts; }
+	void ApplyAppearanceL();           // theme / cursor / status line changed
+	void ShowWelcome();                // the start screen with the saved hosts
 	void SendScreenSize();
 	void SerialInfo();
 	void HangUp();
@@ -358,6 +457,23 @@ private:
 	// scrollback: lines pushed off the top of the screen
 	TTermSb iSb;
 	TSbCell* iSbCells;
+	CSnippetList* iSnippets;  // owned by the app UI; hotkeys look here
+	CHostList* iHosts;        // owned by the app UI; the welcome screen lists them
+	// appearance
+	TInt Theme(TInt aGrey) const;                   // theme mapping of a grey 0..15
+	TRgb Grey(TInt aGrey) const { return TRgb::Gray16(Theme(aGrey)); }
+	void ThemePair(TInt aFg, TInt aBg, TInt& aThemedFg, TInt& aThemedBg) const;
+	TInt iStatusH;            // status line height in pixels (0 = off)
+	CPeriodic* iTick;         // 0.5 s: clock, status line, cursor blink
+	TBool iBlinkHidden;       // cursor in the "off" half of a blink
+	TBuf<120> iStatusDrawn;   // what the status line shows now
+	TTime iReconnectAt;       // when the next reconnect attempt starts
+	TBool iWelcome;           // the start screen is showing: 1-9 connect
+	void StatusText(TDes& aText, TInt& aSplit) const;
+	void DrawStatus(CWindowGc& aGc) const;
+	void Tick();
+	static TInt TickCallback(TAny* aSelf);
+	void StartTick();
 	short* iSbCols;
 	TInt iLinesPushed;    // absolute number of the top screen row
 	TInt iScrollOffset;   // 0 = live; N = viewing N lines back
@@ -447,6 +563,11 @@ private:
 private:
 	CTermView* iView;
 	CHostList* iHosts;
+	CSnippetList* iSnippets;
+	void ManageSnippetsL();
+	void ConnectHostL(TInt aIndex);
+	TBool EditSnippetL(TSnippet& aEntry, TInt aSelf);
+	void SendTmux(TUint aKey);
 	};
 
 class CPsiTermDocument : public CEikDocument

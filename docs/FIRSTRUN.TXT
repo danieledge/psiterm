@@ -1,4 +1,4 @@
-PSITERM 0.34 - FIRST RUN CHECKLIST
+PSITERM 0.35 - FIRST RUN CHECKLIST
 =================================
 
 BEFORE YOU START
@@ -11,7 +11,7 @@ BEFORE YOU START
    (Replaces any older PsiTerm.) PsiTerm is on the Extras bar.
 
 2. FIRST LAUNCH
-   Open PsiTerm. You should see "PsiTerm 0.34" and the screen size.
+   Open PsiTerm. You should see "PsiTerm 0.35" and the screen size.
    Menu > Settings > Connection settings: the same baud
    rate as the modem,
    Flow control: None.
@@ -152,6 +152,29 @@ AUTO-RECONNECT (new in 0.22)
    Settings > Connection settings > Command on login, e.g.
        tmux new -A -s psion
    puts you straight back into the same tmux session.
+
+SNIPPETS, HOTKEYS, CLAUDE CODE AND TMUX (new in 0.35)
+   Snippets menu: your own text to send, e.g. commands or
+     Claude prompts. Manage snippets... to add, edit, delete.
+     Each can press Enter after, and can have a hotkey:
+     Shift+Ctrl + 0-9 or a free letter. The menu shows it.
+     In the text: \n = Enter  ^C = Ctrl+C  \e = Esc  \t = Tab
+     (so a snippet can be any key sequence, e.g. ^Bc).
+   Keys > Claude Code: Interrupt (Esc), Rewind (Esc Esc),
+     Switch mode (Shift+Tab), /clear, /compact, /resume, /help.
+   tmux menu: new/next/previous window, splits, next pane,
+     zoom, scroll mode, rename, detach. Prefix Ctrl+B or
+     Ctrl+A (chosen at the bottom of the menu).
+
+LOOK (new in 0.35)
+   Settings > Appearance...: theme (Classic, Inverted = light
+     on dark, High contrast, Soft), cursor (block, underline,
+     bar), blinking cursor, status line.
+   The status line at the bottom shows the connection
+     (connecting / securing / user@host / reconnecting in Ns)
+     and the time.
+   The start screen lists your saved servers: press 1-9 to
+     connect. Any other key closes it (so AT commands work).
 
 MENUS (tidied in 0.21)
    Debug menu: speed test, serial port info, character codes,
