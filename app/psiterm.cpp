@@ -55,7 +55,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.23");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.24");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -2167,9 +2167,13 @@ void CTermView::PumpSsh()
 	if (iShared->out_tail == iShared->out_head)
 		return;
 	// Feed everything waiting in one paint pass, so libvterm can merge a
-	// burst of scrolling into a single blit.
+	// burst of scrolling into a single blit. Not while a job's output goes
+	// to the tool window: that window draws itself, and the terminal's gc
+	// must not be active then (WSERV 10).
 	TUint8 buf[1024];
-	BeginPaint();
+	TBool paint = !iCapture;
+	if (paint)
+		BeginPaint();
 	for (TInt rounds = 0; rounds < 8; rounds++)
 		{
 		// copy out up to sizeof(buf) in one or two runs (the ring may wrap)
@@ -2192,7 +2196,8 @@ void CTermView::PumpSsh()
 		else
 			FeedTerminal(buf, n);
 		}
-	EndPaint();
+	if (paint)
+		EndPaint();
 	}
 
 void CTermView::DisconnectSsh()
