@@ -63,7 +63,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.53");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.54");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -1184,7 +1184,8 @@ TInt CTermView::ParseTabList(const TDesC& aText, TTmuxTab* aTabs, TInt& aCurrent
 		aTabs[n].iIndex = idx;
 		aTabs[n].iName.Copy(line.Mid(nameStart, end - nameStart > 20 ? 20 : end - nameStart));
 		aTabs[n].iCurrent = cur;
-		aTabs[n].iX0 = aTabs[n].iX1 = 0;
+		aTabs[n].iX0 = s;                  // its column, until DrawTabs sets pixels
+		aTabs[n].iX1 = 0;
 		if (cur)
 			aCurrent++;
 		n++;
@@ -1247,6 +1248,33 @@ void CTermView::ParseTmuxTabs()
 				}
 			TInt current = 0;
 			TInt n = ParseTabList(line, tabs, current);
+			if (n > 1 && current == 0)
+				{
+				// no "*": themes mark the current window by colouring it
+				// differently from the rest of the bar
+				VTermPos pos;
+				pos.row = r;
+				pos.col = iCols - 1;
+				VTermScreenCell barCell;
+				vterm_screen_get_cell(iScreen, pos, &barCell);
+				TInt found = -1;
+				for (TInt t = 0; t < n; t++)
+					{
+					pos.col = tabs[t].iX0;
+					VTermScreenCell cell;
+					if (vterm_screen_get_cell(iScreen, pos, &cell)
+						&& (!vterm_color_is_equal(&cell.bg, &barCell.bg)
+							|| cell.attrs.reverse != barCell.attrs.reverse))
+						{
+						found = (found == -1) ? t : -2;   // exactly one must differ
+						}
+					}
+				if (found >= 0)
+					{
+					tabs[found].iCurrent = ETrue;
+					current = 1;
+					}
+				}
 			if (n >= 1 && (current == 1 || (current == 0 && n == 1)))
 				{
 				if (current == 0)
