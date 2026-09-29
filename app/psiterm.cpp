@@ -60,7 +60,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.45");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.46");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -4163,6 +4163,29 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 			}
 		return;
 		}
+	// tmux and Claude Code keys only mean something in an SSH session
+	if (aMenuId == R_PT_TMUX_MENU || aMenuId == R_PT_TMUX_WIN_MENU
+		|| aMenuId == R_PT_TMUX_PANE_MENU || aMenuId == R_PT_CLAUDE_MENU)
+		{
+		if (!iView->SshLoggedIn())
+			{
+			static const TInt KTmux[] = { EPtCmdTmuxCopy, EPtCmdTmuxDetach, EPtCmdTmuxMouse };
+			static const TInt KWin[] = { EPtCmdTmuxNew, EPtCmdTmuxNext, EPtCmdTmuxPrev,
+				EPtCmdTmuxChoose, EPtCmdTmuxRename };
+			static const TInt KPane[] = { EPtCmdTmuxSplitH, EPtCmdTmuxSplitV, EPtCmdTmuxPane,
+				EPtCmdTmuxZoom };
+			static const TInt KClaude[] = { EPtCmdClaudeEsc, EPtCmdClaudeEscEsc, EPtCmdClaudeMode,
+				EPtCmdClaudeClear, EPtCmdClaudeCompact, EPtCmdClaudeResume, EPtCmdClaudeHelp };
+			const TInt* ids = KTmux;
+			TInt n = 3;
+			if (aMenuId == R_PT_TMUX_WIN_MENU) { ids = KWin; n = 5; }
+			else if (aMenuId == R_PT_TMUX_PANE_MENU) { ids = KPane; n = 4; }
+			else if (aMenuId == R_PT_CLAUDE_MENU) { ids = KClaude; n = 7; }
+			for (TInt i = 0; i < n; i++)
+				aMenuPane->SetItemDimmed(ids[i], ETrue);
+			}
+		return;
+		}
 	if (aMenuId == R_PT_TMUX_PREFIX_MENU)
 		{
 		aMenuPane->SetItemButtonState(iView->Settings().iTmuxPrefix ? EPtCmdTmuxPrefixA : EPtCmdTmuxPrefixB,
@@ -4189,6 +4212,13 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		TInt i = aCommand - EPtCmdSnippet0;
 		if (i < iSnippets->Count())
 			iView->SendSnippetText(iSnippets->At(i).iText, iSnippets->At(i).iEnter);
+		return;
+		}
+	if (((aCommand >= EPtCmdTmuxNew && aCommand <= EPtCmdTmuxDetach) || aCommand == EPtCmdTmuxMouse
+		|| (aCommand >= EPtCmdClaudeEsc && aCommand <= EPtCmdClaudeHelp))
+		&& !iView->SshLoggedIn())
+		{
+		iEikonEnv->InfoMsg(_L("Not connected - connect with SSH first"));
 		return;
 		}
 	switch (aCommand)
