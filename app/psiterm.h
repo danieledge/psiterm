@@ -466,6 +466,7 @@ public:
 	void ShowKeyL(const TDesC& aBase, const TDesC& aName);
 	const TDesC& KeyBase() const { return iKeyBase; }
 	void ParseTmuxTabs();
+	void CheckTabsL();              // Debug: what the tab reader sees
 	void DrawTabs(CWindowGc& aGc) const;
 	void SelectTmuxWindow(TInt aIndex);           // make the key (psissh mode 4)
 	void InstallLoginKeyL(const TDesC& aBase);   // type the authorized_keys command into the session
@@ -591,7 +592,11 @@ private:
 	TInt iTabRow;             // the screen row tmux's status line is on; -1 = no tmux seen
 	TBool iTabsDrawn;         // PsiTerm draws its tab bar over that row
 	TBuf<200> iTabSig;        // what was parsed last, to notice changes
-	TBool iPenOnTabs;          // VTERM_PROP_MOUSE_*: the program wants mouse events
+	TBool iPenOnTabs;
+	TInt iLastState;          // connection state last tick, and since when
+	TUint iStateSince;
+	TUint iTickCount;
+	TBool iEverLoggedIn;      // this session got as far as a login          // VTERM_PROP_MOUSE_*: the program wants mouse events
 	TInt iPenRow0, iPenCol0;
 	TBool iPenWheeled;
 	TInt iPenY0;

@@ -79,7 +79,8 @@ RESOURCE MENU_PANE r_pt_debug_menu
 		{
 		MENU_ITEM { command=EPtCmdSpeedTest; txt="SSH speed test"; },
 		MENU_ITEM { command=EPtCmdSerialInfo; txt="Serial port info"; },
-		MENU_ITEM { command=EPtCmdCharInfo; txt="Character codes of selection"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdCharInfo; txt="Character codes of selection"; },
+		MENU_ITEM { command=EPtCmdCheckTabs; txt="Check tmux tabs"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdScreenshot; txt="Screenshot"; },
 		MENU_ITEM { command=EPtCmdSendShots; txt="Send screenshots"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdSendSize; txt="Type stty screen size (no SSH)"; },

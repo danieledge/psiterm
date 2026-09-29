@@ -42,6 +42,7 @@ extern PsiShared* pg_shared(void);
 extern int pg_init(void);
 extern void pg_close(void);
 extern void pg_set_state(int);
+extern void pg_dial_verbose(int);
 extern void pg_set_exit(int);
 extern int pg_quit_requested(void);
 extern void pg_msleep(int);
@@ -1170,6 +1171,7 @@ int main(int argc, char **argv)
 	setenv("TERM", "xterm-256color", 1);
 
 	pg_set_state(PSI_STATE_DIALING);
+	pg_dial_verbose(1);
 	if (s->net_mode)
 		sprintf(psi_fmtbuf, "Connecting to %s:%d over the Psion's Internet connection...\r\n", s->host, s->port);
 	else
@@ -1185,8 +1187,7 @@ int main(int argc, char **argv)
 	}
 	pg_set_state(PSI_STATE_KEYEX);
 	{
-		const char *m = "Connected. Setting up encryption - this takes about 5-15 seconds\r\n"
-			"on a 5mx, please wait...\r\n";
+		const char *m = "Connected. Securing the connection...\r\n";
 		pg_out_write(m, strlen(m));
 	}
 

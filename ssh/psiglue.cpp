@@ -601,6 +601,18 @@ static int StartsWith(const char* aS, const char* aP)
 
 // Dials host:port through the WiRSa. Returns 0 on CONNECT.
 // Sends AT and waits briefly for OK: is the modem at its command prompt?
+// SSH mode says what the modem is doing (updates dial ten times, quietly)
+static int gDialVerbose = 0;
+extern "C" void pg_dial_verbose(int aOn) { gDialVerbose = aOn; }
+static void Say(const char* aText)
+	{
+	if (!gDialVerbose)
+		return;
+	int n = 0;
+	while (aText[n]) n++;
+	pg_out_write(aText, n);
+	}
+
 static int ModemAnswersAt()
 	{
 	char line[160];
@@ -630,8 +642,12 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 	pg_msleep(300);
 	gRxPos = gRxLen = 0;
 	gComm->ResetBuffers();
-	if (!ModemAnswersAt())
+	Say("  Checking the modem... ");
+	if (ModemAnswersAt())
+		Say("OK\r\n");
+	else
 		{
+		Say("no answer - hanging up an old call first\r\n");
 		// still online from an old connection (e.g. the Psion was switched
 		// off mid-session): escape to command mode and hang up first
 		pg_msleep(1100);
@@ -641,7 +657,10 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 		pg_msleep(500);
 		gRxPos = gRxLen = 0;
 		gComm->ResetBuffers();
-		ModemAnswersAt();
+		if (ModemAnswersAt())
+			Say("  Modem OK\r\n");
+		else
+			Say("  The modem still does not answer AT - is it on, and at this baud rate?\r\n");
 		}
 	pg_msleep(100);
 	gRxPos = gRxLen = 0;
@@ -660,16 +679,28 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 	int nd = 0;
 	do { num[nd++] = (char)('0' + port % 10); port /= 10; } while (port && nd < 7);
 	while (nd) cmd[len++] = num[--nd];
+	cmd[len] = 0;
+	Say("  Sending ");
+	Say(cmd);
+	Say("\r\n");
 	cmd[len++] = '\r';
 	pg_serial_write(cmd, len);
+	cmd[len - 1] = 0;                    // for spotting the modem's echo of it
 
 	for (i = 0; i < 10; i++)
 		{
 		int n = ReadLine(line, sizeof(line), 30000);
 		if (n < 0)
 			{
+			Say("  No reply from the modem for 30 seconds\r\n");
 			if (aResult) { const char* m = "no answer from modem"; int k = 0; while (m[k] && k < aResultMax - 1) { aResult[k] = m[k]; k++; } aResult[k] = 0; }
 			return -1;
+			}
+		if (line[0] && !StartsWith(line, cmd) && !StartsWith(line, "AT"))
+			{
+			Say("  Modem: ");
+			Say(line);
+			Say("\r\n");
 			}
 		if (StartsWith(line, "CONNECT"))
 			return 0;

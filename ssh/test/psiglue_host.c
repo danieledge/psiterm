@@ -71,6 +71,7 @@ int pg_init(void)
 }
 void pg_close(void) { if (gSer >= 0) close(gSer); gSer = -1; restore_tty(); }
 void pg_set_state(int s) { g.state = s; }
+void pg_dial_verbose(int on) { (void)on; }
 void pg_set_exit(int c) { g.exit_code = c; g.state = PSI_STATE_EXITED; }
 int pg_quit_requested(void) { return g.quit; }
 void pg_msleep(int ms) { usleep(ms * 1000); }

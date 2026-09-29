@@ -22,7 +22,8 @@ enum
 	PSI_STATE_DIALING,
 	PSI_STATE_KEYEX,
 	PSI_STATE_CONNECTED,
-	PSI_STATE_EXITED
+	PSI_STATE_EXITED,
+	PSI_STATE_AUTH                 /* logging in (0.52) */
 	};
 
 typedef struct

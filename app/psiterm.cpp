@@ -63,7 +63,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.51");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.52");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -959,8 +959,31 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 		else if (iLaunchMode == 3) aText.Append(_L("Sending screenshots..."));
 		else if (iLaunchMode == 4) aText.Append(_L("Making an SSH key..."));
 		else if (iLaunchMode == 5) aText.Append(_L("Importing an SSH key..."));
-		else if (state == PSI_STATE_DIALING) aText.Format(_L("Connecting to %S..."), &host);
-		else if (state == PSI_STATE_KEYEX) aText.Format(_L("Securing the connection to %S..."), &host);
+		else if (state == PSI_STATE_DIALING || state == PSI_STATE_KEYEX || state == PSI_STATE_AUTH)
+			{
+			// something that moves, so a slow 36 MHz handshake never looks stuck
+			static const TText KSpin[] = { '|', '/', '-', '\\' };
+			TInt secs = (TInt)((User::TickCount() - iStateSince) / 64);
+			if (state == PSI_STATE_DIALING)
+				aText.Format(_L("Dialling %S"), &host);
+			else if (state == PSI_STATE_AUTH)
+				{
+				TBuf<24> user;
+				user.Copy(LeftSafe(iSettings.iSshUser, 20));
+				aText.Format(_L("Logging in as %S"), &user);
+				}
+			else
+				{
+				static const TText* const KSteps[] = {
+					_S("Saying hello to the server"), _S("Agreeing on a cipher"),
+					_S("Doing the X25519 maths"), _S("Checking the server's identity"),
+					_S("Working out the session keys"), _S("Nearly there") };
+				TInt step = secs / 3;
+				if (step > 5) step = 5;
+				aText.Append(TPtrC(KSteps[step]));
+				}
+			aText.AppendFormat(_L("...  %c  %ds   "), KSpin[iTickCount & 3], secs);
+			}
 		else if (state == PSI_STATE_CONNECTED)
 			{
 			TBuf<24> user;
@@ -1030,6 +1053,15 @@ void CTermView::Tick()
 		BeginPaint();
 		EndPaint();
 		}
+	iTickCount++;
+	TInt state = (iSshActive && iShared) ? iShared->state : -1;
+	if (state != iLastState)
+		{
+		iLastState = state;
+		iStateSince = User::TickCount();
+		}
+	if (SshLoggedIn())
+		iEverLoggedIn = ETrue;
 	ParseTmuxTabs();
 	if (iStatusH)
 		{
@@ -1104,12 +1136,16 @@ void CTermView::ParseTmuxTabs()
 				TUint ch = vterm_screen_get_cell(iScreen, pos, &cell) ? cell.chars[0] : 0;
 				line.Append((TText)(ch >= 0x20 && ch < 0x7f ? ch : (ch == 0 ? ' ' : '?')));
 				}
-			if (line.Length() < 6 || line[0] != '[')
+			if (line.Length() < 4)
 				continue;
-			TInt close = line.Locate(']');
-			if (close < 1 || close > 32)
-				continue;
-			TInt i = close + 1, n = 0, current = 0;
+			// the default status-left is "[session] "; without it, start at 0
+			TInt i = 0, n = 0, current = 0;
+			if (line[0] == '[')
+				{
+				TInt close = line.Locate(']');
+				if (close > 0 && close <= 40)
+					i = close + 1;
+				}
 			while (i < line.Length() && n < KMaxTabs)
 				{
 				while (i < line.Length() && line[i] == ' ')
@@ -1219,6 +1255,46 @@ void CTermView::DrawTabs(CWindowGc& aGc) const
 	for (TInt j = 0; j < iTabCount; j++)       // tabs that did not fit: not tappable
 		if (iTabs[j].iX1 > bar.iBr.iX || iTabs[j].iX0 >= x)
 			self->iTabs[j].iX0 = self->iTabs[j].iX1 = 0;
+	}
+
+void CTermView::CheckTabsL()
+	{
+	BeginDebugL(_L("tmux tabs"));
+	TBuf8<260> m;
+	m.Format(_L8("Logged in: %s   Tabs setting: %s   Terminal %dx%d\r\n"),
+		SshLoggedIn() ? "yes" : "no", iSettings.iTmuxTabs ? "on" : "off", iCols, iRows);
+	LocalMessage(m);
+	for (TInt pass = 0; pass < 2; pass++)
+		{
+		TInt r = pass == 0 ? iRows - 1 : 0;
+		m.Format(_L8("\r\nRow %d:\r\n"), r + 1);
+		for (TInt c = 0; c < iCols && m.Length() < 250; c++)
+			{
+			VTermPos pos;
+			pos.row = r;
+			pos.col = c;
+			VTermScreenCell cell;
+			TUint ch = vterm_screen_get_cell(iScreen, pos, &cell) ? cell.chars[0] : 0;
+			m.Append((TUint8)(ch >= 0x20 && ch < 0x7f ? ch : (ch == 0 ? ' ' : '?')));
+			}
+		m.Append(_L8("\r\n"));
+		LocalMessage(m);
+		}
+	m.Format(_L8("\r\nFound: row %d, %d window(s):"), iTabRow + 1, iTabCount);
+	for (TInt t = 0; t < iTabCount && m.Length() < 220; t++)
+		{
+		m.Append(' ');
+		m.AppendNum(iTabs[t].iIndex);
+		m.Append(':');
+		TBuf8<20> n;
+		n.Copy(iTabs[t].iName);
+		m.Append(n);
+		if (iTabs[t].iCurrent)
+			m.Append('*');
+		}
+	m.Append(_L8("\r\n"));
+	LocalMessage(m);
+	ShowDebugL();
 	}
 
 void CTermView::SelectTmuxWindow(TInt aIndex)
@@ -2840,6 +2916,8 @@ void CTermView::LaunchSshL(TInt aMode)
 	Mem::Copy(iShared->entropy, iEntropy, PSI_ENTROPY_SIZE);
 	iShared->entropy_len = PSI_ENTROPY_SIZE;
 	iShared->mode = aMode;
+	iEverLoggedIn = EFalse;
+	iLastState = -1;
 	{
 	// the key to offer (SSH), or where a new / imported key goes (4, 5)
 	TPtr8 kf((TUint8*)iShared->keyfile, sizeof(iShared->keyfile) - 1);
@@ -3172,8 +3250,17 @@ void CTermView::SshProcessEnded()
 			iReconnectTries = 0;
 			iReconnectPw.FillZ();
 			iReconnectPw.Zero();
-			if (!iPendingCmd)
+			if (iPendingCmd)
+				;
+			else if (iEverLoggedIn || iUserQuit)
 				ShowWelcome();                   // back to the start screen
+			else
+				{
+				// never got in: keep the messages that say why on screen
+				LocalMessage(_L8("\r\n[Not connected - the lines above say why. "
+					"1-9 or Shift+Ctrl+S to try again.]\r\n"));
+				iWelcome = iHosts && iHosts->Count() > 0;
+				}
 			}
 		}
 	if (iPendingCmd)
@@ -4835,6 +4922,9 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdTmuxCopy:    SendTmux('['); break;
 	case EPtCmdTmuxRename:  SendTmux(','); break;
 	case EPtCmdTmuxDetach:  SendTmux('d'); break;
+	case EPtCmdCheckTabs:
+		iView->CheckTabsL();
+		break;
 	case EPtCmdTmuxTabs:
 		s.iTmuxTabs = !s.iTmuxTabs;
 		SaveSettings(s);

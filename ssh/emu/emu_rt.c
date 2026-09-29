@@ -187,6 +187,7 @@ void *pg_shared(void) { return (void*)emu_hc(PG(0), 0, 0, 0, 0); }
 int pg_init(void) { return emu_hc(PG(1), 0, 0, 0, 0); }
 void pg_close(void) { emu_hc(PG(2), 0, 0, 0, 0); }
 void pg_set_state(int s) { emu_hc(PG(3), s, 0, 0, 0); }
+void pg_dial_verbose(int on) { (void)on; }
 void pg_set_exit(int c) { emu_hc(PG(4), c, 0, 0, 0); }
 int pg_quit_requested(void) { return emu_hc(PG(5), 0, 0, 0, 0); }
 void pg_msleep(int ms) { emu_hc(PG(6), ms, 0, 0, 0); }

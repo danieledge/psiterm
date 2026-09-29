@@ -256,6 +256,9 @@ static void cli_sessionloop() {
 			before sending the auth messages (rfc4253 10) */
 			cli_auth_getmethods();
 			cli_ses.state = USERAUTH_REQ_SENT;
+#ifdef __EPOC32__
+			{ extern void pg_set_state(int); pg_set_state(5); }   /* PSI_STATE_AUTH */
+#endif
 			TRACE(("leave cli_sessionloop: sent userauth methods req"))
 			return;
 
@@ -268,6 +271,9 @@ static void cli_sessionloop() {
 				dropbear_exit("No auth methods could be used.");
 			}
 			cli_ses.state = USERAUTH_REQ_SENT;
+#ifdef __EPOC32__
+			{ extern void pg_set_state(int); pg_set_state(5); }   /* PSI_STATE_AUTH */
+#endif
 			TRACE(("leave cli_sessionloop: cli_auth_try"))
 			return;
 
