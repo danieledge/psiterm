@@ -59,7 +59,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.35");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.36");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -404,9 +404,8 @@ void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	DrawNow();
 
 	iSerial = CSerialPort::NewL(*this);
-	ApplySerialSettings();
-
 	ShowWelcome();
+	ApplySerialSettings();
 	StartTick();
 	}
 
@@ -3185,7 +3184,14 @@ void CHostListDialog::PreLayoutDynInitL()
 		TBuf<80> where(e.iUser);
 		where.Append('@');
 		where.Append(LeftSafe(e.iHost, 60));
-		if (e.iName.CompareF(e.iHost) != 0 && line.Length() + 3 < line.MaxLength())
+		if (e.iName.CompareF(e.iHost) == 0 && e.iUser.Length())
+			{
+			// named after the host: just "user@host"
+			line = LeftSafe(where, line.MaxLength() - 2);
+			if (e.iPassword.Length())
+				line.Append(_L(" *"));
+			}
+		else if (e.iName.CompareF(e.iHost) != 0 && line.Length() + 3 < line.MaxLength())
 			{
 			line.Append(_L(" - "));
 			line.Append(LeftSafe(where, line.MaxLength() - line.Length()));
@@ -3842,17 +3848,17 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 			}
 		return;
 		}
-	if (aMenuId == R_PT_TMUX_MENU)
+	if (aMenuId == R_PT_TMUX_PREFIX_MENU)
 		{
 		aMenuPane->SetItemButtonState(iView->Settings().iTmuxPrefix ? EPtCmdTmuxPrefixA : EPtCmdTmuxPrefixB,
 			EEikMenuItemSymbolOn);
 		return;
 		}
-	if (aMenuId != R_PT_SETTINGS_MENU)
-		return;
 	TPsiSettings& s = iView->Settings();
-	aMenuPane->SetItemButtonState(EPtCmdZoom0 + s.iZoom, EEikMenuItemSymbolOn);
-	aMenuPane->SetItemButtonState(EPtCmdBold, s.iBold ? EEikMenuItemSymbolOn : 0);
+	if (aMenuId == R_PT_FONT_MENU)
+		aMenuPane->SetItemButtonState(EPtCmdZoom0 + s.iZoom, EEikMenuItemSymbolOn);
+	else if (aMenuId == R_PT_SETTINGS_MENU)
+		aMenuPane->SetItemButtonState(EPtCmdBold, s.iBold ? EEikMenuItemSymbolOn : 0);
 	}
 
 void CPsiTermAppUi::HandleCommandL(TInt aCommand)

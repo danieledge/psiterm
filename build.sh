@@ -28,5 +28,8 @@ ln -sfn "$HERE/app" "$EPOCROOT/ptproj/psiterm"
 
 echo "== package"
 cp "$REL/psiterm.app" "$REL/psiterm.rsc" "$REL/psissh.exe" "$HERE/pkg/"
+# the EPOC C library (ESTLIB.DLL) is not in the 5mx ROM: embed the SDK's
+# redistributable stdlib.sis so a fresh Psion gets it too
+cp "$REL/stdlib.sis" "$HERE/pkg/STDLIB.SIS"
 ( cd "$HERE/pkg" && wine "$EPOCROOT/epoc32/tools/makesis.exe" psiterm.pkg "$HERE/dist/PsiTerm.sis" > /dev/null )
 ls -la "$HERE/dist/PsiTerm.sis"

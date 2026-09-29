@@ -49,6 +49,9 @@ Download [`PsiTerm.sis`](https://github.com/danieledge/psiterm/raw/main/dist/Psi
 copy it to the Psion (e.g. via a CF card or PsiWin) and open it - install to D:
 if you have a CF card. Then see `docs/FIRSTRUN.TXT` for a step-by-step first run.
 
+The installer also offers the EPOC "Standard C Library" (ESTLIB.DLL), which
+PsiTerm needs and the 5mx ROM lacks - say OK if asked.
+
 ## Building
 
 You need Linux, wine, and the EPOC R5 C++ SDK with the gcc 3.0 Psion
