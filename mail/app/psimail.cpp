@@ -170,6 +170,7 @@ void CPmWatcher::DoCancel()
 CPmView::~CPmView()
 	{
 	StopEngine();
+	delete iCalSync;
 	delete iTimer;
 	delete iWatcher;
 	delete iFolders;
@@ -190,9 +191,11 @@ CPmView::~CPmView()
 void* ui_alloc(int aSize) { return User::Alloc(aSize); }
 void ui_free(void* aPtr) { User::Free(aPtr); }
 
-void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings)
+void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSettings& aCal)
 	{
 	iSettings = &aSettings;
+	iCal = &aCal;
+	iCalSync = CPmCalSync::NewL(*this);
 	// PsiMail draws everything itself, in 16 greys (see ui/)
 	CreateBackedUpWindowL(iCoeEnv->RootWin(), EGray16);
 	SetRectL(aRect);
@@ -241,6 +244,9 @@ void CPmView::CopySettingsToShared()
 	s->net.net_mode = iSettings->iNetMode;
 	s->offline = iSettings->iOffline;
 	Mem::Copy(s->acct, iSettings->iAccounts, sizeof(s->acct));
+	Mem::Copy(&s->cal, &iCal->iCal, sizeof(s->cal));
+	if (s->cal.acct < 0 || s->cal.acct >= PM_MAX_ACCOUNTS || !s->acct[s->cal.acct].used)
+		s->cal.acct = iSettings->iAcct;
 	s->acct_seq++;
 	// the mail goes on the CF card (D:) if there is one
 	TVolumeInfo vol;
@@ -1024,6 +1030,51 @@ void CPmView::SearchL(const TDesC& aWords)
 void CPmView::SendRecvL()
 	{
 	Cmd(PM_CMD_SENDRECV, iMode == EList || iMode == EMessage ? TPtrC8(iFolder) : TPtrC8(_L8("INBOX")), 0, KNullDesC8);
+	if (iCal->iCal.enabled && !iSettings->iOffline)
+		CalendarSyncL();
+	}
+
+// ----- calendar: the engine talks to the server, CPmCalSync to the Agenda
+
+void CPmView::CalendarSyncL()
+	{
+	if (!iCal->iCal.enabled)
+		{
+		Toast(_L("Turn calendar sync on in Tools > Calendar settings"));
+		return;
+		}
+	if (CalendarBusy())
+		return;
+	iCalSecond = EFalse;
+	Cmd(PM_CMD_CALSYNC, KNullDesC8, 0, KNullDesC8);
+	}
+
+void CPmView::CalProgress(const TDesC& aText)
+	{
+	SafeCopy(iStatus, aText);
+	iStatusUntil = User::TickCount() + 64 * 30;
+	Render();
+	}
+
+void CPmView::CalSyncDone(TInt aError, const TDesC& aSummary, TBool aPushed)
+	{
+	iStatus.Zero();
+	iStatusUntil = 0;
+	if (aError == KErrNone && aPushed && !iCalSecond)
+		{
+		// send what changed in the Agenda (the engine then fetches again)
+		iCalSecond = ETrue;
+		iCalMsg = aSummary;
+		Cmd(PM_CMD_CALSYNC, KNullDesC8, 0, KNullDesC8);
+		Render();
+		return;
+		}
+	if (iCalSecond && aError == KErrNone && iCalMsg.Length())
+		Toast(iCalMsg);                  // the first pass said what happened
+	else
+		Toast(aSummary);
+	iCalSecond = EFalse;
+	iCalMsg.Zero();
 	}
 
 void CPmView::WholeMessageL()
@@ -1347,6 +1398,11 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 	TInt res = s->last_res;
 	SafeCopy(iStatus, msg);
 	iStatusUntil = User::TickCount() + 64 * 6;
+	if (aCmd.op == PM_CMD_CALSYNC && res != PM_RES_UNTRUSTED && res != PM_RES_CANCELLED)
+		{
+		HandleCalResultL(aCmd, res, msg);
+		return;
+		}
 	switch (res)
 		{
 	case PM_RES_OK:
@@ -1455,6 +1511,52 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		ReloadL();
 		break;
 		}
+	}
+
+void CPmView::HandleCalResultL(const PmCmd& aCmd, TInt aRes, const TDesC& aMsg)
+	{
+	TBool list = aCmd.arg[0] == 'l';
+	if (aRes == PM_RES_OK)
+		{
+		if (list)
+			{
+			Toast(aMsg);
+			return;
+			}
+		iStatus.Zero();
+		TBuf<100> dir;
+		StoreDir(dir);
+		iCalSync->StartL(dir, *iCal);
+		return;
+		}
+	iCalSecond = EFalse;
+	if (aRes == PM_RES_NEED_PASS || aRes == PM_RES_LOGIN_FAILED)
+		{
+		if (aRes == PM_RES_LOGIN_FAILED)
+			{
+			TBuf<200> lines[3];
+			lines[0] = _L("The calendar server refused the password.");
+			lines[1] = _L("Fastmail: make an app password that can use");
+			lines[2] = _L("Calendars (CalDAV), and enter it here.");
+			TPtrC ptrs[3];
+			for (TInt k = 0; k < 3; k++) ptrs[k].Set(lines[k]);
+			CPmInfoDialog* info = new(ELeave) CPmInfoDialog(_L("Calendar"), ptrs, 3);
+			info->ExecuteLD(R_PM_INFO_DIALOG);
+			}
+		TBuf<32> pw;
+		CPmPasswordDialog* dlg = new(ELeave) CPmPasswordDialog(_L("Calendar password"), pw);
+		if (dlg->ExecuteLD(R_PM_PASSWORD_DIALOG) && pw.Length())
+			{
+			CopyToC(iCal->iCal.pass, sizeof(iCal->iCal.pass), pw);
+			((CPmAppUi*)iEikonEnv->EikAppUi())->SaveCalSettings();
+			CopySettingsToShared();
+			Cmd(PM_CMD_CALSYNC, KNullDesC8, 0, TPtrC8((const TUint8*)aCmd.arg));
+			}
+		return;
+		}
+	TBuf<160> t(_L("Calendar: "));
+	t.Append(aMsg.Left(140));
+	Toast(t);
 	}
 
 void CPmView::SetStatus(const TDesC& aText)
@@ -1613,9 +1715,9 @@ void CPmView::RenderMailbox()
 		: iSearch ? _L("Nothing found")
 		: (Busy() ? _L("Looking for messages...") : _L("No messages here"));
 	m.empty = CStr(empty); m.elen = empty.Length();
-	m.busy = Busy();
-	if (m.busy && iLastProgress.Length()) { m.status = CStr(iLastProgress); m.statlen = iLastProgress.Length(); }
-	else if (m.busy) { m.status = "Working"; m.statlen = 7; }
+	m.busy = Busy() || CalendarBusy();
+	if (Busy() && iLastProgress.Length()) { m.status = CStr(iLastProgress); m.statlen = iLastProgress.Length(); }
+	else if (Busy()) { m.status = "Working"; m.statlen = 7; }
 	else if (iStatus.Length()) { m.status = CStr(iStatus); m.statlen = iStatus.Length(); }
 	m.online = iShared->online;
 	m.offline = iSettings->iOffline;
@@ -1641,8 +1743,8 @@ void CPmView::RenderReader()
 	else if (iSearch) { r.folder = "Search"; r.flen = 6; }
 	else if (f) { r.folder = CStr(f->iName); r.flen = f->iName.Length(); }
 	r.focusLink = iFocusLink;
-	r.busy = Busy();
-	if (r.busy && iLastProgress.Length()) { r.status = CStr(iLastProgress); r.statlen = iLastProgress.Length(); }
+	r.busy = Busy() || CalendarBusy();
+	if (Busy() && iLastProgress.Length()) { r.status = CStr(iLastProgress); r.statlen = iLastProgress.Length(); }
 	else if (iStatus.Length()) { r.status = CStr(iStatus); r.statlen = iStatus.Length(); }
 	r.loading = iWaitingBody || !iDocValid;
 	if (row) { r.subject = CStr(row->iSubject); r.sublen = row->iSubject.Length(); r.flagged = row->iFlags.Locate('F') >= 0; }
@@ -2311,8 +2413,9 @@ void CPmAppUi::ConstructL()
 	{
 	BaseConstructL();
 	LoadSettings();
+	LoadCalSettings();
 	iView = new(ELeave) CPmView;
-	iView->ConstructL(ClientRect(), iSettings);
+	iView->ConstructL(ClientRect(), iSettings, iCalSettings);
 	AddToStackL(iView);
 	if (!iSettings.iAccounts[iSettings.iAcct].used)
 		{
@@ -2379,6 +2482,195 @@ void CPmAppUi::SaveSettings()
 	for (TInt i2 = 0; i2 < PM_MAX_ACCOUNTS; i2++)
 		Scramble(iSettings.iAccounts[i2]);
 	file.Close();
+	}
+
+// ----- calendar settings (a file of their own, so mail settings stay put)
+
+_LIT(KCalIniFile, "C:\\System\\Apps\\PsiMail\\Calendar.ini");
+const TUint32 KCalIniMagic = 0x31435350;   // 'PSC1'
+
+static void ScrambleCal(PmCalendar& aCal)
+	{
+	for (TInt i = 0; i < (TInt)sizeof(aCal.pass); i++)
+		aCal.pass[i] ^= (char)(0x3c + i * 5);
+	}
+
+// the time zone list's entry for the Psion's own home city (a guess)
+static TInt GuessZone()
+	{
+	static const TInt16 KStd[] = { 0, 0, 60, 120, 180, 240, 330, 480, 540, 600, 600, 720,
+		-600, -540, -480, -420, -420, -360, -300, -240, -180 };
+	TLocale loc;
+	TInt minutes = loc.UniversalTimeOffset().Int() / 60;
+	if (loc.QueryHomeHasDaylightSavingOn())
+		minutes -= 60;
+	if (minutes == 0)
+		return 1;                              // London, rather than UTC
+	for (TInt i = 0; i < (TInt)(sizeof(KStd) / sizeof(KStd[0])); i++)
+		if (KStd[i] == minutes)
+			return i;
+	return 0;
+	}
+
+void CPmAppUi::LoadCalSettings()
+	{
+	TPmCalSettings& c = iCalSettings;
+	Mem::FillZ(&c, sizeof(c));
+	RFile file;
+	TBool ok = EFalse;
+	if (file.Open(iCoeEnv->FsSession(), KCalIniFile, EFileRead) == KErrNone)
+		{
+		TPckgBuf<TUint32> magic;
+		TPckgBuf<TInt> size;
+		TPckg<TPmCalSettings> p(c);
+		if (file.Read(magic) == KErrNone && magic() == KCalIniMagic &&
+			file.Read(size) == KErrNone && size() == (TInt)sizeof(TPmCalSettings) &&
+			file.Read(p) == KErrNone && p.Length() == (TInt)sizeof(TPmCalSettings))
+			{
+			ScrambleCal(c.iCal);
+			ok = ETrue;
+			}
+		file.Close();
+		}
+	if (!ok)
+		{
+		Mem::FillZ(&c, sizeof(c));
+		Mem::Copy(c.iCal.host, "caldav.fastmail.com", 20);
+		c.iCal.port = 443;
+		c.iCal.zone = GuessZone();
+		c.iCal.days_back = 30;
+		c.iCal.days_ahead = 180;
+		c.iCal.acct = iSettings.iAcct;
+		CPmCalSync::DefaultAgendaFile(c.iAgendaFile);
+		c.iAlarms = 1;
+		}
+	}
+
+void CPmAppUi::SaveCalSettings()
+	{
+	RFs& fs = iCoeEnv->FsSession();
+	fs.MkDirAll(KCalIniFile);
+	RFile file;
+	if (file.Replace(fs, KCalIniFile, EFileWrite) != KErrNone)
+		return;
+	TPckgBuf<TUint32> magic(KCalIniMagic);
+	TPckgBuf<TInt> size(sizeof(TPmCalSettings));
+	file.Write(magic);
+	file.Write(size);
+	ScrambleCal(iCalSettings.iCal);
+	file.Write(TPckgC<TPmCalSettings>(iCalSettings));
+	ScrambleCal(iCalSettings.iCal);
+	file.Close();
+	}
+
+void CPmAppUi::EditCalendarL()
+	{
+	TPmCalSettings c = iCalSettings;
+	TBuf<100> dir;
+	iView->StoreDirectory(dir);
+	CPmCalDialog* dlg = new(ELeave) CPmCalDialog(c, dir);
+	if (!dlg->ExecuteLD(R_PM_CAL_DIALOG))
+		return;
+	TBool turnedOn = c.iCal.enabled && !iCalSettings.iCal.enabled;
+	TBuf<128> oldFile(iCalSettings.iAgendaFile);
+	if (c.iAgendaFile.CompareF(oldFile) != 0 || c.iCal.zone != iCalSettings.iCal.zone)
+		CPmCalSync::ForgetL(dir);            // another file: start the links again
+	if (turnedOn)
+		c.iCal.acct = iSettings.iAcct;
+	iCalSettings = c;
+	SaveCalSettings();
+	iView->SettingsChanged();
+	if (turnedOn && iEikonEnv->QueryWinL(_L("Calendar sync is on"), _L("Sync the calendar with the Agenda now?")))
+		iView->CalendarSyncL();
+	}
+
+CPmCalDialog::~CPmCalDialog()
+	{
+	delete iIds;
+	}
+
+void CPmCalDialog::PreLayoutDynInitL()
+	{
+	SetChoiceListCurrentItem(EPmDlgCalOn, iCal.iCal.enabled ? 1 : 0);
+	TBuf<64> host;
+	FromC(host, iCal.iCal.host);
+	SetEdwinTextL(EPmDlgCalHost, &host);
+	SetEdwinTextL(EPmDlgCalFile, &iCal.iAgendaFile);
+	SetChoiceListCurrentItem(EPmDlgCalZone, iCal.iCal.zone);
+	SetNumberEditorValue(EPmDlgCalBack, iCal.iCal.days_back);
+	SetNumberEditorValue(EPmDlgCalAhead, iCal.iCal.days_ahead);
+	SetChoiceListCurrentItem(EPmDlgCalAlarms, iCal.iAlarms ? 1 : 0);
+	SetChoiceListCurrentItem(EPmDlgCalExisting, iCal.iCopyExisting ? 1 : 0);
+	// the calendars found at the last sync
+	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(4);
+	CleanupStack::PushL(names);
+	iIds = new(ELeave) CDesC8ArrayFlat(4);
+	TInt def = 0;
+	CPmCalSync::CalendarsL(iStoreDir, *names, *iIds, def);
+	if (names->Count() > 0)
+		{
+		CEikChoiceList* cl = (CEikChoiceList*)Control(EPmDlgCalDefault);
+		CleanupStack::Pop();                 // names: the list owns it now
+		cl->SetArrayL(names);
+		cl->SetCurrentItem(def >= 0 ? def : 0);
+		}
+	else
+		CleanupStack::PopAndDestroy();       // names
+	}
+
+TBool CPmCalDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	TBuf<64> host;
+	GetEdwinText(host, EPmDlgCalHost);
+	host.Trim();
+	TInt on = ChoiceListCurrentItem(EPmDlgCalOn);
+	if (on && host.Length() == 0)
+		{
+		iEikonEnv->InfoMsg(_L("Enter the calendar server"));
+		return EFalse;
+		}
+	TBuf<128> file;
+	GetEdwinText(file, EPmDlgCalFile);
+	file.Trim();
+	if (on)
+		{
+		TEntry e;
+		if (file.Length() == 0 || iEikonEnv->FsSession().Entry(file, e) != KErrNone)
+			{
+			iEikonEnv->InfoMsg(_L("No Agenda file there: open it in Agenda first"));
+			return EFalse;
+			}
+		}
+	// "https://host/path" is allowed: the path is where to look for calendars
+	TInt scheme = host.Find(_L("://"));
+	if (scheme >= 0) host.Delete(0, scheme + 3);
+	TInt slash = host.Locate('/');
+	iCal.iCal.path[0] = 0;
+	if (slash >= 0)
+		{
+		CopyToC(iCal.iCal.path, sizeof(iCal.iCal.path), host.Mid(slash));
+		host.SetLength(slash);
+		}
+	CopyToC(iCal.iCal.host, sizeof(iCal.iCal.host), host);
+	iCal.iCal.enabled = on;
+	iCal.iCal.port = 443;
+	TBuf<32> pw;
+	GetSecretEditorText(pw, EPmDlgCalPass);
+	if (pw.Length())
+		CopyToC(iCal.iCal.pass, sizeof(iCal.iCal.pass), pw);
+	iCal.iAgendaFile = file;
+	iCal.iCal.zone = ChoiceListCurrentItem(EPmDlgCalZone);
+	iCal.iCal.days_back = NumberEditorValue(EPmDlgCalBack);
+	iCal.iCal.days_ahead = NumberEditorValue(EPmDlgCalAhead);
+	iCal.iAlarms = ChoiceListCurrentItem(EPmDlgCalAlarms);
+	iCal.iCopyExisting = ChoiceListCurrentItem(EPmDlgCalExisting);
+	if (iIds && iIds->Count() > 0)
+		{
+		TInt k = ChoiceListCurrentItem(EPmDlgCalDefault);
+		if (k >= 0 && k < iIds->Count())
+			CPmCalSync::SetDefaultCalendarL(iStoreDir, (*iIds)[k]);
+		}
+	return ETrue;
 	}
 
 TBool CPmAppUi::EditAccountL(TInt aIndex, TBool aNew)
@@ -2896,6 +3188,12 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdWeb:
 		iView->ViewAsWebPageL();
+		break;
+	case EPmCmdCalendar:
+		iView->CalendarSyncL();
+		break;
+	case EPmCmdCalSettings:
+		EditCalendarL();
 		break;
 	case EPmCmdSmooth:
 		iSettings.iMono = !iSettings.iMono;

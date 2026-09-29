@@ -78,6 +78,7 @@ RESOURCE MENU_PANE r_pm_file_menu
 	items=
 		{
 		MENU_ITEM { command=EPmCmdSendRecv; txt="Send & receive"; },
+		MENU_ITEM { command=EPmCmdCalendar; txt="Sync calendar"; },
 		MENU_ITEM { command=EPmCmdOffline; txt="Work offline"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPmCmdHangup; txt="Hang up (free the serial port)"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdAbout; txt="About PsiMail"; },
@@ -124,6 +125,7 @@ RESOURCE MENU_PANE r_pm_tools_menu
 		MENU_ITEM { command=EPmCmdEditAccount; txt="Account settings..."; },
 		MENU_ITEM { command=EPmCmdNewAccount; txt="New account..."; },
 		MENU_ITEM { command=EPmCmdDeleteAccount; txt="Delete account"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdCalSettings; txt="Calendar settings..."; },
 		MENU_ITEM { command=EPmCmdConnSettings; txt="Connection settings..."; },
 		MENU_ITEM { command=EPmCmdSmooth; txt="Smooth text"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPmCmdRestart; txt="Restart mail engine"; }
@@ -342,4 +344,101 @@ RESOURCE ARRAY r_pm_flow_array
 RESOURCE ARRAY r_pm_link_array
 	{
 	items={ LBUF { txt="Modem (ATDT host:port)"; }, LBUF { txt="Psion TCP/IP (dial-up)"; } };
+	}
+
+// ----------------------------------------------------------------- calendar
+
+RESOURCE DIALOG r_pm_cal_dialog
+	{
+	title="Calendar";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	pages=r_pm_cal_pages;
+	}
+
+RESOURCE ARRAY r_pm_cal_pages
+	{
+	items=
+		{
+		PAGE { text="Server"; id=EPmPageCalServer; lines=r_pm_cal_server_lines; },
+		PAGE { text="Agenda"; id=EPmPageCalAgenda; lines=r_pm_cal_agenda_lines; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_cal_server_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Sync with the Agenda"; id=EPmDlgCalOn;
+			control=CHOICELIST { array_id=r_pm_yesno_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="CalDAV server"; id=EPmDlgCalHost;
+			control=EDWIN { width=24; maxlength=62; }; },
+		DLG_LINE { type=EEikCtSecretEd; prompt="Password (if not the mail one)"; id=EPmDlgCalPass;
+			control=SECRETED { num_letters=32; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="New Psion entries go to"; id=EPmDlgCalDefault;
+			control=CHOICELIST { array_id=r_pm_cal_none_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_cal_agenda_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Agenda file"; id=EPmDlgCalFile;
+			control=EDWIN { width=24; maxlength=120; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Time zone"; id=EPmDlgCalZone;
+			control=CHOICELIST { array_id=r_pm_zones; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Days back"; id=EPmDlgCalBack;
+			control=NUMBER_EDITOR { min=0; max=365; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Days ahead"; id=EPmDlgCalAhead;
+			control=NUMBER_EDITOR { min=7; max=730; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Alarms"; id=EPmDlgCalAlarms;
+			control=CHOICELIST { array_id=r_pm_cal_alarm_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Entries already on the Psion"; id=EPmDlgCalExisting;
+			control=CHOICELIST { array_id=r_pm_cal_existing_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_cal_none_array
+	{
+	items={ LBUF { txt="(sync first)"; } };
+	}
+
+RESOURCE ARRAY r_pm_cal_alarm_array
+	{
+	items={ LBUF { txt="Leave as they are"; }, LBUF { txt="Sync with the server"; } };
+	}
+
+RESOURCE ARRAY r_pm_cal_existing_array
+	{
+	items={ LBUF { txt="Keep on the Psion only"; }, LBUF { txt="Copy to the server"; } };
+	}
+
+// the same order as engine/caltz.c
+RESOURCE ARRAY r_pm_zones
+	{
+	items=
+		{
+		LBUF { txt="UTC"; },
+		LBUF { txt="London, Dublin, Lisbon"; },
+		LBUF { txt="Paris, Berlin, Rome, Madrid"; },
+		LBUF { txt="Athens, Helsinki, Kyiv"; },
+		LBUF { txt="Moscow, Istanbul"; },
+		LBUF { txt="Dubai"; },
+		LBUF { txt="India"; },
+		LBUF { txt="Singapore, Hong Kong, Perth"; },
+		LBUF { txt="Tokyo, Seoul"; },
+		LBUF { txt="Brisbane"; },
+		LBUF { txt="Sydney, Melbourne"; },
+		LBUF { txt="Auckland"; },
+		LBUF { txt="Hawaii"; },
+		LBUF { txt="Alaska"; },
+		LBUF { txt="Pacific (US, Canada)"; },
+		LBUF { txt="Arizona"; },
+		LBUF { txt="Mountain (US, Canada)"; },
+		LBUF { txt="Central (US, Canada)"; },
+		LBUF { txt="Eastern (US, Canada)"; },
+		LBUF { txt="Atlantic (Canada)"; },
+		LBUF { txt="Sao Paulo, Buenos Aires"; }
+		};
 	}

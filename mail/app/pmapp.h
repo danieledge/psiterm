@@ -27,6 +27,7 @@ extern "C" {
 #include <psimail.h>
 }
 #include "pmui.h"
+#include "pmcal.h"
 
 #include <psimail.rsg>
 #include "psimail.hrh"
@@ -101,12 +102,18 @@ private:
 	RProcess* iProcess;
 	};
 
-class CPmView : public CCoeControl
+class CPmView : public CCoeControl, public MPmCalObserver
 	{
 public:
 	enum TMode { EList, EMessage, EOutbox, ENoAccount };
 	~CPmView();
-	void ConstructL(const TRect& aRect, TPmSettings& aSettings);
+	void ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSettings& aCal);
+	void CalendarSyncL();                    // ask the engine, then update the Agenda
+	TBool CalendarBusy() const { return iCalSync && iCalSync->Running(); }
+	void StoreDirectory(TDes& aDir) const { StoreDir(aDir); }
+	// MPmCalObserver
+	void CalProgress(const TDesC& aText);
+	void CalSyncDone(TInt aError, const TDesC& aSummary, TBool aPushed);
 	TMode Mode() const { return iMode; }
 	PmShared* Shared() { return iShared; }
 	TBool EngineRunning() const { return iRunning; }
@@ -163,6 +170,7 @@ private:
 	void Tick();
 	void TickL();
 	void HandleResultL(const PmCmd& aCmd);
+	void HandleCalResultL(const PmCmd& aCmd, TInt aRes, const TDesC& aMsg);
 	void ReloadL();
 	void LoadFoldersL();
 	void LoadListL();
@@ -186,6 +194,10 @@ private:
 	TInt SidebarCount() const { return iFolders->Count() + 1; }   // + the outbox
 private:
 	TPmSettings* iSettings;
+	TPmCalSettings* iCal;
+	CPmCalSync* iCalSync;
+	TBool iCalSecond;                // sending what the Agenda sync found
+	TBuf<120> iCalMsg;
 	RChunk iChunk;
 	TBool iChunkOpen;
 	PmShared* iShared;
@@ -330,12 +342,26 @@ private:
 	TPmSettings& iSettings;
 	};
 
+class CPmCalDialog : public CEikDialog
+	{
+public:
+	CPmCalDialog(TPmCalSettings& aCal, const TDesC& aStoreDir) : iCal(aCal), iStoreDir(aStoreDir) {}
+	~CPmCalDialog();
+private:
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	TPmCalSettings& iCal;
+	TPtrC iStoreDir;
+	CDesC8ArrayFlat* iIds;
+	};
+
 class CPmAppUi : public CEikAppUi
 	{
 public:
 	void ConstructL();
 	~CPmAppUi();
 	void SaveSettings();
+	void SaveCalSettings();
 	void ComposeDraftL(CPmDraft* aDraft, const TDesC& aTitle) { ComposeL(aDraft, aTitle); }
 private:
 	void HandleCommandL(TInt aCommand);
@@ -355,8 +381,11 @@ private:
 	void DeleteAccountL();
 	void AboutL();
 	void AddSignature(CPmDraft& aDraft, TDes& aBody);
+	void LoadCalSettings();
+	void EditCalendarL();
 	CPmView* iView;
 	TPmSettings iSettings;
+	TPmCalSettings iCalSettings;
 	};
 
 class CPmDocument : public CEikDocument

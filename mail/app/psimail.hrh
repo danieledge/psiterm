@@ -74,7 +74,17 @@ enum TPmDialogControls
 	EPmDlgInfo3,
 	EPmDlgInfo4,
 	EPmDlgInfo5,
-	EPmDlgInfo6
+	EPmDlgInfo6,
+	EPmDlgCalOn,
+	EPmDlgCalHost,
+	EPmDlgCalPass,
+	EPmDlgCalFile,
+	EPmDlgCalZone,
+	EPmDlgCalBack,
+	EPmDlgCalAhead,
+	EPmDlgCalAlarms,
+	EPmDlgCalDefault,
+	EPmDlgCalExisting
 	};
 
 enum TPmButtons
@@ -90,5 +100,7 @@ enum TPmPages
 	EPmPageAccount = 0x300,
 	EPmPageIncoming,
 	EPmPageOutgoing,
-	EPmPageOptions
+	EPmPageOptions,
+	EPmPageCalServer,
+	EPmPageCalAgenda
 	};
