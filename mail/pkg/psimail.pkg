@@ -1,0 +1,8 @@
+; PsiMail 0.1 installer for Psion Series 5mx (EPOC R5)
+; PsiMail.app: screen, menus, settings.  psimail.exe: the mail engine.
+&EN
+#{"PsiMail"},(0x01000A7C),0,1,0
+"psimail.app"-"!:\System\Apps\PsiMail\PsiMail.app"
+"psimail.rsc"-"!:\System\Apps\PsiMail\PsiMail.rsc"
+"psimail.aif"-"!:\System\Apps\PsiMail\PsiMail.aif"
+"psimail.exe"-"!:\System\Apps\PsiMail\psimail.exe"

@@ -1,0 +1,343 @@
+// PSIMAIL.RSS - menus, hotkeys and dialogs for PsiMail
+
+NAME PSMA
+
+#include <eikdef.rh>
+#include <eikmenu.rh>
+#include <eikmenu.hrh>
+#include <eikcmds.hrh>
+#include <eikdialg.rh>
+#include <eikdialg.hrh>
+#include <eikedwin.rh>
+#include <eikmfne.rh>
+#include <eikchlst.rh>
+#include <eikcmbut.rh>
+#include <eiklabel.rh>
+#include <eikseced.rh>
+#include <eikctrls.hrh>
+#include <eikon.rsg>
+
+#include "psimail.hrh"
+
+RESOURCE RSS_SIGNATURE { }
+
+RESOURCE TBUF { buf=""; }
+
+RESOURCE EIK_APP_INFO
+	{
+	menubar=r_pm_menubar;
+	hotkeys=r_pm_hotkeys;
+	}
+
+RESOURCE HOTKEYS r_pm_hotkeys
+	{
+	control=
+		{
+		HOTKEY { command=EEikCmdExit; key='e'; },
+		HOTKEY { command=EPmCmdSendRecv; key='g'; },
+		HOTKEY { command=EPmCmdNew; key='n'; },
+		HOTKEY { command=EPmCmdReply; key='r'; },
+		HOTKEY { command=EPmCmdForward; key='w'; },
+		HOTKEY { command=EPmCmdMove; key='m'; },
+		HOTKEY { command=EPmCmdArchive; key='a'; },
+		HOTKEY { command=EPmCmdUnread; key='u'; },
+		HOTKEY { command=EPmCmdFlag; key='t'; },
+		HOTKEY { command=EPmCmdSaveAttach; key='s'; },
+		HOTKEY { command=EPmCmdFolders; key='l'; },
+		HOTKEY { command=EPmCmdRefresh; key='y'; },
+		HOTKEY { command=EPmCmdSearch; key='f'; },
+		HOTKEY { command=EPmCmdOutbox; key='b'; },
+		HOTKEY { command=EPmCmdSwitchAccount; key='j'; },
+		HOTKEY { command=EPmCmdEditAccount; key='k'; },
+		HOTKEY { command=EPmCmdHangup; key='h'; },
+		HOTKEY { command=EPmCmdOffline; key='o'; }
+		};
+	shift_control=
+		{
+		HOTKEY { command=EPmCmdReplyAll; key='r'; },
+		HOTKEY { command=EPmCmdWhole; key='w'; },
+		HOTKEY { command=EPmCmdOlder; key='y'; },
+		HOTKEY { command=EPmCmdShowHeaders; key='h'; }
+		};
+	}
+
+RESOURCE MENU_BAR r_pm_menubar
+	{
+	titles=
+		{
+		MENU_TITLE { menu_pane=r_pm_file_menu; txt="File"; },
+		MENU_TITLE { menu_pane=r_pm_message_menu; txt="Message"; },
+		MENU_TITLE { menu_pane=r_pm_folder_menu; txt="Folder"; },
+		MENU_TITLE { menu_pane=r_pm_tools_menu; txt="Tools"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pm_file_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdSendRecv; txt="Send & receive"; },
+		MENU_ITEM { command=EPmCmdOffline; txt="Work offline"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPmCmdHangup; txt="Hang up (free the serial port)"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdAbout; txt="About PsiMail"; },
+		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pm_message_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdNew; txt="New message"; },
+		MENU_ITEM { command=EPmCmdReply; txt="Reply"; },
+		MENU_ITEM { command=EPmCmdReplyAll; txt="Reply to all"; },
+		MENU_ITEM { command=EPmCmdForward; txt="Forward"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdDelete; txt="Delete (Del)"; },
+		MENU_ITEM { command=EPmCmdArchive; txt="Archive"; },
+		MENU_ITEM { command=EPmCmdMove; txt="Move to folder..."; },
+		MENU_ITEM { command=EPmCmdUnread; txt="Mark read / unread"; },
+		MENU_ITEM { command=EPmCmdFlag; txt="Flag / unflag"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdSaveAttach; txt="Save attachment..."; },
+		MENU_ITEM { command=EPmCmdWhole; txt="Get whole message"; },
+		MENU_ITEM { command=EPmCmdShowHeaders; txt="Show all headers"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pm_folder_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdFolders; txt="Folders"; },
+		MENU_ITEM { command=EPmCmdOutbox; txt="Outbox"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdRefresh; txt="Check for new mail"; },
+		MENU_ITEM { command=EPmCmdOlder; txt="Get older messages"; },
+		MENU_ITEM { command=EPmCmdSearch; txt="Search..."; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pm_tools_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdSwitchAccount; txt="Switch account..."; },
+		MENU_ITEM { command=EPmCmdEditAccount; txt="Account settings..."; },
+		MENU_ITEM { command=EPmCmdNewAccount; txt="New account..."; },
+		MENU_ITEM { command=EPmCmdDeleteAccount; txt="Delete account"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdConnSettings; txt="Connection settings..."; },
+		MENU_ITEM { command=EPmCmdRestart; txt="Restart mail engine"; }
+		};
+	}
+
+// ----------------------------------------------------------------- dialogs
+
+RESOURCE DIALOG r_pm_info_dialog
+	{
+	title="PsiMail";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CONTINUE;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo2; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo3; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo4; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo5; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo6; control=LABEL { txt=""; }; }
+		};
+	}
+
+RESOURCE DIALOG r_pm_text_dialog
+	{
+	title="PsiMail";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Find"; id=EPmDlgWords;
+			control=EDWIN { width=30; maxlength=60; }; }
+		};
+	}
+
+RESOURCE DIALOG r_pm_password_dialog
+	{
+	title="Password";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPmDlgPass;
+			control=SECRETED { num_letters=32; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_empty_array
+	{
+	items={ LBUF { txt="-"; } };
+	}
+
+RESOURCE DIALOG r_pm_choice_dialog
+	{
+	title="PsiMail";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Choose"; id=EPmDlgChoice;
+			control=CHOICELIST { array_id=r_pm_empty_array; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pm_compose_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPmBidSend; button=CMBUT { txt="Send"; }; hotkey='S'; },
+		DLG_BUTTON { id=EPmBidSave; button=CMBUT { txt="Save"; }; hotkey='D'; },
+		DLG_BUTTON { id=EPmBidAttach; button=CMBUT { txt="Attach..."; }; hotkey='A'; },
+		DLG_BUTTON { id=EPmBidRemove; button=CMBUT { txt="Unattach"; }; hotkey='U'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; }
+		};
+	}
+
+RESOURCE DIALOG r_pm_compose_dialog
+	{
+	title="New message";
+	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight;
+	buttons=r_pm_compose_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="To"; id=EPmDlgTo;
+			control=EDWIN { width=34; maxlength=500; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Cc"; id=EPmDlgCc;
+			control=EDWIN { width=34; maxlength=500; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Subject"; id=EPmDlgSubject;
+			control=EDWIN { width=34; maxlength=200; }; },
+		DLG_LINE { type=EEikCtLabel; prompt="Attached"; id=EPmDlgAttachments;
+			control=LABEL { txt="none"; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Text"; id=EPmDlgBody;
+			control=EDWIN { width=34; lines=6; maxlength=30000; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_security_array
+	{
+	items={ LBUF { txt="None"; }, LBUF { txt="TLS (SSL)"; }, LBUF { txt="STARTTLS"; } };
+	}
+
+RESOURCE ARRAY r_pm_yesno_array
+	{
+	items={ LBUF { txt="No"; }, LBUF { txt="Yes"; } };
+	}
+
+RESOURCE ARRAY r_pm_store_array
+	{
+	items={ LBUF { txt="CF card if there is one"; }, LBUF { txt="Internal disk (C:)"; } };
+	}
+
+RESOURCE ARRAY r_pm_account_pages
+	{
+	items=
+		{
+		PAGE { text="Account"; id=EPmPageAccount; lines=r_pm_account_lines; },
+		PAGE { text="Incoming"; id=EPmPageIncoming; lines=r_pm_incoming_lines; },
+		PAGE { text="Outgoing"; id=EPmPageOutgoing; lines=r_pm_outgoing_lines; },
+		PAGE { text="Options"; id=EPmPageOptions; lines=r_pm_options_lines; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_account_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Account name"; id=EPmDlgName;
+			control=EDWIN { width=24; maxlength=30; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Your name"; id=EPmDlgFullName;
+			control=EDWIN { width=24; maxlength=62; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Email address"; id=EPmDlgEmail;
+			control=EDWIN { width=24; maxlength=94; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Signature ( / = new line)"; id=EPmDlgSignature;
+			control=EDWIN { width=24; maxlength=150; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_incoming_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="IMAP server"; id=EPmDlgImapHost;
+			control=EDWIN { width=24; maxlength=62; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Port"; id=EPmDlgImapPort;
+			control=NUMBER_EDITOR { min=1; max=65535; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Security"; id=EPmDlgImapTls;
+			control=CHOICELIST { array_id=r_pm_security_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="User name"; id=EPmDlgUser;
+			control=EDWIN { width=24; maxlength=94; }; },
+		DLG_LINE { type=EEikCtSecretEd; prompt="(App) password"; id=EPmDlgPass;
+			control=SECRETED { num_letters=32; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_outgoing_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="SMTP server"; id=EPmDlgSmtpHost;
+			control=EDWIN { width=24; maxlength=62; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Port"; id=EPmDlgSmtpPort;
+			control=NUMBER_EDITOR { min=1; max=65535; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Security"; id=EPmDlgSmtpTls;
+			control=CHOICELIST { array_id=r_pm_security_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Copy to Sent folder"; id=EPmDlgSaveSent;
+			control=CHOICELIST { array_id=r_pm_yesno_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_options_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Messages per folder"; id=EPmDlgSyncCount;
+			control=NUMBER_EDITOR { min=10; max=500; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Text per message (KB)"; id=EPmDlgBodyKb;
+			control=NUMBER_EDITOR { min=4; max=1024; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Keep mail on"; id=EPmDlgStore;
+			control=CHOICELIST { array_id=r_pm_store_array; }; }
+		};
+	}
+
+RESOURCE DIALOG r_pm_account_dialog
+	{
+	title="Mail account";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	pages=r_pm_account_pages;
+	}
+
+RESOURCE DIALOG r_pm_conn_dialog
+	{
+	title="Connection settings";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Connect via"; id=EPmDlgLink; control=CHOICELIST { array_id=r_pm_link_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Baud rate"; id=EPmDlgBaud; control=CHOICELIST { array_id=r_pm_baud_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Flow control"; id=EPmDlgFlow; control=CHOICELIST { array_id=r_pm_flow_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_baud_array
+	{
+	items={ LBUF { txt="9600"; }, LBUF { txt="19200"; }, LBUF { txt="38400"; }, LBUF { txt="57600"; }, LBUF { txt="115200"; } };
+	}
+
+RESOURCE ARRAY r_pm_flow_array
+	{
+	items={ LBUF { txt="None"; }, LBUF { txt="RTS/CTS"; } };
+	}
+
+RESOURCE ARRAY r_pm_link_array
+	{
+	items={ LBUF { txt="Modem (ATDT host:port)"; }, LBUF { txt="Psion TCP/IP (dial-up)"; } };
+	}

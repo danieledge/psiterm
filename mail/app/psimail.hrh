@@ -1,0 +1,90 @@
+// PSIMAIL.HRH - command and control ids for PsiMail.app
+
+enum TPmCommands
+	{
+	EPmCmdSendRecv = 0x1000,
+	EPmCmdOffline,
+	EPmCmdHangup,
+	EPmCmdAbout,
+	EPmCmdNew,
+	EPmCmdReply,
+	EPmCmdReplyAll,
+	EPmCmdForward,
+	EPmCmdDelete,
+	EPmCmdMove,
+	EPmCmdArchive,
+	EPmCmdUnread,
+	EPmCmdFlag,
+	EPmCmdSaveAttach,
+	EPmCmdWhole,
+	EPmCmdFolders,
+	EPmCmdRefresh,
+	EPmCmdOlder,
+	EPmCmdSearch,
+	EPmCmdOutbox,
+	EPmCmdSwitchAccount,
+	EPmCmdEditAccount,
+	EPmCmdNewAccount,
+	EPmCmdDeleteAccount,
+	EPmCmdConnSettings,
+	EPmCmdRestart,
+	EPmCmdOpen,
+	EPmCmdBack,
+	EPmCmdPrev,
+	EPmCmdNext,
+	EPmCmdEmptyTrash,
+	EPmCmdShowHeaders
+	};
+
+enum TPmDialogControls
+	{
+	EPmDlgTo = 0x100,
+	EPmDlgCc,
+	EPmDlgBcc,
+	EPmDlgSubject,
+	EPmDlgBody,
+	EPmDlgAttachments,
+	EPmDlgName,
+	EPmDlgFullName,
+	EPmDlgEmail,
+	EPmDlgImapHost,
+	EPmDlgImapPort,
+	EPmDlgImapTls,
+	EPmDlgSmtpHost,
+	EPmDlgSmtpPort,
+	EPmDlgSmtpTls,
+	EPmDlgUser,
+	EPmDlgPass,
+	EPmDlgSyncCount,
+	EPmDlgBodyKb,
+	EPmDlgSaveSent,
+	EPmDlgSignature,
+	EPmDlgBaud,
+	EPmDlgFlow,
+	EPmDlgLink,
+	EPmDlgStore,
+	EPmDlgChoice,
+	EPmDlgWords,
+	EPmDlgInfo1,
+	EPmDlgInfo2,
+	EPmDlgInfo3,
+	EPmDlgInfo4,
+	EPmDlgInfo5,
+	EPmDlgInfo6
+	};
+
+enum TPmButtons
+	{
+	EPmBidAttach = 0x200,
+	EPmBidSave,
+	EPmBidSend,
+	EPmBidRemove
+	};
+
+enum TPmPages
+	{
+	EPmPageAccount = 0x300,
+	EPmPageIncoming,
+	EPmPageOutgoing,
+	EPmPageOptions
+	};
