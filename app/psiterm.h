@@ -160,6 +160,7 @@ class CAboutDialog : public CEikDialog
 public:
 	CAboutDialog(const TDesC& aStatus);
 private:
+	void SetSizeAndPositionL(const TSize& aSize);   // never larger than the screen
 	void PreLayoutDynInitL();
 	TBuf<80> iStatus;
 	};

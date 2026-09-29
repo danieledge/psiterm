@@ -58,7 +58,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.33");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.34");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -2681,6 +2681,14 @@ TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
 CAboutDialog::CAboutDialog(const TDesC& aStatus)
 	: iStatus(aStatus)
 	{
+	}
+
+void CAboutDialog::SetSizeAndPositionL(const TSize& aSize)
+	{
+	TSize screen = iEikonEnv->ScreenDevice()->SizeInPixels();
+	TSize size(aSize.iWidth < screen.iWidth - 8 ? aSize.iWidth : screen.iWidth - 8,
+		aSize.iHeight < screen.iHeight - 8 ? aSize.iHeight : screen.iHeight - 8);
+	SetCornerAndSizeL(EHCenterVCenter, size);
 	}
 
 void CAboutDialog::PreLayoutDynInitL()
