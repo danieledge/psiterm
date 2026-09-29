@@ -537,9 +537,17 @@ void CPmView::LoadListL()
 				DisplayName(row.iFrom, from);
 				SafeCopy(row.iSubject, NextField(l));
 				}
-			iRows->InsertL(0, row);            // newest first
+			iRows->AppendL(row);
 			}
 		CleanupStack::PopAndDestroy();
+		// the file is oldest first; show the newest first
+		TInt n = iRows->Count();
+		for (TInt i = 0; i < n / 2; i++)
+			{
+			TPmRow t = (*iRows)[i];
+			(*iRows)[i] = (*iRows)[n - 1 - i];
+			(*iRows)[n - 1 - i] = t;
+			}
 		}
 	iSel = 0;
 	for (TInt i = 0; i < iRows->Count(); i++)
@@ -860,6 +868,7 @@ void CPmView::OpenCurrentL()
 	if (iMode != EList || iSel < 0 || iSel >= iRows->Count())
 		return;
 	TPmRow& row = (*iRows)[iSel];
+	TBool wasUnread = row.iFlags.Locate('S') < 0;
 	iMsgUid = row.iUid;
 	iMode = EMessage;
 	iMsgTop = 0;
@@ -875,9 +884,10 @@ void CPmView::OpenCurrentL()
 		else
 			Cmd(PM_CMD_BODY, iFolder, iMsgUid, KNullDesC8);
 		}
-	else if (row.iFlags.Locate('S') >= 0)
+	else if (wasUnread)
 		{
-		// already here: tell the server it's been read (does nothing if it knew)
+		// here already (e.g. marked unread again): tell the server it's read
+		Cmd(PM_CMD_FLAG, iFolder, iMsgUid, _L8("+S"));
 		}
 	Redraw();
 	}
@@ -924,11 +934,19 @@ void CPmView::DeleteCurrentL()
 	const TPmRow* row = CurrentRow();
 	if (!row || (iMode != EList && iMode != EMessage))
 		return;
+	TUint uid = row->iUid;                    // (the list may reload during the query)
 	const TPmFolder* f = CurrentFolder();
 	TBool forGood = f && f->iKind == 'T';
 	if (forGood && !iEikonEnv->QueryWinL(_L("Delete this message for good?"), _L("It is in the Trash already")))
 		return;
-	Cmd(PM_CMD_MOVE, iFolder, row->iUid, KNullDesC8);
+	Cmd(PM_CMD_MOVE, iFolder, uid, KNullDesC8);
+	for (TInt i = 0; i < iRows->Count(); i++)
+		if ((*iRows)[i].iUid == uid) { iSel = i; break; }
+	if (iSel < 0 || iSel >= iRows->Count() || (*iRows)[iSel].iUid != uid)
+		{
+		Redraw();
+		return;
+		}
 	iRows->Delete(iSel);
 	if (iSel >= iRows->Count()) iSel = iRows->Count() - 1;
 	if (iSel < 0) iSel = 0;
@@ -943,15 +961,15 @@ void CPmView::DeleteCurrentL()
 	Redraw();
 	}
 
-void CPmView::MoveCurrentL(const TDesC8& aDest)
+TBool CPmView::MoveCurrentL(const TDesC8& aDest)
 	{
 	const TPmRow* row = CurrentRow();
 	if (!row || (iMode != EList && iMode != EMessage))
-		return;
+		return EFalse;
 	if (aDest == iFolder)
 		{
 		iEikonEnv->InfoMsg(_L("It is in that folder already"));
-		return;
+		return EFalse;
 		}
 	Cmd(PM_CMD_MOVE, iFolder, row->iUid, aDest);
 	iRows->Delete(iSel);
@@ -965,6 +983,7 @@ void CPmView::MoveCurrentL(const TDesC8& aDest)
 		}
 	EnsureVisible();
 	Redraw();
+	return ETrue;
 	}
 
 void CPmView::ToggleFlagL(TChar aFlag)
@@ -1127,7 +1146,7 @@ void CPmView::DraftFromOutboxL(CPmDraft& aDraft)
 	path.AppendNum(row->iUid);
 	path.Append(_L(".txt"));
 	HBufC* buf = NULL;
-	ReadFileL(path, buf, 256 * 1024);
+	ReadFileL(path, buf, 56 * 1024);
 	if (!buf)
 		return;
 	CleanupStack::PushL(buf);
@@ -1265,21 +1284,23 @@ void CPmView::DeleteOutboxL()
 	const TPmRow* row = CurrentRow();
 	if (!row)
 		return;
-	if (!iEikonEnv->QueryWinL(_L("Delete this message?"), row->iSubject))
+	TUint no = row->iUid;                     // (the list may reload during the query)
+	TBuf<100> subj(row->iSubject);
+	if (!iEikonEnv->QueryWinL(_L("Delete this message?"), subj))
 		return;
 	TBuf<120> dir;
 	OutboxDir(dir);
 	RFs& fs = iCoeEnv->FsSession();
 	TFileName p(dir);
-	p.AppendNum(row->iUid); p.Append(_L(".txt"));
+	p.AppendNum(no); p.Append(_L(".txt"));
 	TInt r = fs.Delete(p);
 	if (r != KErrNone)
 		{
-		p = dir; p.AppendFormat(_L("%04d.txt"), row->iUid);
+		p = dir; p.AppendFormat(_L("%04d.txt"), no);
 		fs.Delete(p);
 		}
-	p = dir; p.AppendFormat(_L("%04d.err"), row->iUid); fs.Delete(p);
-	p = dir; p.AppendNum(row->iUid); p.Append(_L(".err")); fs.Delete(p);
+	p = dir; p.AppendFormat(_L("%04d.err"), no); fs.Delete(p);
+	p = dir; p.AppendNum(no); p.Append(_L(".err")); fs.Delete(p);
 	LoadOutboxL();
 	Redraw();
 	}
@@ -1307,17 +1328,25 @@ void CPmView::TickL()
 		return;
 	s->app_beat++;                       // "still here": see pmepoc.cpp
 	TBool redraw = EFalse;
-	if (s->changed_seq != iChangedSeen)
-		{
-		iChangedSeen = s->changed_seq;
-		ReloadL();
-		}
 	if (s->done_seq != iDoneSeen)
 		{
 		iDoneSeen = s->done_seq;
+		TBool changed = s->changed_seq != iChangedSeen;
+		iChangedSeen = s->changed_seq;
 		PmCmd cmd = iSent[(iDoneSeen - 1) % PM_CMDQ];
+		TInt res = s->last_res;
 		HandleResultL(cmd);
+		// (OK, OFFLINE and failures reload in HandleResultL)
+		if (changed && (res == PM_RES_CANCELLED || res == PM_RES_UNTRUSTED ||
+			res == PM_RES_NEED_PASS || res == PM_RES_LOGIN_FAILED))
+			ReloadL();
 		redraw = ETrue;
+		}
+	else if (s->changed_seq != iChangedSeen && !s->busy)
+		{
+		// files changed (e.g. a sync saved the list): once the engine is done
+		iChangedSeen = s->changed_seq;
+		ReloadL();
 		}
 	// progress
 	TBuf<128> prog;
@@ -1343,7 +1372,7 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 	TBuf<160> msg;
 	FromC(msg, s->last_msg);
 	TInt res = s->last_res;
-	iStatus = msg;
+	SafeCopy(iStatus, msg);
 	switch (res)
 		{
 	case PM_RES_OK:
@@ -1395,7 +1424,9 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		lines[2] = _L("Key: ");
 		lines[2].Append(fp.Left(95));
 		lines[3] = _L("Trust it only if you expected this (e.g. your own server).");
-		CPmInfoDialog* dlg = new(ELeave) CPmInfoDialog(_L("Certificate not trusted"), lines, 4);
+		TPtrC ptrs[4];
+		for (TInt k = 0; k < 4; k++) ptrs[k].Set(lines[k]);
+		CPmInfoDialog* dlg = new(ELeave) CPmInfoDialog(_L("Certificate not trusted"), ptrs, 4);
 		dlg->ExecuteLD(R_PM_INFO_DIALOG);
 		if (iEikonEnv->QueryWinL(_L("Trust this server's key from now on?"), host))
 			{
@@ -1430,10 +1461,15 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		break;
 		}
 	case PM_RES_OFFLINE:
+		if (aCmd.op == PM_CMD_FLAG && iSettings->iOffline)
+			{
+			ReloadL();                         // queued, as expected when offline
+			break;
+			}
 		if (aCmd.op == PM_CMD_BODY && iMode == EMessage && aCmd.uid == iMsgUid)
 			{
 			iMsg1 = _L("Could not download this message:");
-			iMsg2 = msg;
+			SafeCopy(iMsg2, msg);
 			}
 		iEikonEnv->InfoMsg(msg);
 		ReloadL();
@@ -2077,6 +2113,7 @@ void CPmComposeDialog::PreLayoutDynInitL()
 void CPmComposeDialog::PostLayoutDynInitL()
 	{
 	// replies start in the text; new messages at To
+	((CEikEdwin*)Control(EPmDlgBody))->SetCursorPosL(0, EFalse);
 	if (iDraft.iTo.Length())
 		TryChangeFocusToL(EPmDlgBody);
 	}
@@ -2089,11 +2126,17 @@ void CPmComposeDialog::ShowAttachments()
 		t = _L("none (Ctrl+A to add)");
 	else
 		{
-		for (TInt i = 0; i < n && t.Length() < 100; i++)
+		for (TInt i = 0; i < n; i++)
 			{
 			TParsePtrC parse((*iDraft.iAttach)[i]);
+			TPtrC name = parse.NameAndExt().Left(40);
+			if (t.Length() + name.Length() + 6 > t.MaxLength())
+				{
+				t.Append(_L(" ..."));
+				break;
+				}
 			if (i) t.Append(_L(", "));
-			t.Append(parse.NameAndExt().Left(40));
+			t.Append(name);
 			}
 		}
 	TRAPD(err, SetLabelL(EPmDlgAttachments, t));
@@ -2426,128 +2469,162 @@ void CPmAppUi::NewMessageL()
 	ComposeL(d, _L("New message"));
 	}
 
-void CPmAppUi::ReplyL(TBool aAll)
+// The open message's headers, on the heap: the app's stack is only 8 KB and
+// the compose dialog still has to run on it.
+struct THdrs
+	{
+	TBuf<500> iFrom, iReplyTo, iTo, iCc, iSubject, iMsgId, iDate;
+	TBuf<200> iAddr, iAddr2, iItem;
+	};
+
+static THdrs* HeadersLC(CPmView& aView)
+	{
+	THdrs* h = new(ELeave) THdrs;
+	CleanupStack::PushL(h);
+	aView.MessageHeader(_L("From"), h->iFrom);
+	aView.MessageHeader(_L("Reply-To"), h->iReplyTo);
+	aView.MessageHeader(_L("To"), h->iTo);
+	aView.MessageHeader(_L("Cc"), h->iCc);
+	aView.MessageHeader(_L("Subject"), h->iSubject);
+	aView.MessageHeader(_L("Message-ID"), h->iMsgId);
+	aView.MessageHeader(_L("Date"), h->iDate);
+	return h;
+	}
+
+// the next address of a list, skipping commas inside quotes and <>
+static TPtrC NextAddress(TPtrC& aRest)
+	{
+	TInt i = 0, q = 0, ang = 0;
+	while (i < aRest.Length())
+		{
+		TText c = aRest[i];
+		if (c == '"') q = !q;
+		else if (c == '<') ang = 1;
+		else if (c == '>') ang = 0;
+		else if ((c == ',' || c == ';') && !q && !ang) break;
+		i++;
+		}
+	TPtrC item = aRest.Left(i);
+	aRest.Set(i < aRest.Length() ? aRest.Mid(i + 1) : TPtrC());
+	return item;
+	}
+
+CPmDraft* CPmAppUi::ReplyDraftL(TBool aAll)
 	{
 	const TPmRow* row = iView->CurrentRow();
 	if (!row || (iView->Mode() != CPmView::EList && iView->Mode() != CPmView::EMessage))
 		{
 		iEikonEnv->InfoMsg(_L("Choose a message first"));
-		return;
+		return NULL;
 		}
 	if (iView->Mode() == CPmView::EList)
+		iView->OpenCurrentL();                  // the text is needed for the reply
+	row = iView->CurrentRow();
+	if (!row)
+		return NULL;
+	TUint uid = row->iUid;
+	THdrs* h = HeadersLC(*iView);
+	if (!h->iFrom.Length())
 		{
-		// open it (the text is needed for the reply)
-		iView->OpenCurrentL();
+		iEikonEnv->InfoMsg(_L("Wait for the message to download"));
+		CleanupStack::PopAndDestroy();         // h
+		return NULL;
 		}
 	CPmDraft* d = CPmDraft::NewL();
 	CleanupStack::PushL(d);
-	TBuf<500> from, replyTo, to, cc, subject, msgid, date;
-	iView->MessageHeader(_L("From"), from);
-	iView->MessageHeader(_L("Reply-To"), replyTo);
-	iView->MessageHeader(_L("To"), to);
-	iView->MessageHeader(_L("Cc"), cc);
-	iView->MessageHeader(_L("Subject"), subject);
-	iView->MessageHeader(_L("Message-ID"), msgid);
-	iView->MessageHeader(_L("Date"), date);
-	if (!from.Length())
-		{
-		iEikonEnv->InfoMsg(_L("Wait for the message to download"));
-		CleanupStack::PopAndDestroy();
-		return;
-		}
-	SafeCopy(d->iTo, replyTo.Length() ? replyTo : from);
+	SafeCopy(d->iTo, h->iReplyTo.Length() ? TPtrC(h->iReplyTo) : TPtrC(h->iFrom));
 	if (aAll)
 		{
-		// everyone else, not me
+		// everyone else, not me and not who it goes to already
 		TBuf<100> me;
 		FromC(me, iSettings.iAccounts[iSettings.iAcct].email);
-		TBuf<500> all(to);
-		if (cc.Length()) { if (all.Length()) all.Append(_L(", ")); all.Append(cc.Left(all.MaxLength() - all.Length() - 2)); }
-		TPtrC rest = all;
-		while (rest.Length())
+		AddressOnly(h->iAddr2, d->iTo);
+		for (TInt pass = 0; pass < 2; pass++)
 			{
-			TInt comma = rest.Locate(',');
-			TPtrC item = comma >= 0 ? rest.Left(comma) : rest;
-			rest.Set(comma >= 0 ? rest.Mid(comma + 1) : TPtrC());
-			TBuf<200> addr;
-			AddressOnly(addr, item);
-			if (addr.Length() == 0 || addr.CompareF(me) == 0)
-				continue;
-			TBuf<200> fromAddr;
-			AddressOnly(fromAddr, d->iTo);
-			if (addr.CompareF(fromAddr) == 0)
-				continue;
-			TBuf<200> clean(item);
-			clean.Trim();
-			if (d->iCc.Length() + clean.Length() + 2 < d->iCc.MaxLength())
+			TPtrC rest = pass == 0 ? TPtrC(h->iTo) : TPtrC(h->iCc);
+			while (rest.Length())
 				{
-				if (d->iCc.Length()) d->iCc.Append(_L(", "));
-				d->iCc.Append(clean);
+				TPtrC item = NextAddress(rest);
+				AddressOnly(h->iAddr, item);
+				if (h->iAddr.Length() == 0 || h->iAddr.CompareF(me) == 0 || h->iAddr.CompareF(h->iAddr2) == 0)
+					continue;
+				SafeCopy(h->iItem, item);
+				h->iItem.Trim();
+				if (d->iCc.Length() + h->iItem.Length() + 2 < d->iCc.MaxLength())
+					{
+					if (d->iCc.Length()) d->iCc.Append(_L(", "));
+					d->iCc.Append(h->iItem);
+					}
 				}
 			}
 		}
-	if (subject.Left(3).CompareF(_L("Re:")) != 0)
+	if (h->iSubject.Left(3).CompareF(_L("Re:")) != 0)
 		d->iSubject = _L("Re: ");
-	d->iSubject.Append(subject.Left(d->iSubject.MaxLength() - d->iSubject.Length()));
-	SafeCopy(d->iInReplyTo, msgid);
-	SafeCopy(d->iReferences, msgid);
+	d->iSubject.Append(h->iSubject.Left(d->iSubject.MaxLength() - d->iSubject.Length()));
+	SafeCopy(d->iInReplyTo, h->iMsgId);
+	SafeCopy(d->iReferences, h->iMsgId);
 	SafeCopy(d->iReplyFolder, iView->FolderImap());
-	d->iReplyUid = row->iUid;
+	d->iReplyUid = uid;
 	HBufC* body = HBufC::NewL(24 * 1024);
 	TPtr p = body->Des();
 	p.Append('\n');
 	AddSignature(*d, p);
 	TBuf<120> who;
-	DisplayName(who, from);
+	DisplayName(who, h->iFrom);
 	p.Append('\n');
 	p.Append(_L("On "));
-	p.Append(date.Left(40));
+	p.Append(h->iDate.Left(40));
 	p.Append(_L(", "));
 	p.Append(who.Left(60));
 	p.Append(_L(" wrote:\n"));
 	iView->QuoteBodyL(p, 300);
 	delete d->iBody;
 	d->iBody = body;
-	CleanupStack::Pop();
-	ComposeL(d, aAll ? _L("Reply to all") : _L("Reply"));
+	CleanupStack::Pop();                      // d
+	CleanupStack::PopAndDestroy();            // h
+	return d;
 	}
 
-void CPmAppUi::ForwardL()
+void CPmAppUi::ReplyL(TBool aAll)
+	{
+	CPmDraft* d = ReplyDraftL(aAll);
+	if (d)
+		ComposeL(d, aAll ? _L("Reply to all") : _L("Reply"));
+	}
+
+CPmDraft* CPmAppUi::ForwardDraftL()
 	{
 	if (iView->Mode() == CPmView::EList && iView->CurrentRow())
 		iView->OpenCurrentL();
 	if (iView->Mode() != CPmView::EMessage)
 		{
 		iEikonEnv->InfoMsg(_L("Choose a message first"));
-		return;
+		return NULL;
+		}
+	THdrs* h = HeadersLC(*iView);
+	if (!h->iFrom.Length())
+		{
+		iEikonEnv->InfoMsg(_L("Wait for the message to download"));
+		CleanupStack::PopAndDestroy();         // h
+		return NULL;
 		}
 	CPmDraft* d = CPmDraft::NewL();
 	CleanupStack::PushL(d);
-	TBuf<500> from, to, subject, date;
-	iView->MessageHeader(_L("From"), from);
-	iView->MessageHeader(_L("To"), to);
-	iView->MessageHeader(_L("Subject"), subject);
-	iView->MessageHeader(_L("Date"), date);
-	if (!from.Length())
-		{
-		iEikonEnv->InfoMsg(_L("Wait for the message to download"));
-		CleanupStack::PopAndDestroy();
-		return;
-		}
 	d->iSubject = _L("Fwd: ");
-	d->iSubject.Append(subject.Left(190));
+	d->iSubject.Append(h->iSubject.Left(190));
 	HBufC* body = HBufC::NewL(32 * 1024);
+	CleanupStack::PushL(body);
 	TPtr p = body->Des();
 	p.Append('\n');
 	AddSignature(*d, p);
 	p.Append(_L("\n---------- Forwarded message ----------\nFrom: "));
-	p.Append(from.Left(200));
+	p.Append(h->iFrom.Left(200));
 	p.Append(_L("\nDate: "));
-	p.Append(date.Left(60));
+	p.Append(h->iDate.Left(60));
 	p.Append(_L("\nSubject: "));
-	p.Append(subject.Left(200));
+	p.Append(h->iSubject.Left(200));
 	p.Append(_L("\nTo: "));
-	p.Append(to.Left(200));
+	p.Append(h->iTo.Left(200));
 	p.Append(_L("\n\n"));
 	// the text without "> "
 	HBufC* q = HBufC::NewLC(30 * 1024);
@@ -2561,17 +2638,26 @@ void CPmAppUi::ForwardL()
 		rest.Set(nl >= 0 ? rest.Mid(nl + 1) : TPtrC());
 		if (line.Left(2) == _L("> ")) line.Set(line.Mid(2));
 		else if (line.Left(1) == _L(">")) line.Set(line.Mid(1));
-		if (p.Length() + line.Length() + 2 > p.MaxLength()) break;
+		if (p.Length() + line.Length() + 2 > p.MaxLength() - 100) break;
 		p.Append(line);
 		p.Append('\n');
 		}
-	CleanupStack::PopAndDestroy();
+	CleanupStack::PopAndDestroy();            // q
 	if (iView->AttachmentCount())
 		p.Append(_L("\n(The attachments are not forwarded: save them first and attach them.)\n"));
+	CleanupStack::Pop();                      // body
 	delete d->iBody;
 	d->iBody = body;
-	CleanupStack::Pop();
-	ComposeL(d, _L("Forward"));
+	CleanupStack::Pop();                      // d
+	CleanupStack::PopAndDestroy();            // h
+	return d;
+	}
+
+void CPmAppUi::ForwardL()
+	{
+	CPmDraft* d = ForwardDraftL();
+	if (d)
+		ComposeL(d, _L("Forward"));
 	}
 
 void CPmAppUi::MoveL()
@@ -2584,6 +2670,7 @@ void CPmAppUi::MoveL()
 	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(8);
 	CleanupStack::PushL(names);
 	RArray<TInt> map;
+	CleanupClosePushL(map);
 	for (TInt i = 0; i < iView->FolderCount(); i++)
 		{
 		const TPmFolder& f = iView->FolderAt(i);
@@ -2594,20 +2681,21 @@ void CPmAppUi::MoveL()
 		}
 	if (names->Count() == 0)
 		{
-		map.Close();
-		CleanupStack::PopAndDestroy();
+		CleanupStack::PopAndDestroy(2);    // map, names
 		iEikonEnv->InfoMsg(_L("No folders yet - Send & receive first"));
 		return;
 		}
 	TInt choice = 0;
-	CleanupStack::Pop();
+	// the dialog's choice list takes the names: pop them from under map
+	CleanupStack::Pop(2);
+	CleanupClosePushL(map);
 	CPmChoiceDialog* dlg = new(ELeave) CPmChoiceDialog(_L("Move to folder"), _L("Folder"), names, choice);
 	if (dlg->ExecuteLD(R_PM_CHOICE_DIALOG) && choice >= 0 && choice < map.Count())
 		{
 		TBuf8<128> dest(iView->FolderAt(map[choice]).iImap);
 		iView->MoveCurrentL(dest);
 		}
-	map.Close();
+	CleanupStack::PopAndDestroy();          // map
 	}
 
 void CPmAppUi::SaveAttachmentL()
@@ -2640,6 +2728,7 @@ void CPmAppUi::SwitchAccountL()
 	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(4);
 	CleanupStack::PushL(names);
 	RArray<TInt> map;
+	CleanupClosePushL(map);
 	TInt current = 0;
 	for (TInt i = 0; i < PM_MAX_ACCOUNTS; i++)
 		{
@@ -2657,12 +2746,12 @@ void CPmAppUi::SwitchAccountL()
 		}
 	if (names->Count() < 2)
 		{
-		map.Close();
-		CleanupStack::PopAndDestroy();
+		CleanupStack::PopAndDestroy(2);    // map, names
 		iEikonEnv->InfoMsg(_L("There is only one account (Tools > New account)"));
 		return;
 		}
-	CleanupStack::Pop();
+	CleanupStack::Pop(2);
+	CleanupClosePushL(map);
 	TInt choice = current;
 	CPmChoiceDialog* dlg = new(ELeave) CPmChoiceDialog(_L("Switch account"), _L("Account"), names, choice);
 	if (dlg->ExecuteLD(R_PM_CHOICE_DIALOG) && choice >= 0 && choice < map.Count())
@@ -2671,7 +2760,7 @@ void CPmAppUi::SwitchAccountL()
 		SaveSettings();
 		iView->AccountChangedL();
 		}
-	map.Close();
+	CleanupStack::PopAndDestroy();          // map
 	}
 
 void CPmAppUi::DeleteAccountL()
@@ -2705,7 +2794,9 @@ void CPmAppUi::AboutL()
 	UserHal::MemoryInfo(mem);
 	lines[5].Format(_L("Free memory: %d KB. Engine: %d KB."), mem().iFreeRamInBytes / 1024,
 		iView->Shared()->heap_used / 1024);
-	CPmInfoDialog* dlg = new(ELeave) CPmInfoDialog(_L("About PsiMail"), lines, 6);
+	TPtrC ptrs[6];
+	for (TInt k = 0; k < 6; k++) ptrs[k].Set(lines[k]);
+	CPmInfoDialog* dlg = new(ELeave) CPmInfoDialog(_L("About PsiMail"), ptrs, 6);
 	dlg->ExecuteLD(R_PM_INFO_DIALOG);
 	}
 
@@ -2742,6 +2833,8 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 void CPmAppUi::HandleCommandL(TInt aCommand)
 	{
 	CPmView::TMode m = iView->Mode();
+	if (m == CPmView::ENoAccount && aCommand == EPmCmdEditAccount)
+		aCommand = EPmCmdNewAccount;
 	if (m == CPmView::ENoAccount && aCommand != EEikCmdExit && aCommand != EPmCmdNewAccount &&
 		aCommand != EPmCmdConnSettings && aCommand != EPmCmdAbout)
 		{
@@ -2811,8 +2904,8 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 			iEikonEnv->InfoMsg(_L("There is no Archive folder"));
 			break;
 			}
-		iView->MoveCurrentL(dest);
-		iEikonEnv->InfoMsg(_L("Archived"));
+		if (iView->MoveCurrentL(dest))
+			iEikonEnv->InfoMsg(_L("Archived"));
 		break;
 		}
 	case EPmCmdUnread:

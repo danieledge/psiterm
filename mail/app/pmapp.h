@@ -126,7 +126,7 @@ public:
 	void BackL();
 	void StepMessageL(TInt aDir);
 	void DeleteCurrentL();
-	void MoveCurrentL(const TDesC8& aDest);
+	TBool MoveCurrentL(const TDesC8& aDest);
 	void ToggleFlagL(TChar aFlag);
 	void RefreshL();
 	void OlderL();
@@ -230,12 +230,13 @@ private:
 class CPmInfoDialog : public CEikDialog
 	{
 public:
-	CPmInfoDialog(const TDesC& aTitle, const TDesC* aLines, TInt aCount)
+	// aLines: an array of TPtrC (not TBufs: they differ in size)
+	CPmInfoDialog(const TDesC& aTitle, const TPtrC* aLines, TInt aCount)
 		: iTitle(aTitle), iLines(aLines), iCount(aCount) {}
 private:
 	void PreLayoutDynInitL();
-	const TDesC& iTitle;
-	const TDesC* iLines;
+	TPtrC iTitle;
+	const TPtrC* iLines;
 	TInt iCount;
 	};
 
@@ -248,8 +249,8 @@ public:
 private:
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
-	const TDesC& iTitle;
-	const TDesC& iPrompt;
+	TPtrC iTitle;
+	TPtrC iPrompt;
 	TDes& iText;
 	};
 
@@ -260,7 +261,7 @@ public:
 private:
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
-	const TDesC& iPrompt;
+	TPtrC iPrompt;
 	TDes& iText;
 	};
 
@@ -273,8 +274,8 @@ public:
 private:
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
-	const TDesC& iTitle;
-	const TDesC& iPrompt;
+	TPtrC iTitle;
+	TPtrC iPrompt;
 	CDesCArray* iItems;              // the dialog's choice list takes it
 	TInt& iChoice;
 	};
@@ -290,7 +291,7 @@ private:
 	void Collect();
 	void ShowAttachments();
 	CPmDraft& iDraft;
-	const TDesC& iTitle;
+	TPtrC iTitle;
 	};
 
 class CPmAccountDialog : public CEikDialog
@@ -327,6 +328,8 @@ private:
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
 	void LoadSettings();
 	TBool EditAccountL(TInt aIndex, TBool aNew);
+	CPmDraft* ReplyDraftL(TBool aAll);
+	CPmDraft* ForwardDraftL();
 	void ComposeL(CPmDraft* aDraft, const TDesC& aTitle);
 	void NewMessageL();
 	void ReplyL(TBool aAll);

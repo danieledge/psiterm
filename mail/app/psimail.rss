@@ -203,7 +203,7 @@ RESOURCE DLG_BUTTONS r_pm_compose_buttons
 RESOURCE DIALOG r_pm_compose_dialog
 	{
 	title="New message";
-	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight;
+	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight|EEikDialogFlagNotifyEsc;
 	buttons=r_pm_compose_buttons;
 	items=
 		{
@@ -215,8 +215,8 @@ RESOURCE DIALOG r_pm_compose_dialog
 			control=EDWIN { width=34; maxlength=200; }; },
 		DLG_LINE { type=EEikCtLabel; prompt="Attached"; id=EPmDlgAttachments;
 			control=LABEL { txt="none"; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Text"; id=EPmDlgBody;
-			control=EDWIN { width=34; lines=6; maxlength=30000; }; }
+		DLG_LINE { type=EEikCtEdwin; prompt="Text"; id=EPmDlgBody; itemflags=EEikDlgItemTakesEnterKey;
+			control=EDWIN { flags=EEikEdwinNoAutoSelection; width=34; lines=6; maxlength=60000; }; }
 		};
 	}
 
