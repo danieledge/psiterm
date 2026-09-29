@@ -65,7 +65,7 @@ RESOURCE MENU_PANE r_pt_term_menu
 		{
 		MENU_ITEM { command=EPtCmdSsh; txt="SSH to..."; },
 		MENU_ITEM { command=EPtCmdSshDisconnect; txt="Disconnect SSH"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdHangup; txt="Hang up"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdHangup; txt="Hang up modem"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdUpdate; txt="Update PsiTerm"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdAbout; txt="About PsiTerm"; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }

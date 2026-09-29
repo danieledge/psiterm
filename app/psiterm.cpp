@@ -59,7 +59,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.42");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.43");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -517,9 +517,41 @@ void CTermView::SetFontL(TInt aZoom)
 
 // ----- serial data in ------------------------------------------------------
 
+static TInt LastFind(const TDesC8& aIn, const TDesC8& aWord)
+	{
+	TInt last = -1, from = 0;
+	for (;;)
+		{
+		TInt i = aIn.Mid(from).Find(aWord);
+		if (i < 0)
+			return last;
+		last = from + i;
+		from = last + 1;
+		}
+	}
+
 void CTermView::SerialDataL(const TDesC8& aData)
 	{
+	// follow the modem's own messages, so Hang up modem is only offered
+	// (and the status line only says "Modem connected") when it is online
+	iLastRx = User::TickCount();
+	TBuf8<64> look(iRxTail);
+	look.Append(aData.Right(look.MaxLength() - look.Length()));
+	TInt on = LastFind(look, _L8("CONNECT"));
+	TInt off = LastFind(look, _L8("NO CARRIER"));
+	if (on >= 0 || off >= 0)
+		iModemOnline = (on > off);
+	iRxTail = look.Right(12);
 	FeedTerminal(aData.Ptr(), aData.Length());
+	}
+
+// Online as far as we can tell: CONNECT seen, or data still arriving
+// (e.g. a connection opened some other way) within the last 10 seconds
+TBool CTermView::ModemOnline() const
+	{
+	if (iSshActive)
+		return EFalse;
+	return iModemOnline || (iLastRx != 0 && User::TickCount() - iLastRx < 640);
 	}
 
 void CTermView::SerialError(TInt aError)
@@ -920,6 +952,8 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 			}
 		else aText.Append(_L("Starting SSH..."));
 		}
+	else if (ModemOnline())
+		aText.Format(_L("Modem connected   %d baud   Shift+Ctrl+H: hang up"), BaudValue(iSettings.iBaudIndex));
 	else
 		aText.Format(_L("Not connected   %d baud%S"), BaudValue(iSettings.iBaudIndex),
 			iSettings.iNetMode ? &KPppSuffix : &KNullDesC);
@@ -1676,6 +1710,9 @@ void CTermView::SendScreenSize()
 
 void CTermView::HangUp()
 	{
+	iModemOnline = EFalse;
+	iLastRx = 0;
+	iRxTail.Zero();
 	// Hayes escape needs a quiet guard time either side of "+++"
 	User::After(1100000);
 	SendString(KHangupEscape);
@@ -2638,6 +2675,9 @@ void CTermView::SshProcessEnded()
 		iChunkOpen = EFalse;
 		}
 	iSshActive = EFalse;
+	iModemOnline = EFalse;              // psissh hangs up as it ends
+	iLastRx = 0;
+	iRxTail.Zero();
 	TBuf8<160> msg;
 	if (type == EExitPanic)
 		{
@@ -3902,7 +3942,7 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		TBool ssh = iView->SshActive();
 		aMenuPane->SetItemDimmed(EPtCmdSsh, ssh);
 		aMenuPane->SetItemDimmed(EPtCmdSshDisconnect, !ssh);
-		aMenuPane->SetItemDimmed(EPtCmdHangup, ssh);
+		aMenuPane->SetItemDimmed(EPtCmdHangup, ssh || !iView->ModemOnline());
 		return;
 		}
 	if (aMenuId == R_PT_SNIPPETS_MENU)

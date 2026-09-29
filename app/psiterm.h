@@ -374,6 +374,7 @@ public:
 	void DisconnectSsh();
 	void SshProcessEnded();
 	TBool SshActive() const { return iSshActive; }
+	TBool ModemOnline() const;
 	static TInt PumpCallback(TAny* aSelf);
 
 	// from CCoeControl
@@ -534,6 +535,9 @@ private:
 	void TakeScreenshotL();
 	void ShotDir(TDes& aDir);
 	TInt DeleteShots();
+	TBool iModemOnline;       // the terminal saw CONNECT (and no NO CARRIER since)
+	TUint iLastRx;            // tick of the last serial data outside SSH
+	TBuf8<16> iRxTail;        // end of the last serial data, for split words
 	TUint iLastBell;          // tick of the last beep
 	TBuf<100> iLoginCmd;      // the connected host's command on login
 	TBuf8<64> iSshPassword;   // saved password for the next launch, then wiped
