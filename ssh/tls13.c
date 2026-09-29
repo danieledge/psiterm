@@ -194,12 +194,33 @@ static int read_exact(unsigned char *buf, int n, int timeout_ms)
 
 /* Reads one record. Returns its content type (after decryption, the inner
    type) with the payload in g_rec[0..*len), or <0 on error. */
+static int g_first;                      /* no record read yet on this connection */
+static char g_junk[48];                  /* what came before the first record, for errors */
+
 static int read_record(int *len, int timeout_ms)
 {
 	unsigned char hdr[5];
 	int n, r;
 	for (;;) {
-		if ((r = read_exact(hdr, 5, timeout_ms)) < 0) return r;
+		if (g_first) {
+			/* The modem's "CONNECT ..." line can leave a CR/LF (or more text)
+			   ahead of the server's first record: skip up to 64 bytes of it */
+			int skipped = 0, jl = 0;
+			g_first = 0;
+			for (;;) {
+				if ((r = read_exact(hdr, 1, timeout_ms)) < 0) return r;
+				if (hdr[0] >= 20 && hdr[0] <= 23) break;   /* a TLS content type */
+				if (jl < (int)sizeof(g_junk) - 4) { sprintf(g_junk + jl, " %02x", hdr[0]); jl += 3; }
+				if (++skipped > 64) { g_err = "unexpected reply (not TLS?)"; return -1; }
+			}
+			if ((r = read_exact(hdr + 1, 4, timeout_ms)) < 0) return r;
+		} else if ((r = read_exact(hdr, 5, timeout_ms)) < 0) return r;
+		if (hdr[1] != 3) {
+			static char e[96];
+			sprintf(e, "unexpected reply (not TLS?):%.40s %02x %02x %02x", g_junk, hdr[0], hdr[1], hdr[2]);
+			g_err = e;
+			return -1;
+		}
 		n = (hdr[3] << 8) | hdr[4];
 		if (n > REC_MAX - 5) { g_err = "record too big"; return -1; }
 		if ((r = read_exact(g_rec, n, timeout_ms)) < 0) return r;
@@ -255,6 +276,8 @@ int tls_connect(const char *host, char *why, int whymax)
 	g_err = "handshake failed";
 	g_encrypted = 0;
 	g_closed = 0;
+	g_first = 1;
+	g_junk[0] = 0;
 	g_app_pos = g_app_len = 0;
 	memset(zero, 0, 32);
 	sha256_buf((const unsigned char *)"", 0, empty_hash);
