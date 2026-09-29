@@ -109,6 +109,7 @@ typedef struct
 	char update_msg[128];
 	char update_version[16];
 	volatile unsigned int heap_used;
+	volatile unsigned int app_beat;    /* app: +1 every tick; psiweb quits if it stops */
 
 	unsigned char fb[PW_MAX_H * PW_STRIDE];
 	} PwShared;

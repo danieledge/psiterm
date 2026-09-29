@@ -19,7 +19,8 @@ enum TPwCommands
 	EPwCmdPageInfo,
 	EPwCmdRestart,
 	EPwCmdAbout,
-	EPwCmdUpdate
+	EPwCmdUpdate,
+	EPwCmdHangup
 	};
 
 enum TPwDialogControls

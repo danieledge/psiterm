@@ -16,6 +16,13 @@ extern int  pg_net_avail(void);
 extern int  pg_net_read(void *buf, int max);
 extern int  pg_serial_write(const void *buf, int len);
 extern int  pg_wait(int ms, int want_net, int want_kbd);
+extern void pg_link_close(void);
+extern int  pg_link_is_open(void);
+extern unsigned long pwb_ms(void);
+
+#define IDLE_RELEASE_MS 60000       /* give the serial port back after this */
+static unsigned long g_last_use;
+static void used(void) { g_last_use = pwb_ms(); }
 
 static int  g_open;
 static int  g_tls;
@@ -34,6 +41,7 @@ int pwn_connect(const char *host, int port, int tls, char *why, int whymax)
 	PsiShared *s = pg_shared();
 
 	pwn_close(1);
+	used();
 	snprintf(s->host, sizeof(s->host), "%s", host);
 	s->port = port;
 	if (pg_dial(why, whymax) != 0)
@@ -78,6 +86,7 @@ int pwn_is_open(const char *host, int port, int tls)
 
 int pwn_write(const void *buf, int len)
 {
+	used();
 	if (!g_open)
 		return -1;
 #ifndef PW_NO_TLS
@@ -104,6 +113,7 @@ static void note_tail(const unsigned char *b, int n)
 int pwn_read(void *buf, int max, int timeout_ms)
 {
 	int n;
+	used();
 	if (!g_open)
 		return -1;
 #ifndef PW_NO_TLS
@@ -139,4 +149,22 @@ void pwn_close(int hangup)
 		pg_hangup();
 	g_open = 0;
 	g_dead = 0;
+}
+
+/* Called about once a second from the engine's event loop: after a minute
+ * with no fetch using the link, hang up and let go of the serial port so
+ * other programs (PsiTerm) can have it. The next fetch dials again. */
+void pwn_idle_tick(void)
+{
+	if (!pg_link_is_open())
+		return;
+	if (pwb_ms() - g_last_use < IDLE_RELEASE_MS)
+		return;
+	pwn_release_now();
+}
+
+void pwn_release_now(void)
+{
+	pwn_close(1);
+	pg_link_close();
 }

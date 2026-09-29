@@ -15,7 +15,8 @@ extern "C" {
 #include "psiweb.h"
 #include "fb/pwback.h"
 extern PsiShared* pg_shared();
-extern int pg_init();
+extern int pg_attach();
+extern void pwn_idle_tick(void);
 extern void pg_msleep(int);
 }
 
@@ -47,7 +48,8 @@ static PwShared* Pw()
 	if (!gInitDone)
 		{
 		gInitDone = 1;
-		gInitResult = pg_init();       // opens the chunk, then the serial port
+		gInitResult = pg_attach();     // the chunk only: the serial port is
+		                               // opened when a page is fetched
 		PwShared* s = (PwShared*)pg_shared();
 		if (s && s->magic == PW_MAGIC)
 			gPw = s;
@@ -86,20 +88,8 @@ static void SetText(char* aDst, int aMax, const char* aSrc)
 extern "C" int pwb_open(int* aW, int* aH)
 	{
 	Pw();
-	int r = gInitResult;
 	if (!gPw)
 		return -1;                     // not started by PsiWeb.app
-	if (r != 0)
-		{
-		// psiglue could not open the serial port: say why, for the app
-		if (r == -10)
-			SetText(Pw()->exit_msg, sizeof(Pw()->exit_msg),
-				"The serial port is in use - close PsiTerm's connection, then Tools > Restart");
-		else
-			SetText(Pw()->exit_msg, sizeof(Pw()->exit_msg),
-				"Could not set up the serial port (check Tools > Connection settings)");
-		return -1;
-		}
 	*aW = Pw()->width > 0 && Pw()->width <= PW_MAX_W ? Pw()->width : PW_MAX_W;
 	*aH = Pw()->height > 0 && Pw()->height <= PW_MAX_H ? Pw()->height : PW_MAX_H;
 	Pw()->dirty_y0 = *aH;
@@ -208,12 +198,41 @@ static int TakeShared()
 	return gQn;
 	}
 
+// Housekeeping every ~second: give the serial port back when idle
+// (pwnet.c), and quit if PsiWeb.app has gone - its heartbeat, app_beat,
+// has stopped - so the engine can never be left holding the port.
+static TUint gLastCheck = 0;
+static TUint gLastBeat = 0;
+static TUint gBeatSeen = 0;
+static int Housekeeping(PwShared* s)
+	{
+	TUint now = User::TickCount();       // 1/64 s
+	if (now - gLastCheck < 64)
+		return 0;
+	gLastCheck = now;
+	pwn_idle_tick();
+	if (s->app_beat != gLastBeat || gBeatSeen == 0)
+		{
+		gLastBeat = s->app_beat;
+		gBeatSeen = now;
+		}
+	else if (now - gBeatSeen > 64 * 20)  // 20 s without a sign of the app
+		return 1;
+	return 0;
+	}
+
 extern "C" int pwb_next_event(pwb_event* aEv, int aTimeoutMs)
 	{
 	PwShared* s = Pw();
 	TInt waited = 0;
 	for (;;)
 		{
+		if (gPw && Housekeeping(s))
+			{
+			s->quitting = 1;
+			aEv->type = PWB_QUIT;
+			return 1;
+			}
 		if (gQn || TakeShared())
 			{
 			*aEv = gQ[0];

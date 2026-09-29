@@ -12,7 +12,7 @@
 
 _LIT(KEngineExe, "psiweb.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiWeb\\PsiWeb.ini");
-_LIT(KVersion, "0.2");          // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt
+_LIT(KVersion, "0.3");          // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt
 _LIT(KDefaultHome, "http://68k.news/");
 const TInt KZoomSteps[] = { 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200 };
 const TInt KZoomCount = 11;
@@ -253,6 +253,8 @@ TInt CPwView::TickCallback(TAny* aSelf)
 void CPwView::Tick()
 	{
 	PwShared* s = iShared;
+	if (s)
+		s->app_beat++;                   // "still here": see pwepoc.cpp
 	if (s && (iUpdState == PW_UPD_RUNNING || s->update_state != iUpdState))
 		{
 		TRAPD(err, UpdateTickL());
@@ -776,6 +778,10 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 			}
 		break;
 		}
+	case EPwCmdHangup:
+		iView->Command(PW_CMD_HANGUP, KNullDesC);
+		iEikonEnv->InfoMsg(_L("Hanging up - the serial port will be free"));
+		break;
 	case EPwCmdUpdate:
 		iView->StartUpdateL();
 		break;

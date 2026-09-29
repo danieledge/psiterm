@@ -280,9 +280,13 @@ extern "C" PsiShared* pg_shared()
 	return gShared;
 	}
 
-extern "C" int pg_init()
+// Opens the chunk the app created. Returns 0, or <0 (see pg_init).
+extern "C" int pg_attach()
 	{
-	gChunk = new RChunk;
+	if (gShared)
+		return 0;
+	if (!gChunk)
+		gChunk = new RChunk;
 	if (!gChunk)
 		return -1;
 	TInt r = gChunk->OpenGlobal(_L(PSI_SHARED_NAME), EFalse);
@@ -290,16 +294,24 @@ extern "C" int pg_init()
 		return -2;
 	gShared = (PsiShared*)gChunk->Base();
 	if (gShared->magic != PSI_SHARED_MAGIC)
-		return -3;
-	if (gShared->mode == 1)
-		return 0;                   // speed test: no serial port needed
-	if (gShared->net_mode)
 		{
-		gNet = 1;                   // Psion TCP/IP: the socket opens in pg_dial
-		return 0;
+		gShared = 0;
+		gChunk->Close();
+		return -3;
 		}
+	gNet = gShared->net_mode ? 1 : 0;   // Psion TCP/IP: the socket opens in pg_dial
+	return 0;
+	}
 
-	r = User::LoadPhysicalDevice(KPddName);
+// Opens and sets up the serial port (modem mode; nothing to do for TCP/IP).
+// -10 = another program has the port.
+extern "C" int pg_link_open()
+	{
+	if (!gShared)
+		return -2;
+	if (gNet || gCommOpen)
+		return 0;
+	TInt r = User::LoadPhysicalDevice(KPddName);
 	if (r != KErrNone && r != KErrAlreadyExists)
 		return -4;
 	r = User::LoadLogicalDevice(KLddName);
@@ -308,8 +320,8 @@ extern "C" int pg_init()
 	r = StartC32();
 	if (r != KErrNone && r != KErrAlreadyExists)
 		return -6;
-	gServer = new RCommServ;
-	gComm = new RComm;
+	if (!gServer) gServer = new RCommServ;
+	if (!gComm) gComm = new RComm;
 	if (!gServer || !gComm)
 		return -7;
 	r = gServer->Connect();
@@ -317,10 +329,16 @@ extern "C" int pg_init()
 		return -8;
 	r = gServer->LoadCommModule(KCsyName);
 	if (r != KErrNone && r != KErrAlreadyExists)
+		{
+		gServer->Close();
 		return -9;
+		}
 	r = gComm->Open(*gServer, KPortName, ECommExclusive);
 	if (r != KErrNone)
+		{
+		gServer->Close();
 		return -10;
+		}
 	gCommOpen = 1;
 
 	TCommConfig cfg;
@@ -343,21 +361,43 @@ extern "C" int pg_init()
 	return 0;
 	}
 
-extern "C" void pg_close()
+// Lets go of the serial port (or the TCP/IP link) so another program -
+// PsiTerm, say - can use it. pg_dial opens it again when needed.
+extern "C" void pg_link_close()
 	{
 	NetClose();
+	if (gCommOpen)
+		{
+		gComm->Close();
+		gCommOpen = 0;
+		gServer->Close();
+		}
+	gRxPos = gRxLen = 0;
+	}
+
+extern "C" int pg_link_is_open()
+	{
+	return gNet ? gSsOpen : gCommOpen;
+	}
+
+extern "C" int pg_init()
+	{
+	TInt r = pg_attach();
+	if (r != 0)
+		return r;
+	if (gShared->mode == 1)
+		return 0;                   // speed test: no serial port needed
+	return pg_link_open();
+	}
+
+extern "C" void pg_close()
+	{
+	pg_link_close();
 	if (gTimerOpen)
 		{
 		gTimer->Close();
 		gTimerOpen = 0;
 		}
-	if (gCommOpen)
-		{
-		gComm->Close();
-		gCommOpen = 0;
-		}
-	if (gServer)
-		gServer->Close();
 	}
 
 extern "C" void pg_set_state(int aState)
@@ -625,6 +665,18 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 	gRxPos = gRxLen = 0;
 	if (gNet)
 		return NetConnect(aResult, aResultMax);
+	if (!gCommOpen)
+		{
+		// PsiWeb opens the port only when it needs it
+		TInt r = pg_link_open();
+		if (r != 0)
+			{
+			SetMsg(aResult, aResultMax, r == -10
+				? "the serial port is in use by another program (PsiTerm? Remote link?)"
+				: "could not set up the serial port");
+			return -1;
+			}
+		}
 	// quick wake-up so the modem is at a command prompt
 	pg_serial_write("\r", 1);
 	pg_msleep(300);
