@@ -1,4 +1,4 @@
-PSITERM 0.21 - FIRST RUN CHECKLIST
+PSITERM 0.23 - FIRST RUN CHECKLIST
 =================================
 
 BEFORE YOU START
@@ -11,7 +11,7 @@ BEFORE YOU START
    (Replaces any older PsiTerm.) PsiTerm is on the Extras bar.
 
 2. FIRST LAUNCH
-   Open PsiTerm. You should see "PsiTerm 0.21" and the screen size.
+   Open PsiTerm. You should see "PsiTerm 0.23" and the screen size.
    Menu > Settings > Connection settings: the same baud
    rate as the modem,
    Flow control: None.
@@ -122,29 +122,36 @@ TEXT SIZE AND FONTS (Terminus since 0.12)
    The sidebar clipboard icon's Copy / Paste work too.
    Menu > Terminal > About PsiTerm shows version and credits.
 
-UPDATING PSITERM WITHOUT THE CF CARD (0.14; reliable since 0.16)
+UPDATING PSITERM WITHOUT THE CF CARD
    Menu > Terminal > Update PsiTerm
-   First time only it asks for the server:
-     Web server: the machine running server/psion-update.sh
-     Port: 8686
-   After that it remembers it and goes straight ahead. To
-   change it: Menu > Settings > Update & screenshot server...
-   PsiTerm dials the server the same way SSH does, checks
-   version.txt, downloads PsiTerm.sis if it is newer (about
-   30 s at 115200, 5 min at 9600), then opens the installer
-   and closes itself. Say Yes to install; reopen PsiTerm.
+   Since 0.23 updates come straight from GitHub over HTTPS
+   (github.com/danieledge/psiterm) - nothing to set up. A window
+   shows the progress; Stop cancels. Every release is signed and
+   PsiTerm refuses one whose signature does not match.
+   When it is done the installer opens and PsiTerm closes: say
+   Yes to install, then reopen PsiTerm.
+   Settings > Update source can choose a local server instead.
 
-SCREENSHOTS FOR CLAUDE (new in 0.15)
+SCREENSHOTS (developer feature)
    Shift+Ctrl+P (or Debug > Screenshot) - the screen is saved
      0.6 s later (so the menu has gone). "Screenshot N saved".
      Take as many as you like; they go in D:\PsiTerm\.
-   Menu > Debug > Send screenshots uploads them all to the
-     update server (in checked 8 KB pieces, about 1 minute per
-     screenshot) and deletes them from the Psion when done.
+   Menu > Debug > Send screenshots uploads them to a local
+     server running server/psion-update.sh (Settings > Update
+     source > Local server) and deletes them when done.
    Not while SSH is connected - disconnect first (the modem
      line is in use).
    Debug > Character codes of selection: select a few cells with
      the pen, then this shows their exact codes on screen.
+
+AUTO-RECONNECT (new in 0.22)
+   If a logged-in session drops (Psion switched off, WiFi lost)
+   PsiTerm redials after 5 s, then 10, 20, 40, 60 s (10 tries).
+   Enter: reconnect now. Esc: stop. Disconnect SSH never
+   reconnects. A saved password is reused; otherwise it asks.
+   Settings > Connection settings > Command on login, e.g.
+       tmux new -A -s psion
+   puts you straight back into the same tmux session.
 
 MENUS (tidied in 0.21)
    Debug menu: speed test, serial port info, character codes,

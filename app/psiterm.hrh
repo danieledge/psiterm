@@ -84,11 +84,13 @@ enum TPsiTermDialogControls
 	EPtDlgHostList,
 	EPtDlgAboutStatus,
 	EPtDlgDebugText,
+	EPtBidStop,
 	EPtDlgBaud,
 	EPtDlgFlow,
 	EPtDlgLink,
 	EPtDlgReconnect,
 	EPtDlgStartCmd,
+	EPtDlgSource,
 	EPtDlgAbout1, EPtDlgAbout2, EPtDlgAbout3, EPtDlgAbout4,
 	EPtDlgAbout5, EPtDlgAbout6, EPtDlgAbout7, EPtDlgAbout8
 	};

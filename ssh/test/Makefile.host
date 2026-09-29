@@ -4,7 +4,7 @@ DB_SRCS := dbutil buffer dbhelpers signkey rsa dbrandom queue atomicio compat lt
            list chachapoly kex-x25519 cli-main cli-auth cli-authpasswd cli-kex cli-session \
            cli-runopts cli-chansession cli-channel cli-authinteract cli-readconf bignum dh_groups \
            signkey_ossh netio listener fake-rfc2553
-OBJS := $(addprefix hobj/,$(addsuffix .o,$(DB_SRCS))) hobj/psishim.o hobj/psiglue_host.o hobj/bench.o
+OBJS := $(addprefix hobj/,$(addsuffix .o,$(DB_SRCS))) hobj/psishim.o hobj/tls13.o hobj/psiglue_host.o hobj/bench.o
 CF := -O1 -g -std=gnu99 -w -DLOCALOPTIONS_H_EXISTS -D__EPOC32__ -DPSI_HOST_TEST -DDROPBEAR_CLIENT -include compat/psicompat.h \
       -I test/hostcfg -I db -I db/src -I db/libtomcrypt/src/headers -I db/libtommath
 # DS: an upstream Dropbear tree built on the host (./configure && make), for its libtom*.a
@@ -12,6 +12,8 @@ DS ?= ../../dropbear-host
 psissh-host: $(OBJS)
 	gcc -o $@ $(OBJS) $(DS)/libtomcrypt/libtomcrypt.a $(DS)/libtommath/libtommath.a -lz
 hobj/%.o: db/src/%.c
+	@mkdir -p hobj; gcc -c $(CF) $< -o $@
+hobj/tls13.o: tls13.c
 	@mkdir -p hobj; gcc -c $(CF) $< -o $@
 hobj/psishim.o: psishim.c
 	@mkdir -p hobj; gcc -c $(CF) $< -o $@

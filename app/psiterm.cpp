@@ -52,7 +52,10 @@ const TInt KEntropyKeysNeeded = 40;
 const TInt KScrollbackLines = 300;       // ~150 KB of history
 const TInt KScrollbackCols = 128;
 const TInt KClipMax = 16384;            // most text copied/pasted at once
-_LIT(KPsiTermVersion, "0.22");           // also in psiterm.pkg; version.txt must match
+// releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
+_LIT8(KGitHubHost, "raw.githubusercontent.com");
+_LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
+_LIT(KPsiTermVersion, "0.23");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -552,34 +555,18 @@ void CTermView::AppendDebug(const TDesC8& aText)
 	TPtr8 p = iDebugText->Des();
 	TInt room = p.MaxLength() - p.Length();
 	p.Append(aText.Left(aText.Length() < room ? aText.Length() : room));
-	if (!iSshActive)
-		return;
-	// progress: the last non-empty line so far, in the corner of the screen
-	TInt end = p.Length();
-	while (end > 0 && (p[end - 1] == '\r' || p[end - 1] == '\n' || p[end - 1] == ' '))
-		end--;
-	TInt start = end;
-	while (start > 0 && p[start - 1] != '\r' && p[start - 1] != '\n')
-		start--;
-	while (start < end && p[start] == ' ')
-		start++;
-	if (end > start)
-		{
-		TBuf<48> line;
-		line.Copy(p.Mid(start, (end - start) < 48 ? (end - start) : 48));
-		TRAP_IGNORE(iEikonEnv->BusyMsgL(line));
-		}
+	if (iToolDlg)
+		TRAP_IGNORE(iToolDlg->RefreshL());
 	}
 
-void CTermView::ShowDebugL()
+// Terminal output -> editor text: CR goes back to the start of the line
+// (progress counters), LF starts a paragraph, escape sequences are dropped.
+HBufC* CTermView::DebugTextLC() const
 	{
-	iCapture = EFalse;
-	iEikonEnv->BusyMsgCancel();
+	TInt len = iDebugText ? iDebugText->Length() : 0;
+	HBufC* text = HBufC::NewLC(len + 1);
 	if (!iDebugText)
-		return;
-	// terminal text -> editor text: CR returns to the start of the line
-	// (progress counters), LF starts a paragraph, escape sequences dropped
-	HBufC* text = HBufC::NewLC(iDebugText->Length() + 1);
+		return text;
 	TPtr t = text->Des();
 	const TDesC8& in = *iDebugText;
 	TInt lineStart = 0;
@@ -590,11 +577,12 @@ void CTermView::ShowDebugL()
 			{
 			if (i + 1 < in.Length() && in[i + 1] == '\n')
 				continue;
-			t.SetLength(lineStart);
+			if (i + 1 < in.Length())       // a lone CR at the very end: keep the line
+				t.SetLength(lineStart);
 			}
 		else if (c == '\n')
 			{
-			if (t.Length() > 0)          // no blank line at the very top
+			if (t.Length() > 0)
 				{
 				t.Append(CEditableText::EParagraphDelimiter);
 				lineStart = t.Length();
@@ -614,11 +602,62 @@ void CTermView::ShowDebugL()
 		}
 	while (t.Length() > 0 && t[t.Length() - 1] == CEditableText::EParagraphDelimiter)
 		t.SetLength(t.Length() - 1);
+	return text;
+	}
+
+// Shows the window for the current job: live while psissh runs (Stop), or
+// straight away with the result if it has already finished (Close).
+void CTermView::RunToolDialogL()
+	{
+	if (!iCapture)
+		return;
+	CToolDialog* dlg = new(ELeave) CToolDialog(*this, iDebugTitle, !iSshActive);
+	iToolDlg = dlg;
+	TRAPD(err, dlg->ExecuteLD(R_PT_TOOL_DIALOG));
+	iToolDlg = NULL;
+	iCapture = EFalse;
 	delete iDebugText;
 	iDebugText = NULL;
-	CDebugDialog* dlg = new(ELeave) CDebugDialog(iDebugTitle, *text);
-	dlg->ExecuteLD(R_PT_DEBUG_DIALOG);
-	CleanupStack::PopAndDestroy();       // text
+	User::LeaveIfError(err);
+	if (iInstallPending)
+		{
+		iInstallPending = EFalse;
+		StartInstallerL();
+		}
+	}
+
+void CTermView::StopTool()
+	{
+	if (iSshActive && iShared)
+		{
+		iShared->quit = 1;
+		AppendDebug(_L8("\r\nStopping...\r\n"));
+		}
+	}
+
+// A newer PsiTerm.sis was downloaded and its signature checked: open it with
+// the system installer (InstApp, UID 0x10000419 - a .sis carries PsiTerm's
+// own UID in its header, so a plain "open document" would start PsiTerm on
+// it) and close, so the installer can replace this app's files.
+void CTermView::StartInstallerL()
+	{
+	TInt err;
+	RApaLsSession ls;
+	err = ls.Connect();
+	if (err == KErrNone)
+		{
+		TThreadId tid;
+		err = ls.StartDocument(iUpdateFile, TUid::Uid(0x10000419), tid);
+		ls.Close();
+		}
+	if (err == KErrNone)
+		{
+		iEikonEnv->EikAppUi()->HandleCommandL(EEikCmdExit);
+		return;
+		}
+	TBuf<160> m;
+	m.Format(_L("Could not start the installer (%d). Open %S from the System screen."), err, &iUpdateFile);
+	iEikonEnv->InfoWinL(_L("Update downloaded"), m);
 	}
 
 void CTermView::RunAfterDisconnectL(TInt aCommand)
@@ -1791,7 +1830,7 @@ void CTermView::StartUpdateL()
 	{
 	if (iSshActive || iGatheringEntropy)
 		return;
-	if (iSettings.iUpdHost.Length() == 0)
+	if (iSettings.iUpdSource == 1 && iSettings.iUpdHost.Length() == 0)
 		return;
 	LaunchSshL(2);
 	}
@@ -2039,12 +2078,22 @@ void CTermView::LaunchSshL(TInt aMode)
 		}
 	if (aMode == 2)
 		{
-		// update: same link as SSH, but to the web server
-		iShared->port = iSettings.iUpdPort > 0 ? iSettings.iUpdPort : 80;
-		host.Copy(iSettings.iUpdHost);
-		host.ZeroTerminate();
+		// update: same link as SSH, to GitHub (HTTPS) or the local server
 		TPtr8 path((TUint8*)iShared->path, sizeof(iShared->path) - 1);
-		path.Copy(_L8("/"));
+		if (iSettings.iUpdSource == 0)
+			{
+			iShared->tls = 1;
+			iShared->port = 443;
+			host.Copy(KGitHubHost);
+			path.Copy(KGitHubPath);
+			}
+		else
+			{
+			iShared->port = iSettings.iUpdPort > 0 ? iSettings.iUpdPort : 80;
+			host.Copy(iSettings.iUpdHost);
+			path.Copy(_L8("/"));
+			}
+		host.ZeroTerminate();
 		path.ZeroTerminate();
 		TPtr8 ver((TUint8*)iShared->version, sizeof(iShared->version) - 1);
 		ver.Copy(KPsiTermVersion);
@@ -2262,36 +2311,13 @@ void CTermView::SshProcessEnded()
 		}
 	if (iLaunchMode == 2 && type != EExitPanic && exitCode == 10)
 		{
-		// a newer PsiTerm.sis was downloaded: hand it to the installer and
-		// close, so the installer can replace this app's files
-		LocalMessage(_L8("[Starting the installer - PsiTerm will close]\r\n"));
-		// Open it explicitly with the system installer (InstApp, UID
-		// 0x10000419): a .sis file carries PsiTerm's own UID in its header,
-		// so a plain "open document" would start PsiTerm on it instead.
-		TInt err;
-		{
-		RApaLsSession ls;
-		err = ls.Connect();
-		if (err == KErrNone)
-			{
-			TThreadId tid;
-			err = ls.StartDocument(iUpdateFile, TUid::Uid(0x10000419), tid);
-			ls.Close();
-			}
+		LocalMessage(_L8("\r\nStarting the installer - PsiTerm will close.\r\n"));
+		iInstallPending = ETrue;
+		if (iToolDlg)
+			TRAP_IGNORE(iToolDlg->CloseL());     // the installer starts when it has closed
 		}
-		if (err == KErrNone)
-			iEikonEnv->EikAppUi()->HandleCommandL(EEikCmdExit);
-		else
-			{
-			TBuf8<160> m;
-			TBuf8<64> f;
-			f.Copy(iUpdateFile);
-			m.Format(_L8("\r\nCould not start the installer (%d). Open %S from the System screen.\r\n"), err, &f);
-			LocalMessage(m);
-			}
-		}
-	if (iCapture)
-		TRAP_IGNORE(ShowDebugL());
+	if (iToolDlg)
+		TRAP_IGNORE(iToolDlg->FinishL());
 	if (iLaunchMode == 0)
 		{
 		if (!iUserQuit && iSettings.iAutoReconnect && type != EExitPanic && !iPendingCmd
@@ -2678,32 +2704,58 @@ TBool CConnDialog::OkToExitL(TInt /*aButtonId*/)
 	return ETrue;
 	}
 
-void CDebugDialog::PreLayoutDynInitL()
+void CToolDialog::PreLayoutDynInitL()
 	{
 	SetTitleL(iTitle);
-	CEikEdwin* ed = (CEikEdwin*)Control(EPtDlgDebugText);
-	ed->SetTextL(&iText);
+	MakePanelButtonVisible(iFinished ? EPtBidStop : EEikBidOk, EFalse);
+	RefreshL();
 	}
 
-CUpdateDialog::CUpdateDialog(TDes& aHost, TInt& aPort)
-	: iHost(aHost), iPort(aPort)
+void CToolDialog::RefreshL()
 	{
+	HBufC* text = iView.DebugTextLC();
+	CEikEdwin* ed = (CEikEdwin*)Control(EPtDlgDebugText);
+	ed->SetTextL(text);
+	ed->SetCursorPosL(ed->TextLength(), EFalse);   // keep the newest line in view
+	ed->DrawNow();
+	CleanupStack::PopAndDestroy();       // text
+	}
+
+void CToolDialog::FinishL()
+	{
+	if (iFinished)
+		return;
+	iFinished = ETrue;
+	RefreshL();
+	MakePanelButtonVisible(EPtBidStop, EFalse);
+	MakePanelButtonVisible(EEikBidOk, ETrue);
+	DrawNow();
+	}
+
+TBool CToolDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	if (iFinished || iView.InstallPending())
+		return ETrue;
+	iView.StopTool();                    // Stop (or Esc): ask the job to end, stay open
+	return EFalse;
 	}
 
 void CUpdateDialog::PreLayoutDynInitL()
 	{
+	((CEikChoiceList*)Control(EPtDlgSource))->SetCurrentItem(iSource ? 1 : 0);
 	SetEdwinTextL(EPtDlgHost, &iHost);
 	SetNumberEditorValue(EPtDlgPort, iPort);
 	}
 
 TBool CUpdateDialog::OkToExitL(TInt /*aButtonId*/)
 	{
+	iSource = ((CEikChoiceList*)Control(EPtDlgSource))->CurrentItem() == 1 ? 1 : 0;
 	GetEdwinText(iHost, EPtDlgHost);
 	iHost.Trim();
 	iPort = NumberEditorValue(EPtDlgPort);
-	if (iHost.Length() == 0)
+	if (iHost.Length() == 0 && (iSource == 1 || iNeedHost))
 		{
-		CEikonEnv::Static()->InfoMsg(_L("Enter the web server's name or IP address"));
+		CEikonEnv::Static()->InfoMsg(_L("Enter the local server's name or IP address"));
 		return EFalse;
 		}
 	return ETrue;
@@ -2858,6 +2910,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iBold = 0;
 	aSettings.iAutoReconnect = 1;
 	aSettings.iStartCmd.Zero();
+	aSettings.iUpdSource = 0;
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
@@ -2916,6 +2969,9 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 									TInt clen = data[pos++];
 									if (pos + clen <= data.Length() && clen <= 100)
 										aSettings.iStartCmd.Copy(data.Mid(pos, clen));
+									pos += clen;
+									if (pos < data.Length())      // v7: update source
+										aSettings.iUpdSource = (data[pos] == 1) ? 1 : 0;
 									}
 								}
 							}
@@ -2958,6 +3014,7 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	tmp.Copy(aSettings.iStartCmd);
 	data.Append((TUint8)tmp.Length());
 	data.Append(tmp);
+	data.Append((TUint8)(aSettings.iUpdSource ? 1 : 0));
 	file.Write(data);
 	file.Close();
 	}
@@ -3006,7 +3063,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			break;
 		iView->BeginDebugL(_L("SSH speed test"));
 		iView->StartSpeedTestL();
-		iView->ShowDebugIfIdleL();              // it could not start
+		iView->RunToolDialogL();
 		break;
 	case EPtCmdHangup:   iView->HangUp(); break;
 	case EPtCmdSendSize: iView->SendScreenSize(); break;
@@ -3020,14 +3077,22 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		{
 		if (aCommand != EPtCmdUpdateServer && !ConfirmDisconnectL(aCommand))
 			break;
-		// the server is asked for once, then remembered (Settings > Update server)
-		if (aCommand == EPtCmdUpdateServer || s.iUpdHost.Length() == 0)
+		// Updates come from GitHub unless a local server is chosen. Sending
+		// screenshots (a developer feature) always needs the local server.
+		TBool needHost = (aCommand == EPtCmdSendShots) ||
+			(aCommand == EPtCmdUpdate && s.iUpdSource == 1);
+		if (aCommand == EPtCmdUpdateServer || (needHost && s.iUpdHost.Length() == 0))
 			{
+			if (aCommand == EPtCmdSendShots)
+				iEikonEnv->InfoWinL(_L("Screenshots go to a local server"),
+					_L("Run server/psion-update.sh from the PsiTerm source on a computer, then enter its address."));
+			TInt source = s.iUpdSource;
 			TBuf<100> host(s.iUpdHost);
 			TInt port = s.iUpdPort > 0 ? s.iUpdPort : 8686;
-			CUpdateDialog* dlg = new(ELeave) CUpdateDialog(host, port);
+			CUpdateDialog* dlg = new(ELeave) CUpdateDialog(source, host, port, aCommand == EPtCmdSendShots);
 			if (!dlg->ExecuteLD(R_PT_UPDATE_DIALOG))
 				break;
+			s.iUpdSource = source;
 			s.iUpdHost = host;
 			s.iUpdPort = port;
 			SaveSettings(s);
@@ -3039,7 +3104,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			iView->StartUpdateL();
 		else
 			iView->SendScreenshotsL();
-		iView->ShowDebugIfIdleL();              // finished at once / could not start
+		iView->RunToolDialogL();
 		break;
 		}
 	case EPtCmdScreenshot: iView->ScreenshotL(); break;

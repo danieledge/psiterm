@@ -1,7 +1,7 @@
 /* Differential test: PSI_GF32 field arithmetic vs the original TweetNaCl
  * i64 code in db/src/curve25519.c, on random inputs, plus the RFC 7748
  * iterated X25519 vectors and RFC 8032 Ed25519 verify. Host build only.
- * Build+run: make -f test/gf/Makefile (from /home/claude/psissh) */
+ * Build+run: make -f test/gf/Makefile (from the ssh/ folder) */
 #include <stdio.h>
 #undef printf
 #undef sscanf

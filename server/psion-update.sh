@@ -1,6 +1,6 @@
 #!/bin/bash
 # Tiny HTTP/1.0 server for PsiTerm (run by socat, one process per connection)
-#   GET  /version.txt, /PsiTerm.sis        -> from ~/PsionDownloads/update
+#   GET  /version.txt, /PsiTerm.sis(.sig)  -> from ~/PsionDownloads/update
 #   GET  /PsiTerm.sis?o=OFFSET&n=LENGTH    -> one chunk, with X-CRC32 header
 #   POST /upload                           -> saved in ~/PsionDownloads/screenshots
 # After sending, the connection is held open until the Psion hangs up
@@ -53,7 +53,7 @@ query=""
 case "$path" in *\?*) query=${path#*\?}; path=${path%%\?*} ;; esac
 f="${path#/}"
 case "$f" in
-  version.txt|PsiTerm.sis) ;;
+  version.txt|PsiTerm.sis|PsiTerm.sis.sig) ;;
   *) f="" ;;
 esac
 if [ "$method" = "GET" ] && [ -n "$f" ] && [ -f "$DIR/$f" ]; then

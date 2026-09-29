@@ -28,6 +28,7 @@
 
 #include "../db/libtomcrypt/src/headers/tomcrypt.h"
 #include "zlib.h"
+#include "tls13.h"
 #include <termios.h>
 #include <sys/uio.h>
 #ifdef PSI_HOST_TEST
@@ -667,38 +668,70 @@ static void run_speed_test(void)
    "ATDT host:port" or the Psion's own TCP/IP). Plain HTTP/1.0, one request
    per connection. Exit code 10 = new version saved, 0 = already current. */
 
+/* All update/upload I/O goes through io_read/io_write, which use TLS when
+   the source is HTTPS (GitHub) and the raw link otherwise. */
+static int g_tls;
+
+static int io_read(unsigned char *buf, int max, int timeout_ms)
+{
+	if (g_tls)
+		return tls_read(buf, max, timeout_ms);   /* >0, 0 closed, -1 error, -2 cancelled */
+	if (pg_net_avail() == 0) {
+		int m = pg_wait(timeout_ms, 1, 0);
+		if (m & 8) return -2;
+		if (pg_net_avail() == 0) return -1;
+	}
+	return pg_net_read(buf, max);
+}
+
+static int io_write(const void *buf, int len)
+{
+	if (g_tls)
+		return tls_write(buf, len) == 0 ? len : -1;
+	return pg_serial_write(buf, len);
+}
+
 static int net_read_byte(int timeout_ms)
 {
 	unsigned char c;
-	if (pg_net_avail() == 0) {
-		int m = pg_wait(timeout_ms, 1, 0);
-		if (m & 8) return -2;                 /* user cancelled */
-		if (pg_net_avail() == 0) return -1;   /* timeout or closed */
-	}
-	pg_net_read(&c, 1);
-	return c;
+	int r = io_read(&c, 1, timeout_ms);
+	if (r == 1) return c;
+	return r == -2 ? -2 : -1;
 }
 
 static long http_response(const char *path, char *why, int whymax);
-static int g_has_crc;                 /* last response had X-CRC32 */
+static int g_has_crc;                 /* last response had X-CRC32 (local server) */
 static unsigned long g_crc;           /* ...and its value */
-static long g_total = -1;             /* X-Total: whole file size */
+static long g_total = -1;             /* whole file size: X-Total or Content-Range */
 
-/* Sends GET, parses the status and Content-Length. Returns the body length
-   (or -1 if unknown) with the link positioned at the first body byte. */
-static long http_request(const char *path, char *why, int whymax)
+/* Dials (plus a TLS handshake for HTTPS), sends GET, parses the headers.
+   For HTTPS a byte range can be asked for (rlen > 0). Returns the body
+   length (-1 if unknown) with the link at the first body byte, or -2. */
+static long http_request(const char *path, long rfrom, long rlen, char *why, int whymax)
 {
 	PsiShared *s = pg_shared();
-	char req[256];
+	char req[384];
 	if (pg_dial(why, whymax) != 0)
 		return -2;
-	sprintf(req, "GET %s HTTP/1.0\r\nHost: %s\r\nUser-Agent: PsiTerm\r\nConnection: close\r\n\r\n", path, s->host);
-	pg_serial_write(req, strlen(req));
+	if (g_tls && tls_connect(s->host, why, whymax) != 0) {
+		pg_hangup();
+		return -2;
+	}
+	sprintf(req, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: PsiTerm/%s\r\nConnection: close\r\n",
+		path, s->host, s->version);
+	if (rlen > 0)
+		sprintf(req + strlen(req), "Range: bytes=%ld-%ld\r\n", rfrom, rfrom + rlen - 1);
+	strcat(req, "\r\n");
+	if (io_write(req, strlen(req)) < 0) {
+		sprintf(why, "could not send the request");
+		pg_hangup();
+		return -2;
+	}
 	return http_response(path, why, whymax);
 }
 
 /* Reads the status line and headers. Returns Content-Length (-1 if none),
-   or -2 with 'why' set on error / non-200. */
+   or -2 with 'why' set on error / other status than 200 or 206. */
 static long http_response(const char *path, char *why, int whymax)
 {
 	char line[256];
@@ -709,7 +742,12 @@ static long http_response(const char *path, char *why, int whymax)
 	g_total = -1;
 	for (;;) {                                /* header lines */
 		c = net_read_byte(30000);
-		if (c < 0) { sprintf(why, c == -2 ? "cancelled" : "no reply from server"); return -2; }
+		if (c < 0) {
+			if (c == -2) sprintf(why, "cancelled");
+			else if (g_tls && *tls_error()) sprintf(why, "%.80s", tls_error());
+			else sprintf(why, "no reply from server");
+			return -2;
+		}
 		if (c == '\r') continue;
 		if (c != '\n') { if (n < (int)sizeof(line) - 1) line[n++] = (char)c; continue; }
 		line[n] = 0;
@@ -720,34 +758,51 @@ static long http_response(const char *path, char *why, int whymax)
 			status = sp ? atoi(sp + 1) : 0;
 		} else if (!strncasecmp(line, "Content-Length:", 15))
 			length = atol(line + 15);
-		else if (!strncasecmp(line, "X-CRC32:", 8)) {
+		else if (!strncasecmp(line, "Content-Range:", 14)) {
+			char *sl = strchr(line, '/');     /* bytes a-b/total */
+			if (sl) g_total = atol(sl + 1);
+		} else if (!strncasecmp(line, "X-CRC32:", 8)) {
 			g_crc = strtoul(line + 8, NULL, 16);
 			g_has_crc = 1;
 		} else if (!strncasecmp(line, "X-Total:", 8))
 			g_total = atol(line + 8);
 		n = 0;
 	}
-	if (status != 200) {
-		sprintf(why, "server said %d for %s", status, path);
+	if (status != 200 && status != 206) {
+		sprintf(why, "server said %d for %.60s", status, path);
 		return -2;
 	}
 	return length;
 }
-
-#define CHUNK 16384
 
 /* Reads exactly n body bytes (fewer on timeout/close); -2 if cancelled. */
 static int read_body(unsigned char *buf, int n)
 {
 	int k = 0;
 	while (k < n) {
-		if (pg_net_avail() == 0) {
-			int m = pg_wait(15000, 1, 0);
-			if (m & 8) return -2;
-			if (pg_net_avail() == 0) break;
-		}
-		k += pg_net_read(buf + k, n - k);
+		int r = io_read(buf + k, n - k, 15000);
+		if (r == -2) return -2;
+		if (r <= 0) break;
+		k += r;
 	}
+	return k;
+}
+
+/* GETs a small text file into buf (NUL-terminated). Returns length or -1. */
+static int fetch_small(const char *name, char *buf, int max, char *why, int whymax)
+{
+	PsiShared *s = pg_shared();
+	char path[128];
+	long len;
+	int k;
+	sprintf(path, "%s%s", s->path, name);
+	len = http_request(path, 0, 0, why, whymax);
+	if (len == -2) return -1;
+	if (len < 0 || len > max - 1) len = max - 1;
+	k = read_body((unsigned char *)buf, (int)len);
+	pg_hangup();
+	if (k < 0) { sprintf(why, "cancelled"); return -1; }
+	buf[k] = 0;
 	return k;
 }
 
@@ -759,70 +814,146 @@ static int version_newer(const char *remote, const char *local)
 	return rm > lm || (rm == lm && rn > ln);
 }
 
+/* ---- release signature
+   PsiTerm.sis.sig = "<version>\n<Ed25519 signature, hex>\n" over
+   "PsiTerm update\n" <version> "\n" SHA-256(PsiTerm.sis), made with the
+   release key (tools/release/sign.py). Nothing is installed unless it
+   verifies against this public key. */
+#ifdef PSI_HOST_TEST
+/* host test build only: test/update-test.key signs the test releases */
+static const unsigned char KUpdateKey[32] = { 0xf8,0x33,0x12,0xd1,0xee,0x3f,0x58,0x23,0x7c,0xfb,0x99,0x34,0x29,0x9e,0x1c,0x12,0x9c,0x98,0x16,0xc2,0xfd,0x54,0x0a,0x1b,0x24,0x43,0xeb,0xd0,0xae,0xdd,0xa0,0xd7 };
+#else
+static const unsigned char KUpdateKey[32] = {
+	0x37,0x74,0xc9,0x3a,0xb2,0xf8,0x4b,0x0e,0x07,0x68,0x41,0x34,0x11,0x6c,0xc0,0x3e,
+	0x81,0x63,0x90,0xd8,0x00,0x67,0x8f,0x33,0x54,0x38,0x6b,0xf9,0xfd,0x5e,0x9e,0x36 };
+#endif
+
+extern int dropbear_ed25519_verify(const unsigned char *m, unsigned long mlen,
+	const unsigned char *s, unsigned long slen, const unsigned char *pk);
+extern void seedrandom(void);
+
+static int hexval(int c)
+{
+	if (c >= '0' && c <= '9') return c - '0';
+	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+	return -1;
+}
+
+/* Parses the .sig file: returns 0 with version and 64-byte signature. */
+static int parse_sig(const char *txt, char *ver, int vermax, unsigned char sig[64])
+{
+	int i = 0, n = 0;
+	while (txt[i] && txt[i] != '\n' && txt[i] != '\r' && n < vermax - 1) ver[n++] = txt[i++];
+	ver[n] = 0;
+	while (txt[i] == '\r' || txt[i] == '\n') i++;
+	for (n = 0; n < 64; n++) {
+		int h = hexval(txt[i]), l = h >= 0 ? hexval(txt[i + 1]) : -1;
+		if (h < 0 || l < 0) return -1;
+		sig[n] = (unsigned char)(h * 16 + l);
+		i += 2;
+	}
+	return ver[0] ? 0 : -1;
+}
+
+static int verify_file(const char *file, const char *ver, const unsigned char sig[64])
+{
+	unsigned char msg[15 + 16 + 1 + 32], buf[1024];
+	hash_state h;
+	int n = 0, vl = (int)strlen(ver), k;
+	FILE *f = fopen(file, "rb");
+	if (!f || vl > 16) { if (f) fclose(f); return -1; }
+	sha256_init(&h);
+	while ((k = (int)fread(buf, 1, sizeof(buf), f)) > 0)
+		sha256_process(&h, buf, k);
+	fclose(f);
+	memcpy(msg, "PsiTerm update\n", 15); n = 15;
+	memcpy(msg + n, ver, vl); n += vl;
+	msg[n++] = '\n';
+	sha256_done(&h, msg + n); n += 32;
+	return dropbear_ed25519_verify(msg, n, sig, 64, KUpdateKey);
+}
+
+#define CHUNK_LOCAL 16384            /* local server: pieces with a CRC-32 */
+#define CHUNK_TLS   49152            /* HTTPS: TLS already checks every record */
+
 static int run_update(void)
 {
 	PsiShared *s = pg_shared();
-	char why[96], path[96], remote[24], msg[160];
-	long len, got = 0;
-	int c, n = 0, lastkb = -1;
+	char why[96], path[128], remote[24], msg[160], sigtxt[300], sigver[24];
+	unsigned char sig[64];
+	long got = 0, total = -1;
+	int n, tries = 0, chunk;
+	const char *scheme;
 	FILE *f;
 
-	sprintf(msg, "Checking http://%s:%d%sversion.txt ...\r\n", s->host, s->port, s->path);
+	g_tls = s->tls;
+	scheme = g_tls ? "https" : "http";
+	chunk = g_tls ? CHUNK_TLS : CHUNK_LOCAL;
+	if (g_tls)
+		seedrandom();                         /* TLS needs fresh random numbers */
+
+	sprintf(msg, "Checking %s://%s%s ...\r\n", scheme, s->host, s->path);
 	pg_out_write(msg, strlen(msg));
-	sprintf(path, "%sversion.txt", s->path);
-	len = http_request(path, why, sizeof(why));
-	if (len == -2) goto fail;
-	while (n < (int)sizeof(remote) - 1 && (len < 0 || n < len)) {
-		c = net_read_byte(10000);
-		if (c < 0) break;
-		if (c == '\r' || c == '\n' || c == ' ') { if (n) break; else continue; }
-		remote[n++] = (char)c;
-	}
+	if (fetch_small("version.txt", remote, sizeof(remote), why, sizeof(why)) < 0) goto fail;
+	for (n = 0; remote[n] && remote[n] != '\r' && remote[n] != '\n' && remote[n] != ' '; n++) ;
 	remote[n] = 0;
-	pg_hangup();
 	if (!n) { sprintf(why, "version.txt was empty"); goto fail; }
 	if (!version_newer(remote, s->version)) {
 		sprintf(msg, "PsiTerm %s is the latest version (server has %s).\r\n", s->version, remote);
 		pg_out_write(msg, strlen(msg));
 		return 0;
 	}
-	sprintf(msg, "Version %s is available (you have %s). Downloading...\r\n", remote, s->version);
+	sprintf(msg, "Version %s is available (you have %s).\r\n", remote, s->version);
 	pg_out_write(msg, strlen(msg));
 
-	/* Chunked download: each 16 KB piece carries a CRC-32 and is retried
-	   until it arrives intact, so a dropped or garbled byte costs one chunk,
-	   not the whole update. Falls back to one plain GET on old servers. */
+	if (fetch_small("PsiTerm.sis.sig", sigtxt, sizeof(sigtxt), why, sizeof(why)) < 0) {
+		sprintf(why, "no release signature on the server (PsiTerm.sis.sig)");
+		goto fail;
+	}
+	if (parse_sig(sigtxt, sigver, sizeof(sigver), sig) != 0) { sprintf(why, "the release signature file is damaged"); goto fail; }
+	if (strcmp(sigver, remote) != 0) { sprintf(why, "signature is for %.10s, not %.10s", sigver, remote); goto fail; }
+	pg_out_write("Downloading...\r\n", 16);
+
+	/* In pieces, each held in memory until complete and then written, and
+	   retried if it arrives short or damaged: so a dropped byte costs one
+	   piece, not the whole download. */
 	f = fopen(s->save_as, "wb");
 	if (!f) { sprintf(why, "cannot write %s", s->save_as); goto fail; }
 	{
-		static unsigned char chunk[CHUNK];
-		long total = -1;
-		int tries = 0;
+		static unsigned char buf[CHUNK_TLS];
 		for (;;) {
 			long want, clen;
 			int k;
 			if (total >= 0 && got >= total) break;
-			sprintf(path, "%sPsiTerm.sis?o=%ld&n=%d", s->path, got, CHUNK);
-			clen = http_request(path, why, sizeof(why));
+			if (g_tls) {
+				sprintf(path, "%sPsiTerm.sis", s->path);
+				clen = http_request(path, got, chunk, why, sizeof(why));
+			} else {
+				sprintf(path, "%sPsiTerm.sis?o=%ld&n=%d", s->path, got, chunk);
+				clen = http_request(path, 0, 0, why, sizeof(why));
+			}
 			if (clen == -2) {
 				if (!strcmp(why, "cancelled") || ++tries > 6) { fclose(f); goto fail; }
-				pg_hangup();
+				sprintf(msg, "\r  %ld KB - %.40s, retrying (%d) ", got / 1024, why, tries);
+				pg_out_write(msg, strlen(msg));
 				continue;
 			}
-			if (!g_has_crc || g_total < 0) {  /* old server: this reply is the whole file */
-				if (got == 0) { len = clen; goto stream; }
+			if (g_total < 0) {
 				pg_hangup();
-				fclose(f); sprintf(why, "server stopped sending chunks"); goto fail;
+				fclose(f);
+				sprintf(why, "server does not support partial downloads");
+				goto fail;
 			}
 			total = g_total;
-			want = total - got < CHUNK ? total - got : CHUNK;
-			k = (clen == want) ? read_body(chunk, (int)want) : -1;
+			want = total - got < chunk ? total - got : chunk;
+			k = (clen == want) ? read_body(buf, (int)want) : -1;
 			pg_hangup();
 			if (k == -2) { fclose(f); sprintf(why, "cancelled"); goto fail; }
-			if (k != want || (crc32(0L, chunk, (unsigned)want) & 0xffffffffUL) != g_crc) {
+			if (k != want || (g_has_crc && (crc32(0L, buf, (unsigned)want) & 0xffffffffUL) != g_crc)) {
 				if (++tries > 6) {
 					fclose(f);
-					sprintf(why, "chunk at %ld kept failing (%d of %ld bytes)", got, k, want);
+					sprintf(why, "piece at %ld kept failing (%d of %ld bytes)", got, k, want);
 					goto fail;
 				}
 				sprintf(msg, "\r  %ld of %ld KB - retrying (%d) ", got / 1024, total / 1024, tries);
@@ -830,52 +961,20 @@ static int run_update(void)
 				continue;
 			}
 			tries = 0;
-			if ((long)fwrite(chunk, 1, (size_t)want, f) != want) { fclose(f); sprintf(why, "disk full?"); goto fail; }
+			if ((long)fwrite(buf, 1, (size_t)want, f) != want) { fclose(f); sprintf(why, "disk full?"); goto fail; }
 			got += want;
-			sprintf(msg, "\r  %ld of %ld KB            ", got / 1024, total / 1024);
-			pg_out_write(msg, strlen(msg));
-		}
-		if (total >= 0) {
-			fclose(f);
-			goto done;
-		}
-	}
-stream:
-	for (;;) {
-		unsigned char buf[512];
-		int k = 0;
-		if (len >= 0 && got >= len) break;
-		while (k < (int)sizeof(buf) && (len < 0 || got + k < len)) {
-			if (pg_net_avail() == 0) {
-				int m = pg_wait(k ? 0 : 30000, 1, 0);
-				if (m & 8) { fclose(f); pg_hangup(); sprintf(why, "cancelled"); goto fail; }
-				if (pg_net_avail() == 0) break;
-			}
-			{
-				int want = (int)sizeof(buf) - k;
-				if (len >= 0 && want > len - got - k)
-					want = (int)(len - got - k);
-				k += pg_net_read(buf + k, want);
-			}
-		}
-		if (k == 0) break;                    /* closed or timed out */
-		if ((int)fwrite(buf, 1, k, f) != k) { fclose(f); pg_hangup(); sprintf(why, "disk full?"); goto fail; }
-		got += k;
-		if ((int)(got / 8192) != lastkb) {
-			lastkb = (int)(got / 8192);
-			if (len > 0) sprintf(msg, "\r  %ld of %ld KB ", got / 1024, len / 1024);
-			else sprintf(msg, "\r  %ld KB ", got / 1024);
+			sprintf(msg, "\r  %ld of %ld KB                    ", got / 1024, total / 1024);
 			pg_out_write(msg, strlen(msg));
 		}
 	}
 	fclose(f);
-	pg_hangup();
-	if (len >= 0 && got != len) {
-		sprintf(why, "download stopped at %ld of %ld bytes", got, len);
+	pg_out_write("\r\nChecking the release signature...\r\n", 37);
+	if (verify_file(s->save_as, remote, sig) != 0) {
+		remove(s->save_as);
+		sprintf(why, "SIGNATURE CHECK FAILED - the download was deleted, nothing installed");
 		goto fail;
 	}
-done:
-	sprintf(msg, "\r\nSaved %ld bytes to %s\r\n", got, s->save_as);
+	sprintf(msg, "Signature OK. Saved %ld bytes to %s\r\n", got, s->save_as);
 	pg_out_write(msg, strlen(msg));
 	return 10;
 

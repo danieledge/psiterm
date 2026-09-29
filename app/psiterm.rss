@@ -87,16 +87,25 @@ RESOURCE MENU_PANE r_pt_debug_menu
 
 // Results of the Debug tools (speed test, serial info, sending screenshots,
 // updating) - shown here rather than in the terminal
-RESOURCE DIALOG r_pt_debug_dialog
+RESOURCE DIALOG r_pt_tool_dialog
 	{
-	title="Debug";
+	title="PsiTerm";
 	flags=EEikDialogFlagWait;
-	buttons=R_EIK_BUTTONS_CONTINUE;
+	buttons=r_pt_tool_buttons;
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; id=EPtDlgDebugText;
 			control=EDWIN { width=62; lines=11; maxlength=8000;
 				flags=EEikEdwinReadOnly|EEikEdwinNoAutoSelection; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pt_tool_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPtBidStop; button=CMBUT { txt="Stop"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Close"; }; hotkey=EEikBidOk; flags=0; }
 		};
 	}
 
@@ -153,7 +162,7 @@ RESOURCE MENU_PANE r_pt_settings_menu
 		MENU_ITEM { command=EPtCmdZoom4; txt="Terminus 18 (64x13)"; flags=EEikMenuItemRadioEnd; },
 		MENU_ITEM { command=EPtCmdBold; txt="Bold text"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdConnSettings; txt="Connection settings..."; },
-		MENU_ITEM { command=EPtCmdUpdateServer; txt="Update & screenshot server..."; }
+		MENU_ITEM { command=EPtCmdUpdateServer; txt="Update source..."; }
 		};
 	}
 
@@ -255,14 +264,22 @@ RESOURCE DIALOG r_pt_about_dialog
 	}
 
 // Update: where to fetch version.txt and PsiTerm.sis from
+RESOURCE ARRAY r_pt_source_array
+	{
+	items={ LBUF { txt="GitHub (HTTPS)"; }, LBUF { txt="Local server"; } };
+	}
+
+// Where updates come from; the local server is also where Debug >
+// Send screenshots goes (server/psion-update.sh in the source)
 RESOURCE DIALOG r_pt_update_dialog
 	{
-	title="Update PsiTerm";
+	title="Update source";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
 		{
-		DLG_LINE { type=EEikCtEdwin; prompt="Web server"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=100; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Updates from"; id=EPtDlgSource; control=CHOICELIST { array_id=r_pt_source_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Local server"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=100; }; },
 		DLG_LINE { type=EEikCtNumberEditor; prompt="Port"; id=EPtDlgPort; control=NUMBER_EDITOR { min=1; max=65535; }; }
 		};
 	}

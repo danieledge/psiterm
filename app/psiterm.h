@@ -48,6 +48,7 @@ struct TPsiSettings
 	TInt iBold;        // 1 = draw all text bold (easier to read)
 	TInt iAutoReconnect;  // 1 = redial if a logged-in session drops
 	TBuf<100> iStartCmd;  // optional command run on login, e.g. tmux new -A -s psion
+	TInt iUpdSource;      // 0 = GitHub (HTTPS, default), 1 = the local server iUpdHost
 	};
 
 // ---------------------------------------------------------------------------
@@ -164,15 +165,23 @@ private:
 	};
 
 // Update server (host + port)
-// Read-only text window for the Debug tools' results
-class CDebugDialog : public CEikDialog
+// Window for updates and the Debug tools: live output while the job runs
+// (with a Stop button), then the full result (with Close)
+class CTermView;
+class CToolDialog : public CEikDialog
 	{
 public:
-	CDebugDialog(const TDesC& aTitle, const TDesC& aText) : iTitle(aTitle), iText(aText) {}
+	CToolDialog(CTermView& aView, const TDesC& aTitle, TBool aFinished)
+		: iView(aView), iTitle(aTitle), iFinished(aFinished) {}
+	void RefreshL();                  // show the latest output
+	void FinishL();                   // the job has ended: Stop -> Close
+	void CloseL() { TryExitL(EEikBidOk); }
 private:
 	void PreLayoutDynInitL();
-	TPtrC iTitle;
-	TPtrC iText;
+	TBool OkToExitL(TInt aButtonId);
+	CTermView& iView;
+	TBuf<40> iTitle;
+	TBool iFinished;
 	};
 
 // Baud rate, flow control, link type
@@ -189,12 +198,15 @@ private:
 class CUpdateDialog : public CEikDialog
 	{
 public:
-	CUpdateDialog(TDes& aHost, TInt& aPort);
+	CUpdateDialog(TInt& aSource, TDes& aHost, TInt& aPort, TBool aNeedHost)
+		: iSource(aSource), iHost(aHost), iPort(aPort), iNeedHost(aNeedHost) {}
 private:
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
+	TInt& iSource;
 	TDes& iHost;
 	TInt& iPort;
+	TBool iNeedHost;      // screenshots always need the local server
 	};
 
 // Add / edit one host
@@ -233,8 +245,11 @@ public:
 	void LocalMessage(const TDesC8& aText);
 	// Debug screen: output goes to a text window instead of the terminal
 	void BeginDebugL(const TDesC& aTitle);
-	void ShowDebugL();                 // show what was collected (if any)
-	void ShowDebugIfIdleL() { if (iCapture && !iSshActive) ShowDebugL(); }
+	void ShowDebugL() { RunToolDialogL(); }
+	void RunToolDialogL();             // the window for the job begun with BeginDebugL
+	HBufC* DebugTextLC() const;        // collected output as editor text
+	void StopTool();
+	TBool InstallPending() const { return iInstallPending; }
 	void RunAfterDisconnectL(TInt aCommand);   // disconnect SSH, then run aCommand
 	TInt Cols() const { return iCols; }
 	TInt Rows() const { return iRows; }
@@ -383,6 +398,9 @@ private:
 	HBufC8* iDebugText;       // collected Debug tool output
 	TBuf<40> iDebugTitle;
 	TBool iCapture;           // LocalMessage/psissh output -> iDebugText
+	CToolDialog* iToolDlg;    // open while a job runs
+	TBool iInstallPending;    // update downloaded: start the installer when the window closes
+	void StartInstallerL();
 	TInt iPendingCmd;         // run when the SSH session has ended
 	CIdle* iPendingIdle;
 	static TInt PendingCallback(TAny* aSelf);

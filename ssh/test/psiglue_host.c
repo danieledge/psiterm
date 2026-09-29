@@ -46,6 +46,7 @@ int pg_init(void)
 	signal(SIGUSR1, on_usr1);
 	g.net_mode = getenv("PSI_NET") ? 1 : 0;
 	if (getenv("PSI_CMD")) strncpy(g.command, getenv("PSI_CMD"), sizeof(g.command) - 1);
+	g.tls = getenv("PSI_TLS") ? 1 : 0;
 	if (getenv("PSI_UPLOAD")) {
 		g.mode = 3;
 		strcpy(g.path, "/upload");
@@ -136,7 +137,7 @@ int pg_dial(char* why, int max)
 	gNetClosed = 0; gRxPos = gRxLen = 0;
 	if (g.net_mode) {
 		struct sockaddr_in a; memset(&a, 0, sizeof(a)); a.sin_family = AF_INET; a.sin_port = htons(g.port);
-		if (inet_pton(AF_INET, g.host, &a.sin_addr) != 1) { snprintf(why, max, "could not look up the host name (error -5120)"); return -1; }
+		if (inet_pton(AF_INET, getenv("PSI_ADDR") ? getenv("PSI_ADDR") : g.host, &a.sin_addr) != 1) { snprintf(why, max, "could not look up the host name (error -5120)"); return -1; }
 		gSer = socket(AF_INET, SOCK_STREAM, 0);
 		if (connect(gSer, (struct sockaddr*)&a, sizeof(a)) < 0) { snprintf(why, max, "connection failed (error -33)"); return -1; }
 		return 0;

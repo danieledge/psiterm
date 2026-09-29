@@ -21,7 +21,8 @@ and Claude Code - on a 1999 palmtop.
 - Terminus font in four sizes (plus Courier), optional bold, 16 greys
 - Scrollback, pen selection, copy/paste with the system clipboard
 - Box drawing, block and Braille graphics drawn natively
-- Over-the-air updates and an on-device crypto speed test
+- Signed over-the-air updates straight from GitHub (TLS 1.3 on a 36 MHz ARM)
+- An on-device crypto speed test
 
 ## Install
 
@@ -52,14 +53,28 @@ PsiTerm app, and packages `dist/PsiTerm.sis`.
 | `pkg/` | installer definition, font and icon files |
 | `server/` | optional local update/debug server (plain HTTP) |
 | `tools/` | font and icon converters, screenshot renderer, test harnesses |
-| `ssh/test/` | host-side tests (build `ssh/test/Makefile.host`) |
+| `ssh/test/` | host-side tests (build `ssh/test/Makefile.host`; `update-test.key` is a throwaway key only the host test build trusts) |
 
 ## Updates
 
-**Terminal > Update PsiTerm** downloads new versions over the same link SSH
-uses.
-Currently it fetches from a small local server (`server/psion-update.sh`).
-Fetching straight from this repository over HTTPS is in progress.
+**Terminal > Update PsiTerm** fetches `dist/version.txt` and `dist/PsiTerm.sis`
+from this repository over HTTPS. The Psion speaks a minimal TLS 1.3 client
+(`ssh/tls13.c`: X25519, ChaCha20-Poly1305) over the same modem or dial-up link
+SSH uses.
+
+Every release is signed. `dist/PsiTerm.sis.sig` holds an Ed25519 signature
+over the version and the SHA-256 of the .sis, and PsiTerm checks it against the
+public key built into `ssh/psishim.c` before installing anything. The Psion
+does not check TLS certificates (no CA store, too slow), so the signature is
+what makes updates trustworthy, from GitHub or anywhere else.
+
+To make a release: build, then
+`tools/release/sign.py dist/PsiTerm.sis <version>` with the release key
+(kept outside the repository), and commit `dist/`.
+
+Settings > Update source can point PsiTerm at a local server instead
+(`server/psion-update.sh`, plain HTTP). The same server receives the Debug
+screenshots, a developer feature.
 
 ## Licence
 

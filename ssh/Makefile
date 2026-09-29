@@ -31,7 +31,7 @@ LTC_OBJS := $(patsubst db/%.c,obj/%.o,$(LTC_SRCS))
 LTM_OBJS := $(patsubst db/%.c,obj/%.o,$(LTM_SRCS))
 Z_SRCS   := adler32 crc32 deflate inflate inftrees inffast trees zutil
 Z_OBJS   := $(addprefix obj/zlib/,$(addsuffix .o,$(Z_SRCS)))
-GLUE_OBJS := obj/psiglue.o obj/psishim.o obj/bench.o
+GLUE_OBJS := obj/psiglue.o obj/psishim.o obj/tls13.o obj/bench.o
 
 all: $(REL)/psissh.exe
 
@@ -64,7 +64,11 @@ obj/bench.o: bench/bench.c bench/rsa_vec.h
 	@mkdir -p obj
 	$(CC) -c $(CFLAGS) $< -o $@
 
-obj/psishim.o: psishim.c psishared.h
+obj/psishim.o: psishim.c psishared.h tls13.h
+	@mkdir -p obj
+	$(CC) -c $(CFLAGS) $< -o $@
+
+obj/tls13.o: tls13.c tls13.h
 	@mkdir -p obj
 	$(CC) -c $(CFLAGS) $< -o $@
 

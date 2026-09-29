@@ -65,6 +65,7 @@ typedef struct
 	volatile int lost_link;        /* psissh sets: 1 = was logged in and the link
 	                                  dropped, 2 = could not dial/connect */
 	char command[128];             /* optional remote command, e.g. tmux new -A -s psion */
+	int tls;                       /* update over HTTPS (TLS 1.3), e.g. from GitHub (0.23) */
 	} PsiShared;
 
 #endif

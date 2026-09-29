@@ -23,6 +23,7 @@ __pycache__/
 # release signing key: never commit
 *.key
 !ssh/db/**/*.key
+!ssh/test/update-test.key
 signing/
 
 # local debugging / device data
@@ -37,3 +38,5 @@ known_hosts
 .DS_Store
 *~
 *.swp
+tools/shot/host.raw
+tools/shot/host.screen
