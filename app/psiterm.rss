@@ -277,7 +277,8 @@ RESOURCE ARRAY r_pt_flow_array
 
 RESOURCE ARRAY r_pt_auth_array
 	{
-	items={ LBUF { txt="SSH key"; }, LBUF { txt="Password (ask)"; }, LBUF { txt="Saved password"; } };
+	items={ LBUF { txt="SSH key"; }, LBUF { txt="Password (ask)"; }, LBUF { txt="Saved password"; },
+		LBUF { txt="SSH key, then saved password"; } };
 	}
 
 RESOURCE ARRAY r_pt_noyes_array

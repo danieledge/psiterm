@@ -214,7 +214,8 @@ struct THostEntry
 	TBuf<63> iPassword;   // empty = ask when connecting
 	TInt iPort;
 	TBuf<100> iCommand;   // run on login, e.g. tmux new -A -s psion (optional)
-	TInt iAuth;           // log in with: 0 = SSH key, 1 = password (ask), 2 = saved password
+	TInt iAuth;           // log in with: 0 = SSH key, 1 = password (ask), 2 = saved password,
+	                      // 3 = SSH key, then the saved password
 	};
 
 class CHostList : public CBase
