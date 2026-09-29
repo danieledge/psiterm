@@ -1,0 +1,101 @@
+// PSITERM.HRH - command IDs shared by the resource file and the C++ code
+
+enum TPsiTermCommands
+	{
+	EPtCmdSsh = 0x1000,
+	EPtCmdSshDisconnect,
+	EPtCmdSpeedTest,
+	EPtCmdDial,
+	EPtCmdHangup,
+	EPtCmdSendSize,
+	EPtCmdReset,
+	EPtCmdAbout,
+
+	EPtCmdKeyEsc,
+	EPtCmdKeyTab,
+	EPtCmdKeyShiftTab,
+	EPtCmdKeyCtrlC,
+	EPtCmdKeyCtrlD,
+	EPtCmdKeyCtrlZ,
+	EPtCmdKeyCtrlL,
+	EPtCmdKeyCtrlR,
+	EPtCmdKeyCtrlA,
+	EPtCmdKeyCtrlBackslash,
+	EPtCmdKeyInsert,
+
+	EPtCmdF1,
+	EPtCmdF2,
+	EPtCmdF3,
+	EPtCmdF4,
+	EPtCmdF5,
+	EPtCmdF6,
+	EPtCmdF7,
+	EPtCmdF8,
+	EPtCmdF9,
+	EPtCmdF10,
+	EPtCmdF11,
+	EPtCmdF12,
+
+	EPtCmdBaud9600,
+	EPtCmdBaud19200,
+	EPtCmdBaud38400,
+	EPtCmdBaud57600,
+	EPtCmdBaud115200,
+
+	EPtCmdFlowNone,
+	EPtCmdFlowRtsCts,
+
+
+	EPtCmdSerialInfo,
+
+	EPtCmdLinkModem,
+	EPtCmdLinkPpp,
+
+	EPtCmdCopy,
+	EPtCmdPaste,
+	EPtCmdSelectScreen,
+	EPtCmdScrollUp,
+	EPtCmdScrollDown,
+	EPtCmdScrollEnd,
+
+	EPtCmdZoom0,          // five zoom levels, smallest first
+	EPtCmdZoom1,
+	EPtCmdZoom2,
+	EPtCmdZoom3,
+	EPtCmdZoom4,
+
+	EPtCmdUpdate,
+	EPtCmdCharInfo,
+	EPtCmdScreenshot,
+	EPtCmdSendShots,
+	EPtCmdUpdateServer,
+	EPtCmdBold,
+	EPtCmdConnSettings
+	};
+
+enum TPsiTermDialogControls
+	{
+	EPtDlgHost = 1,
+	EPtDlgUser,
+	EPtDlgPort,
+	EPtDlgName,
+	EPtDlgPassword,
+	EPtDlgRemember,
+	EPtDlgHostList,
+	EPtDlgAboutStatus,
+	EPtDlgDebugText,
+	EPtDlgBaud,
+	EPtDlgFlow,
+	EPtDlgLink,
+	EPtDlgReconnect,
+	EPtDlgStartCmd,
+	EPtDlgAbout1, EPtDlgAbout2, EPtDlgAbout3, EPtDlgAbout4,
+	EPtDlgAbout5, EPtDlgAbout6, EPtDlgAbout7, EPtDlgAbout8
+	};
+
+enum TPsiTermDialogButtons
+	{
+	EPtBidNew = 100,
+	EPtBidEdit,
+	EPtBidDelete
+	};

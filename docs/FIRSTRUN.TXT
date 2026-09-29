@@ -1,0 +1,162 @@
+PSITERM 0.21 - FIRST RUN CHECKLIST
+=================================
+
+BEFORE YOU START
+- Psion: Control Panel > Remote link = OFF.
+- WiRSa: the adapter with pin 6 removed, MODEM mode.
+- Note the WiRSa's baud rate (shown on its screen).
+
+1. INSTALL
+   Open D:\Install\Apps\Terminal\PsiTerm.sis, install to D:.
+   (Replaces any older PsiTerm.) PsiTerm is on the Extras bar.
+
+2. FIRST LAUNCH
+   Open PsiTerm. You should see "PsiTerm 0.21" and the screen size.
+   Menu > Settings > Connection settings: the same baud
+   rate as the modem,
+   Flow control: None.
+   Type AT and press Enter - expect OK.
+
+3. SPEED TEST (no WiRSa needed)
+   Menu > Debug > SSH speed test. Takes about a minute.
+   Every line should say "ok". Take a photo of the results.
+
+4. SSH (do this once at the current baud rate first)
+   Menu > Terminal > SSH to...   (or Shift+Ctrl+S)
+   First time: the "SSH host" form opens. Fill in
+     a name, your server's host name or IP, Port 22, user name.
+     Password (up to 32 characters) + tick "Remember
+     password" to save it, or
+     leave the tick off to be asked each time.
+   Then the host list: pick a host and press Enter (Connect).
+   Tap New / Edit / Delete to manage hosts. A * after a
+   name means its password is saved.
+   First time only: type about 40 random keys when asked
+   (this makes the encryption keys unpredictable).
+   "Setting up encryption" takes about 5-15 seconds. Wait.
+   Answer y to trust the server's key (first time only).
+   With a saved password you'll see "(saved password)" and
+   go straight in; if it's wrong you're asked as normal.
+   Compression switches on by itself. Type exit to finish.
+   Editing a host: a blank password keeps the saved one;
+   untick "Remember password" to forget it.
+   NOTE: saved passwords are scrambled, not strongly
+   encrypted. Anyone with your Psion can use them.
+
+5. GO FAST: 115200 BAUD (after step 4 has worked)
+   In PsiTerm, not connected, type:
+       AT&K0        (Enter)  - expect OK
+       AT$SB=115200 (Enter)
+   The WiRSa says "SWITCHING ... IN 5 SECONDS".
+   Straight away: Menu > Settings > Connection settings
+   > Baud rate 115200.
+   Type AT (Enter) - expect OK. If not, set PsiTerm back
+   to the old speed and try again.
+   Then type AT&W (Enter) to save it in the WiRSa.
+   PsiTerm remembers its own setting.
+   Now repeat step 4 - screens should draw about 12x faster.
+   Leave flow control at None: PsiTerm doesn't need it.
+   If you ever see garbage or "Integrity error" at 115200,
+   drop both ends to 57600 the same way (AT$SB=57600).
+
+6. SERIAL PORT INFO (1 minute, helps plan faster links)
+   Menu > Debug > Serial port info.
+   Photo the result for Claude - it says whether this Psion
+   can go beyond 115200, and whether it has an IR port.
+
+7. OPTIONAL, LATER: SSH OVER THE PSION'S OWN INTERNET (PPP)
+   Off by default - only try this once steps 1-5 work.
+   The WiRSa can act as a dial-up Internet provider, which
+   also lets Opera and Email work.
+   a) Control panel > Dial: add an Internet account:
+      phone number PPP, no login script, no user name or
+      password, modem = a standard modem at the WiRSa's
+      speed (not "Mobile").
+   b) Close PsiTerm (it holds the serial port), open Opera,
+      try a web page - the Psion should dial "PPP" and the
+      WiRSa shows "PPP Gateway ACTIVE".
+   c) Open PsiTerm: Menu > Settings > Connection settings >
+      SSH connects via "Psion
+      Internet (PPP)", then SSH to... as normal. Host names
+      work as well as IP addresses.
+   To go back: choose "Modem" there instead.
+   If PsiTerm says the serial port is in use afterwards,
+   the dial-up is still connected; it frees itself when it
+   hangs up.
+
+8. IF SOMETHING GOES WRONG, NOTE:
+   - the last message on screen (photo is best)
+   - "could not open serial port" = Remote link on, or
+     Comms still running
+   - "SSH program crashed (panic N)" = tell Claude the N
+   - "Could not connect: ..." = WiRSa not in MODEM mode,
+     wrong baud, or server unreachable
+   - WiRSa lost its settings (AT&F or a reset) = it is back
+     at 9600: set PsiTerm to 9600 and redo step 5.
+
+SCROLL BACK, SELECT, COPY AND PASTE (new in 0.10)
+   Scroll back: Shift+Fn+Up / Shift+Fn+Down (Shift+PgUp/PgDn),
+     or drag the pen up/down along the far right edge.
+     "history -N/M" shows at the top right. Shift+Fn+Right or
+     any typing goes back to the live screen. Keeps ~300 lines.
+     (Full-screen apps like tmux and vim have no history here -
+     use tmux's own copy mode, Ctrl+B [.)
+   Select: drag the pen across text (drag past the top or
+     bottom edge to scroll while selecting).
+   Copy: Shift+Ctrl+C (or Edit > Copy selection). It goes on
+     the Psion clipboard, so you can paste it into Word too.
+   Paste: Shift+Ctrl+V (or Edit > Paste) types the clipboard
+     into the session.
+
+TEXT SIZE AND FONTS (Terminus since 0.12)
+   The sidebar zoom buttons (+ / -) step through 5 sizes:
+     Courier small  (106 x 30)  for apps needing 24+ rows (btop)
+     Terminus 12    (106 x 20)  <- default
+     Terminus 14    ( 80 x 17)
+     Terminus 16    ( 80 x 15)
+     Terminus 18    ( 64 x 13)
+   Menu > Settings > Bold text makes every letter thicker
+   (easier to read on the 5mx screen; remembered).
+   Also Menu > Settings. Terminus is a popular terminal font,
+   bundled with PsiTerm (SIL Open Font License).
+   The sidebar clipboard icon's Copy / Paste work too.
+   Menu > Terminal > About PsiTerm shows version and credits.
+
+UPDATING PSITERM WITHOUT THE CF CARD (0.14; reliable since 0.16)
+   Menu > Terminal > Update PsiTerm
+   First time only it asks for the server:
+     Web server: the machine running server/psion-update.sh
+     Port: 8686
+   After that it remembers it and goes straight ahead. To
+   change it: Menu > Settings > Update & screenshot server...
+   PsiTerm dials the server the same way SSH does, checks
+   version.txt, downloads PsiTerm.sis if it is newer (about
+   30 s at 115200, 5 min at 9600), then opens the installer
+   and closes itself. Say Yes to install; reopen PsiTerm.
+
+SCREENSHOTS FOR CLAUDE (new in 0.15)
+   Shift+Ctrl+P (or Debug > Screenshot) - the screen is saved
+     0.6 s later (so the menu has gone). "Screenshot N saved".
+     Take as many as you like; they go in D:\PsiTerm\.
+   Menu > Debug > Send screenshots uploads them all to the
+     update server (in checked 8 KB pieces, about 1 minute per
+     screenshot) and deletes them from the Psion when done.
+   Not while SSH is connected - disconnect first (the modem
+     line is in use).
+   Debug > Character codes of selection: select a few cells with
+     the pen, then this shows their exact codes on screen.
+
+MENUS (tidied in 0.21)
+   Debug menu: speed test, serial port info, character codes,
+     screenshots, reset. Results open in a Debug window instead
+     of the terminal. If SSH is connected it offers to
+     disconnect first, then carries on by itself.
+   Keys menu: only keys the 5mx keyboard lacks (Shift+Tab,
+     Insert, Ctrl+\). Esc, Tab and Ctrl+letter: use the keyboard.
+
+KEYS
+   Menu key: all options      Shift+Ctrl+E: close
+   Shift+Ctrl+S: SSH          Shift+Ctrl+T: Shift+Tab
+   Shift+Ctrl+P: screenshot
+   Plain Ctrl+letter goes to the server (Ctrl+C etc.)
+   Menu > Terminal > Disconnect SSH ends a session.

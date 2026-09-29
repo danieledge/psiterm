@@ -1,0 +1,3 @@
+[reply 7 bytes: \x1b[?1;2c]
+[reply 11 bytes: \x1b[>0;100;0c]
+[reply 19 bytes: \x1bP>|libvterm(0.3)\x1b\]

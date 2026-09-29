@@ -1,0 +1,226 @@
+[?1049h[22;0;0t[?1h=[H[2J[?12l[?25h[?1000l[?1002l[?1003l[?1006l[?1005l[?2004h(B[m[?12l[?25h[?1006l[?1000l[?1002l[?1003l[1;1H[1;30r[c[>c[>q]10;?\]11;?\[1;1H[?25l[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[30m[42m
+[0] 0:bash*                                                                           "vm" 22:12 28-Sep-26(B[m[?12l[?25h[1;1H(B[m[?12l[?25h[?1006l[?1000l[?1002l[?1003l[1;1H[1;30r[1;1H[?25l[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[30m[42m
+[0] 0:bash*                                                                           "vm" 22:12 28-Sep-26(B[m[?12l[?25h[1;1H[?7727h(B[m[?12l[?25h[?1006l[?1000l[?1002l[?1003l[1;1H[1;30r[?7727h(B[m[?12l[?25h[?1006l[?1000l[?1002l[?1003l[1;1H[1;30r[?7727h(B[m[?12l[?25h[?1006l[?1000l[?1002l[?1003l[1;1H[1;30r[1;1H[?25l[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[30m[42m
+[0] 0:bash*                                                                           "vm" 22:12 28-Sep-26(B[m[?12l[?25h[1;1Hroot@vm:/home/claude/psiterm/shot# ls -l --color=always /usr/bin | head -40
+[1;29r[1;1H[10S-rwxr-xr-x 1 root root       16422 Jan  5  2026 [32m[1madd-apt-repository
+(B[m-rwxr-xr-x 1 root root       14720 Aug 19 17:47 [32m[1maddpart
+(B[mlrwxrwxrwx 1 root root          26 Feb  9  2026 [36m[1maddr2line(B[m -> [32m[1mx86_64-linux-gnu-addr2line
+(B[m-rwxr-xr-x 1 root root       43552 Mar 31  2024 [32m[1mafm2pl
+(B[m-rwxr-xr-x 1 root root       53824 Mar 31  2024 [32m[1mafm2tfm
+(B[m-rwxr-xr-x 1 root root     3836776 Jun 19  2025 [32m[1mage
+(B[m-rwxr-xr-x 1 root root     2105944 Jun 19  2025 [32m[1mage-keygen
+(B[m-rwxr-xr-x 1 root root      536384 Mar 31  2024 [32m[1maleph
+(B[m-rwxr-xr-x 1 root root       22928 Apr  7  2024 [32m[1mambiguous_words
+(B[mlrwxrwxrwx 1 root root          30 May 27  2024 [36m[1mamdgpu-arch-18(B[m -> [32m[1m../lib/llvm-18/bin/amdgpu-arch
+(B[mlrwxrwxrwx 1 root root           6 Feb 14  2024 [36m[1mamstex(B[m -> [32m[1mpdftex
+(B[mlrwxrwxrwx 1 root root          32 May 27  2024 [36m[1manalyze-build-18(B[m -> [32m[1m../lib/llvm-18/bin/analyze-build
+(B[mlrwxrwxrwx 1 root root          25 Mar 31  2024 [36m[1manimate(B[m -> [32m[1m/etc/alternatives/animate
+(B[mlrwxrwxrwx 1 root root          29 Mar 31  2024 [36m[1manimate-im6(B[m -> [32m[1m/etc/alternatives/animate-im6
+(B[m-rwxr-xr-x 1 root root       14656 Mar 31  2024 [32m[1manimate-im6.q16
+(B[m-rwxr-xr-x 1 root root       18824 Oct 22  2024 [32m[1mapt
+(B[mlrwxrwxrwx 1 root root          18 Jan  5  2026 [36m[1mapt-add-repository(B[m -> [32m[1madd-apt-repository
+(B[m-rwxr-xr-x 1 root root       88544 Oct 22  2024 [32m[1mapt-cache
+(B[m-rwxr-xr-x 1 root root       27104 Oct 22  2024 [32m[1mapt-cdrom
+(B[m-rwxr-xr-x 1 root root       31120 Oct 22  2024 [32m[1mapt-config(B[m[K
+-rwxr-xr-x 1 root root       51680 Oct 22  2024 [32m[1mapt-get(B[m[K
+-rwxr-xr-x 1 root root       28664 Oct 22  2024 [32m[1mapt-key(B[m[K
+-rwxr-xr-x 1 root root       55776 Oct 22  2024 [32m[1mapt-mark(B[m[K
+lrwxrwxrwx 1 root root          19 Feb  9  2026 [36m[1mar(B[m -> [32m[1mx86_64-linux-gnu-ar(B[m[K
+-rwxr-xr-x 1 root root       35336 Jan 23  2026 [32m[1march(B[m[K
+lrwxrwxrwx 1 root root          19 Feb  9  2026 [36m[1mas(B[m -> [32m[1mx86_64-linux-gnu-as(B[m[K
+lrwxrwxrwx 1 root root          17 Mar 30  2024 [36m[1masan_symbolize(B[m -> [32m[1masan_symbolize-18(B[m[K
+-rwxr-xr-x 1 root root       42995 May 27  2024 [32m[1masan_symbolize-18(B[m[K
+lrwxrwxrwx 1 root root          59 Feb 14  2024 [36m[1mauthorindex(B[m -> [K[1;30r[29;64H[1;29r[1;1H[4S[25;64H[32m[1m../share/texlive/texmf-dist/scripts/authorindex/authorindex(B[m[K
+-rwxr-xr-x 1 root root       15204 Jan 14  2023 [32m[1mautoconf(B[m[K
+-rwxr-xr-x 1 root root        9034 Jan 14  2023 [32m[1mautoheader(B[m[K
+root@vm:/home/claude/psiterm/shot# [K[1;30r[29;36H[?25l[1;54H(0x[2;54Hx[3;54Hx[4;54Hx[5;54Hx[6;54Hx[7;54Hx[8;54Hx[9;54Hx[10;54Hx[11;54Hx[12;54Hx[13;54Hx[14;54Hx[15;54Hx[16;54H[32mx[17;54Hx[18;54Hx[19;54Hx[20;54Hx[21;54Hx[22;54Hx[23;54Hx[24;54Hx[25;54Hx[26;54Hx[27;54Hx[28;54Hx[29;54Hx(B(B[m[H-rwxr-xr-x 1 root root       88544 Oct 22  2024 [32m[1mapt-c(B[m[2;53H[1K[32m[1mache(B[m
+-rwxr-xr-x 1 root root       27104 Oct 22  2024 [32m[1mapt-c(B[m[4;53H[1K[32m[1mdrom(B[m
+-rwxr-xr-x 1 root root       31120 Oct 22  2024 [32m[1mapt-c(B[m[6;53H[1K[32m[1monfig(B[m
+-rwxr-xr-x 1 root root       51680 Oct 22  2024 [32m[1mapt-g(B[m[8;53H[1K[32m[1met(B[m
+-rwxr-xr-x 1 root root       28664 Oct 22  2024 [32m[1mapt-k(B[m[10;53H[1K[32m[1mey(B[m
+-rwxr-xr-x 1 root root       55776 Oct 22  2024 [32m[1mapt-m(B[m[12;53H[1K[32m[1mark(B[m
+lrwxrwxrwx 1 root root          19 Feb  9  2026 [36m[1mar(B[m ->[14;53H[1K [32m[1mx86_64-linux-gnu-ar(B[m
+-rwxr-xr-x 1 root root       35336 Jan 23  2026 [32m[1march(B[m[1X
+lrwxrwxrwx 1 root root          19 Feb  9  2026 [36m[1mas(B[m ->[17;53H[1K [32m[1mx86_64-linux-gnu-as(B[m
+lrwxrwxrwx 1 root root          17 Mar 30  2024 [36m[1masan_
+symbolize(B[m -> [32m[1masan_symbolize-18(B[m[23X
+-rwxr-xr-x 1 root root       42995 May 27  2024 [32m[1masan_(B[m[21;53H[1K[32m[1msymbolize-18(B[m
+lrwxrwxrwx 1 root root          59 Feb 14  2024 [36m[1mautho
+rindex(B[m -> [32m[1m../share/texlive/texmf-dist/scripts/authori(B[m[24;53H[1K[32m[1mndex/authorindex(B[m
+-rwxr-xr-x 1 root root       15204 Jan 14  2023 [32m[1mautoc(B[m[26;53H[1K[32m[1monf(B[m
+-rwxr-xr-x 1 root root        9034 Jan 14  2023 [32m[1mautoh(B[m[28;53H[1K[32m[1meader(B[m
+root@vm:/home/claude/psiterm/shot# [18X[1;55H[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[30m[42m
+[0] 0:bash*                                                                           "vm" 22:12 28-Sep-26(B[m[?12l[?25h[1;55H[29;1Hroot@vm:/home/claude/psiterm/shot# [18X[1;55Hroot@vm:/home/claude/psiterm/shot# top -d 1[2;55H[?25l[1;29r[2;55H[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[1d[Ktop - 22:12:19 up 3 min,  0 user,  load average: 0.0[2;55HTasks:[1m  66 (B[mtotal,[1m   1 (B[mrunning,[1m  65 (B[msleeping,[1m   0 (B[msto[3;55H%Cpu(s):[1m  0.0 (B[mus,[1m  0.0 (B[msy,[1m  0.0 (B[mni,[1m100.0 (B[mid,[1m  0.0 (B[mwa[4;55HMiB Mem :[1m   8032.0 (B[mtotal,[1m   7326.2 (B[mfree,[1m    521.8 (B[mus[5;55HMiB Swap:[1m      0.0 (B[mtotal,[1m      0.0 (B[mfree,[1m      0.0 (B[mus[7;55H[7m  PID USER      PR  NI    VIRT    RES    SHR S (B[m[K[8;55H    1 root      20   0   21892   4928   4536 S [K[9;55H    2 root      20   0       0      0      0 S [K[10;55H    3 root      20   0       0      0      0 S [K[11;55H    4 root       0 -20       0      0      0 I [K[12;55H    5 root       0 -20       0      0      0 I [K[13;55H    6 root       0 -20       0      0      0 I [K[14;55H    7 root       0 -20       0      0      0 I [K[15;55H    8 root       0 -20       0      0      0 I [K[16;55H    9 root      20   0       0      0      0 I [K[17;55H   10 root       0 -20       0      0      0 I [K[18;55H   11 root      20   0       0      0      0 I [K[19;55H   12 root      20   0       0      0      0 I [K[20;55H   13 root       0 -20       0      0      0 I [K[21;55H   14 root      20   0       0      0      0 S [K[22;55H   15 root      20   0       0      0      0 I [K[23;55H   16 root      20   0       0      0      0 S [K[24;55H   17 root      20   0       0      0      0 S [K[25;55H   18 root      rt   0       0      0      0 S [K[26;55H   19 root      20   0       0      0      0 S [K[27;55H   20 root      20   0       0      0      0 S [K[28;55H   21 root      rt   0       0      0      0 S [K[29;55H   22 root      20   0       0      0      0 S [K[1;30r[29;102H[1;54H(0x[2;54Hx[3;54Hx[4;54Hx[5;54Hx[6;54Hx[7;54Hx[8;54Hx[9;54Hx[10;54Hx[11;54Hx[12;54Hx[13;54Hx[14;54Hx[15;54Hx[16;54H[32mx[17;54Hx[18;54Hx[19;54Hx[20;54Hx[21;54Hx[22;54Hx[23;54Hx[24;54Hx[25;54Hx[26;54Hx[27;54Hx[28;54Hx[29;54Hx(B(B[m[30m[42m
+[0] 0:top*                                                                            "vm" 22:12 28-Sep-26(B[m[29;102H[1;55Htop - 22:12:20 up 3 min,  0 user,  load average: 0.0[3;55H%Cpu(s):[1m  0.5 (B[mus,[1m  0.5 (B[msy,[1m  0.0 (B[mni,[1m 99.1 (B[mid,[1m  0.0 (B[mwa[8;55H   90 root      20   0 5582312 313360 116868 S [K[9;55H    1 root      20   0   21892   4928   4536 S [K[10;55H    2 root      20   0       0      0      0 S [K[11;55H    3 root      20   0       0      0      0 S [K[12;55H    4 root       0 -20       0      0      0 I [K[13;55H    5 root       0 -20       0      0      0 I [K[14;55H    6 root       0 -20       0      0      0 I [K[15;55H    7 root       0 -20       0      0      0 I [K[16;55H    8 root       0 -20       0      0      0 I [K[17;55H    9 root      20   0       0      0      0 I [K[18;55H   10 root       0 -20       0      0      0 I [K[19;55H   11 root      20   0       0      0      0 I [K[20;55H   12 root      20   0       0      0      0 I [K[21;55H   13 root       0 -20       0      0      0 I [K[22;55H   14 root      20   0       0      0      0 S [K[23;55H   15 root      20   0       0      0      0 I [K[24;55H   16 root      20   0       0      0      0 S [K[25;55H   17 root      20   0       0      0      0 S [K[26;55H   18 root      rt   0       0      0      0 S [K[27;55H   19 root      20   0       0      0      0 S [K[28;55H   20 root      20   0       0      0      0 S [K[29;55H   21 root      rt   0       0      0      0 S [K[1;54H(0x[2;54Hx[3;54Hx[4;54Hx[5;54Hx[6;54Hx[7;54Hx[8;54Hx[9;54Hx[10;54Hx[11;54Hx[12;54Hx[13;54Hx[14;54Hx[15;54H[32mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq[16;54Hx[17;54Hx[18;54Hx[19;54Hx[20;54Hx[21;54Hx[22;54Hx[23;54Hx[24;54Hx[25;54Hx[26;54Hx[27;54Hx[28;54Hx[29;54Hx(B(B[m[H-rwxr-xr-x 1 root root       88544 Oct 22  2024 [32m[1mapt-c(B[m[2;53H[1K[32m[1mache(B[m
+-rwxr-xr-x 1 root root       27104 Oct 22  2024 [32m[1mapt-c(B[m[4;53H[1K[32m[1mdrom(B[m
+-rwxr-xr-x 1 root root       31120 Oct 22  2024 [32m[1mapt-c(B[m[6;53H[1K[32m[1monfig(B[m
+-rwxr-xr-x 1 root root       51680 Oct 22  2024 [32m[1mapt-g(B[m[8;53H[1K[32m[1met(B[m
+-rwxr-xr-x 1 root root       28664 Oct 22  2024 [32m[1mapt-k(B[m[10;53H[1K[32m[1mey(B[m
+-rwxr-xr-x 1 root root       55776 Oct 22  2024 [32m[1mapt-m(B[m[12;53H[1K[32m[1mark(B[m
+lrwxrwxrwx 1 root root          19 Feb  9  2026 [36m[1mar(B[m ->[14;53H[1K [32m[1mx86_64-linux-gnu-ar(B[m
+-rwxr-xr-x 1 root root       35336 Jan 23  2026 [32m[1march(B[m[1X
+lrwxrwxrwx 1 root root          19 Feb  9  2026 [36m[1mas(B[m ->[17;53H[1K [32m[1mx86_64-linux-gnu-as(B[m
+lrwxrwxrwx 1 root root          17 Mar 30  2024 [36m[1masan_
+symbolize(B[m -> [32m[1masan_symbolize-18(B[m[23X
+-rwxr-xr-x 1 root root       42995 May 27  2024 [32m[1masan_(B[m[21;53H[1K[32m[1msymbolize-18(B[m
+lrwxrwxrwx 1 root root          59 Feb 14  2024 [36m[1mautho
+rindex(B[m -> [32m[1m../share/texlive/texmf-dist/scripts/authori(B[m[24;53H[1K[32m[1mndex/authorindex(B[m
+-rwxr-xr-x 1 root root       15204 Jan 14  2023 [32m[1mautoc(B[m[26;53H[1K[32m[1monf(B[m
+-rwxr-xr-x 1 root root        9034 Jan 14  2023 [32m[1mautoh(B[m[28;53H[1K[32m[1meader(B[m
+root@vm:/home/claude/psiterm/shot# [18X[1;55H    8 root       0 -20       0      0      0 I [K[2;55H    9 root      20   0       0      0      0 I [K[3;55H   10 root       0 -20       0      0      0 I [K[4;55H   11 root      20   0       0      0      0 I [K[5;55H   12 root      20   0       0      0      0 I [K[6;55H   13 root       0 -20       0      0      0 I [K[7;55H   14 root      20   0       0      0      0 S [K[8;55H   15 root      20   0       0      0      0 I [K[9;55H   16 root      20   0       0      0      0 S [K[10;55H   17 root      20   0       0      0      0 S [K[11;55H   18 root      rt   0       0      0      0 S [K[12;55H   19 root      20   0       0      0      0 S [K[13;55H   20 root      20   0       0      0      0 S [K[14;55H   21 root      rt   0       0      0      0 S [K[16;55H[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K
+[K[30m[42m
+[0] 0:top*                                                                            "vm" 22:12 28-Sep-26(B[m[16;55H[?12l[?25h[1dtop - 22:12:20 up 3 min,  0 user,  load average: 0.0[2;55HTasks:[1m  67 (B[mtotal,[1m   2 (B[mrunning,[1m  65 (B[msleeping,[1m   0 (B[msto[3;55H%Cpu(s):[1m  1.6 (B[mus,[1m  1.6 (B[msy,[1m  0.0 (B[mni,[1m 96.8 (B[mid,[1m  0.0 (B[mwa[4;55HMiB Mem :[1m   8032.0 (B[mtotal,[1m   7326.2 (B[mfree,[1m    521.8 (B[mus[5;55HMiB Swap:[1m      0.0 (B[mtotal,[1m      0.0 (B[mfree,[1m      0.0 (B[mus[6;55H[K
+[7m  PID USER      PR  NI    VIRT    RES    SHR S (B[m[K[8;55H   90 root      20   0 5582312 313368 116868 S [K[9;55H    1 root      20   0   21892   4928   4536 S [K[10;55H    2 root      20   0       0      0      0 S [K[11;55H    3 root      20   0       0      0      0 S [K[12;55H    4 root       0 -20       0      0      0 I [K[13;55H    5 root       0 -20       0      0      0 I [K[14;55H    6 root       0 -20       0      0      0 I [K[16;55Hroot@vm:/home/claude/psiterm/shot# [?25l[1;54H(0x[2;54Hx[3;54Hx[4;54Hx[5;54Hx[6;54Hx[7;54Hx[8;54Hx[9;54Hx[10;54Hx[11;54Hx[12;54Hx[13;54Hx[14;54Hx[15;54H[32mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq[16;54Hx[17;54Hx[18;54Hx[19;54Hx[20;54Hx[21;54Hx[22;54Hx[23;54Hx[24;54Hx[25;54Hx[26;54Hx[27;54Hx[28;54Hx[29;54Hx(B(B[m[30m[42m
+[0] 0:bash*                                                                           "vm" 22:12 28-Sep-26(B[m[?12l[?25h[16;90Hvi -u NONE /tmp/l[17;55Hines.txt[18;55H[?25l[2Aline 0[K[17;55Hline 1  x[K[18;55Hline 2  xx[K[19;55Hline 3  xxx[K[20;55Hline 4  xxxx[K[21;55Hline 5  xxxxx[K[22;55Hline 6  xxxxxx[K[23;55Hline 7  xxxxxxx[K[24;55Hline 8  xxxxxxxx[K[25;55Hline 9  xxxxxxxxx[K[26;55Hline 10  xxxxxxxxxx[K[27;55Hline 11  xxxxxxxxxxx[K[28;55Hline 12  xxxxxxxxxxxx[K[29;55H"/tmp/lines.txt" 200 lines, 5990 bytes[K[?12l[?25h[16;55H[1dtop - 22:12:21 up 3 min,  0 user,  load average: 0.0[2;55HTasks:[1m  68 (B[mtotal,[1m   1 (B[mrunning,[1m  67 (B[msleeping,[1m   0 (B[msto[3;55H%Cpu(s):[1m  6.1 (B[mus,[1m  3.0 (B[msy,[1m  0.0 (B[mni,[1m 89.9 (B[mid,[1m  1.0 (B[mwa[8;55H  686 root      20   0    8440   7896   3488 S [K[9;55H   90 root      20   0 5582312 313368 116868 S [K[10;55H    1 root      20   0   21892   4928   4536 S [K[11;55H    2 root      20   0       0      0      0 S [K[12;55H    3 root      20   0       0      0      0 S [K[13;55H    4 root       0 -20       0      0      0 I [K[14;55H    5 root       0 -20       0      0      0 I [K[16;55H[1dtop - 22:12:22 up 3 min,  0 user,  load average: 0.0[3;55H%Cpu(s):[1m  1.0 (B[mus,[1m  0.0 (B[msy,[1m  0.0 (B[mni,[1m 99.0 (B[mid,[1m  0.0 (B[mwa[4;55HMiB Mem :[1m   8032.0 (B[mtotal,[1m   7306.1 (B[mfree,[1m    528.9 (B[mus[8;55H   90 root      20   0 5582312 313368 116868 S [K[9;55H    1 root      20   0   21892   4928   4536 S [K[10;55H    2 root      20   0       0      0      0 S [K[11;55H    3 root      20   0       0      0      0 S [K[12;55H    4 root       0 -20       0      0      0 I [K[13;55H    5 root       0 -20       0      0      0 I [K[14;55H    6 root       0 -20       0      0      0 I [K[16;55H[?25l[1;54H(0x[2;54Hx[3;54Hx[4;54Hx[5;54Hx[6;54Hx[7;54Hx[8;54Hx[9;54Hx[10;54Hx[11;54Hx[12;54Hx[13;54Hx[14;54Hx[15;54H[32mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq[16;54Hx[17;54Hx[18;54Hx[19;54Hx[20;54Hx[21;54Hx[22;54Hx[23;54Hx[24;54Hx[25;54Hx[26;54Hx[27;54Hx[28;54Hx[29;54Hx(B(B[m[30m[42m
+[0] 0:vi*                                                                             "vm" 22:12 28-Sep-26(B[m[?12l[?25h[16;55H[1dtop - 22:12:23 up 3 min,  0 user,  load average: 0.0[8;55H   90 root      20   0 5582312 313376 116868 S [K[9;55H  477 root      20   0    9944   4796   3436 S [K[10;55H    1 root      20   0   21892   4928   4536 S [K[11;55H    2 root      20   0       0      0      0 S [K[12;55H    3 root      20   0       0      0      0 S [K[13;55H    4 root       0 -20       0      0      0 I [K[14;55H    5 root       0 -20       0      0      0 I [K[16;55H

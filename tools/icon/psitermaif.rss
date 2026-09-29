@@ -1,0 +1,16 @@
+// PSITERMAIF.RSS - caption, icons and capabilities for PsiTerm
+#include <aiftool.rh>
+
+RESOURCE AIF_DATA
+	{
+	caption_list=
+		{
+		CAPTION { code=ELangEnglish; caption="PsiTerm"; },
+		CAPTION { code=ELangAmerican; caption="PsiTerm"; }
+		};
+	app_uid=16779895;     // 0x01000A77
+	num_icons=3;
+	hidden=KAppNotHidden;
+	embeddability=KAppNotEmbeddable;
+	newfile=KAppDoesNotSupportNewFile;
+	}

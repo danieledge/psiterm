@@ -1,0 +1,755 @@
+diff --git a/libtomcrypt/src/mac/poly1305/poly1305.c b/libtomcrypt/src/mac/poly1305/poly1305.c
+index f709f72..1dfd9d7 100644
+--- a/libtomcrypt/src/mac/poly1305/poly1305.c
++++ b/libtomcrypt/src/mac/poly1305/poly1305.c
+@@ -24,7 +24,9 @@ static void _poly1305_block(poly1305_state *st, const unsigned char *in, unsigne
+    ulong32 s1,s2,s3,s4;
+    ulong32 h0,h1,h2,h3,h4;
+    ulong32 tmp;
++#ifndef PSI_MULACC
+    ulong64 d0,d1,d2,d3,d4;
++#endif
+    ulong32 c;
+ 
+    r0 = st->r[0];
+@@ -44,6 +46,21 @@ static void _poly1305_block(poly1305_state *st, const unsigned char *in, unsigne
+    h3 = st->h[3];
+    h4 = st->h[4];
+ 
++#ifdef PSI_MULACC
++   /* T[k][i] / T[k][5+i]: low/high 16 bits of the multiplier of h_i in
++    * output column k (the r/s pattern of the products below) */
++   {
++      ulong32 hs[5], T[5][10];
++      const ulong32 m[5][5] = {
++         { r0, s4, s3, s2, s1 },
++         { r1, r0, s4, s3, s2 },
++         { r2, r1, r0, s4, s3 },
++         { r3, r2, r1, r0, s4 },
++         { r4, r3, r2, r1, r0 } };
++      int k, i;
++      for (k = 0; k < 5; k++)
++         for (i = 0; i < 5; i++) { T[k][i] = m[k][i] & 0xffff; T[k][5 + i] = m[k][i] >> 16; }
++#endif
+    while (inlen >= 16) {
+       /* h += in[i] */
+       LOAD32L(tmp, in+ 0); h0 += (tmp     ) & 0x3ffffff;
+@@ -52,6 +69,40 @@ static void _poly1305_block(poly1305_state *st, const unsigned char *in, unsigne
+       LOAD32L(tmp, in+ 9); h3 += (tmp >> 6) & 0x3ffffff;
+       LOAD32L(tmp, in+12); h4 += (tmp >> 8) | hibit;
+ 
++#ifdef PSI_MULACC
++      /* Psion 5mx (no long multiply, GCC 3.0): the 25 limb products are
++       * done column by column from small tables so that only a few values
++       * are live at once (a direct translation spilled everything). Each
++       * product uses 32-bit MULs on 16-bit halves (h < 2^27, r,s < 2^29,
++       * cross sum < 2^30) accumulated as a (lo,hi) word pair. */
++      {
++      ulong32 hl[5], hu[5], c;
++      int k, i;
++      hl[0] = h0 & 0xffff; hu[0] = h0 >> 16;
++      hl[1] = h1 & 0xffff; hu[1] = h1 >> 16;
++      hl[2] = h2 & 0xffff; hu[2] = h2 >> 16;
++      hl[3] = h3 & 0xffff; hu[3] = h3 >> 16;
++      hl[4] = h4 & 0xffff; hu[4] = h4 >> 16;
++      c = 0;
++      for (k = 0; k < 5; k++) {
++         const ulong32 *tl = T[k], *tu = T[k] + 5;
++         ulong32 lo = c, up = 0;
++         for (i = 0; i < 5; i++) {
++            ulong32 a0 = hl[i], a1 = hu[i], b0 = tl[i], b1 = tu[i];
++            ulong32 ll = a0 * b0, mid = a1 * b0 + a0 * b1;
++            ulong32 l = ll + (mid << 16);
++            ulong32 u = a1 * b1 + (mid >> 16) + (l < ll);
++            lo += l; up += u + (lo < l);
++         }
++         /* carry c = d >> 26 fits 32 bits since d < 2^58 */
++         c = (lo >> 26) | (up << 6);
++         hs[k] = lo & 0x3ffffff;
++      }
++      h0 = hs[0]; h1 = hs[1]; h2 = hs[2]; h3 = hs[3]; h4 = hs[4];
++      h0 += c * 5;  c =          (h0 >> 26); h0 =          h0 & 0x3ffffff;
++      h1 += c;
++      }
++#else
+       /* h *= r */
+       d0 = ((ulong64)h0 * r0) + ((ulong64)h1 * s4) + ((ulong64)h2 * s3) + ((ulong64)h3 * s2) + ((ulong64)h4 * s1);
+       d1 = ((ulong64)h0 * r1) + ((ulong64)h1 * r0) + ((ulong64)h2 * s4) + ((ulong64)h3 * s3) + ((ulong64)h4 * s2);
+@@ -67,10 +118,14 @@ static void _poly1305_block(poly1305_state *st, const unsigned char *in, unsigne
+       d4 += c;      c = (ulong32)(d4 >> 26); h4 = (ulong32)d4 & 0x3ffffff;
+       h0 += c * 5;  c =          (h0 >> 26); h0 =          h0 & 0x3ffffff;
+       h1 += c;
++#endif
+ 
+       in += 16;
+       inlen -= 16;
+    }
++#ifdef PSI_MULACC
++   }
++#endif
+ 
+    st->h[0] = h0;
+    st->h[1] = h1;
+diff --git a/libtomcrypt/src/stream/chacha/chacha_crypt.c b/libtomcrypt/src/stream/chacha/chacha_crypt.c
+index 6814058..e663321 100644
+--- a/libtomcrypt/src/stream/chacha/chacha_crypt.c
++++ b/libtomcrypt/src/stream/chacha/chacha_crypt.c
+@@ -22,6 +22,43 @@
+   x[a] += x[b]; x[d] = ROL(x[d] ^ x[a],  8); \
+   x[c] += x[d]; x[b] = ROL(x[b] ^ x[c],  7);
+ 
++#ifdef PSI_MULACC
++/* Psion 5mx: the state lives in 16 scalars (GCC 3.0 keeps most of them in
++ * registers, an array always goes back to memory) and the keystream is
++ * produced as 16 little-endian words instead of 64 bytes. */
++#define QR(a,b,c,d) \
++  a += b; d = ROL(d ^ a, 16); \
++  c += d; b = ROL(b ^ c, 12); \
++  a += b; d = ROL(d ^ a,  8); \
++  c += d; b = ROL(b ^ c,  7);
++static void _chacha_block(ulong32 *output, const ulong32 *input, int rounds)
++{
++   ulong32 x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15;
++   int i;
++   x0 = input[0]; x1 = input[1]; x2 = input[2]; x3 = input[3];
++   x4 = input[4]; x5 = input[5]; x6 = input[6]; x7 = input[7];
++   x8 = input[8]; x9 = input[9]; x10 = input[10]; x11 = input[11];
++   x12 = input[12]; x13 = input[13]; x14 = input[14]; x15 = input[15];
++   for (i = rounds; i > 0; i -= 2) {
++      QR(x0, x4, x8, x12)
++      QR(x1, x5, x9, x13)
++      QR(x2, x6, x10, x14)
++      QR(x3, x7, x11, x15)
++      QR(x0, x5, x10, x15)
++      QR(x1, x6, x11, x12)
++      QR(x2, x7, x8, x13)
++      QR(x3, x4, x9, x14)
++   }
++   output[0] = x0 + input[0]; output[1] = x1 + input[1];
++   output[2] = x2 + input[2]; output[3] = x3 + input[3];
++   output[4] = x4 + input[4]; output[5] = x5 + input[5];
++   output[6] = x6 + input[6]; output[7] = x7 + input[7];
++   output[8] = x8 + input[8]; output[9] = x9 + input[9];
++   output[10] = x10 + input[10]; output[11] = x11 + input[11];
++   output[12] = x12 + input[12]; output[13] = x13 + input[13];
++   output[14] = x14 + input[14]; output[15] = x15 + input[15];
++}
++#else
+ static void _chacha_block(unsigned char *output, const ulong32 *input, int rounds)
+ {
+    ulong32 x[16];
+@@ -42,6 +79,7 @@ static void _chacha_block(unsigned char *output, const ulong32 *input, int round
+      STORE32L(x[i], output + 4 * i);
+    }
+ }
++#endif
+ 
+ /**
+    Encrypt (or decrypt) bytes of ciphertext (or plaintext) with ChaCha
+@@ -53,7 +91,12 @@ static void _chacha_block(unsigned char *output, const ulong32 *input, int round
+ */
+ int chacha_crypt(chacha_state *st, const unsigned char *in, unsigned long inlen, unsigned char *out)
+ {
++#ifdef PSI_MULACC
++   ulong32 wbuf[16];
++   unsigned char *buf = (unsigned char *)wbuf;   /* little-endian ARM */
++#else
+    unsigned char buf[64];
++#endif
+    unsigned long i, j;
+ 
+    if (inlen == 0) return CRYPT_OK; /* nothing to do */
+@@ -72,7 +115,11 @@ int chacha_crypt(chacha_state *st, const unsigned char *in, unsigned long inlen,
+       in  += j;
+    }
+    for (;;) {
++#ifdef PSI_MULACC
++     _chacha_block(wbuf, st->input, st->rounds);
++#else
+      _chacha_block(buf, st->input, st->rounds);
++#endif
+      if (st->ivlen == 8) {
+        /* IV-64bit, increment 64bit counter */
+        if (0 == ++st->input[12] && 0 == ++st->input[13]) return CRYPT_OVERFLOW;
+@@ -87,6 +134,15 @@ int chacha_crypt(chacha_state *st, const unsigned char *in, unsigned long inlen,
+        for (i = inlen; i < 64; ++i) st->kstream[i] = buf[i];
+        return CRYPT_OK;
+      }
++#ifdef PSI_MULACC
++     if ((((unsigned long)in | (unsigned long)out) & 3) == 0) {
++       /* word-aligned (the usual case for packet buffers): 16 word XORs
++        * instead of 64 byte loads/stores. Needs -fno-strict-aliasing. */
++       const ulong32 *wi = (const ulong32 *)in;
++       ulong32 *wo = (ulong32 *)out;
++       for (i = 0; i < 16; ++i) wo[i] = wi[i] ^ wbuf[i];
++     } else
++#endif
+      for (i = 0; i < 64; ++i) out[i] = in[i] ^ buf[i];
+      inlen -= 64;
+      out += 64;
+diff --git a/libtommath/bn_s_mp_montgomery_reduce_fast.c b/libtommath/bn_s_mp_montgomery_reduce_fast.c
+index 3f0c672..e20ca0b 100644
+--- a/libtommath/bn_s_mp_montgomery_reduce_fast.c
++++ b/libtommath/bn_s_mp_montgomery_reduce_fast.c
+@@ -66,7 +66,7 @@ mp_err s_mp_montgomery_reduce_fast(mp_int *x, const mp_int *n, mp_digit rho)
+        * that W[ix-1] have  the carry cleared (see after the inner loop)
+        */
+       mp_digit mu;
+-      mu = ((W[ix] & MP_MASK) * rho) & MP_MASK;
++      mu = ((mp_digit)(W[ix] & MP_MASK) * rho) & MP_MASK;   /* single-precision product */
+ 
+       /* a = a + mu * m * b**i
+        *
+@@ -94,9 +94,20 @@ mp_err s_mp_montgomery_reduce_fast(mp_int *x, const mp_int *n, mp_digit rho)
+          _W = W + ix;
+ 
+          /* inner loop */
++#ifdef PSI_MULACC
++         {
++            /* W[] words as little-endian digit pairs (ARM) */
++            mp_digit *w = (mp_digit *)_W;
++            for (iy = 0; iy < n->used; iy++) {
++               PSI_MULACC(w[0], w[1], mu, *tmpn++);
++               w += 2;
++            }
++         }
++#else
+          for (iy = 0; iy < n->used; iy++) {
+             *_W++ += (mp_word)mu * (mp_word)*tmpn++;
+          }
++#endif
+       }
+ 
+       /* now fix carry for next digit, W[ix+1] */
+diff --git a/libtommath/bn_s_mp_mul_digs_fast.c b/libtommath/bn_s_mp_mul_digs_fast.c
+index 3c4176a..daa80d0 100644
+--- a/libtommath/bn_s_mp_mul_digs_fast.c
++++ b/libtommath/bn_s_mp_mul_digs_fast.c
+@@ -61,10 +61,19 @@ mp_err s_mp_mul_digs_fast(const mp_int *a, const mp_int *b, mp_int *c, int digs)
+       iy = MP_MIN(a->used-tx, ty+1);
+ 
+       /* execute loop */
++#ifdef PSI_MULACC
++      {
++         mp_digit wl = (mp_digit)_W, wh = (mp_digit)(_W >> 32);
++         for (iz = 0; iz < iy; ++iz) {
++            PSI_MULACC(wl, wh, *tmpx++, *tmpy--);
++         }
++         _W = ((mp_word)wh << 32) | wl;
++      }
++#else
+       for (iz = 0; iz < iy; ++iz) {
+          _W += (mp_word)*tmpx++ * (mp_word)*tmpy--;
+-
+       }
++#endif
+ 
+       /* store term */
+       W[ix] = (mp_digit)_W & MP_MASK;
+diff --git a/libtommath/bn_s_mp_sqr_fast.c b/libtommath/bn_s_mp_sqr_fast.c
+index 4a8a891..e245004 100644
+--- a/libtommath/bn_s_mp_sqr_fast.c
++++ b/libtommath/bn_s_mp_sqr_fast.c
+@@ -58,16 +58,34 @@ mp_err s_mp_sqr_fast(const mp_int *a, mp_int *b)
+       iy = MP_MIN(iy, ((ty-tx)+1)>>1);
+ 
+       /* execute loop */
++#ifdef PSI_MULACC
++      {
++         mp_digit wl = 0, wh = 0;
++         for (iz = 0; iz < iy; iz++) {
++            PSI_MULACC(wl, wh, *tmpx++, *tmpy--);
++         }
++         _W = ((mp_word)wh << 32) | wl;
++      }
++#else
+       for (iz = 0; iz < iy; iz++) {
+          _W += (mp_word)*tmpx++ * (mp_word)*tmpy--;
+       }
++#endif
+ 
+       /* double the inner product and add carry */
+       _W = _W + _W + W1;
+ 
+       /* even columns have the square term in them */
+       if (((unsigned)ix & 1u) == 0u) {
++#ifdef PSI_MULACC
++         {
++            mp_digit wl = (mp_digit)_W, wh = (mp_digit)(_W >> 32);
++            PSI_MULACC(wl, wh, a->dp[ix>>1], a->dp[ix>>1]);
++            _W = ((mp_word)wh << 32) | wl;
++         }
++#else
+          _W += (mp_word)a->dp[ix>>1] * (mp_word)a->dp[ix>>1];
++#endif
+       }
+ 
+       /* store it */
+diff --git a/libtommath/tommath_private.h b/libtommath/tommath_private.h
+index 1a0096f..f069360 100644
+--- a/libtommath/tommath_private.h
++++ b/libtommath/tommath_private.h
+@@ -153,6 +153,14 @@ extern void MP_FREE(void *mem, size_t size);
+ #undef mp_word
+ typedef private_mp_word mp_word;
+ 
++/* Psion 5mx: PSI_MULACC (compat/psicompat.h) replaces the 64-bit digit
++ * products in the comba routines. It needs 28-bit digits (16-bit halves
++ * a1,b1 < 2^12 so the cross products cannot carry) and a little-endian
++ * layout of mp_word as two mp_digits. */
++#if defined(PSI_MULACC) && !defined(MP_28BIT)
++#undef PSI_MULACC
++#endif
++
+ #define MP_MIN(x, y) (((x) < (y)) ? (x) : (y))
+ #define MP_MAX(x, y) (((x) > (y)) ? (x) : (y))
+ 
+diff --git a/src/cli-kex.c b/src/cli-kex.c
+index 6881b36..fbffe6f 100644
+--- a/src/cli-kex.c
++++ b/src/cli-kex.c
+@@ -80,6 +80,22 @@ void send_msg_kexdh_init() {
+ 	}
+ #endif
+ 
++#if DROPBEAR_CURVE25519
++	/* Psion: when our first-guess KEXDH_INIT was wrong the server ignored
++	 * it (RFC 4253 7.1) and we send another. The ephemeral keypair made for
++	 * the guess belongs to this same key exchange and has not been used, so
++	 * reuse it instead of paying for another X25519 (~0.6 s on an ARM710).
++	 * The param is always freed once the exchange completes (below), so a
++	 * param existing here can only be this exchange's unused guess. */
++	if (ses.newkeys->algo_kex->mode == DROPBEAR_KEX_CURVE25519
++			&& cli_ses.curve25519_param) {
++		buf_putbyte(ses.writepayload, SSH_MSG_KEXDH_INIT);
++		buf_putstring(ses.writepayload, cli_ses.curve25519_param->pub, CURVE25519_LEN);
++		encrypt_packet();
++		return;
++	}
++#endif
++
+ 	cli_kex_free_param();
+ 
+ 	buf_putbyte(ses.writepayload, SSH_MSG_KEXDH_INIT);
+diff --git a/src/cli-main.c b/src/cli-main.c
+index 0a052a3..d5489da 100644
+--- a/src/cli-main.c
++++ b/src/cli-main.c
+@@ -41,6 +41,8 @@ static void kill_proxy_sighandler(int signo);
+ #if defined(DBMULTI_dbclient) || !DROPBEAR_MULTI
+ #if defined(DBMULTI_dbclient) && DROPBEAR_MULTI
+ int cli_main(int argc, char ** argv) {
++#elif defined(__EPOC32__)
++int psi_dropbear_main(int argc, char ** argv) {
+ #else
+ int main(int argc, char ** argv) {
+ #endif
+@@ -91,10 +93,17 @@ int main(int argc, char ** argv) {
+ 	} else
+ #endif
+ 	{
++#ifdef __EPOC32__
++		/* PsiTerm: psissh.exe has already dialled host:port through the
++		   WiRSa modem, so the serial line *is* the TCP connection. */
++		sock_in = sock_out = PSI_FD_NET;
++		progress = NULL;
++#else
+ 		progress = connect_remote(cli_opts.remotehost, cli_opts.remoteport,
+ 			cli_connected, &ses, cli_opts.bind_address, cli_opts.bind_port,
+ 			DROPBEAR_PRIO_LOWDELAY);
+ 		sock_in = sock_out = -1;
++#endif
+ 	}
+ 
+ 	cli_session(sock_in, sock_out, progress, proxy_cmd_pid);
+diff --git a/src/cli-session.c b/src/cli-session.c
+index 90273b2..522c350 100644
+--- a/src/cli-session.c
++++ b/src/cli-session.c
+@@ -447,6 +447,12 @@ void cli_dropbear_exit(int exitcode, const char* format, va_list param) {
+ 
+ 	dropbear_log(LOG_INFO, "%s", fullmsg);
+ 
++#ifdef __EPOC32__
++	{
++		extern void psi_session_ended(int code, int lost);
++		psi_session_ended(exitcode, ses.authstate.authdone ? 1 : 0);
++	}
++#endif
+ 	exit(exitcode);
+ }
+ 
+diff --git a/src/common-algo.c b/src/common-algo.c
+index c68eafb..692c532 100644
+--- a/src/common-algo.c
++++ b/src/common-algo.c
+@@ -208,6 +208,11 @@ algo_type ssh_nocompress[] = {
+ };
+ 
+ algo_type sigalgs[] = {
++#if defined(__EPOC32__) && DROPBEAR_RSA && DROPBEAR_RSA_SHA256
++	/* PsiTerm: on the Psion's 36MHz ARM710 an RSA signature check takes
++	   ~1-3s versus ~12-19s for Ed25519, so ask for RSA host keys first. */
++	{"rsa-sha2-256", DROPBEAR_SIGNATURE_RSA_SHA256, NULL, 1, NULL},
++#endif
+ #if DROPBEAR_ED25519
+ 	{"ssh-ed25519", DROPBEAR_SIGNATURE_ED25519, NULL, 1, NULL},
+ #if DROPBEAR_SK_ED25519
+@@ -229,7 +234,7 @@ algo_type sigalgs[] = {
+ #endif
+ #endif
+ #if DROPBEAR_RSA
+-#if DROPBEAR_RSA_SHA256
++#if DROPBEAR_RSA_SHA256 && !defined(__EPOC32__)
+ 	{"rsa-sha2-256", DROPBEAR_SIGNATURE_RSA_SHA256, NULL, 1, NULL},
+ #endif
+ #if DROPBEAR_RSA_SHA1
+diff --git a/src/common-session.c b/src/common-session.c
+index 6108aba..029e6c5 100644
+--- a/src/common-session.c
++++ b/src/common-session.c
+@@ -567,6 +567,18 @@ static void checktimeouts() {
+ 		send_msg_kexinit();
+ 	}
+ 
++#ifdef __EPOC32__
++	{
++		/* A long gap since the last check means the Psion was switched off:
++		   give the link a fresh keepalive window instead of timing out at once */
++		static time_t last_check = 0;
++		if (last_check && elapsed(now, last_check) > 20) {
++			ses.last_packet_time_keepalive_recv = now;
++			ses.last_packet_time_keepalive_sent = 0;
++		}
++		last_check = now;
++	}
++#endif
+ 	if (opts.keepalive_secs > 0 && ses.authstate.authdone) {
+ 		/* Avoid sending keepalives prior to auth - those are
+ 		not valid pre-auth packet types */
+diff --git a/src/curve25519.c b/src/curve25519.c
+index df9ca6b..fcafe92 100644
+--- a/src/curve25519.c
++++ b/src/curve25519.c
+@@ -38,9 +38,27 @@ typedef unsigned char u8;
+ typedef unsigned long u32;
+ typedef unsigned long long u64;
+ typedef long long i64;
++
++/* PSI_GF32: field arithmetic for 32-bit CPUs without a long multiply
++ * (ARM710 on the Psion 5mx). TweetNaCl's i64[16] limbs turn every 16x16-bit
++ * product into a libgcc __muldi3 call; here a field element is 16 unsigned
++ * 16-bit limbs held in 32-bit words, every product is one 32-bit MUL and
++ * column sums use a 64-bit accumulator (ADDS/ADC). Every A/Z/M/S output is
++ * fully carried (all limbs < 2^16) so the next multiply's 16x16 products
++ * cannot overflow 32 bits. Same constant-time structure as TweetNaCl: no
++ * secret-dependent branches or indices. Set to 0 to get TweetNaCl back. */
++#ifndef PSI_GF32
++#define PSI_GF32 1
++#endif
++#if PSI_GF32
++typedef unsigned int gfl;          /* one limb (32-bit word holding 16 bits) */
++typedef unsigned long long gfa;    /* column accumulator */
++typedef gfl gf[16];
++#else
+ typedef i64 gf[16];
++#endif
+ 
+-#if DROPBEAR_CURVE25519_DEP
++#if DROPBEAR_CURVE25519_DEP && !PSI_GF32
+ static const gf
+   _121665 = {0xDB41,1};
+ #endif /* DROPBEAR_CURVE25519_DEP */
+@@ -82,6 +100,164 @@ sv set25519(gf r, const gf a)
+ }
+ #endif /* DROPBEAR_ED25519 */
+ 
++#if PSI_GF32
++#include "curve25519_gf32.h"
++
++/* Carry normalisation. Every A/Z/M/S/M121665 result goes through two
++ * carry passes: the first is fused into the operation itself (running
++ * carry c, then the carry out of limb 15 wraps as 38*c into limb 0, since
++ * 2^256 = 38 mod p), the second is car25519_2 below. Two passes are enough
++ * when the first pass's carries stay below 1725, i.e. all input limbs are
++ * < 2^26 (ours are < 2^24): then limb 0 after the first wrap is < 2^17, so
++ * every carry in pass 2 is 0 or 1 and its wrap-around carry c2 is 0 or 1.
++ * If c2 = 1 all of limbs 1..15 were 0xffff and overflowed to 0 while limb 0
++ * was < 2^16+1482, so after pass 2 limb 0 = (limb0 - 2^16) + 38 < 2^16 and
++ * no further carry can occur. */
++sv car25519_2(gf o)
++{
++  int i;
++  gfl c = 0, t;
++  for (i = 0; i < 16; i++) { t = o[i] + c; o[i] = t & 0xffff; c = t >> 16; }
++  o[0] += 38 * c;
++}
++
++/* pass 1 for a raw (unnormalised) result already stored in o */
++sv car25519(gf o)
++{
++  car25519_2(o);
++  car25519_2(o);
++}
++
++sv sel25519(gf p,gf q,int b)
++{
++  int i;
++  gfl t, c = (gfl)0 - (gfl)b;
++  FOR(i,16) {
++    t = c & (p[i] ^ q[i]);
++    p[i] ^= t;
++    q[i] ^= t;
++  }
++}
++
++sv pack25519(u8 *o,const gf n)
++{
++  int i,j,b;
++  int m[16];
++  gf t;
++  gfl c;
++  FOR(i,16) t[i]=n[i];
++  car25519(t);
++  /* t < 2^256 = 2p + 38: two conditional subtractions of p fully reduce it */
++  FOR(j,2) {
++    m[0]=(int)t[0]-0xffed;
++    for(i=1;i<15;i++) {
++      m[i]=(int)t[i]-0xffff-((m[i-1]>>16)&1);
++      m[i-1]&=0xffff;
++    }
++    m[15]=(int)t[15]-0x7fff-((m[14]>>16)&1);
++    b=(m[15]>>16)&1;
++    m[14]&=0xffff;
++    c = (gfl)0 - (gfl)(1-b);       /* all ones when t >= p: take m */
++    FOR(i,16) t[i] ^= c & (t[i] ^ (gfl)m[i]);
++  }
++  FOR(i,16) {
++    o[2*i]=t[i]&0xff;
++    o[2*i+1]=t[i]>>8;
++  }
++}
++
++#if DROPBEAR_ED25519
++#if DROPBEAR_SIGNKEY_VERIFY
++static int neq25519(const gf a, const gf b)
++{
++  u8 c[32],d[32];
++  pack25519(c,a);
++  pack25519(d,b);
++  return crypto_verify_32(c,d);
++}
++#endif /* DROPBEAR_SIGNKEY_VERIFY */
++
++static u8 par25519(const gf a)
++{
++  u8 d[32];
++  pack25519(d,a);
++  return d[0]&1;
++}
++#endif /* DROPBEAR_ED25519 */
++
++sv unpack25519(gf o, const u8 *n)
++{
++  int i;
++  FOR(i,16) o[i]=n[2*i]+((gfl)n[2*i+1]<<8);
++  o[15]&=0x7fff;
++}
++
++sv A(gf o,const gf a,const gf b)
++{
++  int i;
++  gfl c = 0, t;
++  for (i = 0; i < 16; i++) { t = a[i] + b[i] + c; o[i] = t & 0xffff; c = t >> 16; }
++  o[0] += 38 * c;
++  car25519_2(o);
++}
++
++/* o = a - b + 4p, limb by limb; 4p = 2^257 - 76 is written with borrowed
++ * limbs {0x1ffb4, 0x1fffe x15} so no limb difference goes negative. */
++sv Z(gf o,const gf a,const gf b)
++{
++  int i;
++  gfl c, t;
++  t = a[0] + 0x1ffb4u - b[0]; o[0] = t & 0xffff; c = t >> 16;
++  for (i = 1; i < 16; i++) { t = a[i] + 0x1fffeu - b[i] + c; o[i] = t & 0xffff; c = t >> 16; }
++  o[0] += 38 * c;
++  car25519_2(o);
++}
++
++/* o = r[0..31] mod p: 2^256 = 38 (mod p) folds the top 16 limbs down */
++sv gf_fold(gf o, const gfl r[32])
++{
++  int i;
++  gfl c = 0, t;
++  for (i = 0; i < 16; i++) { t = r[i] + 38 * r[i+16] + c; o[i] = t & 0xffff; c = t >> 16; }
++  o[0] += 38 * c;
++  car25519_2(o);
++}
++
++sv M(gf o,const gf a,const gf b)
++{
++  gfl r[32];
++  gf_mul_raw(r,a,b);
++  gf_fold(o,r);
++}
++
++sv S(gf o,const gf a)
++{
++  gfl r[32];
++  gf_sqr_raw(r,a);
++  gf_fold(o,r);
++}
++
++#if DROPBEAR_CURVE25519_DEP
++/* o = a * 121665 = a * (0xDB41 + 2^16): 16 small products instead of 256 */
++sv M121665(gf o,const gf a)
++{
++  int i;
++  gfl r[17];
++  gfa t = 0;
++  FOR(i,16) {
++    t += (gfa)(a[i]*0xDB41u);
++    if (i) t += a[i-1];
++    r[i] = (gfl)t & 0xffff; t >>= 16;
++  }
++  r[16] = (gfl)t + a[15];
++  o[0] = r[0] + 38*r[16];
++  for(i=1;i<16;i++) o[i]=r[i];
++  car25519_2(o);      /* limbs 1..15 already < 2^16, limb 0 < 2^23 */
++  car25519_2(o);
++}
++#endif
++
++#else /* !PSI_GF32: original TweetNaCl i64 arithmetic */
+ sv car25519(gf o)
+ {
+   int i;
+@@ -183,6 +359,8 @@ sv S(gf o,const gf a)
+   M(o,a,a);
+ }
+ 
++#endif /* PSI_GF32 */
++
+ sv inv25519(gf o,const gf i)
+ {
+   gf c;
+@@ -213,7 +391,12 @@ sv pow2523(gf o,const gf i)
+ void dropbear_curve25519_scalarmult(u8 *q,const u8 *n,const u8 *p)
+ {
+   u8 z[32];
++#if PSI_GF32
++  gfl x[80];
++  int r,i;
++#else
+   i64 x[80],r,i;
++#endif
+   gf a,b,c,d,e,f;
+   FOR(i,31) z[i]=n[i];
+   z[31]=(n[31]&127)|64;
+@@ -240,7 +423,11 @@ void dropbear_curve25519_scalarmult(u8 *q,const u8 *n,const u8 *p)
+     Z(a,a,c);
+     S(b,a);
+     Z(c,d,f);
++#if PSI_GF32
++    M121665(a,c);
++#else
+     M(a,c,_121665);
++#endif
+     A(a,a,d);
+     M(c,c,a);
+     M(a,d,f);
+diff --git a/src/dbrandom.c b/src/dbrandom.c
+index aa72203..5e0e1e1 100644
+--- a/src/dbrandom.c
++++ b/src/dbrandom.c
+@@ -136,7 +136,12 @@ static void write_urandom(void)
+ 		return;
+ 	}
+ #endif
+-#if !DROPBEAR_USE_PRNGD
++#if defined(__EPOC32__)
++	/* keep some pool output for next time (the Psion has no /dev/urandom) */
++	unsigned char buf[INIT_SEED_SIZE];
++	genrandom(buf, sizeof(buf));
++	psi_save_seed(buf, sizeof(buf));
++#elif !DROPBEAR_USE_PRNGD
+ 	/* This is opportunistic, don't worry about failure */
+ 	unsigned char buf[INIT_SEED_SIZE];
+ 	FILE *f = fopen(DROPBEAR_URANDOM_DEV, "w");
+@@ -246,6 +251,10 @@ void seedrandom() {
+ 	}
+ #endif
+ 
++#ifdef __EPOC32__
++	psi_add_entropy(&hs);
++	urandom_seeded = 1;
++#endif
+ 	if (!urandom_seeded) {
+ #if DROPBEAR_USE_PRNGD
+ 		if (process_file(&hs, DROPBEAR_PRNGD_SOCKET, INIT_SEED_SIZE, 1) 
+diff --git a/src/packet.c b/src/packet.c
+index 942b805..72fd4c1 100644
+--- a/src/packet.c
++++ b/src/packet.c
+@@ -428,25 +428,32 @@ static buffer* buf_decompress(const buffer* buf, unsigned int len) {
+ 	int result;
+ 	buffer * ret;
+ 	z_streamp zstream;
++	/* Psion: inflate into one persistent scratch buffer instead of a
++	 * freshly zeroed 32 KB allocation for every packet (m_malloc callocs),
++	 * then copy out a buffer of exactly the decompressed size. The
++	 * returned buffer is owned and freed by the caller as before. */
++	static buffer *scratch = NULL;
+ 
+ 	zstream = ses.keys->recv.zstream;
+ 	/* We use RECV_MAX_PAYLOAD_LEN+1 here to ensure that
+ 	   we can detect an oversized payload after inflate() */
+-	ret = buf_new(RECV_MAX_PAYLOAD_LEN+1);
++	if (scratch == NULL) {
++		scratch = buf_new(RECV_MAX_PAYLOAD_LEN+1);
++	}
+ 
+ 	zstream->avail_in = len;
+ 	zstream->next_in = buf_getptr(buf, len);
+-	zstream->avail_out = ret->size;
+-	zstream->next_out = ret->data;
++	zstream->avail_out = scratch->size;
++	zstream->next_out = scratch->data;
+ 
+ 	result = inflate(zstream, Z_SYNC_FLUSH);
+ 	if (result != Z_OK) {
+ 		dropbear_exit("zlib error");
+ 	}
+ 
+-	buf_setlen(ret, ret->size - zstream->avail_out);
++	buf_setlen(scratch, scratch->size - zstream->avail_out);
+ 
+-	if (zstream->avail_in > 0 || ret->len > RECV_MAX_PAYLOAD_LEN) {
++	if (zstream->avail_in > 0 || scratch->len > RECV_MAX_PAYLOAD_LEN) {
+ 		/* The remote side sent larger than a payload size
+ 		 * of uncompressed data.
+ 		 */
+@@ -454,6 +461,8 @@ static buffer* buf_decompress(const buffer* buf, unsigned int len) {
+ 	}
+ 
+ 	/* Success. All input was consumed and avail_out > 0 */
++	buf_setpos(scratch, 0);
++	ret = buf_newcopy(scratch);
+ 	return ret;
+ 
+ }
+diff --git a/src/sysoptions.h b/src/sysoptions.h
+index 6e50f8f..d3643d6 100644
+--- a/src/sysoptions.h
++++ b/src/sysoptions.h
+@@ -335,7 +335,9 @@
+ 
+ /* Changing this is inadvisable, it appears to have problems
+  * with flushing compressed data */
++#ifndef DROPBEAR_ZLIB_MEM_LEVEL
+ #define DROPBEAR_ZLIB_MEM_LEVEL 8
++#endif
+ 
+ #if (DROPBEAR_SVR_PASSWORD_AUTH) && (DROPBEAR_SVR_PAM_AUTH)
+ #error "You can't turn on PASSWORD and PAM auth both at once. Fix it in localoptions.h"

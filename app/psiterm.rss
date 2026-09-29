@@ -1,0 +1,268 @@
+// PSITERM.RSS - menus and hotkeys for PsiTerm
+
+NAME PSIT
+
+#include <eikdef.rh>
+#include <eikmenu.rh>
+#include <eikmenu.hrh>
+#include <eikcmds.hrh>
+#include <eikdialg.rh>
+#include <eikdialg.hrh>
+#include <eikedwin.rh>
+#include <eikmfne.rh>
+#include <eikseced.rh>
+#include <eikchlst.rh>
+#include <eikcmbut.rh>
+#include <eiklabel.rh>
+#include <eikctrls.hrh>
+#include <eikon.rsg>
+
+#include "psiterm.hrh"
+
+RESOURCE RSS_SIGNATURE { }
+
+RESOURCE TBUF { buf=""; }
+
+RESOURCE EIK_APP_INFO
+	{
+	menubar=r_pt_menubar;
+	hotkeys=r_pt_hotkeys;
+	}
+
+// Plain Ctrl+letter combinations all go to the remote system (Ctrl+C etc.),
+// so PsiTerm's own shortcuts use Shift+Ctrl.
+RESOURCE HOTKEYS r_pt_hotkeys
+	{
+	shift_control=
+		{
+		HOTKEY { command=EEikCmdExit; key='e'; },
+		HOTKEY { command=EPtCmdHangup; key='h'; },
+		HOTKEY { command=EPtCmdSsh; key='s'; },
+		HOTKEY { command=EPtCmdKeyShiftTab; key='t'; },
+		HOTKEY { command=EPtCmdCopy; key='c'; },
+		HOTKEY { command=EPtCmdPaste; key='v'; },
+		HOTKEY { command=EPtCmdScreenshot; key='p'; }
+		};
+	}
+
+RESOURCE MENU_BAR r_pt_menubar
+	{
+	titles=
+		{
+		MENU_TITLE { menu_pane=r_pt_term_menu; txt="Terminal"; },
+		MENU_TITLE { menu_pane=r_pt_edit_menu; txt="Edit"; },
+		MENU_TITLE { menu_pane=r_pt_keys_menu; txt="Keys"; },
+		MENU_TITLE { menu_pane=r_pt_fkeys_menu; txt="F-keys"; },
+		MENU_TITLE { menu_pane=r_pt_settings_menu; txt="Settings"; },
+		MENU_TITLE { menu_pane=r_pt_debug_menu; txt="Debug"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_term_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdSsh; txt="SSH to..."; },
+		MENU_ITEM { command=EPtCmdSshDisconnect; txt="Disconnect SSH"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdHangup; txt="Hang up"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdUpdate; txt="Update PsiTerm"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdAbout; txt="About PsiTerm"; },
+		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_debug_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdSpeedTest; txt="SSH speed test"; },
+		MENU_ITEM { command=EPtCmdSerialInfo; txt="Serial port info"; },
+		MENU_ITEM { command=EPtCmdCharInfo; txt="Character codes of selection"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdScreenshot; txt="Screenshot"; },
+		MENU_ITEM { command=EPtCmdSendShots; txt="Send screenshots"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdSendSize; txt="Type stty screen size (no SSH)"; },
+		MENU_ITEM { command=EPtCmdReset; txt="Reset terminal"; }
+		};
+	}
+
+// Results of the Debug tools (speed test, serial info, sending screenshots,
+// updating) - shown here rather than in the terminal
+RESOURCE DIALOG r_pt_debug_dialog
+	{
+	title="Debug";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CONTINUE;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; id=EPtDlgDebugText;
+			control=EDWIN { width=62; lines=11; maxlength=8000;
+				flags=EEikEdwinReadOnly|EEikEdwinNoAutoSelection; }; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_edit_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdCopy; txt="Copy selection"; },
+		MENU_ITEM { command=EPtCmdPaste; txt="Paste"; },
+		MENU_ITEM { command=EPtCmdSelectScreen; txt="Select screen"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdScrollUp; txt="Scroll back (Shift+PgUp)"; },
+		MENU_ITEM { command=EPtCmdScrollDown; txt="Scroll forward (Shift+PgDn)"; },
+		MENU_ITEM { command=EPtCmdScrollEnd; txt="Back to live screen"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_keys_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdKeyShiftTab; txt="Shift+Tab"; },
+		MENU_ITEM { command=EPtCmdKeyInsert; txt="Insert"; },
+		MENU_ITEM { command=EPtCmdKeyCtrlBackslash; txt="Ctrl+\\"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_fkeys_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdF1; txt="F1"; },
+		MENU_ITEM { command=EPtCmdF2; txt="F2"; },
+		MENU_ITEM { command=EPtCmdF3; txt="F3"; },
+		MENU_ITEM { command=EPtCmdF4; txt="F4"; },
+		MENU_ITEM { command=EPtCmdF5; txt="F5"; },
+		MENU_ITEM { command=EPtCmdF6; txt="F6"; },
+		MENU_ITEM { command=EPtCmdF7; txt="F7"; },
+		MENU_ITEM { command=EPtCmdF8; txt="F8"; },
+		MENU_ITEM { command=EPtCmdF9; txt="F9"; },
+		MENU_ITEM { command=EPtCmdF10; txt="F10"; },
+		MENU_ITEM { command=EPtCmdF11; txt="F11"; },
+		MENU_ITEM { command=EPtCmdF12; txt="F12"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_settings_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdZoom0; txt="Courier small (106x30)"; flags=EEikMenuItemRadioStart; },
+		MENU_ITEM { command=EPtCmdZoom1; txt="Terminus 12 (106x20)"; flags=EEikMenuItemRadioMiddle; },
+		MENU_ITEM { command=EPtCmdZoom2; txt="Terminus 14 (80x17)"; flags=EEikMenuItemRadioMiddle; },
+		MENU_ITEM { command=EPtCmdZoom3; txt="Terminus 16 (80x15)"; flags=EEikMenuItemRadioMiddle; },
+		MENU_ITEM { command=EPtCmdZoom4; txt="Terminus 18 (64x13)"; flags=EEikMenuItemRadioEnd; },
+		MENU_ITEM { command=EPtCmdBold; txt="Bold text"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdConnSettings; txt="Connection settings..."; },
+		MENU_ITEM { command=EPtCmdUpdateServer; txt="Update & screenshot server..."; }
+		};
+	}
+
+// Baud rate, flow control and link type: set once, so kept off the menu
+RESOURCE DIALOG r_pt_conn_dialog
+	{
+	title="Connection settings";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Baud rate"; id=EPtDlgBaud; control=CHOICELIST { array_id=r_pt_baud_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Flow control"; id=EPtDlgFlow; control=CHOICELIST { array_id=r_pt_flow_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="SSH connects via"; id=EPtDlgLink; control=CHOICELIST { array_id=r_pt_link_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Reconnect if dropped"; id=EPtDlgReconnect; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Command on login"; id=EPtDlgStartCmd; control=EDWIN { width=22; maxlength=100; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pt_baud_array
+	{
+	items={ LBUF { txt="9600"; }, LBUF { txt="19200"; }, LBUF { txt="38400"; }, LBUF { txt="57600"; }, LBUF { txt="115200"; } };
+	}
+
+RESOURCE ARRAY r_pt_flow_array
+	{
+	items={ LBUF { txt="None"; }, LBUF { txt="RTS/CTS"; } };
+	}
+
+RESOURCE ARRAY r_pt_noyes_array
+	{
+	items={ LBUF { txt="No"; }, LBUF { txt="Yes"; } };
+	}
+
+RESOURCE ARRAY r_pt_link_array
+	{
+	items={ LBUF { txt="Modem (ATDT host:port)"; }, LBUF { txt="Psion Internet (PPP)"; } };
+	}
+
+// Saved hosts: pick one and Connect, or manage the list
+RESOURCE DIALOG r_pt_hosts_dialog
+	{
+	title="SSH to";
+	flags=EEikDialogFlagWait;
+	buttons=r_pt_hosts_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Host"; id=EPtDlgHostList; control=CHOICELIST { maxdisplaychar=24; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pt_hosts_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPtBidNew; button=CMBUT { txt="New"; }; hotkey='N'; },
+		DLG_BUTTON { id=EPtBidEdit; button=CMBUT { txt="Edit"; }; hotkey='E'; },
+		DLG_BUTTON { id=EPtBidDelete; button=CMBUT { txt="Delete"; }; hotkey='D'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Connect"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+// Add or edit one saved host
+RESOURCE DIALOG r_pt_host_edit_dialog
+	{
+	title="SSH host";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgName; control=EDWIN { width=22; maxlength=24; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Host"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=100; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Port"; id=EPtDlgPort; control=NUMBER_EDITOR { min=1; max=65535; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="User"; id=EPtDlgUser; control=EDWIN { width=22; maxlength=60; }; },
+		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPtDlgPassword; control=SECRETED { num_letters=32; }; },
+		DLG_LINE { type=EEikCtCheckBox; prompt="Remember password"; id=EPtDlgRemember; }
+		};
+	}
+
+// About box
+RESOURCE DIALOG r_pt_about_dialog
+	{
+	title="About PsiTerm";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CONTINUE;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout1; control=LABEL { standard_font=EEikLabelFontLegend; txt="PsiTerm 0.13"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout2; control=LABEL { txt="SSH terminal for the Psion Series 5mx"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout3; control=LABEL { txt="(c) Dan Edge"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAboutStatus; control=LABEL { reserve_length=48; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout4; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Dropbear SSH (c) Matt Johnston - MIT licence"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout5; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="libvterm (c) Paul Evans - MIT licence"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout6; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="LibTomCrypt, LibTomMath - public domain"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout7; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="zlib (c) Jean-loup Gailly and Mark Adler"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout8; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Terminus font (c) Dimitar Zhekov - SIL OFL 1.1"; }; }
+		};
+	}
+
+// Update: where to fetch version.txt and PsiTerm.sis from
+RESOURCE DIALOG r_pt_update_dialog
+	{
+	title="Update PsiTerm";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Web server"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=100; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Port"; id=EPtDlgPort; control=NUMBER_EDITOR { min=1; max=65535; }; }
+		};
+	}

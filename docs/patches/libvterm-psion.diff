@@ -1,0 +1,138 @@
+diff --git a/src/encoding.c b/src/encoding.c
+index 434ac3f..393190b 100644
+--- a/src/encoding.c
++++ b/src/encoding.c
+@@ -154,7 +154,7 @@ static void decode_utf8(VTermEncoding *enc, void *data_,
+   }
+ }
+ 
+-static VTermEncoding encoding_utf8 = {
++static const VTermEncoding encoding_utf8 = {
+   .init   = &init_utf8,
+   .decode = &decode_utf8,
+ };
+@@ -175,7 +175,7 @@ static void decode_usascii(VTermEncoding *enc, void *data,
+   }
+ }
+ 
+-static VTermEncoding encoding_usascii = {
++static const VTermEncoding encoding_usascii = {
+   .decode = &decode_usascii,
+ };
+ 
+@@ -207,7 +207,7 @@ static void decode_table(VTermEncoding *enc, void *data,
+ #include "encoding/DECdrawing.inc"
+ #include "encoding/uk.inc"
+ 
+-static struct {
++static const struct {
+   VTermEncodingType type;
+   char designation;
+   VTermEncoding *enc;
+diff --git a/src/keyboard.c b/src/keyboard.c
+index d31c8be..c0649ca 100644
+--- a/src/keyboard.c
++++ b/src/keyboard.c
+@@ -67,7 +67,7 @@ typedef struct {
+   int csinum;
+ } keycodes_s;
+ 
+-static keycodes_s keycodes[] = {
++static const keycodes_s keycodes[] = {
+   { KEYCODE_NONE }, // NONE
+ 
+   { KEYCODE_ENTER,   '\r'   }, // ENTER
+@@ -88,7 +88,7 @@ static keycodes_s keycodes[] = {
+   { KEYCODE_CSINUM, '~', 6 },  // PAGEDOWN
+ };
+ 
+-static keycodes_s keycodes_fn[] = {
++static const keycodes_s keycodes_fn[] = {
+   { KEYCODE_NONE },            // F0 - shouldn't happen
+   { KEYCODE_SS3,    'P' },     // F1
+   { KEYCODE_SS3,    'Q' },     // F2
+@@ -104,7 +104,7 @@ static keycodes_s keycodes_fn[] = {
+   { KEYCODE_CSINUM, '~', 24 }, // F12
+ };
+ 
+-static keycodes_s keycodes_kp[] = {
++static const keycodes_s keycodes_kp[] = {
+   { KEYCODE_KEYPAD, '0', 'p' }, // KP_0
+   { KEYCODE_KEYPAD, '1', 'q' }, // KP_1
+   { KEYCODE_KEYPAD, '2', 'r' }, // KP_2
+diff --git a/src/pen.c b/src/pen.c
+index 2227a6f..93b2be4 100644
+--- a/src/pen.c
++++ b/src/pen.c
+@@ -32,11 +32,11 @@ static const VTermRGB ansi_colors[] = {
+   { 255, 255, 255 }, // white for real
+ };
+ 
+-static int ramp6[] = {
++static const int ramp6[] = {
+   0x00, 0x33, 0x66, 0x99, 0xCC, 0xFF,
+ };
+ 
+-static int ramp24[] = {
++static const int ramp24[] = {
+   0x00, 0x0B, 0x16, 0x21, 0x2C, 0x37, 0x42, 0x4D, 0x58, 0x63, 0x6E, 0x79,
+   0x85, 0x90, 0x9B, 0xA6, 0xB1, 0xBC, 0xC7, 0xD2, 0xDD, 0xE8, 0xF3, 0xFF,
+ };
+diff --git a/src/screen.c b/src/screen.c
+index 6747acb..7d61f95 100644
+--- a/src/screen.c
++++ b/src/screen.c
+@@ -852,7 +852,7 @@ static int sb_clear(void *user) {
+   return 0;
+ }
+ 
+-static VTermStateCallbacks state_cbs = {
++static const VTermStateCallbacks state_cbs = {
+   .putglyph    = &putglyph,
+   .movecursor  = &movecursor,
+   .premove     = &premove,
+diff --git a/src/vterm.c b/src/vterm.c
+index e1f676f..06671bd 100644
+--- a/src/vterm.c
++++ b/src/vterm.c
+@@ -22,27 +22,29 @@ static void default_free(void *ptr, void *allocdata)
+   free(ptr);
+ }
+ 
+-static VTermAllocatorFunctions default_allocator = {
++static const VTermAllocatorFunctions default_allocator = {
+   .malloc = &default_malloc,
+   .free   = &default_free,
+ };
+ 
+ VTerm *vterm_new(int rows, int cols)
+ {
+-  return vterm_build(&(const struct VTermBuilder){
+-      .rows = rows,
+-      .cols = cols,
+-    });
++  struct VTermBuilder b;
++  memset(&b, 0, sizeof(b));
++  b.rows = rows;
++  b.cols = cols;
++  return vterm_build(&b);
+ }
+ 
+ VTerm *vterm_new_with_allocator(int rows, int cols, VTermAllocatorFunctions *funcs, void *allocdata)
+ {
+-  return vterm_build(&(const struct VTermBuilder){
+-      .rows = rows,
+-      .cols = cols,
+-      .allocator = funcs,
+-      .allocdata = allocdata,
+-    });
++  struct VTermBuilder b;
++  memset(&b, 0, sizeof(b));
++  b.rows = rows;
++  b.cols = cols;
++  b.allocator = funcs;
++  b.allocdata = allocdata;
++  return vterm_build(&b);
+ }
+ 
+ /* A handy macro for defaulting values out of builder fields */

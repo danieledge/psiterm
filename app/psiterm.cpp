@@ -1,0 +1,3186 @@
+// PSITERM.CPP - PsiTerm: libvterm-based serial terminal for the Psion Series 5mx
+//
+// Structure:
+//   CSerialPort   - RComm wrapper; battery-friendly reads (block for 1 byte,
+//                   then short timed reads while data keeps flowing)
+//   CTermView     - owns the libvterm instance, draws its screen into a
+//                   backed-up 16-grey window, maps Psion keys to vterm keys
+//   CPsiTermAppUi - menus, commands, settings file
+
+#include <e32keys.h>
+#include <e32svr.h>
+#include <estlib.h>
+#include <e32hal.h>
+#include <eikchlst.h>
+#include <eikseced.h>
+#include <baclipb.h>
+#include <txtetext.h>
+#include <eikdll.h>
+#include <apgcli.h>
+#include <eikedwin.h>
+#include "psiterm.h"
+
+#ifndef TRAP_IGNORE
+#define TRAP_IGNORE(s) { TInt _ignored; TRAP(_ignored, s); }
+#endif
+
+_LIT(KPddName, "EUART1");
+_LIT(KLddName, "ECOMM");
+_LIT(KCsyName, "ECUART");
+_LIT(KPortName, "COMM::0");
+_LIT(KFontCourier, "Courier");
+_LIT(KFontTerminus, "Terminus");         // from PsiTerm.gdr, next to the app
+_LIT(KFontFile, "PsiTerm.gdr");
+
+// Zoom levels, smallest first: typeface (0 = Terminus, 1 = the ROM's Courier)
+// and pixel height. The sidebar zoom buttons step through these. The one
+// Courier size is the only one with 24+ rows, for apps like btop.
+const TInt KZoomLevels = 5;
+const TInt KZoomFace[KZoomLevels] = { 1, 0, 0, 0, 0 };
+const TInt KZoomPixels[KZoomLevels] = { 8, 12, 14, 16, 18 };
+const TInt KDefaultZoom = 1;             // Terminus 6x12: 106 x 20
+_LIT(KIniFile, "C:\\System\\Apps\\PsiTerm\\PsiTerm.ini");
+_LIT(KHostsFile, "C:\\System\\Apps\\PsiTerm\\Hosts.dat");
+_LIT8(KHangupEscape, "+++");
+_LIT8(KHangupCommand, "ATH\r");
+
+const TInt KMoreDataTimeout = 25000;   // microseconds to wait for more bytes
+_LIT(KSshExeName, "psissh.exe");
+_LIT(KSeedFile, "C:\\System\\Apps\\PsiTerm\\ssh_seed.bin");
+_LIT(KSshHome, "C:\\System\\Apps\\PsiTerm");
+const TInt KEntropyKeysNeeded = 40;
+const TInt KScrollbackLines = 300;       // ~150 KB of history
+const TInt KScrollbackCols = 128;
+const TInt KClipMax = 16384;            // most text copied/pasted at once
+_LIT(KPsiTermVersion, "0.22");           // also in psiterm.pkg; version.txt must match
+
+static TBps BaudFromIndex(TInt aIndex)
+	{
+	switch (aIndex)
+		{
+	case 0: return EBps9600;
+	case 1: return EBps19200;
+	case 2: return EBps38400;
+	case 3: return EBps57600;
+	default: return EBps115200;
+		}
+	}
+
+static TInt BaudValue(TInt aIndex)
+	{
+	switch (aIndex)
+		{
+	case 0: return 9600;
+	case 1: return 19200;
+	case 2: return 38400;
+	case 3: return 57600;
+	default: return 115200;
+		}
+	}
+
+// ===========================================================================
+// CSerialPort
+// ===========================================================================
+
+CSerialPort::CSerialPort(MSerialObserver& aObserver)
+	: CActive(EPriorityStandard), iObserver(aObserver), iState(EIdle)
+	{
+	}
+
+CSerialPort* CSerialPort::NewL(MSerialObserver& aObserver)
+	{
+	CSerialPort* self = new(ELeave) CSerialPort(aObserver);
+	CActiveScheduler::Add(self);
+	return self;
+	}
+
+CSerialPort::~CSerialPort()
+	{
+	Close();
+	if (iServerOpen)
+		iServer.Close();
+	}
+
+TInt CSerialPort::Open(TInt aBaudIndex, TBool aRtsCts)
+	{
+	Close();
+	TInt r = User::LoadPhysicalDevice(KPddName);
+	if (r != KErrNone && r != KErrAlreadyExists)
+		return r;
+	r = User::LoadLogicalDevice(KLddName);
+	if (r != KErrNone && r != KErrAlreadyExists)
+		return r;
+	if (!iServerOpen)
+		{
+		r = StartC32();
+		if (r != KErrNone && r != KErrAlreadyExists)
+			return r;
+		r = iServer.Connect();
+		if (r != KErrNone)
+			return r;
+		iServerOpen = ETrue;
+		r = iServer.LoadCommModule(KCsyName);
+		if (r != KErrNone && r != KErrAlreadyExists)
+			return r;
+		}
+	r = iComm.Open(iServer, KPortName, ECommExclusive);
+	if (r != KErrNone)
+		return r;
+
+	TCommConfig cfg;
+	iComm.Config(cfg);
+	cfg().iRate = BaudFromIndex(aBaudIndex);
+	cfg().iDataBits = EData8;
+	cfg().iStopBits = EStop1;
+	cfg().iParity = EParityNone;
+	cfg().iFifo = EFifoEnable;
+	cfg().iTerminatorCount = 0;
+	// No KConfigFailDSR: the WiRSa's DSR line must never matter.
+	cfg().iHandshake = aRtsCts ? (KConfigObeyCTS | KConfigFreeRTS) : 0;
+	r = iComm.SetConfig(cfg);
+	if (r != KErrNone)
+		{
+		iComm.Close();
+		return r;
+		}
+	iComm.SetReceiveBufferLength(16384);
+	iComm.SetSignals(KSignalDTR | KSignalRTS, 0);
+	iComm.ResetBuffers();
+	iOpen = ETrue;
+	iErrorCount = 0;
+	ReadFirst();
+	return KErrNone;
+	}
+
+// Reports what the serial hardware says it can do, and whether it accepts
+// rates above 115200 (EPOC R5 only lists up to 115200; faster needs the
+// driver to accept a "special" rate). Also looks for a second port (IrDA).
+void CSerialPort::Probe(TDes8& aOut)
+	{
+	if (!iOpen)
+		{
+		aOut.Append(_L8("Serial port is not open.\r\n"));
+		return;
+		}
+	Cancel();
+	iState = EIdle;
+	TCommCaps caps;
+	iComm.Caps(caps);
+	aOut.AppendFormat(_L8("COMM::0 rate caps 0x%x, handshake caps 0x%x, IR caps 0x%x\r\n"),
+		caps().iRate, caps().iHandshake, caps().iSIR);
+	aOut.Append((caps().iRate & KCapsBpsSpecial) ? _L8("  Driver allows special rates.\r\n")
+		: _L8("  No special rates: 115200 is the ceiling.\r\n"));
+	TCommConfig old;
+	iComm.Config(old);
+	static const TInt KRates[] = { 230400, 460800 };
+	for (TInt i = 0; i < 2; i++)
+		{
+		TCommConfig c = old;
+		c().iRate = EBpsSpecial;
+		c().iSpecialRate = KRates[i];
+		TInt r = iComm.SetConfig(c);
+		if (r == KErrNone)
+			aOut.AppendFormat(_L8("  %d baud: accepted by the driver\r\n"), KRates[i]);
+		else
+			aOut.AppendFormat(_L8("  %d baud: refused (%d)\r\n"), KRates[i], r);
+		}
+	iComm.SetConfig(old);
+	RComm second;
+	TInt r = second.Open(iServer, _L("COMM::1"), ECommShared);
+	if (r == KErrNone)
+		{
+		second.Caps(caps);
+		aOut.AppendFormat(_L8("COMM::1 rate caps 0x%x, IR caps 0x%x\r\n"), caps().iRate, caps().iSIR);
+		second.Close();
+		}
+	else
+		aOut.AppendFormat(_L8("COMM::1 not available (%d)\r\n"), r);
+	ReadFirst();
+	}
+
+void CSerialPort::Close()
+	{
+	Cancel();
+	if (iOpen)
+		{
+		iComm.Close();
+		iOpen = EFalse;
+		}
+	iState = EIdle;
+	}
+
+TInt CSerialPort::Write(const TDesC8& aData)
+	{
+	if (!iOpen || aData.Length() == 0)
+		return KErrNotReady;
+	TRequestStatus stat;
+	iComm.Write(stat, TTimeIntervalMicroSeconds32(3000000), aData);
+	User::WaitForRequest(stat);
+	return stat.Int();
+	}
+
+void CSerialPort::ReadFirst()
+	{
+	// Block (no timer) until one byte arrives - costs no battery while idle.
+	iFirst.Zero();
+	iComm.Read(iStatus, iFirst);
+	iState = EWaitFirst;
+	SetActive();
+	}
+
+void CSerialPort::ReadMore()
+	{
+	// Data is flowing: collect a burst, returning early after a short gap.
+	iBuf.Zero();
+	iComm.Read(iStatus, TTimeIntervalMicroSeconds32(KMoreDataTimeout), iBuf);
+	iState = EWaitMore;
+	SetActive();
+	}
+
+void CSerialPort::RunL()
+	{
+	TInt status = iStatus.Int();
+	if (iState == EWaitFirst)
+		{
+		if (status == KErrNone)
+			{
+			iErrorCount = 0;
+			iObserver.SerialDataL(iFirst);
+			ReadMore();
+			return;
+			}
+		}
+	else if (iState == EWaitMore)
+		{
+		if (status == KErrNone || status == KErrTimedOut)
+			{
+			iErrorCount = 0;
+			if (iBuf.Length() > 0)
+				{
+				iObserver.SerialDataL(iBuf);
+				ReadMore();
+				}
+			else
+				ReadFirst();
+			return;
+			}
+		}
+	// Line errors (overrun, framing, parity): report the first few, keep going.
+	if (status == KErrCancel)
+		return;
+	if (++iErrorCount <= 3)
+		iObserver.SerialError(status);
+	if (iErrorCount > 50)
+		{
+		iState = EIdle;      // give up rather than spin forever
+		return;
+		}
+	ReadFirst();
+	}
+
+void CSerialPort::DoCancel()
+	{
+	iComm.ReadCancel();
+	}
+
+// ===========================================================================
+// CTermView
+// ===========================================================================
+
+CTermView::CTermView()
+	{
+	}
+
+CTermView::~CTermView()
+	{
+	if (iSshActive && iShared)
+		{
+		iShared->quit = 1;
+		for (TInt i = 0; i < 30 && iSshProcess.ExitType() == EExitPending; i++)
+			User::After(100000);
+		if (iSshProcess.ExitType() == EExitPending)
+			iSshProcess.Kill(0);
+		}
+	delete iPump;
+	delete iWatcher;
+	delete iShotTimer;
+	delete iPendingIdle;
+	delete iReconnectTimer;
+	delete iDebugText;
+	if (iSshActive)
+		iSshProcess.Close();
+	if (iChunkOpen)
+		iChunk.Close();
+	delete iSerial;
+	if (iVt)
+		vterm_free(iVt);
+	User::Free(iSbCells);
+	User::Free(iSbCols);
+	ReleaseFont();
+	if (iFontFileLoaded)
+		iCoeEnv->ScreenDevice()->RemoveFile(iFontFileId);
+	CloseSTDLIB();
+	}
+
+void CTermView::ReleaseFont()
+	{
+	if (iFont)
+		{
+		iCoeEnv->ReleaseScreenFont(iFont);
+		iFont = NULL;
+		}
+	}
+
+void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
+	{
+	iSettings = aSettings;
+	CreateBackedUpWindowL(iCoeEnv->RootWin(), EGray16);
+	SetRectL(aRect);
+	EnableDragEvents();                      // pen drag selects text
+
+	// Terminal engine; real size is set by SetFontL
+	iVt = vterm_new(24, 80);
+	User::LeaveIfNull(iVt);
+	vterm_set_utf8(iVt, 1);
+	vterm_output_set_callback(iVt, &CTermView::CbOutput, this);
+	iScreen = vterm_obtain_screen(iVt);
+	Mem::FillZ(&iCallbacks, sizeof(iCallbacks));
+	iCallbacks.damage = &CTermView::CbDamage;
+	iCallbacks.moverect = &CTermView::CbMoveRect;
+	iCallbacks.movecursor = &CTermView::CbMoveCursor;
+	iCallbacks.settermprop = &CTermView::CbSetTermProp;
+	iCallbacks.bell = &CTermView::CbBell;
+	iCallbacks.sb_pushline = &CTermView::CbPushLine;
+	iCallbacks.sb_clear = &CTermView::CbClearScrollback;
+	// scrollback memory; without it PsiTerm still works, just with no history
+	iSbCells = (TSbCell*)User::Alloc(KScrollbackLines * KScrollbackCols * sizeof(TSbCell));
+	iSbCols = (short*)User::Alloc(KScrollbackLines * sizeof(short));
+	if (!iSbCells || !iSbCols)
+		{
+		User::Free(iSbCells);
+		User::Free(iSbCols);
+		iSbCells = NULL;
+		iSbCols = NULL;
+		}
+	SbInit(&iSb, iSbCells, iSbCols, KScrollbackLines, KScrollbackCols);
+	vterm_screen_set_callbacks(iScreen, &iCallbacks, this);
+	vterm_screen_enable_altscreen(iScreen, 1);
+	// Let libvterm batch scrolling into window blits (CopyRect) instead of
+	// asking us to repaint every scrolled line.
+	vterm_screen_set_damage_merge(iScreen, VTERM_DAMAGE_SCROLL);
+	VTermColor fg, bg;
+	vterm_color_rgb(&fg, 0, 0, 0);
+	vterm_color_rgb(&bg, 255, 255, 255);
+	vterm_state_set_default_colors(vterm_obtain_state(iVt), &fg, &bg);
+	vterm_screen_reset(iScreen, 1);
+	iCurVisible = ETrue;
+
+	// our bundled bitmap font; if it can't be loaded the Courier levels remain
+	{
+	TParse parse;
+	parse.Set(CEikonEnv::Static()->EikAppUi()->Application()->AppFullName(), NULL, NULL);
+	TFileName fontFile(parse.DriveAndPath());
+	fontFile.Append(KFontFile);
+	if (iCoeEnv->ScreenDevice()->AddFile(fontFile, iFontFileId) == KErrNone)
+		iFontFileLoaded = ETrue;
+	}
+	SetFontL(iSettings.iZoom);
+	ActivateL();
+	DrawNow();
+
+	iSerial = CSerialPort::NewL(*this);
+	ApplySerialSettings();
+
+	TPtrC8 flowName(iSettings.iRtsCts ? _L8("RTS/CTS") : _L8("no flow control"));
+	TBuf8<160> banner;
+	TPtrC version(KPsiTermVersion);
+	banner.Format(_L8("\x1b[7m PsiTerm %S \x1b[0m  %d baud, %S, %dx%d\r\n"
+		"Menu key for options.  Shift+Ctrl+S: SSH to a server.\r\n\r\n"),
+		&version,
+		BaudValue(iSettings.iBaudIndex),
+		&flowName,
+		iCols, iRows);
+	LocalMessage(banner);
+	}
+
+void CTermView::ApplySerialSettings()
+	{
+	if (!iSerial)
+		return;
+	TInt r = iSerial->Open(iSettings.iBaudIndex, iSettings.iRtsCts);
+	if (r != KErrNone)
+		{
+		TBuf8<160> msg;
+		if (iSettings.iNetMode && r == KErrInUse)
+			msg.Format(_L8("\r\n[PsiTerm: serial port in use - probably by the Psion's dial-up\r\n"
+				" connection. It is freed when the dial-up hangs up.]\r\n"));
+		else
+			msg.Format(_L8("\r\n[PsiTerm: could not open serial port, error %d.\r\n"
+				" Is Remote link switched off?]\r\n"), r);
+		LocalMessage(msg);
+		}
+	}
+
+void CTermView::ZoomBy(TInt aStep)
+	{
+	TInt z = iSettings.iZoom + aStep;
+	if (z < 0) z = 0;
+	if (z >= KZoomLevels) z = KZoomLevels - 1;
+	if (z != iSettings.iZoom)
+		SetFontL(z);
+	}
+
+void CTermView::SetFontL(TInt aZoom)
+	{
+	if (aZoom < 0 || aZoom >= KZoomLevels)
+		aZoom = KDefaultZoom;
+	iSettings.iZoom = aZoom;
+	ReleaseFont();
+	TInt pixels = KZoomPixels[aZoom];
+	TInt twips = iCoeEnv->ScreenDevice()->VerticalPixelsToTwips(pixels);
+	if (KZoomFace[aZoom] == 0)
+		{
+		TFontSpec spec(KFontTerminus, twips);
+		iFont = iCoeEnv->CreateScreenFontL(spec);
+		if (iFont->FontSpecInTwips().iTypeface.iName.CompareF(KFontTerminus) != 0)
+			ReleaseFont();                  // not installed: use Courier instead
+		}
+	if (!iFont)
+		{
+		TFontSpec spec(KFontCourier, twips);
+		iFont = iCoeEnv->CreateScreenFontL(spec);
+		}
+
+	// Cell = widest common glyph; every character is placed at its cell
+	// position so even a proportional font lines up.
+	iCellW = 1;
+	const TText probe[] = { 'M', 'W', 'm', 'w', '@', '#', '0' };
+	for (TUint i = 0; i < sizeof(probe) / sizeof(probe[0]); i++)
+		{
+		TInt w = iFont->CharWidthInPixels(probe[i]);
+		if (w > iCellW)
+			iCellW = w;
+		}
+	iCellH = iFont->HeightInPixels();
+	if (iCellH < 6)
+		iCellH = 6;
+	iAscent = iFont->AscentInPixels();
+	// Monospaced font (Courier is)? Then a run of cells can be drawn with a
+	// single DrawText instead of one call per character.
+	iMono = ETrue;
+	for (TUint g = 32; g < 256 && iMono; g++)
+		{
+		if (g >= 127 && g < 160)
+			continue;
+		if (iFont->CharWidthInPixels((TChar)g) != iCellW)
+			iMono = EFalse;
+		}
+
+	TSize size = Rect().Size();
+	iCols = size.iWidth / iCellW;
+	iRows = size.iHeight / iCellH;
+	if (iCols > 160) iCols = 160;
+	if (iRows > 60) iRows = 60;
+	if (iCols < 20) iCols = 20;
+	if (iRows < 5) iRows = 5;
+	iOriginX = (size.iWidth - iCols * iCellW) / 2;
+	iOriginY = (size.iHeight - iRows * iCellH) / 2;
+
+	iScrollOffset = 0;                       // back to the live screen
+	iSelActive = EFalse;
+	iCacheValid = EFalse;
+	vterm_set_size(iVt, iRows, iCols);
+	vterm_screen_flush_damage(iScreen);
+	if (iSshActive && iShared)
+		{
+		iShared->rows = iRows;
+		iShared->cols = iCols;
+		iShared->resized = 1;
+		}
+	iDamaged = EFalse;
+	if (IsActivated())
+		DrawNow();
+	}
+
+// ----- serial data in ------------------------------------------------------
+
+void CTermView::SerialDataL(const TDesC8& aData)
+	{
+	FeedTerminal(aData.Ptr(), aData.Length());
+	}
+
+void CTermView::SerialError(TInt aError)
+	{
+	TBuf8<64> msg;
+	msg.Format(_L8("\r\n[PsiTerm: serial error %d]\r\n"), aError);
+	LocalMessage(msg);
+	}
+
+void CTermView::FeedTerminal(const TUint8* aBytes, TInt aLen)
+	{
+	TBool outer = (iPaintGc == NULL);
+	if (outer)
+		BeginPaint();
+	vterm_input_write(iVt, (const char*)aBytes, aLen);
+	if (outer)
+		EndPaint();
+	}
+
+void CTermView::LocalMessage(const TDesC8& aText)
+	{
+	if (iCapture)
+		AppendDebug(aText);
+	else
+		FeedTerminal(aText.Ptr(), aText.Length());
+	}
+
+// ----- Debug screen ----------------------------------------------------------
+
+void CTermView::BeginDebugL(const TDesC& aTitle)
+	{
+	delete iDebugText;
+	iDebugText = NULL;
+	iDebugText = HBufC8::NewL(8000);
+	iDebugTitle = aTitle.Left(aTitle.Length() < iDebugTitle.MaxLength() ? aTitle.Length() : iDebugTitle.MaxLength());
+	iCapture = ETrue;
+	}
+
+void CTermView::AppendDebug(const TDesC8& aText)
+	{
+	if (!iDebugText)
+		return;
+	TPtr8 p = iDebugText->Des();
+	TInt room = p.MaxLength() - p.Length();
+	p.Append(aText.Left(aText.Length() < room ? aText.Length() : room));
+	if (!iSshActive)
+		return;
+	// progress: the last non-empty line so far, in the corner of the screen
+	TInt end = p.Length();
+	while (end > 0 && (p[end - 1] == '\r' || p[end - 1] == '\n' || p[end - 1] == ' '))
+		end--;
+	TInt start = end;
+	while (start > 0 && p[start - 1] != '\r' && p[start - 1] != '\n')
+		start--;
+	while (start < end && p[start] == ' ')
+		start++;
+	if (end > start)
+		{
+		TBuf<48> line;
+		line.Copy(p.Mid(start, (end - start) < 48 ? (end - start) : 48));
+		TRAP_IGNORE(iEikonEnv->BusyMsgL(line));
+		}
+	}
+
+void CTermView::ShowDebugL()
+	{
+	iCapture = EFalse;
+	iEikonEnv->BusyMsgCancel();
+	if (!iDebugText)
+		return;
+	// terminal text -> editor text: CR returns to the start of the line
+	// (progress counters), LF starts a paragraph, escape sequences dropped
+	HBufC* text = HBufC::NewLC(iDebugText->Length() + 1);
+	TPtr t = text->Des();
+	const TDesC8& in = *iDebugText;
+	TInt lineStart = 0;
+	for (TInt i = 0; i < in.Length(); i++)
+		{
+		TUint c = in[i];
+		if (c == '\r')
+			{
+			if (i + 1 < in.Length() && in[i + 1] == '\n')
+				continue;
+			t.SetLength(lineStart);
+			}
+		else if (c == '\n')
+			{
+			if (t.Length() > 0)          // no blank line at the very top
+				{
+				t.Append(CEditableText::EParagraphDelimiter);
+				lineStart = t.Length();
+				}
+			}
+		else if (c == 0x1b)
+			{
+			if (i + 1 < in.Length() && in[i + 1] == '[')
+				{
+				i += 2;
+				while (i < in.Length() && (in[i] < 0x40 || in[i] > 0x7e))
+					i++;
+				}
+			}
+		else if (c >= 0x20)
+			t.Append((TText)c);
+		}
+	while (t.Length() > 0 && t[t.Length() - 1] == CEditableText::EParagraphDelimiter)
+		t.SetLength(t.Length() - 1);
+	delete iDebugText;
+	iDebugText = NULL;
+	CDebugDialog* dlg = new(ELeave) CDebugDialog(iDebugTitle, *text);
+	dlg->ExecuteLD(R_PT_DEBUG_DIALOG);
+	CleanupStack::PopAndDestroy();       // text
+	}
+
+void CTermView::RunAfterDisconnectL(TInt aCommand)
+	{
+	iPendingCmd = aCommand;
+	DisconnectSsh();
+	}
+
+TInt CTermView::PendingCallback(TAny* aSelf)
+	{
+	CTermView* self = (CTermView*)aSelf;
+	TInt cmd = self->iPendingCmd;
+	self->iPendingCmd = 0;
+	if (cmd)
+		TRAP_IGNORE(CEikonEnv::Static()->EikAppUi()->HandleCommandL(cmd));
+	return 0;
+	}
+
+// ----- libvterm callbacks --------------------------------------------------
+
+int CTermView::CbDamage(VTermRect aRect, void* aUser)
+	{
+	CTermView* self = (CTermView*)aUser;
+	if (self->iScrollOffset > 0)
+		{
+		self->iNeedFull = ETrue;          // view shows history: redraw at the end
+		return 1;
+		}
+	// libvterm's screen matches this rect right now, so paint it now if we
+	// can: a later scroll blit must move up-to-date pixels.
+	if (self->iPaintGc)
+		self->DrawCells(*self->iPaintGc, aRect.start_row, aRect.start_col, aRect.end_row, aRect.end_col);
+	else
+		self->AddDamage(aRect.start_row, aRect.start_col, aRect.end_row, aRect.end_col);
+	return 1;
+	}
+
+// Part of the screen moved (scrolling). Blit the pixels already on screen;
+// libvterm then reports only the newly exposed lines as damage.
+int CTermView::CbMoveRect(VTermRect aDest, VTermRect aSrc, void* aUser)
+	{
+	CTermView* self = (CTermView*)aUser;
+	if (self->iScrollOffset > 0)
+		{
+		self->iNeedFull = ETrue;
+		return 1;
+		}
+	if (!self->iPaintGc)
+		return 0;                     // not painting: libvterm marks it damaged
+	TInt w = self->iCellW, h = self->iCellH;
+	TRect src(TPoint(self->iOriginX + aSrc.start_col * w, self->iOriginY + aSrc.start_row * h),
+		TPoint(self->iOriginX + aSrc.end_col * w, self->iOriginY + aSrc.end_row * h));
+	TPoint offset((aDest.start_col - aSrc.start_col) * w, (aDest.start_row - aSrc.start_row) * h);
+	self->iPaintGc->CopyRect(offset, src);
+	return 1;
+	}
+
+// A line scrolled off the top of the screen: keep it in the history.
+int CTermView::CbPushLine(int aCols, const VTermScreenCell* aCells, void* aUser)
+	{
+	CTermView* self = (CTermView*)aUser;
+	TSbCell line[KScrollbackCols];
+	if (aCols > KScrollbackCols)
+		aCols = KScrollbackCols;
+	for (TInt i = 0; i < aCols; i++)
+		{
+		const VTermScreenCell& c = aCells[i];
+		TInt fg, bg;
+		self->CellColours(c, fg, bg);
+		TUint ch = c.chars[0];
+		line[i].iCh = (ch == (TUint)-1 || ch > 0xFFFF) ? 0xFFFF : (unsigned short)ch;
+		line[i].iGrey = (unsigned char)((fg << 4) | bg);
+		line[i].iFlags = (unsigned char)((c.attrs.bold ? KSbBold : 0) | (c.attrs.underline ? KSbUnderline : 0)
+			| (c.attrs.strike ? KSbStrike : 0) | (c.width > 1 ? KSbWide : 0));
+		}
+	SbPush(&self->iSb, line, aCols);
+	self->iLinesPushed++;
+	if (self->iScrollOffset > 0)
+		{
+		// keep the history the user is reading still on the screen
+		if (self->iScrollOffset < self->iSb.iCount)
+			self->iScrollOffset++;
+		self->iNeedFull = ETrue;
+		}
+	return 1;
+	}
+
+int CTermView::CbClearScrollback(void* aUser)
+	{
+	CTermView* self = (CTermView*)aUser;
+	SbClear(&self->iSb);
+	if (self->iScrollOffset)
+		{
+		self->iScrollOffset = 0;
+		self->iNeedFull = ETrue;
+		}
+	return 1;
+	}
+
+int CTermView::CbMoveCursor(VTermPos aPos, VTermPos /*aOldPos*/, int aVisible, void* aUser)
+	{
+	CTermView* self = (CTermView*)aUser;
+	self->iCurRow = aPos.row;
+	self->iCurCol = aPos.col;
+	self->iCurVisible = aVisible;
+	return 1;
+	}
+
+int CTermView::CbSetTermProp(VTermProp aProp, VTermValue* aVal, void* aUser)
+	{
+	CTermView* self = (CTermView*)aUser;
+	if (aProp == VTERM_PROP_CURSORVISIBLE)
+		self->iCurVisible = aVal->boolean;
+	return 1;
+	}
+
+int CTermView::CbBell(void* /*aUser*/)
+	{
+	CEikonEnv::Beep();
+	return 1;
+	}
+
+void CTermView::CbOutput(const char* aBytes, size_t aLen, void* aUser)
+	{
+	CTermView* self = (CTermView*)aUser;
+	self->WriteToHost(TPtrC8((const TUint8*)aBytes, aLen));
+	}
+
+// Bytes typed by the user go to the SSH process when a session is running,
+// otherwise straight down the serial line.
+void CTermView::WriteToHost(const TDesC8& aBytes)
+	{
+	if (iSshActive && iShared)
+		{
+		for (TInt i = 0; i < aBytes.Length(); i++)
+			{
+			TInt guard = 0;
+			while (iShared->kbd_head - iShared->kbd_tail >= PSI_KBD_SIZE && guard++ < 200)
+				User::After(5000);
+			iShared->kbd[iShared->kbd_head % PSI_KBD_SIZE] = aBytes[i];
+			iShared->kbd_head++;
+			}
+		return;
+		}
+	if (iSerial)
+		iSerial->Write(aBytes);
+	}
+
+// ----- drawing -------------------------------------------------------------
+
+void CTermView::AddDamage(TInt aRow0, TInt aCol0, TInt aRow1, TInt aCol1)
+	{
+	if (!iDamaged)
+		{
+		iDmgRow0 = aRow0; iDmgCol0 = aCol0; iDmgRow1 = aRow1; iDmgCol1 = aCol1;
+		iDamaged = ETrue;
+		return;
+		}
+	if (aRow0 < iDmgRow0) iDmgRow0 = aRow0;
+	if (aCol0 < iDmgCol0) iDmgCol0 = aCol0;
+	if (aRow1 > iDmgRow1) iDmgRow1 = aRow1;
+	if (aCol1 > iDmgCol1) iDmgCol1 = aCol1;
+	}
+
+// All screen updates from terminal output happen between BeginPaint and
+// EndPaint, with the old cursor removed so scroll blits never move it.
+void CTermView::BeginPaint()
+	{
+	ActivateGc();
+	iPaintGc = &SystemGc();
+	iPaintGc->UseFont(iFont);
+	if (iDrawnCurVisible && iDrawnCurRow < iRows && iDrawnCurCol < iCols)
+		DrawOneCell(*iPaintGc, iDrawnCurRow, iDrawnCurCol);
+	iDrawnCurVisible = EFalse;
+	if (iDamaged)
+		{
+		iDamaged = EFalse;
+		DrawCells(*iPaintGc, iDmgRow0, iDmgCol0, iDmgRow1, iDmgCol1);
+		}
+	}
+
+void CTermView::EndPaint()
+	{
+	vterm_screen_flush_damage(iScreen);    // pending scroll blit + damage
+	if (iNeedFull)
+		{
+		iNeedFull = EFalse;
+		DrawAll(*iPaintGc);
+		}
+	DrawCursor(*iPaintGc);
+	iPaintGc->DiscardFont();
+	iPaintGc = NULL;
+	DeactivateGc();
+	}
+
+void CTermView::Draw(const TRect& /*aRect*/) const
+	{
+	CWindowGc& gc = SystemGc();
+	gc.UseFont(iFont);
+	gc.SetPenStyle(CGraphicsContext::ENullPen);
+	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	gc.SetBrushColor(TRgb::Gray16(15));
+	gc.DrawRect(Rect());
+	CONST_CAST(CTermView*, this)->iDamaged = EFalse;
+	DrawAll(gc);
+	DrawCursor(gc);
+	}
+
+void CTermView::DrawAll(CWindowGc& aGc) const
+	{
+	DrawCells(aGc, 0, 0, iRows, iCols);
+	DrawScrollIndicator(aGc);
+	}
+
+// While looking at history, show where we are in the top-right corner.
+void CTermView::DrawScrollIndicator(CWindowGc& aGc) const
+	{
+	if (iScrollOffset <= 0)
+		return;
+	TBuf<40> text;
+	text.Format(_L(" history -%d/%d "), iScrollOffset, iSb.iCount);
+	TInt w = iFont->TextWidthInPixels(text);
+	TInt x = Rect().iBr.iX - w - 2;
+	TRect box(TPoint(x, iOriginY), TSize(w, iCellH));
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(TRgb::Gray16(0));
+	aGc.DrawRect(box);
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.SetPenColor(TRgb::Gray16(15));
+	aGc.DrawText(text, TPoint(x, iOriginY + iAscent));
+	}
+
+// Draws a rectangle of cells. Runs of ordinary text that share colours and
+// attributes are drawn with one background fill and one DrawText, which is
+// many times faster on the Psion than a fill + text per character.
+void CTermView::DrawCells(CWindowGc& aGc, TInt aRow0, TInt aCol0, TInt aRow1, TInt aCol1) const
+	{
+	if (aRow0 < 0) aRow0 = 0;
+	if (aCol0 < 0) aCol0 = 0;
+	if (aRow1 > iRows) aRow1 = iRows;
+	if (aCol1 > iCols) aCol1 = iCols;
+	TBuf<160> run;
+	const TUint KRunFlags = KSbBold | KSbUnderline | KSbStrike;
+	for (TInt r = aRow0; r < aRow1; r++)
+		{
+		TInt c = aCol0;
+		TLook look;
+		TInt byte = -1;
+		TBool have = EFalse;          // look/byte already fetched for column c
+		while (c < aCol1)
+			{
+			if (!have)
+				{
+				if (!GetLook(r, c, look))
+					{
+					c++;                  // outside the screen: nothing to draw
+					continue;
+					}
+				byte = TextByte(look);
+				}
+			have = EFalse;
+			if (byte < 0)
+				{
+				DrawOneCell(aGc, r, c, look);  // graphics, wide chars, etc.
+				c++;
+				continue;
+				}
+			TInt fg = look.iFg, bg = look.iBg;
+			TUint flags = look.iFlags & KRunFlags;
+			TBool ink = (byte != ' ');
+			TInt start = c;
+			run.Zero();
+			run.Append((TText)byte);
+			for (c++; c < aCol1; c++)
+				{
+				TLook next;
+				if (!GetLook(r, c, next))
+					break;
+				TInt b = TextByte(next);
+				if (b < 0 || next.iFg != fg || next.iBg != bg || (next.iFlags & KRunFlags) != flags)
+					{
+					look = next;              // becomes the next run's first cell
+					byte = b;
+					have = ETrue;
+					break;
+					}
+				run.Append((TText)b);
+				if (b != ' ')
+					ink = ETrue;
+				}
+			TBool bold = (flags & KSbBold) != 0 || iSettings.iBold;
+			TBool ul = (flags & KSbUnderline) != 0;
+			TBool st = (flags & KSbStrike) != 0;
+			TInt x0 = iOriginX + start * iCellW;
+			TInt y0 = iOriginY + r * iCellH;
+			TInt x1 = x0 + run.Length() * iCellW;
+			aGc.SetPenStyle(CGraphicsContext::ENullPen);
+			aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+			aGc.SetBrushColor(TRgb::Gray16(bg));
+			aGc.DrawRect(TRect(x0, y0, x1, y0 + iCellH));
+			if (!ink && !ul && !st)
+				continue;
+			aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+			aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+			aGc.SetPenColor(TRgb::Gray16(fg));
+			if (ink)
+				{
+				TPoint base(x0, y0 + iAscent);
+				if (iMono)
+					{
+					aGc.DrawText(run, base);
+					if (bold)
+						aGc.DrawText(run, base + TPoint(1, 0));
+					}
+				else
+					{
+					for (TInt i = 0; i < run.Length(); i++)
+						{
+						if (run[i] == ' ')
+							continue;
+						TPtrC one(run.Mid(i, 1));
+						TPoint at(x0 + i * iCellW, base.iY);
+						aGc.DrawText(one, at);
+						if (bold)
+							aGc.DrawText(one, at + TPoint(1, 0));
+						}
+					}
+				}
+			if (ul)
+				aGc.DrawLine(TPoint(x0, y0 + iCellH - 1), TPoint(x1, y0 + iCellH - 1));
+			if (st)
+				aGc.DrawLine(TPoint(x0, y0 + iCellH / 2), TPoint(x1, y0 + iCellH / 2));
+			}
+		}
+	}
+
+// One cell of the view: the live screen, or a scrollback line when the user
+// has scrolled back. Selected cells come back with fg/bg swapped.
+TBool CTermView::GetLook(TInt aRow, TInt aCol, TLook& aLook) const
+	{
+	TInt line = ViewLine(aRow);
+	if (line >= iLinesPushed)
+		{
+		VTermPos pos;
+		pos.row = line - iLinesPushed;
+		pos.col = aCol;
+		VTermScreenCell cell;
+		if (!vterm_screen_get_cell(iScreen, pos, &cell))
+			return EFalse;
+		aLook.iCh = cell.chars[0];
+		aLook.iWidth = cell.width;
+		aLook.iFlags = (cell.attrs.bold ? KSbBold : 0) | (cell.attrs.underline ? KSbUnderline : 0)
+			| (cell.attrs.strike ? KSbStrike : 0);
+		// colours repeat along a line: reuse the last conversion when possible
+		CTermView* self = CONST_CAST(CTermView*, this);
+		if (!iCacheValid || (TInt)cell.attrs.reverse != iCacheRev
+			|| !vterm_color_is_equal(&cell.fg, &iCacheFg) || !vterm_color_is_equal(&cell.bg, &iCacheBg))
+			{
+			CellColours(cell, self->iCacheF, self->iCacheB);
+			self->iCacheFg = cell.fg;
+			self->iCacheBg = cell.bg;
+			self->iCacheRev = cell.attrs.reverse;
+			self->iCacheValid = ETrue;
+			}
+		aLook.iFg = iCacheF;
+		aLook.iBg = iCacheB;
+		}
+	else
+		{
+		int cols;
+		const TSbCell* sb = SbLine(&iSb, iLinesPushed - line, &cols);
+		if (sb && aCol < cols)
+			{
+			const TSbCell& c = sb[aCol];
+			aLook.iCh = (c.iCh == 0xFFFF) ? (TUint)-1 : c.iCh;
+			aLook.iWidth = (c.iFlags & KSbWide) ? 2 : 1;
+			aLook.iFg = c.iGrey >> 4;
+			aLook.iBg = c.iGrey & 0x0f;
+			aLook.iFlags = c.iFlags & (KSbBold | KSbUnderline | KSbStrike);
+			}
+		else
+			{
+			aLook.iCh = 0;
+			aLook.iWidth = 1;
+			aLook.iFg = 0;
+			aLook.iBg = 15;
+			aLook.iFlags = 0;
+			}
+		}
+	if (iSelActive)
+		{
+		TInt l0 = iSelLine0, c0 = iSelCol0, l1 = iSelLine1, c1 = iSelCol1;
+		SbOrder(&l0, &c0, &l1, &c1);
+		if (SbInSelection(line, aCol, l0, c0, l1, c1))
+			{
+			TInt t = aLook.iFg;
+			aLook.iFg = aLook.iBg;
+			aLook.iBg = t;
+			TInt d = aLook.iFg - aLook.iBg;
+			if (d < 0) d = -d;
+			if (d < 6)
+				{
+				aLook.iBg = 0;
+				aLook.iFg = 15;
+				}
+			}
+		}
+	return ETrue;
+	}
+
+// Code-page byte for a cell that is plain text (spaces included), or -1 if
+// the cell needs DrawOneCell (box drawing, blocks, braille, wide glyphs).
+// U+00A0 and the other Unicode spaces are drawn as plain blanks: spaces
+// are only ever cleared, never drawn from the font, and a font's 0xA0 glyph
+// can come out as garbage on the Psion (Claude Code uses U+00A0).
+static TBool IsBlankChar(TUint aCh)
+	{
+	return aCh == 0 || aCh == ' ' || aCh == (TUint)-1 || aCh == 0xA0 ||
+		(aCh >= 0x2000 && aCh <= 0x200A) || aCh == 0x202F || aCh == 0x205F || aCh == 0x3000;
+	}
+
+TInt CTermView::TextByte(const TLook& aLook) const
+	{
+	TUint ch = aLook.iCh;
+	if (IsBlankChar(ch))
+		return ' ';
+	if (aLook.iWidth != 1)
+		return -1;
+	if (PsiBoxSegments(ch) > 0)
+		return -1;
+	if ((ch >= 0x2580 && ch <= 0x259F) || (ch >= 0x2800 && ch <= 0x28FF))
+		return -1;
+	TInt byte = PsiMapToCodePage(ch);
+	if (byte == 0)
+		return ' ';                   // zero-width
+	if (byte < 0)
+		return '?';
+	return byte;
+	}
+
+// Colour -> one of 16 greys. The Psion screen is dark-on-light, so text
+// colours are kept dark enough to read and backgrounds are kept light
+// unless they are genuinely dark.
+static TInt GreyOf(const VTermScreen* aScreen, VTermColor aCol)
+	{
+	vterm_screen_convert_color_to_rgb(aScreen, &aCol);
+	// ((r*30 + g*59 + b*11) / 100) / 17 without two software divisions:
+	// x*9869 >> 24 == x/1700 for every x <= 25500
+	TUint x = aCol.rgb.red * 30 + aCol.rgb.green * 59 + aCol.rgb.blue * 11;
+	return (TInt)((x * 9869u) >> 24);    // 0..15
+	}
+
+void CTermView::CellColours(const VTermScreenCell& aCell, TInt& aFg, TInt& aBg) const
+	{
+	TInt fg = 0;
+	TInt bg = 15;
+	TBool fgDefault = VTERM_COLOR_IS_DEFAULT_FG(&aCell.fg);
+	TBool bgDefault = VTERM_COLOR_IS_DEFAULT_BG(&aCell.bg);
+	if (!fgDefault)
+		{
+		fg = GreyOf(iScreen, aCell.fg);
+		// light text colours were chosen for black backgrounds: darken them
+		if (bgDefault)
+			fg = (fg > 9) ? 9 - (fg - 9) / 2 : fg * 2 / 3;
+		}
+	if (!bgDefault)
+		bg = GreyOf(iScreen, aCell.bg);
+	if (aCell.attrs.reverse)
+		{
+		TInt t = fg; fg = bg; bg = t;
+		}
+	// keep enough contrast to read
+	TInt diff = fg - bg;
+	if (diff < 0) diff = -diff;
+	if (diff < 6)
+		fg = (bg >= 8) ? 0 : 15;
+	aFg = fg;
+	aBg = bg;
+	}
+
+void CTermView::DrawOneCell(CWindowGc& aGc, TInt aRow, TInt aCol) const
+	{
+	TLook look;
+	if (GetLook(aRow, aCol, look))
+		DrawOneCell(aGc, aRow, aCol, look);
+	}
+
+void CTermView::DrawOneCell(CWindowGc& aGc, TInt aRow, TInt aCol, const TLook& aLook) const
+	{
+	TInt fg = aLook.iFg, bg = aLook.iBg;
+
+	TRect box(TPoint(iOriginX + aCol * iCellW, iOriginY + aRow * iCellH),
+		TSize(iCellW, iCellH));
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(TRgb::Gray16(bg));
+	aGc.DrawRect(box);
+
+	TUint ch = aLook.iCh;
+	if (IsBlankChar(ch))
+		return;
+
+	TRgb fgRgb = TRgb::Gray16(fg);
+
+	// Box drawing: real lines
+	TInt seg = PsiBoxSegments(ch);
+	if (seg > 0)
+		{
+		aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+		aGc.SetPenColor(fgRgb);
+		aGc.SetPenSize(TSize((seg & KBoxHeavy) ? 2 : 1, (seg & KBoxHeavy) ? 2 : 1));
+		TInt cx = box.iTl.iX + iCellW / 2;
+		TInt cy = box.iTl.iY + iCellH / 2;
+		TInt x0 = box.iTl.iX, x1 = box.iBr.iX;
+		TInt y0 = box.iTl.iY, y1 = box.iBr.iY;
+		if (seg & KBoxDouble)
+			{
+			if (seg & (KBoxLeft | KBoxRight))
+				{
+				TInt a = (seg & KBoxLeft) ? x0 : cx;
+				TInt b = (seg & KBoxRight) ? x1 : cx + 1;
+				aGc.DrawLine(TPoint(a, cy - 1), TPoint(b, cy - 1));
+				aGc.DrawLine(TPoint(a, cy + 1), TPoint(b, cy + 1));
+				}
+			if (seg & (KBoxUp | KBoxDown))
+				{
+				TInt a = (seg & KBoxUp) ? y0 : cy;
+				TInt b = (seg & KBoxDown) ? y1 : cy + 1;
+				aGc.DrawLine(TPoint(cx - 1, a), TPoint(cx - 1, b));
+				aGc.DrawLine(TPoint(cx + 1, a), TPoint(cx + 1, b));
+				}
+			}
+		else
+			{
+			if (seg & KBoxLeft)  aGc.DrawLine(TPoint(x0, cy), TPoint(cx + 1, cy));
+			if (seg & KBoxRight) aGc.DrawLine(TPoint(cx, cy), TPoint(x1, cy));
+			if (seg & KBoxUp)    aGc.DrawLine(TPoint(cx, y0), TPoint(cx, cy + 1));
+			if (seg & KBoxDown)  aGc.DrawLine(TPoint(cx, cy), TPoint(cx, y1));
+			}
+		aGc.SetPenSize(TSize(1, 1));
+		return;
+		}
+
+	// Block elements U+2580..U+259F: filled rectangles / grey shades
+	if (ch >= 0x2580 && ch <= 0x259F)
+		{
+		TRect r = box;
+		TInt level = fg;
+		switch (ch)
+			{
+		case 0x2580: r.iBr.iY = box.iTl.iY + iCellH / 2; break;           // upper half
+		case 0x2584: r.iTl.iY = box.iTl.iY + iCellH / 2; break;           // lower half
+		case 0x258C: r.iBr.iX = box.iTl.iX + iCellW / 2; break;           // left half
+		case 0x2590: r.iTl.iX = box.iTl.iX + iCellW / 2; break;           // right half
+		case 0x2591: level = (fg * 1 + bg * 3) / 4; break;                // light shade
+		case 0x2592: level = (fg + bg) / 2; break;                        // medium shade
+		case 0x2593: level = (fg * 3 + bg * 1) / 4; break;                // dark shade
+		case 0x2594: r.iBr.iY = box.iTl.iY + (iCellH + 7) / 8; break;   // upper eighth
+		case 0x2595: r.iTl.iX = box.iBr.iX - (iCellW + 7) / 8; break;   // right eighth
+		default:
+			if (ch >= 0x2596)                                             // quadrants
+				{
+				// bits: 1 upper-left, 2 upper-right, 4 lower-left, 8 lower-right
+				static const TUint8 KQuad[10] = { 4, 8, 1, 13, 9, 7, 11, 2, 6, 14 };
+				TInt q = KQuad[ch - 0x2596];
+				TInt mx = box.iTl.iX + iCellW / 2, my = box.iTl.iY + iCellH / 2;
+				aGc.SetBrushColor(TRgb::Gray16(level));
+				if (q & 1) aGc.DrawRect(TRect(box.iTl.iX, box.iTl.iY, mx, my));
+				if (q & 2) aGc.DrawRect(TRect(mx, box.iTl.iY, box.iBr.iX, my));
+				if (q & 4) aGc.DrawRect(TRect(box.iTl.iX, my, mx, box.iBr.iY));
+				if (q & 8) aGc.DrawRect(TRect(mx, my, box.iBr.iX, box.iBr.iY));
+				return;
+				}
+			if (ch >= 0x2581 && ch <= 0x2587)                             // lower eighths
+				r.iTl.iY = box.iBr.iY - (iCellH * (TInt)(ch - 0x2580)) / 8;
+			else if (ch >= 0x2589 && ch <= 0x258F)                        // left eighths
+				r.iBr.iX = box.iTl.iX + (iCellW * (TInt)(0x2590 - ch)) / 8;
+			break;                                                        // 0x2588 = full block
+			}
+		aGc.SetBrushColor(TRgb::Gray16(level));
+		aGc.DrawRect(r);
+		return;
+		}
+
+	// Braille U+2800..U+28FF (spinners, sparklines): draw the dots
+	if (ch >= 0x2800 && ch <= 0x28FF)
+		{
+		TUint bits = ch - 0x2800;
+		// dot order: 1,2,3 left column top-down; 4,5,6 right; 7 left bottom; 8 right bottom
+		static const TInt8 dx[8] = { 0, 0, 0, 1, 1, 1, 0, 1 };
+		static const TInt8 dy[8] = { 0, 1, 2, 0, 1, 2, 3, 3 };
+		aGc.SetBrushColor(fgRgb);
+		TInt stepX = iCellW / 2;
+		TInt stepY = iCellH / 4;
+		if (stepY < 1) stepY = 1;
+		for (TInt i = 0; i < 8; i++)
+			{
+			if (bits & (1 << i))
+				{
+				TInt px = box.iTl.iX + dx[i] * stepX + stepX / 2 - 1;
+				TInt py = box.iTl.iY + dy[i] * stepY + stepY / 2;
+				aGc.DrawRect(TRect(TPoint(px, py), TSize(2, 2)));
+				}
+			}
+		return;
+		}
+
+	// Ordinary text via the code page
+	TInt byte = PsiMapToCodePage(ch);
+	if (byte == 0)
+		return;                       // zero-width
+	if (byte < 0)
+		byte = '?';
+	TBuf<1> text;
+	text.Append((TText)byte);
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.SetPenColor(fgRgb);
+	TPoint base(box.iTl.iX, box.iTl.iY + iAscent);
+	aGc.DrawText(text, base);
+	if ((aLook.iFlags & KSbBold) || iSettings.iBold)
+		aGc.DrawText(text, base + TPoint(1, 0));        // fake bold
+	if (aLook.iFlags & KSbUnderline)
+		aGc.DrawLine(TPoint(box.iTl.iX, box.iBr.iY - 1), TPoint(box.iBr.iX, box.iBr.iY - 1));
+	if (aLook.iFlags & KSbStrike)
+		aGc.DrawLine(TPoint(box.iTl.iX, box.iTl.iY + iCellH / 2),
+			TPoint(box.iBr.iX, box.iTl.iY + iCellH / 2));
+	}
+
+void CTermView::DrawCursor(CWindowGc& aGc) const
+	{
+	CTermView* self = CONST_CAST(CTermView*, this);
+	self->iDrawnCurRow = iCurRow;
+	self->iDrawnCurCol = iCurCol;
+	self->iDrawnCurVisible = iCurVisible;
+	if (iScrollOffset > 0)
+		self->iDrawnCurVisible = EFalse;
+	if (!iCurVisible || iScrollOffset > 0 || iCurRow >= iRows || iCurCol >= iCols)
+		return;
+	TRect box(TPoint(iOriginX + iCurCol * iCellW, iOriginY + iCurRow * iCellH),
+		TSize(iCellW, iCellH));
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetDrawMode(CGraphicsContext::EDrawModeNOTSCREEN);
+	aGc.DrawRect(box);
+	aGc.SetDrawMode(CGraphicsContext::EDrawModePEN);
+	}
+
+// ----- keyboard ------------------------------------------------------------
+
+void CTermView::SendKey(VTermKey aKey, TInt aMod)
+	{
+	vterm_keyboard_key(iVt, aKey, (VTermModifier)aMod);
+	}
+
+void CTermView::SendChar(TUint aChar)
+	{
+	vterm_keyboard_unichar(iVt, aChar, VTERM_MOD_NONE);
+	}
+
+void CTermView::SendCtrl(TUint aLetter)
+	{
+	TBuf8<1> b;
+	b.Append((TUint8)(aLetter & 0x1f));
+	WriteToHost(b);
+	}
+
+void CTermView::SendString(const TDesC8& aText)
+	{
+	WriteToHost(aText);
+	}
+
+void CTermView::SerialInfo()
+	{
+	if (iSshActive)
+		return;
+	TBuf8<512> info;
+	if (iSerial)
+		iSerial->Probe(info);
+	TRAPD(err, BeginDebugL(_L("Serial port info")));
+	if (err != KErrNone)
+		return;
+	LocalMessage(info);
+	TRAP_IGNORE(ShowDebugL());
+	}
+
+void CTermView::SendScreenSize()
+	{
+	TBuf8<48> cmd;
+	cmd.Format(_L8("stty cols %d rows %d\r"), iCols, iRows);
+	SendString(cmd);
+	}
+
+void CTermView::HangUp()
+	{
+	// Hayes escape needs a quiet guard time either side of "+++"
+	User::After(1100000);
+	SendString(KHangupEscape);
+	User::After(1100000);
+	SendString(KHangupCommand);
+	}
+
+void CTermView::ResetTerminal()
+	{
+	SbClear(&iSb);
+	iScrollOffset = 0;
+	iSelActive = EFalse;
+	vterm_screen_reset(iScreen, 1);
+	vterm_screen_flush_damage(iScreen);
+	DrawNow();
+	}
+
+TKeyResponse CTermView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType)
+	{
+	if (aType != EEventKey)
+		return EKeyWasNotConsumed;
+	TUint code = aKeyEvent.iCode;
+	TUint mods = aKeyEvent.iModifiers;
+	if (code != EKeyMenu)
+		AddKeyEntropy(code);
+	if (iReconnectWait)
+		{
+		if (code == EKeyEscape)
+			{
+			CancelReconnect(_L8("\r\n[Reconnect cancelled]\r\n"));
+			return EKeyWasConsumed;
+			}
+		if (code == EKeyEnter)
+			{
+			ReconnectNowL();
+			return EKeyWasConsumed;
+			}
+		}
+	if (iGatheringEntropy)
+		{
+		if (code == EKeyEscape)
+			{
+			iGatheringEntropy = EFalse;
+			LocalMessage(_L8("\r\n[SSH cancelled]\r\n"));
+			return EKeyWasConsumed;
+			}
+		if (code == EKeyMenu)
+			return EKeyWasNotConsumed;
+		if (iKeyCount >= KEntropyKeysNeeded)
+			{
+			iGatheringEntropy = EFalse;
+			LocalMessage(_L8(" done.\r\n"));
+			LaunchSshL();
+			}
+		else
+			LocalMessage(_L8("."));
+		return EKeyWasConsumed;
+		}
+	// Shift+PgUp/PgDn/Home/End move through the history (Fn+arrows on the Psion)
+	if ((mods & EModifierShift) && !(mods & EModifierCtrl))
+		{
+		switch (code)
+			{
+		case EKeyPageUp:   ScrollBy(iRows - 1); return EKeyWasConsumed;
+		case EKeyPageDown: ScrollBy(-(iRows - 1)); return EKeyWasConsumed;
+		case EKeyHome:     ScrollTo(iSb.iCount); return EKeyWasConsumed;
+		case EKeyEnd:      ScrollTo(0); return EKeyWasConsumed;
+		default: break;
+			}
+		}
+	if (code != EKeyMenu)
+		{
+		// typing returns to the live screen and drops the selection
+		if (iSelActive)
+			ClearSelection();
+		if (iScrollOffset > 0)
+			ScrollTo(0);
+		}
+	TInt vm = VTERM_MOD_NONE;
+	if (mods & EModifierShift) vm |= VTERM_MOD_SHIFT;
+	if (mods & EModifierCtrl) vm |= VTERM_MOD_CTRL;
+
+	switch (code)
+		{
+	case EKeyMenu:
+		return EKeyWasNotConsumed;               // let EIKON open the menu
+	case EKeyUpArrow:    SendKey(VTERM_KEY_UP, vm); break;
+	case EKeyDownArrow:  SendKey(VTERM_KEY_DOWN, vm); break;
+	case EKeyLeftArrow:  SendKey(VTERM_KEY_LEFT, vm); break;
+	case EKeyRightArrow: SendKey(VTERM_KEY_RIGHT, vm); break;
+	case EKeyPageUp:     SendKey(VTERM_KEY_PAGEUP, vm); break;
+	case EKeyPageDown:   SendKey(VTERM_KEY_PAGEDOWN, vm); break;
+	case EKeyHome:       SendKey(VTERM_KEY_HOME, vm); break;
+	case EKeyEnd:        SendKey(VTERM_KEY_END, vm); break;
+	case EKeyEnter:      SendKey(VTERM_KEY_ENTER, VTERM_MOD_NONE); break;
+	case EKeyBackspace:  SendKey(VTERM_KEY_BACKSPACE, VTERM_MOD_NONE); break;
+	case EKeyDelete:     SendKey(VTERM_KEY_DEL, VTERM_MOD_NONE); break;
+	case EKeyEscape:     SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE); break;
+	case EKeyTab:        SendKey(VTERM_KEY_TAB, vm & VTERM_MOD_SHIFT); break;
+	default:
+		if (code >= EKeyF1 && code <= EKeyF12)
+			{
+			SendKey((VTermKey)VTERM_KEY_FUNCTION(code - EKeyF1 + 1), VTERM_MOD_NONE);
+			break;
+			}
+		if (code < 0x20)
+			{
+			SendCtrl(code | 0x40);               // already a control character
+			break;
+			}
+		if (code < 0x100)
+			{
+			if ((mods & EModifierCtrl) && ((code >= 'a' && code <= 'z') ||
+				(code >= 'A' && code <= 'Z') || code == '\\' || code == ']' ||
+				code == '[' || code == '^' || code == '_' || code == '@'))
+				{
+				SendCtrl(code);
+				break;
+				}
+			SendChar(PsiCodePageToUnicode(code));
+			break;
+			}
+		return EKeyWasNotConsumed;
+		}
+	return EKeyWasConsumed;
+	}
+
+// ----- scrollback, pen selection, clipboard -----------------------------------
+
+void CTermView::ScrollBy(TInt aLines)
+	{
+	ScrollTo(iScrollOffset + aLines);
+	}
+
+void CTermView::ScrollTo(TInt aOffset)
+	{
+	if (aOffset > iSb.iCount)
+		aOffset = iSb.iCount;
+	if (aOffset < 0)
+		aOffset = 0;
+	if (aOffset == iScrollOffset)
+		return;
+	iScrollOffset = aOffset;
+	iCacheValid = EFalse;
+	DrawNow();
+	}
+
+// Repaints whole view rows [aRow0, aRow1] (e.g. after the selection moved).
+void CTermView::RepaintRows(TInt aRow0, TInt aRow1)
+	{
+	if (aRow0 > aRow1)
+		{
+		TInt t = aRow0; aRow0 = aRow1; aRow1 = t;
+		}
+	if (aRow0 < 0) aRow0 = 0;
+	if (aRow1 >= iRows) aRow1 = iRows - 1;
+	if (aRow0 > aRow1 || !IsActivated())
+		return;
+	BeginPaint();
+	DrawCells(*iPaintGc, aRow0, 0, aRow1 + 1, iCols);
+	DrawScrollIndicator(*iPaintGc);
+	EndPaint();
+	}
+
+void CTermView::ClearSelection()
+	{
+	if (!iSelActive)
+		return;
+	iSelActive = EFalse;
+	TInt l0 = iSelLine0, c0 = iSelCol0, l1 = iSelLine1, c1 = iSelCol1;
+	SbOrder(&l0, &c0, &l1, &c1);
+	RepaintRows(l0 - ViewLine(0), l1 - ViewLine(0));
+	}
+
+// Diagnostic: the Unicode code points and attributes of the first few
+// selected cells, e.g. to find out what an odd-looking character really is.
+void CTermView::ShowCharInfoL()
+	{
+	if (!iSelActive)
+		{
+		iEikonEnv->InfoMsg(_L("Drag the pen over the character first"));
+		return;
+		}
+	TInt l0 = iSelLine0, c0 = iSelCol0, l1 = iSelLine1, c1 = iSelCol1;
+	SbOrder(&l0, &c0, &l1, &c1);
+	TBuf<200> info;
+	TInt shown = 0;
+	for (TInt line = l0; line <= l1 && shown < 6; line++)
+		{
+		TInt row = line - ViewLine(0);
+		TInt from = (line == l0) ? c0 : 0;
+		TInt to = (line == l1) ? c1 : iCols - 1;
+		for (TInt c = from; c <= to && shown < 6; c++, shown++)
+			{
+			TLook look;
+			TUint ch = 0;
+			TInt w = 1;
+			TUint attr = 0;
+			if (row >= 0 && row < iRows && GetLook(row, c, look))
+				{
+				ch = look.iCh;
+				w = look.iWidth;
+				attr = look.iFlags;
+				}
+			if (line >= iLinesPushed)
+				{
+				VTermPos pos;
+				pos.row = line - iLinesPushed;
+				pos.col = c;
+				VTermScreenCell cell;
+				if (vterm_screen_get_cell(iScreen, pos, &cell) && cell.attrs.reverse)
+					attr |= 0x100;
+				}
+			if (shown)
+				info.Append(' ');
+			info.AppendFormat(_L("%04x"), ch == (TUint)-1 ? 0xFFFF : ch);
+			if (w > 1) info.Append('w');
+			if (attr & KSbBold) info.Append('b');
+			if (attr & 0x100) info.Append('r');
+			TInt b = PsiMapToCodePage(ch);
+			if (b > 0 && ch != (TUint)-1)
+				info.AppendFormat(_L("=%02x"), b);
+			}
+		}
+	iEikonEnv->InfoMsg(info);
+	}
+
+void CTermView::SelectScreen()
+	{
+	ClearSelection();
+	iSelLine0 = ViewLine(0);
+	iSelCol0 = 0;
+	iSelLine1 = ViewLine(iRows - 1);
+	iSelCol1 = iCols - 1;
+	iSelActive = ETrue;
+	DrawNow();
+	}
+
+// Pen: drag across text to select it. The right-most column works as a
+// scroll bar: drag there to move through the history.
+void CTermView::HandlePointerEventL(const TPointerEvent& aEvent)
+	{
+	TPoint p = aEvent.iPosition;
+	TInt col = (p.iX - iOriginX) / iCellW;
+	TInt row = (p.iY - iOriginY) / iCellH;
+	if (p.iY < iOriginY) row = -1;
+	if (col < 0) col = 0;
+	if (col >= iCols) col = iCols - 1;
+	TInt rowC = row < 0 ? 0 : (row >= iRows ? iRows - 1 : row);
+
+	switch (aEvent.iType)
+		{
+	case TPointerEvent::EButton1Down:
+		ClearSelection();
+		if (col >= iCols - 1 && iSb.iCount > 0)
+			{
+			iPenMode = EPenScroll;
+			iPenY0 = p.iY;
+			iPenOffset0 = iScrollOffset;
+			}
+		else
+			{
+			iPenMode = EPenSelect;
+			iSelLine0 = iSelLine1 = ViewLine(rowC);
+			iSelCol0 = iSelCol1 = col;
+			}
+		break;
+	case TPointerEvent::EDrag:
+		if (iPenMode == EPenScroll)
+			{
+			// drag down pulls older text into view
+			ScrollTo(iPenOffset0 + (p.iY - iPenY0) / iCellH);
+			}
+		else if (iPenMode == EPenSelect)
+			{
+			// dragging past the top or bottom edge scrolls while selecting
+			if (row < 0)
+				ScrollBy(1);
+			else if (row >= iRows)
+				ScrollBy(-1);
+			TInt line = ViewLine(rowC);
+			if (line == iSelLine1 && col == iSelCol1 && iSelActive)
+				break;
+			TInt oldRow = iSelLine1 - ViewLine(0);
+			iSelLine1 = line;
+			iSelCol1 = col;
+			TBool wasActive = iSelActive;
+			iSelActive = (iSelLine1 != iSelLine0 || iSelCol1 != iSelCol0) || wasActive;
+			if (iSelActive)
+				RepaintRows(wasActive ? oldRow : iSelLine0 - ViewLine(0), rowC);
+			}
+		break;
+	case TPointerEvent::EButton1Up:
+		if (iPenMode == EPenSelect && iSelActive)
+			iEikonEnv->InfoMsg(_L("Shift+Ctrl+C copies the selection"));
+		iPenMode = EPenNone;
+		break;
+	default:
+		break;
+		}
+	}
+
+// Characters of one absolute line, for turning a selection into text.
+int CTermView::SelLineFn(void* aCtx, int aLine, unsigned int* aChars, int aMaxCols)
+	{
+	CTermView* self = (CTermView*)aCtx;
+	if (aLine >= self->iLinesPushed)
+		{
+		TInt r = aLine - self->iLinesPushed;
+		if (r >= self->iRows)
+			return 0;
+		TInt n = self->iCols < aMaxCols ? self->iCols : aMaxCols;
+		for (TInt c = 0; c < n; c++)
+			{
+			VTermPos pos;
+			pos.row = r;
+			pos.col = c;
+			VTermScreenCell cell;
+			aChars[c] = vterm_screen_get_cell(self->iScreen, pos, &cell) ? cell.chars[0] : 0;
+			}
+		return n;
+		}
+	int cols;
+	const TSbCell* sb = SbLine(&self->iSb, self->iLinesPushed - aLine, &cols);
+	if (!sb)
+		return 0;
+	if (cols > aMaxCols)
+		cols = aMaxCols;
+	for (TInt c = 0; c < cols; c++)
+		aChars[c] = (sb[c].iCh == 0xFFFF) ? (unsigned int)-1 : sb[c].iCh;
+	return cols;
+	}
+
+// Unicode -> the Psion's code page, with ASCII stand-ins for line drawing.
+int CTermView::SelMapFn(unsigned int aCh)
+	{
+	TInt seg = PsiBoxSegments(aCh);
+	if (seg > 0)
+		{
+		TBool h = (seg & (KBoxLeft | KBoxRight)) != 0;
+		TBool v = (seg & (KBoxUp | KBoxDown)) != 0;
+		return (h && v) ? '+' : (h ? '-' : '|');
+		}
+	if (aCh >= 0x2580 && aCh <= 0x259F)
+		return '#';
+	if (aCh >= 0x2800 && aCh <= 0x28FF)
+		return '.';
+	TInt b = PsiMapToCodePage(aCh);
+	return b < 0 ? '?' : b;
+	}
+
+void CTermView::CopySelectionL()
+	{
+	if (!iSelActive)
+		{
+		iEikonEnv->InfoMsg(_L("Drag the pen over some text first"));
+		return;
+		}
+	HBufC8* buf = HBufC8::NewLC(KClipMax);
+	TPtr8 p(buf->Des());
+	TInt n = SbSelectionText(&CTermView::SelLineFn, this, &CTermView::SelMapFn,
+		iSelLine0, iSelCol0, iSelLine1, iSelCol1,
+		(unsigned char*)p.Ptr(), KClipMax, CEditableText::EParagraphDelimiter);
+	p.SetLength(n);
+	CClipboard* cb = CClipboard::NewForWritingLC(iCoeEnv->FsSession());
+	CPlainText* text = CPlainText::NewL();
+	CleanupStack::PushL(text);
+	text->InsertL(0, p);
+	text->CopyToStoreL(cb->Store(), cb->StreamDictionary(), 0, text->DocumentLength());
+	cb->CommitL();
+	CleanupStack::PopAndDestroy(3);         // text, cb, buf
+	TBuf<40> msg;
+	msg.Format(_L("Copied %d characters"), n);
+	iEikonEnv->InfoMsg(msg);
+	}
+
+// Types the clipboard to the host (as a bracketed paste when the remote
+// program asked for that, so editors don't auto-indent it).
+void CTermView::PasteL()
+	{
+	CClipboard* cb = NULL;
+	TRAPD(err, cb = CClipboard::NewForReadingL(iCoeEnv->FsSession()));
+	if (err != KErrNone || !cb)
+		{
+		iEikonEnv->InfoMsg(_L("Nothing to paste"));
+		return;
+		}
+	CleanupStack::PushL(cb);
+	CPlainText* text = CPlainText::NewL();
+	CleanupStack::PushL(text);
+	text->PasteFromStoreL(cb->Store(), cb->StreamDictionary(), 0);
+	TInt len = text->DocumentLength();
+	if (len > KClipMax)
+		len = KClipMax;
+	HBufC* buf = HBufC::NewLC(len);
+	TPtr p(buf->Des());
+	text->Extract(p, 0, len);
+	if (iScrollOffset > 0)
+		ScrollTo(0);
+	vterm_keyboard_start_paste(iVt);
+	for (TInt i = 0; i < p.Length(); i++)
+		{
+		TUint c = p[i];
+		if (c == CEditableText::EParagraphDelimiter || c == CEditableText::ELineBreak)
+			SendKey(VTERM_KEY_ENTER, VTERM_MOD_NONE);
+		else if (c == CEditableText::ETabCharacter)
+			SendKey(VTERM_KEY_TAB, VTERM_MOD_NONE);
+		else if (c == CEditableText::ENonBreakingSpace)
+			SendChar(' ');
+		else if (c >= 0x20)
+			SendChar(PsiCodePageToUnicode(c));
+		}
+	vterm_keyboard_end_paste(iVt);
+	CleanupStack::PopAndDestroy(3);         // buf, text, cb
+	}
+
+// ----- SSH session -----------------------------------------------------------
+
+// Keystroke timing is the Psion's best source of unpredictability for the
+// SSH key exchange: keep a rolling buffer of tick counts and clock bits.
+void CTermView::AddKeyEntropy(TUint aCode)
+	{
+	TTime now;
+	now.HomeTime();
+	TUint32 t = now.Int64().Low();
+	TUint32 tick = User::TickCount();
+	TUint8 sample[4];
+	sample[0] = (TUint8)(t ^ aCode);
+	sample[1] = (TUint8)(t >> 8);
+	sample[2] = (TUint8)(tick ^ (t >> 16));
+	sample[3] = (TUint8)(tick >> 8);
+	for (TInt i = 0; i < 4; i++)
+		{
+		iEntropy[iEntropyPos] ^= sample[i];
+		iEntropyPos = (iEntropyPos + 1) % PSI_ENTROPY_SIZE;
+		if (iEntropyFill < PSI_ENTROPY_SIZE)
+			iEntropyFill++;
+		}
+	iKeyCount++;
+	}
+
+TBool CTermView::SeedFileExists()
+	{
+	TEntry entry;
+	return iCoeEnv->FsSession().Entry(KSeedFile, entry) == KErrNone;
+	}
+
+void CTermView::StartSshL()
+	{
+	if (iSshActive || iGatheringEntropy)
+		return;
+	if (iSettings.iSshHost.Length() == 0 || iSettings.iSshUser.Length() == 0)
+		return;
+	if (!SeedFileExists() && iKeyCount < KEntropyKeysNeeded)
+		{
+		// first ever SSH: gather randomness from the user's typing
+		LocalMessage(_L8("\r\nSSH needs some randomness for its keys the first time.\r\n"
+			"Please type random keys until it says done (Esc cancels): "));
+		iGatheringEntropy = ETrue;
+		return;
+		}
+	LaunchSshL();
+	}
+
+void CTermView::StartSpeedTestL()
+	{
+	if (iSshActive || iGatheringEntropy)
+		return;
+	LaunchSshL(1);
+	}
+
+void CTermView::StartUpdateL()
+	{
+	if (iSshActive || iGatheringEntropy)
+		return;
+	if (iSettings.iUpdHost.Length() == 0)
+		return;
+	LaunchSshL(2);
+	}
+
+// ----- screenshots -------------------------------------------------------------
+// A screenshot (.psi) holds the screen pixels (16 greys) plus every cell's
+// character and colours, so problems can be seen and decoded exactly.
+// Layout: "PSISHOT1", width, height, rows, cols, zoom (6 x uint32 LE),
+// width*height 4-bit pixels (row by row), then rows*cols cells of
+// { uint32 code point, uint8 fg, uint8 bg, uint8 flags, uint8 width }.
+
+void CTermView::ShotDir(TDes& aDir)
+	{
+	TVolumeInfo vol;
+	aDir.Copy(iCoeEnv->FsSession().Volume(vol, EDriveD) == KErrNone
+		? _L("D:\\PsiTerm\\") : _L("C:\\PsiTerm\\"));
+	}
+
+void CTermView::ScreenshotL()
+	{
+	if (!iShotTimer)
+		iShotTimer = CPeriodic::NewL(CActive::EPriorityStandard);
+	iShotTimer->Cancel();
+	iShotTimer->Start(600000, 600000, TCallBack(&CTermView::ShotCallback, this));
+	}
+
+TInt CTermView::ShotCallback(TAny* aSelf)
+	{
+	CTermView* self = (CTermView*)aSelf;
+	self->iShotTimer->Cancel();
+	TRAPD(err, self->TakeScreenshotL());
+	if (err != KErrNone)
+		{
+		TBuf<48> m;
+		m.Format(_L("Screenshot failed (%d)"), err);
+		CEikonEnv::Static()->InfoMsg(m);
+		}
+	return 0;
+	}
+
+static void PutU32(TDes8& aBuf, TUint aValue)
+	{
+	for (TInt i = 0; i < 4; i++)
+		aBuf.Append((TUint8)(aValue >> (8 * i)));
+	}
+
+void CTermView::TakeScreenshotL()
+	{
+	RFs& fs = iCoeEnv->FsSession();
+	TFileName name;
+	ShotDir(name);
+	fs.MkDirAll(name);
+	TInt dirLen = name.Length();
+	TInt n;
+	for (n = 1; n < 1000; n++)
+		{
+		name.SetLength(dirLen);
+		name.AppendFormat(_L("shot%03d.psi"), n);
+		TEntry e;
+		if (fs.Entry(name, e) != KErrNone)
+			break;
+		}
+	CWsScreenDevice* screen = iCoeEnv->ScreenDevice();
+	TSize size = screen->SizeInPixels();
+	CFbsBitmap* bmp = new(ELeave) CFbsBitmap;
+	CleanupStack::PushL(bmp);
+	User::LeaveIfError(bmp->Create(size, EGray16));
+	User::LeaveIfError(screen->CopyScreenToBitmap(bmp));
+	RFile file;
+	User::LeaveIfError(file.Replace(fs, name, EFileWrite));
+	CleanupClosePushL(file);
+	TBuf8<32> hdr;
+	hdr.Append(_L8("PSISHOT1"));
+	PutU32(hdr, size.iWidth);
+	PutU32(hdr, size.iHeight);
+	PutU32(hdr, iRows);
+	PutU32(hdr, iCols);
+	PutU32(hdr, iSettings.iZoom);
+	User::LeaveIfError(file.Write(hdr));
+	HBufC8* line = HBufC8::NewLC(size.iWidth / 2 + 8);
+	TPtr8 lp(line->Des());
+	for (TInt y = 0; y < size.iHeight; y++)
+		{
+		bmp->GetScanLine(lp, TPoint(0, y), size.iWidth, EGray16);
+		lp.SetLength((size.iWidth + 1) / 2);
+		User::LeaveIfError(file.Write(lp));
+		}
+	CleanupStack::PopAndDestroy();          // line
+	TBuf8<8 * 16> cells;
+	for (TInt r = 0; r < iRows; r++)
+		for (TInt c = 0; c < iCols; c++)
+			{
+			TLook look;
+			if (!GetLook(r, c, look))
+				{
+				look.iCh = 0; look.iFg = 0; look.iBg = 15; look.iFlags = 0; look.iWidth = 1;
+				}
+			PutU32(cells, look.iCh);
+			cells.Append((TUint8)look.iFg);
+			cells.Append((TUint8)look.iBg);
+			cells.Append((TUint8)look.iFlags);
+			cells.Append((TUint8)look.iWidth);
+			if (cells.Length() + 8 > cells.MaxLength())
+				{
+				User::LeaveIfError(file.Write(cells));
+				cells.Zero();
+				}
+			}
+	User::LeaveIfError(file.Write(cells));
+	CleanupStack::PopAndDestroy(2);         // file, bmp
+	TBuf<64> m;
+	m.Format(_L("Screenshot %d saved - Terminal > Send screenshots"), n);
+	iEikonEnv->InfoMsg(m);
+	}
+
+// Deletes the sent .psi files; returns how many.
+TInt CTermView::DeleteShots()
+	{
+	RFs& fs = iCoeEnv->FsSession();
+	TFileName dir, spec;
+	ShotDir(dir);
+	spec.Copy(dir);
+	spec.Append(_L("*.psi"));
+	CDir* list = NULL;
+	if (fs.GetDir(spec, KEntryAttNormal, ESortByName, list) != KErrNone || !list)
+		return 0;
+	TInt n = list->Count();
+	for (TInt i = 0; i < n; i++)
+		{
+		TFileName f(dir);
+		f.Append((*list)[i].iName);
+		fs.Delete(f);
+		}
+	delete list;
+	return n;
+	}
+
+// Bundles every .psi into one file and POSTs it to the update server.
+void CTermView::SendScreenshotsL()
+	{
+	if (iSshActive || iGatheringEntropy)
+		return;
+	RFs& fs = iCoeEnv->FsSession();
+	TFileName dir, spec;
+	ShotDir(dir);
+	spec.Copy(dir);
+	spec.Append(_L("*.psi"));
+	CDir* list = NULL;
+	if (fs.GetDir(spec, KEntryAttNormal, ESortByName, list) != KErrNone || !list || list->Count() == 0)
+		{
+		delete list;
+		iEikonEnv->InfoMsg(_L("No screenshots to send (Shift+Ctrl+P takes one)"));
+		return;
+		}
+	CleanupStack::PushL(list);
+	iUpdateFile.Copy(dir);
+	iUpdateFile.Append(_L("send.tmp"));
+	RFile out;
+	User::LeaveIfError(out.Replace(fs, iUpdateFile, EFileWrite));
+	CleanupClosePushL(out);
+	HBufC8* buf = HBufC8::NewLC(4096);
+	TPtr8 bp(buf->Des());
+	for (TInt i = 0; i < list->Count(); i++)
+		{
+		const TEntry& e = (*list)[i];
+		TBuf8<64> hdr;
+		hdr.Append(_L8("PSIFILE1"));
+		PutU32(hdr, e.iName.Length());
+		hdr.Append(e.iName);
+		PutU32(hdr, e.iSize);
+		User::LeaveIfError(out.Write(hdr));
+		TFileName f(dir);
+		f.Append(e.iName);
+		RFile in;
+		User::LeaveIfError(in.Open(fs, f, EFileRead));
+		for (;;)
+			{
+			in.Read(bp);
+			if (bp.Length() == 0)
+				break;
+			out.Write(bp);
+			}
+		in.Close();
+		}
+	CleanupStack::PopAndDestroy(3);         // buf, out, list
+	LaunchSshL(3);
+	}
+
+void CTermView::LaunchSshL(TInt aMode)
+	{
+	// hand the serial port over to psissh.exe
+	if (iSerial)
+		iSerial->Close();
+
+	TInt r = iChunk.CreateGlobal(_L(PSI_SHARED_NAME), sizeof(PsiShared), sizeof(PsiShared));
+	if (r == KErrAlreadyExists)
+		r = iChunk.OpenGlobal(_L(PSI_SHARED_NAME), EFalse);
+	if (r != KErrNone)
+		{
+		TBuf8<64> msg;
+		msg.Format(_L8("\r\n[SSH: shared memory error %d]\r\n"), r);
+		LocalMessage(msg);
+		ApplySerialSettings();
+		return;
+		}
+	iChunkOpen = ETrue;
+	iShared = (PsiShared*)iChunk.Base();
+	Mem::FillZ(iShared, sizeof(PsiShared));
+	iShared->magic = PSI_SHARED_MAGIC;
+	iShared->rows = iRows;
+	iShared->cols = iCols;
+	iShared->baud_index = iSettings.iBaudIndex;
+	iShared->rtscts = iSettings.iRtsCts;
+	iShared->port = iSettings.iSshPort > 0 ? iSettings.iSshPort : 22;
+	TPtr8 host((TUint8*)iShared->host, sizeof(iShared->host) - 1);
+	host.Copy(iSettings.iSshHost);
+	host.ZeroTerminate();
+	TPtr8 user((TUint8*)iShared->user, sizeof(iShared->user) - 1);
+	user.Copy(iSettings.iSshUser);
+	user.ZeroTerminate();
+	TPtr8 prefix((TUint8*)iShared->dial_prefix, sizeof(iShared->dial_prefix) - 1);
+	prefix.Copy(_L8("ATDT"));
+	prefix.ZeroTerminate();
+	TPtr8 home((TUint8*)iShared->home, sizeof(iShared->home) - 1);
+	home.Copy(KSshHome);
+	home.ZeroTerminate();
+	iCoeEnv->FsSession().MkDirAll(_L("C:\\System\\Apps\\PsiTerm\\"));
+	Mem::Copy(iShared->entropy, iEntropy, PSI_ENTROPY_SIZE);
+	iShared->entropy_len = PSI_ENTROPY_SIZE;
+	iShared->mode = aMode;
+	iLaunchMode = aMode;
+	iShared->net_mode = (aMode != 1 && iSettings.iNetMode) ? 1 : 0;
+	if (aMode == 3)
+		{
+		// send screenshots: POST the bundle to the update server
+		iShared->port = iSettings.iUpdPort > 0 ? iSettings.iUpdPort : 80;
+		host.Copy(iSettings.iUpdHost);
+		host.ZeroTerminate();
+		TPtr8 path((TUint8*)iShared->path, sizeof(iShared->path) - 1);
+		path.Copy(_L8("/upload"));
+		path.ZeroTerminate();
+		TPtr8 save((TUint8*)iShared->save_as, sizeof(iShared->save_as) - 1);
+		save.Copy(iUpdateFile);
+		save.ZeroTerminate();
+		}
+	if (aMode == 2)
+		{
+		// update: same link as SSH, but to the web server
+		iShared->port = iSettings.iUpdPort > 0 ? iSettings.iUpdPort : 80;
+		host.Copy(iSettings.iUpdHost);
+		host.ZeroTerminate();
+		TPtr8 path((TUint8*)iShared->path, sizeof(iShared->path) - 1);
+		path.Copy(_L8("/"));
+		path.ZeroTerminate();
+		TPtr8 ver((TUint8*)iShared->version, sizeof(iShared->version) - 1);
+		ver.Copy(KPsiTermVersion);
+		ver.ZeroTerminate();
+		// save to the CF card if there is one (D:), else internal memory
+		TVolumeInfo vol;
+		iUpdateFile.Copy(iCoeEnv->FsSession().Volume(vol, EDriveD) == KErrNone
+			? _L("D:\\PsiTerm-update.sis") : _L("C:\\PsiTerm-update.sis"));
+		TPtr8 save((TUint8*)iShared->save_as, sizeof(iShared->save_as) - 1);
+		save.Copy(iUpdateFile);
+		save.ZeroTerminate();
+		}
+	if (aMode == 0)
+		{
+		iUserQuit = EFalse;
+		TPtr8 cmd((TUint8*)iShared->command, sizeof(iShared->command) - 1);
+		cmd.Copy(iSettings.iStartCmd);
+		cmd.ZeroTerminate();
+		if (iSshPassword.Length() > 0)
+			iReconnectPw = iSshPassword;
+		}
+	if (aMode == 0 && iSshPassword.Length() > 0)
+		{
+		TPtr8 pw((TUint8*)iShared->password, sizeof(iShared->password) - 1);
+		pw.Copy(iSshPassword);
+		pw.ZeroTerminate();
+		}
+	iSshPassword.FillZ();
+	iSshPassword.Zero();
+
+	// psissh.exe lives next to PsiTerm.app
+	TParse parse;
+	parse.Set(CEikonEnv::Static()->EikAppUi()->Application()->AppFullName(), NULL, NULL);
+	TFileName exe(parse.DriveAndPath());
+	exe.Append(KSshExeName);
+	r = iSshProcess.Create(exe, KNullDesC);
+	if (r != KErrNone)
+		{
+		TBuf8<96> msg;
+		msg.Format(_L8("\r\n[SSH: could not start psissh.exe, error %d]\r\n"), r);
+		LocalMessage(msg);
+		iChunk.Close();
+		iChunkOpen = EFalse;
+		iShared = NULL;
+		ApplySerialSettings();
+		return;
+		}
+	iSshActive = ETrue;
+	if (!iWatcher)
+		iWatcher = new(ELeave) CSshWatcher(*this);
+	iWatcher->Watch(iSshProcess);
+	if (!iPump)
+		iPump = CPeriodic::NewL(CActive::EPriorityStandard);
+	// every system tick (1/64 s): the old 40 ms poll added up to 3 ticks
+	// to every key echo. An idle poll is a couple of compares.
+	iPump->Start(15625, 15625, TCallBack(PumpCallback, this));
+	iSshProcess.Resume();
+	}
+
+TInt CTermView::PumpCallback(TAny* aSelf)
+	{
+	((CTermView*)aSelf)->PumpSsh();
+	return 1;
+	}
+
+// Move psissh.exe's terminal output into libvterm.
+void CTermView::PumpSsh()
+	{
+	if (!iShared)
+		return;
+	if (iShared->out_tail == iShared->out_head)
+		return;
+	// Feed everything waiting in one paint pass, so libvterm can merge a
+	// burst of scrolling into a single blit.
+	TUint8 buf[1024];
+	BeginPaint();
+	for (TInt rounds = 0; rounds < 8; rounds++)
+		{
+		// copy out up to sizeof(buf) in one or two runs (the ring may wrap)
+		TUint tail = iShared->out_tail;
+		TInt n = (TInt)(iShared->out_head - tail);
+		if (n <= 0)
+			break;
+		if (n > (TInt)sizeof(buf))
+			n = sizeof(buf);
+		TUint off = tail % PSI_OUT_SIZE;
+		TInt run = PSI_OUT_SIZE - (TInt)off;
+		if (run > n)
+			run = n;
+		Mem::Copy(buf, iShared->out + off, run);
+		if (n > run)
+			Mem::Copy(buf + run, iShared->out, n - run);
+		iShared->out_tail = tail + n;
+		if (iCapture)
+			AppendDebug(TPtrC8(buf, n));
+		else
+			FeedTerminal(buf, n);
+		}
+	EndPaint();
+	}
+
+void CTermView::DisconnectSsh()
+	{
+	iUserQuit = ETrue;
+	if (iReconnectWait)
+		CancelReconnect(_L8("\r\n[Reconnect cancelled]\r\n"));
+	if (iSshActive && iShared)
+		iShared->quit = 1;
+	}
+
+// ----- auto-reconnect ----------------------------------------------------------
+// If a logged-in session drops (Psion switched off, WiFi gone, modem hung up)
+// PsiTerm redials the same host after a short wait, backing off to 1 minute.
+// A start command such as "tmux new -A -s psion" puts you back where you were.
+
+void CTermView::ScheduleReconnect()
+	{
+	iReconnectTries++;
+	if (iReconnectTries > 10)
+		{
+		CancelReconnect(_L8("\r\n[Could not reconnect - use SSH to... to try again]\r\n"));
+		return;
+		}
+	TInt secs = 5;
+	for (TInt i = 1; i < iReconnectTries && secs < 60; i++)
+		secs *= 2;
+	if (secs > 60)
+		secs = 60;
+	TBuf8<120> m;
+	m.Format(_L8("\r\n[Connection lost - reconnecting in %d s (try %d). Enter: now, Esc: stop]\r\n"),
+		secs, iReconnectTries);
+	LocalMessage(m);
+	if (!iReconnectTimer)
+		iReconnectTimer = CPeriodic::New(CActive::EPriorityStandard);
+	if (!iReconnectTimer)
+		return;
+	iReconnectTimer->Cancel();
+	iReconnectTimer->Start(secs * 1000000, secs * 1000000, TCallBack(ReconnectCallback, this));
+	iReconnectWait = ETrue;
+	}
+
+void CTermView::CancelReconnect(const TDesC8& aWhy)
+	{
+	if (iReconnectTimer)
+		iReconnectTimer->Cancel();
+	iReconnectWait = EFalse;
+	iReconnecting = EFalse;
+	iReconnectTries = 0;
+	iReconnectPw.FillZ();
+	iReconnectPw.Zero();
+	LocalMessage(aWhy);
+	}
+
+TInt CTermView::ReconnectCallback(TAny* aSelf)
+	{
+	TRAP_IGNORE(((CTermView*)aSelf)->ReconnectNowL());
+	return 0;
+	}
+
+void CTermView::ReconnectNowL()
+	{
+	if (iReconnectTimer)
+		iReconnectTimer->Cancel();
+	if (!iReconnectWait || iSshActive)
+		return;
+	iReconnectWait = EFalse;
+	iReconnecting = ETrue;
+	iSshPassword = iReconnectPw;
+	LaunchSshL();
+	}
+
+void CTermView::SshProcessEnded()
+	{
+	PumpSsh();
+	if (iPump)
+		iPump->Cancel();
+	TInt reason = iSshProcess.ExitReason();
+	TExitType type = iSshProcess.ExitType();
+	TExitCategoryName category(iSshProcess.ExitCategory());
+	TInt stage = iShared ? iShared->state : -1;
+	TInt exitCode = iShared ? iShared->exit_code : -1;
+	TInt lost = iShared ? iShared->lost_link : 0;
+	iSshProcess.Close();
+	iShared = NULL;
+	if (iChunkOpen)
+		{
+		iChunk.Close();
+		iChunkOpen = EFalse;
+		}
+	iSshActive = EFalse;
+	TBuf8<160> msg;
+	if (type == EExitPanic)
+		{
+		static const char* const KStage[] = { "starting", "dialling", "setting up encryption", "connected", "finished" };
+		TBuf8<16> cat;
+		cat.Copy(category);
+		const char* st = (stage >= 0 && stage <= 4) ? KStage[stage] : "unknown";
+		msg.Format(_L8("\r\n[SSH program crashed: %S %d, while %s]\r\n"), &cat, reason, st);
+		}
+	else if (iLaunchMode != 0)
+		msg.Zero();                      // the tool has said how it went
+	else
+		msg.Format(_L8("\r\n[SSH program finished]\r\n"));
+	LocalMessage(msg);
+	ApplySerialSettings();
+	if (iLaunchMode == 3)
+		{
+		iCoeEnv->FsSession().Delete(iUpdateFile);        // the bundle
+		if (type != EExitPanic && exitCode == 11)
+			{
+			TBuf8<64> m;
+			m.Format(_L8("[%d screenshot(s) sent]\r\n"), DeleteShots());
+			LocalMessage(m);
+			}
+		}
+	if (iLaunchMode == 2 && type != EExitPanic && exitCode == 10)
+		{
+		// a newer PsiTerm.sis was downloaded: hand it to the installer and
+		// close, so the installer can replace this app's files
+		LocalMessage(_L8("[Starting the installer - PsiTerm will close]\r\n"));
+		// Open it explicitly with the system installer (InstApp, UID
+		// 0x10000419): a .sis file carries PsiTerm's own UID in its header,
+		// so a plain "open document" would start PsiTerm on it instead.
+		TInt err;
+		{
+		RApaLsSession ls;
+		err = ls.Connect();
+		if (err == KErrNone)
+			{
+			TThreadId tid;
+			err = ls.StartDocument(iUpdateFile, TUid::Uid(0x10000419), tid);
+			ls.Close();
+			}
+		}
+		if (err == KErrNone)
+			iEikonEnv->EikAppUi()->HandleCommandL(EEikCmdExit);
+		else
+			{
+			TBuf8<160> m;
+			TBuf8<64> f;
+			f.Copy(iUpdateFile);
+			m.Format(_L8("\r\nCould not start the installer (%d). Open %S from the System screen.\r\n"), err, &f);
+			LocalMessage(m);
+			}
+		}
+	if (iCapture)
+		TRAP_IGNORE(ShowDebugL());
+	if (iLaunchMode == 0)
+		{
+		if (!iUserQuit && iSettings.iAutoReconnect && type != EExitPanic && !iPendingCmd
+			&& (lost == 1 || (iReconnecting && lost == 2)))
+			{
+			if (lost == 1)
+				iReconnectTries = 0;          // it was working: start the back-off again
+			ScheduleReconnect();
+			}
+		else
+			{
+			iReconnecting = EFalse;
+			iReconnectTries = 0;
+			iReconnectPw.FillZ();
+			iReconnectPw.Zero();
+			}
+		}
+	if (iPendingCmd)
+		{
+		// a Debug tool was waiting for the SSH session to end
+		if (!iPendingIdle)
+			iPendingIdle = CIdle::New(CActive::EPriorityStandard);
+		if (iPendingIdle)
+			{
+			iPendingIdle->Cancel();
+			iPendingIdle->Start(TCallBack(PendingCallback, this));
+			}
+		}
+	}
+
+CSshWatcher::CSshWatcher(CTermView& aView)
+	: CActive(EPriorityStandard), iView(aView)
+	{
+	CActiveScheduler::Add(this);
+	}
+
+CSshWatcher::~CSshWatcher()
+	{
+	Cancel();
+	}
+
+void CSshWatcher::Watch(RProcess& aProcess)
+	{
+	iProcess = &aProcess;
+	aProcess.Logon(iStatus);
+	SetActive();
+	}
+
+void CSshWatcher::RunL()
+	{
+	iView.SshProcessEnded();
+	}
+
+void CSshWatcher::DoCancel()
+	{
+	if (iProcess)
+		iProcess->LogonCancel(iStatus);
+	}
+
+// EPOC R5's TDesC::Left(n) panics (USER 22) when n > Length(), unlike later
+// Symbian versions which clamp. Always go through this.
+static TPtrC LeftSafe(const TDesC& aText, TInt aMax)
+	{
+	return aText.Left(aText.Length() < aMax ? aText.Length() : aMax);
+	}
+
+// ===========================================================================
+// Saved hosts
+// ===========================================================================
+
+CHostList* CHostList::NewL(RFs& aFs)
+	{
+	CHostList* self = new(ELeave) CHostList(aFs);
+	CleanupStack::PushL(self);
+	self->iEntries = new(ELeave) CArrayFixFlat<THostEntry>(4);
+	CleanupStack::Pop();
+	return self;
+	}
+
+CHostList::~CHostList()
+	{
+	if (iEntries)
+		{
+		for (TInt i = 0; i < iEntries->Count(); i++)
+			(*iEntries)[i].iPassword.FillZ();
+		delete iEntries;
+		}
+	}
+
+void CHostList::AddL(const THostEntry& aEntry)
+	{
+	iEntries->AppendL(aEntry);
+	}
+
+void CHostList::Delete(TInt aIndex)
+	{
+	(*iEntries)[aIndex].iPassword.FillZ();
+	iEntries->Delete(aIndex);
+	if (iLast >= iEntries->Count())
+		iLast = iEntries->Count() - 1;
+	if (iLast < 0)
+		iLast = 0;
+	}
+
+// Scrambling key: this Psion's unique ID mixed with a per-file salt.
+TUint32 CHostList::KeyFor(TUint32 aSalt) const
+	{
+	TMachineInfoV1Buf info;
+	TUint32 id = 0x5053494fu;
+	if (UserHal::MachineInfo(info) == KErrNone)
+		id ^= info().iMachineUniqueId.Low() ^ (info().iMachineUniqueId.High() * 2654435761u);
+	TUint32 k = id ^ (aSalt * 2246822519u);
+	return k ? k : 0x9e3779b9u;
+	}
+
+static void Scramble(TDes8& aData, TUint32 aKey)
+	{
+	TUint32 x = aKey;
+	for (TInt i = 0; i < aData.Length(); i++)
+		{
+		x ^= x << 13; x ^= x >> 17; x ^= x << 5;      // xorshift32
+		aData[i] = (TUint8)(aData[i] ^ (x >> 24));
+		}
+	}
+
+static void PutStr(TDes8& aOut, const TDesC& aText)
+	{
+	TBuf8<128> tmp;
+	tmp.Copy(LeftSafe(aText, 127));
+	aOut.Append((TUint8)tmp.Length());
+	aOut.Append(tmp);
+	}
+
+static TBool GetStr(const TDesC8& aIn, TInt& aPos, TDes& aText)
+	{
+	if (aPos >= aIn.Length())
+		return EFalse;
+	TInt len = aIn[aPos++];
+	if (aPos + len > aIn.Length() || len > aText.MaxLength())
+		return EFalse;
+	aText.Copy(aIn.Mid(aPos, len));
+	aPos += len;
+	return ETrue;
+	}
+
+// Hosts.dat: "PH" 1 count last salt[4], then per host:
+//   name host user (length-prefixed), port (2 bytes), password (length-prefixed, scrambled)
+void CHostList::Load()
+	{
+	iEntries->Reset();
+	iLast = 0;
+	RFile file;
+	if (file.Open(iFs, KHostsFile, EFileRead) != KErrNone)
+		return;
+	HBufC8* buf = HBufC8::New(KMaxHosts * 400 + 16);
+	if (!buf)
+		{
+		file.Close();
+		return;
+		}
+	TPtr8 data(buf->Des());
+	TInt r = file.Read(data);
+	file.Close();
+	if (r != KErrNone || data.Length() < 9 || data[0] != 'P' || data[1] != 'H' || data[2] != 1)
+		{
+		delete buf;
+		return;
+		}
+	TInt count = data[3];
+	iLast = data[4];
+	TUint32 salt = data[5] | (data[6] << 8) | (data[7] << 16) | (data[8] << 24);
+	TUint32 key = KeyFor(salt);
+	TInt pos = 9;
+	for (TInt i = 0; i < count && i < KMaxHosts; i++)
+		{
+		THostEntry e;
+		if (!GetStr(data, pos, e.iName) || !GetStr(data, pos, e.iHost) || !GetStr(data, pos, e.iUser))
+			break;
+		if (pos + 3 > data.Length())
+			break;
+		e.iPort = data[pos] | (data[pos + 1] << 8);
+		pos += 2;
+		TInt len = data[pos++];
+		if (pos + len > data.Length() || len > e.iPassword.MaxLength())
+			break;
+		TBuf8<64> pw(data.Mid(pos, len));
+		pos += len;
+		Scramble(pw, key + (TUint32)i * 0x10001u);
+		e.iPassword.Copy(pw);
+		pw.FillZ();
+		TRAPD(err, iEntries->AppendL(e));
+		e.iPassword.FillZ();
+		if (err != KErrNone)
+			break;
+		}
+	data.FillZ();
+	delete buf;
+	if (iLast >= iEntries->Count())
+		iLast = 0;
+	}
+
+TInt CHostList::Save()
+	{
+	HBufC8* buf = HBufC8::New(KMaxHosts * 400 + 16);
+	if (!buf)
+		return KErrNoMemory;
+	TPtr8 data(buf->Des());
+	TUint32 salt = (TUint32)User::TickCount() * 2654435761u ^ (TUint32)(TInt)this;
+	TTime now;
+	now.HomeTime();
+	salt ^= now.Int64().Low();
+	TUint32 key = KeyFor(salt);
+	data.Append('P');
+	data.Append('H');
+	data.Append(1);
+	data.Append((TUint8)iEntries->Count());
+	data.Append((TUint8)iLast);
+	for (TInt b = 0; b < 4; b++)
+		data.Append((TUint8)(salt >> (8 * b)));
+	for (TInt i = 0; i < iEntries->Count(); i++)
+		{
+		const THostEntry& e = (*iEntries)[i];
+		PutStr(data, e.iName);
+		PutStr(data, e.iHost);
+		PutStr(data, e.iUser);
+		data.Append((TUint8)(e.iPort & 0xff));
+		data.Append((TUint8)(e.iPort >> 8));
+		TBuf8<64> pw;
+		pw.Copy(e.iPassword);
+		Scramble(pw, key + (TUint32)i * 0x10001u);
+		data.Append((TUint8)pw.Length());
+		data.Append(pw);
+		pw.FillZ();
+		}
+	iFs.MkDirAll(KHostsFile);
+	RFile file;
+	TInt r = file.Replace(iFs, KHostsFile, EFileWrite);
+	if (r == KErrNone)
+		{
+		r = file.Write(data);
+		file.Close();
+		}
+	data.FillZ();
+	delete buf;
+	return r;
+	}
+
+// ----- "SSH to" host list ---------------------------------------------------
+
+CHostListDialog::CHostListDialog(CHostList& aHosts, TInt& aIndex, TInt& aAction)
+	: iHosts(aHosts), iIndex(aIndex), iAction(aAction)
+	{
+	iAction = 0;
+	}
+
+void CHostListDialog::PreLayoutDynInitL()
+	{
+	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(4);
+	CleanupStack::PushL(names);
+	for (TInt i = 0; i < iHosts.Count(); i++)
+		{
+		const THostEntry& e = iHosts.At(i);
+		TBuf<40> line;
+		if (e.iName.Length())
+			line = e.iName;
+		else
+			line = LeftSafe(e.iHost, 24);
+		if (e.iPassword.Length())
+			line.Append(_L(" *"));          // has a saved password
+		names->AppendL(line);
+		}
+	CEikChoiceList* list = (CEikChoiceList*)Control(EPtDlgHostList);
+	list->SetArrayL(names);
+	list->SetArrayExternalOwnership(EFalse);
+	CleanupStack::Pop();                      // names: now owned by the list
+	TInt current = iIndex;
+	if (current < 0 || current >= iHosts.Count())
+		current = 0;
+	list->SetCurrentItem(current);
+	}
+
+TBool CHostListDialog::OkToExitL(TInt aButtonId)
+	{
+	iIndex = ChoiceListCurrentItem(EPtDlgHostList);
+	iAction = (aButtonId == EEikBidCancel) ? 0 : aButtonId;
+	return ETrue;
+	}
+
+// ----- add / edit one host ---------------------------------------------------
+
+CHostEditDialog::CHostEditDialog(THostEntry& aEntry)
+	: iEntry(aEntry)
+	{
+	}
+
+void CHostEditDialog::PreLayoutDynInitL()
+	{
+	SetEdwinTextL(EPtDlgName, &iEntry.iName);
+	SetEdwinTextL(EPtDlgHost, &iEntry.iHost);
+	SetNumberEditorValue(EPtDlgPort, iEntry.iPort > 0 ? iEntry.iPort : 22);
+	SetEdwinTextL(EPtDlgUser, &iEntry.iUser);
+	// (the secret editor holds at most CEikSecretEditor::EMaxSecEdLength = 32
+	//  characters; its limit is set in the resource - more panics EIKON 12)
+	SetCheckBoxState(EPtDlgRemember,
+		iEntry.iPassword.Length() ? CEikButtonBase::ESet : CEikButtonBase::EClear);
+	}
+
+TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	TBuf<100> host;
+	TBuf<60> user;
+	GetEdwinText(host, EPtDlgHost);
+	GetEdwinText(user, EPtDlgUser);
+	host.Trim();
+	user.Trim();
+	if (host.Length() == 0)
+		{
+		CEikonEnv::Static()->InfoMsg(_L("Enter a host name or IP address"));
+		TryChangeFocusToL(EPtDlgHost);
+		return EFalse;
+		}
+	if (user.Length() == 0)
+		{
+		CEikonEnv::Static()->InfoMsg(_L("Enter a user name"));
+		TryChangeFocusToL(EPtDlgUser);
+		return EFalse;
+		}
+	iEntry.iHost = host;
+	iEntry.iUser = user;
+	GetEdwinText(iEntry.iName, EPtDlgName);
+	iEntry.iName.Trim();
+	if (iEntry.iName.Length() == 0)
+		iEntry.iName = LeftSafe(host, iEntry.iName.MaxLength());
+	iEntry.iPort = NumberEditorValue(EPtDlgPort);
+	TBuf<63> typed;
+	GetSecretEditorText(typed, EPtDlgPassword);
+	if (CheckBoxState(EPtDlgRemember) == CEikButtonBase::ESet)
+		{
+		if (typed.Length())                 // blank keeps the saved password
+			iEntry.iPassword = typed;
+		}
+	else
+		{
+		iEntry.iPassword.FillZ();
+		iEntry.iPassword.Zero();
+		}
+	typed.FillZ();
+	return ETrue;
+	}
+
+// ----- About box ---------------------------------------------------------------
+
+CAboutDialog::CAboutDialog(const TDesC& aStatus)
+	: iStatus(aStatus)
+	{
+	}
+
+void CAboutDialog::PreLayoutDynInitL()
+	{
+	TBuf<32> title(_L("PsiTerm "));
+	title.Append(KPsiTermVersion);
+	SetLabelL(EPtDlgAbout1, title);
+	SetLabelL(EPtDlgAboutStatus, iStatus);
+	}
+
+// ----- update server dialog -----------------------------------------------------
+
+void CConnDialog::PreLayoutDynInitL()
+	{
+	((CEikChoiceList*)Control(EPtDlgBaud))->SetCurrentItem(iSettings.iBaudIndex);
+	((CEikChoiceList*)Control(EPtDlgFlow))->SetCurrentItem(iSettings.iRtsCts ? 1 : 0);
+	((CEikChoiceList*)Control(EPtDlgLink))->SetCurrentItem(iSettings.iNetMode ? 1 : 0);
+	((CEikChoiceList*)Control(EPtDlgReconnect))->SetCurrentItem(iSettings.iAutoReconnect ? 1 : 0);
+	((CEikEdwin*)Control(EPtDlgStartCmd))->SetTextL(&iSettings.iStartCmd);
+	}
+
+TBool CConnDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	iSettings.iBaudIndex = ((CEikChoiceList*)Control(EPtDlgBaud))->CurrentItem();
+	iSettings.iRtsCts = ((CEikChoiceList*)Control(EPtDlgFlow))->CurrentItem() == 1;
+	iSettings.iNetMode = ((CEikChoiceList*)Control(EPtDlgLink))->CurrentItem() == 1;
+	iSettings.iAutoReconnect = ((CEikChoiceList*)Control(EPtDlgReconnect))->CurrentItem() == 1;
+	((CEikEdwin*)Control(EPtDlgStartCmd))->GetText(iSettings.iStartCmd);
+	return ETrue;
+	}
+
+void CDebugDialog::PreLayoutDynInitL()
+	{
+	SetTitleL(iTitle);
+	CEikEdwin* ed = (CEikEdwin*)Control(EPtDlgDebugText);
+	ed->SetTextL(&iText);
+	}
+
+CUpdateDialog::CUpdateDialog(TDes& aHost, TInt& aPort)
+	: iHost(aHost), iPort(aPort)
+	{
+	}
+
+void CUpdateDialog::PreLayoutDynInitL()
+	{
+	SetEdwinTextL(EPtDlgHost, &iHost);
+	SetNumberEditorValue(EPtDlgPort, iPort);
+	}
+
+TBool CUpdateDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	GetEdwinText(iHost, EPtDlgHost);
+	iHost.Trim();
+	iPort = NumberEditorValue(EPtDlgPort);
+	if (iHost.Length() == 0)
+		{
+		CEikonEnv::Static()->InfoMsg(_L("Enter the web server's name or IP address"));
+		return EFalse;
+		}
+	return ETrue;
+	}
+
+// ===========================================================================
+// App UI
+// ===========================================================================
+
+void CPsiTermAppUi::ConstructL()
+	{
+	BaseConstructL();
+	TPsiSettings settings;
+	LoadSettings(settings);
+	iHosts = CHostList::NewL(iCoeEnv->FsSession());
+	iHosts->Load();
+	if (iHosts->Count() == 0 && settings.iSshUser.Length() > 0)
+		{
+		// carry over the host from PsiTerm 0.3's single "SSH to" setting
+		THostEntry e;
+		e.iName = LeftSafe(settings.iSshHost, 24);
+		e.iHost = settings.iSshHost;
+		e.iUser = settings.iSshUser;
+		e.iPort = settings.iSshPort;
+		iHosts->AddL(e);
+		iHosts->Save();
+		}
+	iView = new(ELeave) CTermView;
+	iView->ConstructL(ClientRect(), settings);
+	AddToStackL(iView);
+	}
+
+CPsiTermAppUi::~CPsiTermAppUi()
+	{
+	if (iView)
+		{
+		RemoveFromStack(iView);
+		delete iView;
+		}
+	delete iHosts;
+	}
+
+// Add / edit dialog. Returns ETrue if the user pressed OK.
+TBool CPsiTermAppUi::EditHostL(THostEntry& aEntry)
+	{
+	CHostEditDialog* dlg = new(ELeave) CHostEditDialog(aEntry);
+	return dlg->ExecuteLD(R_PT_HOST_EDIT_DIALOG) != 0;
+	}
+
+// "SSH to...": the saved host list. Loops until the user connects or cancels.
+void CPsiTermAppUi::SshToL()
+	{
+	if (iView->SshActive())
+		{
+		iEikonEnv->InfoMsg(_L("Already connected - Disconnect SSH first"));
+		return;
+		}
+	for (;;)
+		{
+		if (iHosts->Count() == 0)
+			{
+			THostEntry e;
+			e.iPort = 22;
+			if (!EditHostL(e))
+				return;
+			iHosts->AddL(e);
+			iHosts->iLast = iHosts->Count() - 1;
+			iHosts->Save();
+			e.iPassword.FillZ();
+			continue;
+			}
+		TInt index = iHosts->iLast;
+		TInt action = 0;
+		CHostListDialog* dlg = new(ELeave) CHostListDialog(*iHosts, index, action);
+		TInt ok = dlg->ExecuteLD(R_PT_HOSTS_DIALOG);
+		if (!ok && action == 0)
+			return;
+		if (index < 0 || index >= iHosts->Count())
+			index = 0;
+		switch (action)
+			{
+		case EPtBidNew:
+			{
+			if (iHosts->Count() >= KMaxHosts)
+				{
+				iEikonEnv->InfoMsg(_L("Host list is full - delete one first"));
+				break;
+				}
+			THostEntry e;
+			e.iPort = 22;
+			e.iUser = iHosts->At(index).iUser;     // most people reuse a user name
+			if (EditHostL(e))
+				{
+				iHosts->AddL(e);
+				iHosts->iLast = iHosts->Count() - 1;
+				iHosts->Save();
+				}
+			e.iPassword.FillZ();
+			break;
+			}
+		case EPtBidEdit:
+			{
+			THostEntry e = iHosts->At(index);
+			if (EditHostL(e))
+				{
+				iHosts->At(index) = e;
+				iHosts->iLast = index;
+				iHosts->Save();
+				}
+			e.iPassword.FillZ();
+			break;
+			}
+		case EPtBidDelete:
+			{
+			TBuf<60> what(iHosts->At(index).iName);
+			if (CEikonEnv::QueryWinL(_L("Delete this saved host?"), what))
+				{
+				iHosts->Delete(index);
+				iHosts->Save();
+				}
+			break;
+			}
+		default:                                 // Connect
+			{
+			const THostEntry& e = iHosts->At(index);
+			iHosts->iLast = index;
+			iHosts->Save();
+			TPsiSettings& s = iView->Settings();
+			s.iSshHost = e.iHost;
+			s.iSshUser = e.iUser;
+			s.iSshPort = e.iPort;
+			SaveSettings(s);
+			iView->SetSshPassword(e.iPassword);
+			iView->StartSshL();
+			return;
+			}
+			}
+		}
+	}
+
+void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
+	{
+	aSettings.iBaudIndex = 0;     // 9600: what most modems start at
+	aSettings.iRtsCts = 0;
+	aSettings.iZoom = KDefaultZoom;
+	aSettings.iSshHost.Zero();
+	aSettings.iSshUser.Zero();
+	aSettings.iSshPort = 22;
+	aSettings.iNetMode = 0;
+	aSettings.iUpdHost.Zero();
+	aSettings.iUpdPort = 8686;
+	aSettings.iBold = 0;
+	aSettings.iAutoReconnect = 1;
+	aSettings.iStartCmd.Zero();
+	RFs& fs = iCoeEnv->FsSession();
+	RFile file;
+	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
+		return;
+	TBuf8<512> data;
+	if (file.Read(data) == KErrNone && data.Length() >= 3)
+		{
+		if (data[0] <= 4) aSettings.iBaudIndex = data[0];
+		aSettings.iRtsCts = (data[1] != 0);
+		// zoom: 32+level since 0.12 (Terminus); 0.11 stored 16+level of its
+		// Spleen/Courier list; earlier versions 0=small 1=large
+		static const TUint8 KFrom011[5] = { 0, 0, 1, 1, 3 };
+		if (data[2] >= 32 && data[2] < 32 + KZoomLevels)
+			aSettings.iZoom = data[2] - 32;
+		else if (data[2] >= 16 && data[2] < 21)
+			aSettings.iZoom = KFrom011[data[2] - 16];
+		else if (data[2] <= 1)
+			aSettings.iZoom = data[2] ? 1 : 0;
+		// v2: host, user as length-prefixed strings, then port (2 bytes)
+		TInt pos = 3;
+		if (pos < data.Length())
+			{
+			TInt len = data[pos++];
+			if (pos + len <= data.Length() && len <= 100)
+				{
+				aSettings.iSshHost.Copy(data.Mid(pos, len));
+				pos += len;
+				if (pos < data.Length())
+					{
+					len = data[pos++];
+					if (pos + len <= data.Length() && len <= 60)
+						{
+						aSettings.iSshUser.Copy(data.Mid(pos, len));
+						pos += len;
+						if (pos + 2 <= data.Length())
+							aSettings.iSshPort = data[pos] | (data[pos + 1] << 8);
+						pos += 2;
+						if (pos < data.Length())                 // v3: link type
+							aSettings.iNetMode = (data[pos] == 1);
+						pos++;
+						if (pos < data.Length())                 // v4: update server
+							{
+							TInt ulen = data[pos++];
+							if (pos + ulen + 2 <= data.Length() && ulen <= 100)
+								{
+								aSettings.iUpdHost.Copy(data.Mid(pos, ulen));
+								pos += ulen;
+								aSettings.iUpdPort = data[pos] | (data[pos + 1] << 8);
+								pos += 2;
+								if (pos < data.Length())     // v5: bold text
+									aSettings.iBold = (data[pos] == 1);
+								pos++;
+								if (pos + 1 < data.Length())  // v6: reconnect, start command
+									{
+									aSettings.iAutoReconnect = (data[pos++] != 0);
+									TInt clen = data[pos++];
+									if (pos + clen <= data.Length() && clen <= 100)
+										aSettings.iStartCmd.Copy(data.Mid(pos, clen));
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	file.Close();
+	}
+
+void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
+	{
+	RFs& fs = iCoeEnv->FsSession();
+	fs.MkDirAll(KIniFile);
+	RFile file;
+	if (file.Replace(fs, KIniFile, EFileWrite) != KErrNone)
+		return;
+	TBuf8<512> data;
+	data.Append((TUint8)aSettings.iBaudIndex);
+	data.Append((TUint8)aSettings.iRtsCts);
+	data.Append((TUint8)(32 + aSettings.iZoom));
+	TBuf8<100> tmp;
+	tmp.Copy(aSettings.iSshHost);
+	data.Append((TUint8)tmp.Length());
+	data.Append(tmp);
+	tmp.Copy(aSettings.iSshUser);
+	data.Append((TUint8)tmp.Length());
+	data.Append(tmp);
+	data.Append((TUint8)(aSettings.iSshPort & 0xff));
+	data.Append((TUint8)(aSettings.iSshPort >> 8));
+	data.Append((TUint8)(aSettings.iNetMode ? 1 : 0));
+	tmp.Copy(aSettings.iUpdHost);
+	data.Append((TUint8)tmp.Length());
+	data.Append(tmp);
+	data.Append((TUint8)(aSettings.iUpdPort & 0xff));
+	data.Append((TUint8)(aSettings.iUpdPort >> 8));
+	data.Append((TUint8)(aSettings.iBold ? 1 : 0));
+	data.Append((TUint8)(aSettings.iAutoReconnect ? 1 : 0));
+	tmp.Copy(aSettings.iStartCmd);
+	data.Append((TUint8)tmp.Length());
+	data.Append(tmp);
+	file.Write(data);
+	file.Close();
+	}
+
+// The Debug tools need the serial port: offer to end the SSH session first.
+// Returns ETrue if the tool can run now; if the user agrees to disconnect,
+// the command is run again by itself once the session has ended.
+TBool CPsiTermAppUi::ConfirmDisconnectL(TInt aCommand)
+	{
+	if (!iView->SshActive())
+		return ETrue;
+	if (iEikonEnv->QueryWinL(_L("SSH is connected"), _L("Disconnect, then continue?")))
+		iView->RunAfterDisconnectL(aCommand);
+	return EFalse;
+	}
+
+void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
+	{
+	if (aMenuId == R_PT_TERM_MENU)
+		{
+		TBool ssh = iView->SshActive();
+		aMenuPane->SetItemDimmed(EPtCmdSsh, ssh);
+		aMenuPane->SetItemDimmed(EPtCmdSshDisconnect, !ssh);
+		aMenuPane->SetItemDimmed(EPtCmdHangup, ssh);
+		return;
+		}
+	if (aMenuId != R_PT_SETTINGS_MENU)
+		return;
+	TPsiSettings& s = iView->Settings();
+	aMenuPane->SetItemButtonState(EPtCmdZoom0 + s.iZoom, EEikMenuItemSymbolOn);
+	aMenuPane->SetItemButtonState(EPtCmdBold, s.iBold ? EEikMenuItemSymbolOn : 0);
+	}
+
+void CPsiTermAppUi::HandleCommandL(TInt aCommand)
+	{
+	TPsiSettings& s = iView->Settings();
+	switch (aCommand)
+		{
+	case EEikCmdExit:
+		Exit();
+		return;
+	case EPtCmdSsh:     SshToL(); break;
+	case EPtCmdSshDisconnect: iView->DisconnectSsh(); break;
+	case EPtCmdSpeedTest:
+		if (!ConfirmDisconnectL(aCommand))
+			break;
+		iView->BeginDebugL(_L("SSH speed test"));
+		iView->StartSpeedTestL();
+		iView->ShowDebugIfIdleL();              // it could not start
+		break;
+	case EPtCmdHangup:   iView->HangUp(); break;
+	case EPtCmdSendSize: iView->SendScreenSize(); break;
+	case EPtCmdSerialInfo:
+		if (ConfirmDisconnectL(aCommand))
+			iView->SerialInfo();
+		break;
+	case EPtCmdUpdate:
+	case EPtCmdSendShots:
+	case EPtCmdUpdateServer:
+		{
+		if (aCommand != EPtCmdUpdateServer && !ConfirmDisconnectL(aCommand))
+			break;
+		// the server is asked for once, then remembered (Settings > Update server)
+		if (aCommand == EPtCmdUpdateServer || s.iUpdHost.Length() == 0)
+			{
+			TBuf<100> host(s.iUpdHost);
+			TInt port = s.iUpdPort > 0 ? s.iUpdPort : 8686;
+			CUpdateDialog* dlg = new(ELeave) CUpdateDialog(host, port);
+			if (!dlg->ExecuteLD(R_PT_UPDATE_DIALOG))
+				break;
+			s.iUpdHost = host;
+			s.iUpdPort = port;
+			SaveSettings(s);
+			if (aCommand == EPtCmdUpdateServer)
+				break;
+			}
+		iView->BeginDebugL(aCommand == EPtCmdUpdate ? _L("Update PsiTerm") : _L("Send screenshots"));
+		if (aCommand == EPtCmdUpdate)
+			iView->StartUpdateL();
+		else
+			iView->SendScreenshotsL();
+		iView->ShowDebugIfIdleL();              // finished at once / could not start
+		break;
+		}
+	case EPtCmdScreenshot: iView->ScreenshotL(); break;
+	case EPtCmdCopy:     iView->CopySelectionL(); break;
+	case EPtCmdPaste:    iView->PasteL(); break;
+	case EPtCmdSelectScreen: iView->SelectScreen(); break;
+	case EPtCmdCharInfo: iView->ShowCharInfoL(); break;
+	case EPtCmdScrollUp:   iView->ScrollBy(iView->Rows() - 1); break;
+	case EPtCmdScrollDown: iView->ScrollBy(-(iView->Rows() - 1)); break;
+	case EPtCmdScrollEnd:  iView->ScrollTo(0); break;
+	case EPtCmdReset:    iView->ResetTerminal(); break;
+	case EPtCmdAbout:
+		{
+		TPtrC link(s.iNetMode ? _L("Psion Internet") : _L("modem"));
+		TBuf<80> status;
+		status.Format(_L("Screen %dx%d, %d baud, SSH via %S"),
+			iView->Cols(), iView->Rows(), BaudValue(s.iBaudIndex), &link);
+		CAboutDialog* dlg = new(ELeave) CAboutDialog(status);
+		dlg->ExecuteLD(R_PT_ABOUT_DIALOG);
+		break;
+		}
+	case EPtCmdKeyEsc:      iView->SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE); break;
+	case EPtCmdKeyTab:      iView->SendKey(VTERM_KEY_TAB, VTERM_MOD_NONE); break;
+	case EPtCmdKeyShiftTab: iView->SendKey(VTERM_KEY_TAB, VTERM_MOD_SHIFT); break;
+	case EPtCmdKeyInsert:   iView->SendKey(VTERM_KEY_INS, VTERM_MOD_NONE); break;
+	case EPtCmdKeyCtrlC:    iView->SendCtrl('C'); break;
+	case EPtCmdKeyCtrlD:    iView->SendCtrl('D'); break;
+	case EPtCmdKeyCtrlZ:    iView->SendCtrl('Z'); break;
+	case EPtCmdKeyCtrlL:    iView->SendCtrl('L'); break;
+	case EPtCmdKeyCtrlR:    iView->SendCtrl('R'); break;
+	case EPtCmdKeyCtrlA:    iView->SendCtrl('A'); break;
+	case EPtCmdKeyCtrlBackslash: iView->SendCtrl('\\'); break;
+	case EPtCmdBaud9600:
+	case EPtCmdBaud19200:
+	case EPtCmdBaud38400:
+	case EPtCmdBaud57600:
+	case EPtCmdBaud115200:
+		s.iBaudIndex = aCommand - EPtCmdBaud9600;
+		if (!iView->SshActive())
+			iView->ApplySerialSettings();
+		SaveSettings(s);
+		break;
+	case EPtCmdFlowNone:
+	case EPtCmdFlowRtsCts:
+		s.iRtsCts = (aCommand == EPtCmdFlowRtsCts);
+		if (!iView->SshActive())
+			iView->ApplySerialSettings();
+		SaveSettings(s);
+		break;
+	case EPtCmdLinkModem:
+	case EPtCmdLinkPpp:
+		s.iNetMode = (aCommand == EPtCmdLinkPpp);
+		SaveSettings(s);
+		iView->LocalMessage(s.iNetMode
+			? _L8("\r\n[SSH will use the Psion's own Internet connection (dial-up/PPP).\r\n"
+				" Set it up in Control panel > Dial: number PPP, no login script.]\r\n")
+			: _L8("\r\n[SSH will dial through the modem (ATDT host:port).]\r\n"));
+		break;
+	case EPtCmdZoom0:
+	case EPtCmdZoom1:
+	case EPtCmdZoom2:
+	case EPtCmdZoom3:
+	case EPtCmdZoom4:
+		iView->SetFontL(aCommand - EPtCmdZoom0);
+		SaveSettings(s);
+		break;
+	case EPtCmdConnSettings:
+		{
+		TPsiSettings old = s;
+		CConnDialog* dlg = new(ELeave) CConnDialog(s);
+		if (!dlg->ExecuteLD(R_PT_CONN_DIALOG))
+			break;
+		SaveSettings(s);
+		if (s.iBaudIndex != old.iBaudIndex || s.iRtsCts != old.iRtsCts)
+			{
+			if (iView->SshActive())
+				iEikonEnv->InfoMsg(_L("New speed applies when SSH disconnects"));
+			else
+				iView->ApplySerialSettings();
+			}
+		if (s.iNetMode != old.iNetMode && s.iNetMode)
+			iEikonEnv->InfoMsg(_L("Set up the dial-up in Control panel > Dial (number PPP)"));
+		break;
+		}
+	case EPtCmdBold:
+		s.iBold = !s.iBold;
+		SaveSettings(s);
+		iView->DrawNow();
+		break;
+	case EEikCmdZoomIn:                       // sidebar zoom buttons
+		iView->ZoomBy(1);
+		SaveSettings(s);
+		break;
+	case EEikCmdZoomOut:
+		iView->ZoomBy(-1);
+		SaveSettings(s);
+		break;
+	case EEikCmdEditCopy:                     // sidebar clipboard menu
+	case EEikCmdEditCut:
+		iView->CopySelectionL();
+		break;
+	case EEikCmdEditPaste:
+		iView->PasteL();
+		break;
+	default:
+		if (aCommand >= EPtCmdF1 && aCommand <= EPtCmdF12)
+			iView->SendKey((VTermKey)VTERM_KEY_FUNCTION(aCommand - EPtCmdF1 + 1), VTERM_MOD_NONE);
+		break;
+		}
+	}
+
+// ===========================================================================
+// Document / Application / entry points
+// ===========================================================================
+
+CPsiTermDocument::CPsiTermDocument(CEikApplication& aApp)
+	: CEikDocument(aApp)
+	{
+	}
+
+CEikAppUi* CPsiTermDocument::CreateAppUiL()
+	{
+	return new(ELeave) CPsiTermAppUi;
+	}
+
+TUid CPsiTermApplication::AppDllUid() const
+	{
+	return KUidPsiTerm;
+	}
+
+CApaDocument* CPsiTermApplication::CreateDocumentL()
+	{
+	return new(ELeave) CPsiTermDocument(*this);
+	}
+
+EXPORT_C CApaApplication* NewApplication()
+	{
+	return new CPsiTermApplication;
+	}
+
+GLDEF_C TInt E32Dll(TDllReason)
+	{
+	return KErrNone;
+	}

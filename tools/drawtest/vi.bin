@@ -1,0 +1,336 @@
+[?1049h[22;0;0t[>4;2m[?1h=[?2004h[1;30r[?12h[?12l[22;2t[22;1t[27m[23m[29m[m[H[2J[?25l[30;1H"~/lines.txt" 400 lines, 21090 bytes[1;1Hline 0
+line 1  x
+line 2  xx
+line 3  xxx
+line 4  xxxx
+line 5  xxxxx
+line 6  xxxxxx
+line 7  xxxxxxx
+line 8  xxxxxxxx
+line 9  xxxxxxxxx
+line 10  xxxxxxxxxx
+line 11  xxxxxxxxxxx
+line 12  xxxxxxxxxxxx
+line 13  xxxxxxxxxxxxx
+line 14  xxxxxxxxxxxxxx
+line 15  xxxxxxxxxxxxxxx
+line 16  xxxxxxxxxxxxxxxx
+line 17  xxxxxxxxxxxxxxxxx
+line 18  xxxxxxxxxxxxxxxxxx
+line 19  xxxxxxxxxxxxxxxxxxx
+line 20  xxxxxxxxxxxxxxxxxxxx
+line 21  xxxxxxxxxxxxxxxxxxxxx
+line 22  xxxxxxxxxxxxxxxxxxxxxx
+line 23  xxxxxxxxxxxxxxxxxxxxxxx
+line 24  xxxxxxxxxxxxxxxxxxxxxxxx
+line 25  xxxxxxxxxxxxxxxxxxxxxxxxx
+line 26  xxxxxxxxxxxxxxxxxxxxxxxxxx
+line 27  xxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 28  xxxxxxxxxxxxxxxxxxxxxxxxxxxx[1;1H[?25h[?4m[?25l[27m[23m[29m[m[H[2J[1;1Hline 27  xxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 28  xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 29  xxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 30  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 31  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 32  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 33  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 34  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 35  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 36  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 37  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 38  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 39  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 40  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 41  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 42  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 43  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 44  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 45  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 46  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 47  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 48  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 49  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 50  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 51  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 52  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 53  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 54  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 55  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[1;1H[?25h[?25l[27m[23m[29m[m[H[2J[1;1Hline 54  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 55  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 56  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 57  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 58  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 59  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 60  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 61  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 62  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 63  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 64  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 65  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 66  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 67  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 68  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 69  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 70  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 71  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 72  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 73  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 74  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 75  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 76  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 77  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 78  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 79  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 80  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 81  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 82  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[1;1H[?25h[?25l[27m[23m[29m[m[H[2J[1;1Hline 81  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 82  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 83  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 84  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 85  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 86  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 87  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 88  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 89  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 90
+line 91  x
+line 92  xx
+line 93  xxx
+line 94  xxxx
+line 95  xxxxx
+line 96  xxxxxx
+line 97  xxxxxxx
+line 98  xxxxxxxx
+line 99  xxxxxxxxx
+line 100  xxxxxxxxxx
+line 101  xxxxxxxxxxx
+line 102  xxxxxxxxxxxx
+line 103  xxxxxxxxxxxxx
+line 104  xxxxxxxxxxxxxx
+line 105  xxxxxxxxxxxxxxx
+line 106  xxxxxxxxxxxxxxxx
+line 107  xxxxxxxxxxxxxxxxx
+line 108  xxxxxxxxxxxxxxxxxx
+line 109  xxxxxxxxxxxxxxxxxxx[1;1H[?25h[?25l[27m[23m[29m[m[H[2J[1;1Hline 108  xxxxxxxxxxxxxxxxxx
+line 109  xxxxxxxxxxxxxxxxxxx
+line 110  xxxxxxxxxxxxxxxxxxxx
+line 111  xxxxxxxxxxxxxxxxxxxxx
+line 112  xxxxxxxxxxxxxxxxxxxxxx
+line 113  xxxxxxxxxxxxxxxxxxxxxxx
+line 114  xxxxxxxxxxxxxxxxxxxxxxxx
+line 115  xxxxxxxxxxxxxxxxxxxxxxxxx
+line 116  xxxxxxxxxxxxxxxxxxxxxxxxxx
+line 117  xxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 118  xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 119  xxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 120  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 121  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 122  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 123  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 124  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 125  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 126  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 127  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 128  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 129  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 130  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 131  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 132  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 133  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 134  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 135  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 136  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[1;1H[?25h[?25l[27m[23m[29m[m[H[2J[1;1Hline 135  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 136  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 137  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 138  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 139  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 140  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 141  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 142  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 143  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 144  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 145  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 146  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 147  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 148  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 149  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 150  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 151  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 152  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 153  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 154  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 155  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 156  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 157  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 158  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 159  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 160  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 161  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 162  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 163  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[1;1H[?25h[?25lline 108[1;29H[K[2;7H09[2;30H[K[3;7H10[3;31H[K[4;7H11[4;32H[K[5;7H12[5;33H[K[6;7H13[6;34H[K[7;7H14[7;35H[K[8;7H15[8;36H[K[9;7H16[9;37H[K[10;7H17[10;38H[K[11;7H18[11;39H[K[12;7H19[12;40H[K[13;7H20[13;41H[K[14;7H21[14;42H[K[15;7H22[15;43H[K[16;7H23[16;44H[K[17;7H24[17;45H[K[18;7H25[18;46H[K[19;7H26[19;47H[K[20;7H27[20;48H[K[21;7H28[21;49H[K[22;7H29[22;50H[K[23;7H30[23;51H[K[24;7H31[24;52H[K[25;7H32[25;53H[K[26;7H33[26;54H[K[27;7H34[27;55H[K[28;7H35[28;56H[K[29;7H36[29;57H[K[29;1H[?25h[?25l[1;6H81  x[18Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[2;6H82  x[19Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[3;6H83  x[20Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[4;6H84  x[21Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[5;6H85  x[22Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[6;6H86  x[23Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[7;6H87  x[24Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[8;6H88  x[25Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[9;6H89  x[26Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[10;6H90 [10;11H[K[11;6H91  x[11;11H[K[12;6H92  x[12;12H[K[13;6H93  x[13;13H[K[14;6H94  x[14;14H[K[15;6H95  x[15;15H[K[16;6H96  x[16;16H[K[17;6H97  x[17;17H[K[18;6H98  x[18;18H[K[19;6H99  x[19;19H[K[20;7H00[20;21H[K[21;7H01[21;22H[K[22;7H02[22;23H[K[23;7H03[23;24H[K[24;7H04[24;25H[K[25;7H05[25;26H[K[26;7H06[26;27H[K[27;7H07[27;28H[K[28;7H08[28;29H[K[29;7H09[29;30H[K[29;1H[?25h[?25l[1;6H54[1;64H[K[2;6H55[2;65H[K[3;6H56[3;66H[K[4;6H57[4;67H[K[5;6H58[5;68H[K[6;6H59[6;69H[K[7;6H60[7;70H[K[8;6H61[8;71H[K[9;6H62[9;72H[K[10;6H63  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[11;6H64  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[12;6H65  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[13;6H66  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[14;6H67  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[15;6H68[7Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[16;6H69[8Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[17;6H70[9Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[18;6H71[10Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[19;6H72[11Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[20;6H73  x[10Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[21;6H74  x[11Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[22;6H75  x[12Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[23;6H76  x[13Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[24;6H77  x[14Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[25;6H78  x[15Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[26;6H79  x[16Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[27;6H80  x[17Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[28;6H81  x[18Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[29;6H82  x[19Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[14M[1;30r[16;1Hline 83  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 84  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 85  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 86  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 87  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 88  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 89  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 90
+line 91  x
+line 92  xx
+line 93  xxx
+line 94  xxxx
+line 95  xxxxx
+line 96  xxxxxx[?25h[?25l[1;29r[1;1H[14M[1;30r[16;1Hline 97  xxxxxxx
+line 98  xxxxxxxx
+line 99  xxxxxxxxx
+line 100  xxxxxxxxxx
+line 101  xxxxxxxxxxx
+line 102  xxxxxxxxxxxx
+line 103  xxxxxxxxxxxxx
+line 104  xxxxxxxxxxxxxx
+line 105  xxxxxxxxxxxxxxx
+line 106  xxxxxxxxxxxxxxxx
+line 107  xxxxxxxxxxxxxxxxx
+line 108  xxxxxxxxxxxxxxxxxx
+line 109  xxxxxxxxxxxxxxxxxxx
+line 110  xxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[14M[1;30r[16;1Hline 111  xxxxxxxxxxxxxxxxxxxxx
+line 112  xxxxxxxxxxxxxxxxxxxxxx
+line 113  xxxxxxxxxxxxxxxxxxxxxxx
+line 114  xxxxxxxxxxxxxxxxxxxxxxxx
+line 115  xxxxxxxxxxxxxxxxxxxxxxxxx
+line 116  xxxxxxxxxxxxxxxxxxxxxxxxxx
+line 117  xxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 118  xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 119  xxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 120  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 121  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 122  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 123  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 124  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[14M[1;30r[16;1Hline 125  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 126  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 127  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 128  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 129  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 130  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 131  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 132  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 133  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 134  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 135  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 136  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 137  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 138  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[14M[1;30r[16;1Hline 139  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 140  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 141  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 142  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 143  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 144  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 145  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 146  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 147  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 148  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 149  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 150  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 151  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 152  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[14M[1;30r[16;1Hline 153  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 154  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 155  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 156  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 157  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 158  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 159  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 160  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 161  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 162  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 163  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 164  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 165  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 166  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[14L[1;30r[1;1Hline 124  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 125  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 126  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 127  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 128  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 129  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 130  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 131  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 132  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 133  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 134  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 135  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 136  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 137  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[29;1H[?25h[?25l[1;29r[1;1H[14L[1;30r[1;1Hline 110  xxxxxxxxxxxxxxxxxxxx
+line 111  xxxxxxxxxxxxxxxxxxxxx
+line 112  xxxxxxxxxxxxxxxxxxxxxx
+line 113  xxxxxxxxxxxxxxxxxxxxxxx
+line 114  xxxxxxxxxxxxxxxxxxxxxxxx
+line 115  xxxxxxxxxxxxxxxxxxxxxxxxx
+line 116  xxxxxxxxxxxxxxxxxxxxxxxxxx
+line 117  xxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 118  xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 119  xxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 120  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 121  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 122  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+line 123  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[29;1H[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 139  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 140  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 141  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 142  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 143  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 144  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 145  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 146  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 147  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 148  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 149  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 150  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 151  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 152  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 153  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 154  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 155  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 156  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 157  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 158  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 159  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 160  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 161  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 162  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 163  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 164  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 165  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 166  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 167  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 168  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 169  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 170  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 171  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 172  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 173  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 174  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 175  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 176  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 177  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 178  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 179  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 180[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 181  x[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 182  xx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 183  xxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 184  xxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 185  xxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 186  xxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 187  xxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 188  xxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 189  xxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 190  xxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 191  xxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 192  xxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 193  xxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 194  xxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 195  xxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 196  xxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 197  xxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 198  xxxxxxxxxxxxxxxxxx[?25h[28;1H[27;1H[26;1H[25;1H[24;1H[23;1H[22;1H[21;1H[20;1H[19;1H[18;1H[17;1H[16;1H[15;1H[14;1H[13;1H[12;1H[11;1H[10;1H[9;1H[8;1H[7;1H[6;1H[5;1H[4;1H[3;1H[2;1H[1;1H[?25l[1;29r[1;1H[L[1;30r[1;1Hline 169  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 168  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 167  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 166  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 165  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 164  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 163  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 162  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 161  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 160  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 159  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 158  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 157  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 156  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 155  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 154  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 153  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 152  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 151  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 150  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 149  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 148  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 147  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 146  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 145  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 144  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 143  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 142  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 141  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 140  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 139  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25l[1;29r[1;1H[L[1;30r[1;1Hline 138  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[?25h[?25lline 371[1;22H[K[2;6H372[2;23H[K[3;6H373[3;24H[K[4;6H374[4;25H[K[5;6H375[5;26H[K[6;6H376[6;27H[K[7;6H377[7;28H[K[8;6H378[8;29H[K[9;6H379[9;30H[K[10;6H380[10;31H[K[11;6H381[11;32H[K[12;6H382[12;33H[K[13;6H383[13;34H[K[14;6H384[14;35H[K[15;6H385[15;36H[K[16;6H386[16;37H[K[17;6H387[17;38H[K[18;6H388[18;39H[K[19;6H389[19;40H[K[20;6H390[20;41H[K[21;6H391[21;42H[K[22;6H392[22;43H[K[23;6H393[23;44H[K[24;6H394[24;45H[K[25;6H395[25;46H[K[26;6H396[26;47H[K[27;6H397[27;48H[K[28;6H398[28;49H[K[29;6H399[29;50H[K[29;1H[?25h[?25l[1;6H0  [1;11H[K[2;6H1  x[2;11H[K[3;6H2  xx[3;11H[K[4;7H  xx[4;12H[K[5;6H4  xx[5;13H[K[6;6H5  xx[6;14H[K[7;6H6  xx[7;15H[K[8;6H7  xx[8;16H[K[9;6H8  xx[9;17H[K[10;6H9  xx[10;18H[K[11;6H10  x[11;20H[K[12;6H11  x[12;21H[K[13;6H12  x[13;22H[K[14;6H13  x[14;23H[K[15;6H14  x[15;24H[K[16;6H15  x[16;25H[K[17;6H16  x[17;26H[K[18;6H17  x[18;27H[K[19;6H18  x[19;28H[K[20;6H19  x[20;29H[K[21;6H20  x[21;30H[K[22;6H21  x[22;31H[K[23;6H22  x[23;32H[K[24;6H23  x[24;33H[K[25;6H24  x[25;34H[K[26;6H25  x[26;35H[K[27;6H26  x[27;36H[K[28;6H27  x[28;37H[K[29;6H28  x[29;38H[K[1;1H[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 29  xxxxxxxxxxxxxxxxxxxxxxxxxxxxx[1;1H[?25h[?25l[1;29r[29;1H
+[1;30r[29;1Hline 30  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx[1;1H[?25h[?25l[2;29r[2;1H[L[1;30r[2;1Hline 1  x[?25h[?25l[3;29r[3;1H[L[1;30r[3;1Hline 1  x[?25h[?25l[30;1H1 line less; before #4  1 second ago[3;29r[29;1H
+[1;30r[29;1Hline 29  xxxxxxxxxxxxxxxxxxxxxxxxxxxxx[30;1H[K[30;1H1 line less; before #4  1 second ago[2;1H[?25h[?25l[30;1H[K[30;1H:q![?2004l[>4;m[23;2t[23;1t[30;1H[K[30;1H[?2004l[?1l>[?1049l[23;0;0t[?25h[>4;m

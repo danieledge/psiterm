@@ -1,0 +1,39 @@
+# build output
+/build/
+*.o
+*.obj
+*.lib
+*.map
+*.marm
+*.rpp
+ssh/obj/
+ssh/hobj/
+ssh/psissh-host
+ssh/emu/*.pe
+ssh/test/gf/gftest
+tools/sbtest/sbtest
+tools/drawtest/fbtest
+tools/shot/host
+pkg/psiterm.app
+pkg/psiterm.rsc
+pkg/psissh.exe
+__pycache__/
+*.pyc
+
+# release signing key: never commit
+*.key
+!ssh/db/**/*.key
+signing/
+
+# local debugging / device data
+*.psi
+upload-*.bin
+screenshots/
+known_hosts
+*seed*
+!ssh/db/src/dbrandom.c
+
+# editors / OS
+.DS_Store
+*~
+*.swp
