@@ -468,24 +468,40 @@ static void addr_str(ImapNode *list, char *out, int max, int many)
 static const char *k_months = "JanFebMarAprMayJunJulAugSepOctNovDec";
 
 /* "17-Jul-1996 02:44:25 -0700" -> seconds since 1970 (UTC) */
+static long num(const char **p, int max)
+{
+	long v = 0;
+	int n = 0;
+	while (**p == ' ') (*p)++;
+	while (n < max && **p >= '0' && **p <= '9') { v = v * 10 + (**p - '0'); (*p)++; n++; }
+	return n ? v : -1;
+}
+
 static long parse_internaldate(const char *s)
 {
-	int d, y, hh, mm, ss, tz, m;
-	char mon[4];
-	long days;
 	static const int cum[12] = { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
+	long d, y, hh, mm, ss, tz, days, t;
+	int m, sign = 1;
+	d = num(&s, 2);
+	if (d < 1 || *s++ != '-') return 0;
+	for (m = 0; m < 12; m++) if (!pm_strncasecmp(k_months + m * 3, s, 3)) break;
+	if (m == 12) return 0;
+	s += 3;
+	if (*s++ != '-') return 0;
+	y = num(&s, 4);
+	hh = num(&s, 2); if (*s == ':') s++;
+	mm = num(&s, 2); if (*s == ':') s++;
+	ss = num(&s, 2);
 	while (*s == ' ') s++;
-	if (sscanf(s, "%d-%3s-%d %d:%d:%d %d", &d, mon, &y, &hh, &mm, &ss, &tz) != 7) return 0;
-	for (m = 0; m < 12; m++) if (!pm_strncasecmp(k_months + m * 3, mon, 3)) break;
-	if (m == 12 || y < 1970) return 0;
+	if (*s == '-') { sign = -1; s++; } else if (*s == '+') s++;
+	tz = num(&s, 4);
+	if (y < 1970 || hh < 0 || mm < 0 || ss < 0) return 0;
+	if (tz < 0) tz = 0;
 	days = (y - 1970) * 365L + (y - 1969) / 4 + cum[m] + (d - 1);
 	if (m >= 2 && y % 4 == 0) days++;
-	{
-		long t = days * 86400L + hh * 3600L + mm * 60L + ss;
-		int sign = tz < 0 ? -1 : 1, a = tz * sign;
-		t -= sign * ((a / 100) * 3600L + (a % 100) * 60L);
-		return t;
-	}
+	t = days * 86400L + hh * 3600L + mm * 60L + ss;
+	t -= sign * ((tz / 100) * 3600L + (tz % 100) * 60L);
+	return t;
 }
 
 static void flags_from(ImapNode *fl, char *out)

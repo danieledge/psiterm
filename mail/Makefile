@@ -82,7 +82,7 @@ $(O)/%.o: host/%.c $(HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) -c $(TFLAGS) -I$(TOP)/ssh $< -o $@
 $(OUT): $(ENG_OBJS) $(TLS_OBJS) $(LTC_OBJS) $(PLAT) $(O)/libltm.a
-	$(CC) -o $@ $^
+	$(CC) $(ARCH) -o $@ $^
 else
 $(O)/pmepoc.o: engine/pmepoc.cpp $(HDRS)
 	@mkdir -p $(dir $@)
@@ -102,6 +102,18 @@ $(OUT): $(ENG_OBJS) $(TLS_OBJS) $(LTC_OBJS) $(PLAT) $(O)/libltm.a
 	@ls -la $@
 endif
 
+# psimail-emu.pe: the same ARM objects with emu/ standing in for EPOC, to run
+# in an ARM emulator on a PC (emu/run_psimail.py)
+ifneq ($(TARGET),host)
+EMU_OBJS := $(ENG_OBJS) $(TLS_OBJS) $(LTC_OBJS) $(O)/nsprintf.o $(O)/emu/emu_rt.o $(O)/emu/emu_hc.o $(O)/emu/emu_mail.o $(O)/libltm.a
+$(O)/emu/%.o: emu/%.c
+	@mkdir -p $(dir $@)
+	$(CC) -c $(ARCH) -O2 -fno-builtin -w -D__EPOC32__ -I$(MAIL) -I$(TOP)/ssh -I$(E)/include/libc $< -o $@
+$(O)/psimail-emu.pe: $(EMU_OBJS)
+	arm-pe-ld -o $@ -e main -Map $(O)/psimail-emu.map $(EMU_OBJS) $(LIBGCC)
+emu: $(O)/psimail-emu.pe
+endif
+
 clean:
 	rm -rf $(O)
-.PHONY: all clean
+.PHONY: all clean emu
