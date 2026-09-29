@@ -55,7 +55,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.24");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.25");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -2707,6 +2707,17 @@ TBool CConnDialog::OkToExitL(TInt /*aButtonId*/)
 	iSettings.iAutoReconnect = ((CEikChoiceList*)Control(EPtDlgReconnect))->CurrentItem() == 1;
 	((CEikEdwin*)Control(EPtDlgStartCmd))->GetText(iSettings.iStartCmd);
 	return ETrue;
+	}
+
+// EIKON sizes a dialog to its contents and centres it; if that is bigger
+// than the 640x240 screen the title and buttons end up off-screen and the
+// (modal) dialog looks like a frozen, shifted terminal. Keep it on screen.
+void CToolDialog::SetSizeAndPositionL(const TSize& aSize)
+	{
+	TSize screen = iEikonEnv->ScreenDevice()->SizeInPixels();
+	TSize size(aSize.iWidth < screen.iWidth - 8 ? aSize.iWidth : screen.iWidth - 8,
+		aSize.iHeight < screen.iHeight - 8 ? aSize.iHeight : screen.iHeight - 8);
+	SetCornerAndSizeL(EHCenterVCenter, size);   // what CEikDialog does, clamped
 	}
 
 void CToolDialog::PreLayoutDynInitL()

@@ -177,6 +177,7 @@ public:
 	void FinishL();                   // the job has ended: Stop -> Close
 	void CloseL() { TryExitL(EEikBidOk); }
 private:
+	void SetSizeAndPositionL(const TSize& aSize);   // never larger than the screen
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
 	CTermView& iView;

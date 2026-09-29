@@ -95,7 +95,7 @@ RESOURCE DIALOG r_pt_tool_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; id=EPtDlgDebugText;
-			control=EDWIN { width=62; lines=11; maxlength=8000;
+			control=EDWIN { width=40; lines=7; maxlength=8000;
 				flags=EEikEdwinReadOnly|EEikEdwinNoAutoSelection; }; }
 		};
 	}
