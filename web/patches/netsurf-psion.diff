@@ -427,6 +427,25 @@ index 3914771..284898b 100644
 +#endif
 +
  #endif
+diff --git a/utils/file.c b/utils/file.c
+index 75a8a1c..00061ea 100644
+--- a/utils/file.c
++++ b/utils/file.c
+@@ -152,6 +152,14 @@ static nserror posix_nsurl_to_path(struct nsurl *url, char **path_out)
+ 		return res;
+ 	}
+ 
++#ifdef PSIWEB
++	/* file:///D:/PsiMail/x.htm has the path /D:/PsiMail/x.htm: EPOC
++	 * wants D:/PsiMail/x.htm */
++	if (path[0] == '/' && path[1] != '\0' && path[2] == ':') {
++		memmove(path, path + 1, strlen(path));
++	}
++#endif
++
+ 	*path_out = path;
+ 
+ 	return NSERROR_OK;
 diff --git a/utils/regex.h b/utils/regex.h
 index a415239..bddfb58 100644
 --- a/utils/regex.h

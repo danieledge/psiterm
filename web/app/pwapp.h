@@ -73,7 +73,9 @@ public:
 	void EngineEnded();
 	void ShowMessage(const TDesC& aLine1, const TDesC& aLine2);
 	void StartUpdateL();
+	void OpenUrlL(const TDesC& aUrl);
 private:
+	static TInt StartCallback(TAny* aSelf);
 	void Draw(const TRect& aRect) const;
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
 	void HandlePointerEventL(const TPointerEvent& aEvent);
@@ -93,6 +95,8 @@ private:
 	TBool iRunning;
 	CPwWatcher* iWatcher;
 	CPeriodic* iTimer;
+	CIdle* iStarter;
+	TBuf<PW_URL_MAX> iStartUrl;
 	TUint iLastFrame;
 	TInt iEntropyPos;
 	TBuf<80> iMsg1;
@@ -152,6 +156,8 @@ public:
 	~CPwAppUi();
 private:
 	void HandleCommandL(TInt aCommand);
+	TBool ProcessCommandParametersL(TApaCommand aCommand, TFileName& aDocumentName, const TDesC8& aTail);
+	void ProcessMessageL(TUid aUid, const TDesC8& aParams);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
 	void LoadSettings(TPwSettings& aSettings);
 	void SaveSettings(const TPwSettings& aSettings);

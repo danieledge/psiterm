@@ -79,6 +79,9 @@ typedef struct
 	int zoom;                       /* percent */
 	char home_url[PW_URL_MAX];
 	char res_dir[96];               /* e.g. C:\System\Apps\PsiWeb\ */
+	char start_url[PW_URL_MAX];     /* first page instead of home_url, when
+	                                   another app (PsiMail) opened PsiWeb */
+	int start_taken;                /* psiweb: the first page has been picked */
 
 	/* input */
 	volatile unsigned int ev_head;  /* app */

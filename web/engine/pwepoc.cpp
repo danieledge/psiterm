@@ -293,7 +293,19 @@ extern "C" void pwb_ready()
 	Pw()->state = PW_STATE_READY;
 	}
 
-extern "C" const char* pwb_home_url() { return Pw()->home_url[0] ? Pw()->home_url : "about:welcome"; }
+/* the first call (NetSurf's first page) takes start_url if there is one;
+   Home always goes to the home page */
+extern "C" const char* pwb_home_url()
+	{
+	PwShared* s = Pw();
+	if (s->start_url[0] && !s->start_taken)
+		{
+		s->start_taken = 1;
+		return s->start_url;
+		}
+	s->start_taken = 1;
+	return s->home_url[0] ? s->home_url : "about:welcome";
+	}
 extern "C" const char* pwb_res_dir() { return Pw()->res_dir; }
 extern "C" int pwb_load_images() { return Pw()->load_images; }
 extern "C" int pwb_zoom() { return Pw()->zoom; }

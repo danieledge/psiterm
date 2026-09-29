@@ -88,6 +88,7 @@ void CPwWatcher::DoCancel()
 CPwView::~CPwView()
 	{
 	StopEngine();
+	delete iStarter;
 	delete iTimer;
 	delete iWatcher;
 	delete iBitmap;
@@ -121,7 +122,31 @@ void CPwView::ConstructL(const TRect& aRect, const TPwSettings& aSettings)
 	iTimer = CPeriodic::NewL(CActive::EPriorityStandard);
 	iTimer->Start(KTick, KTick, TCallBack(TickCallback, this));
 	ActivateL();
-	StartEngineL();
+	// started once the app is up, so a URL on the command line (from
+	// PsiMail) can be the first page: see CPwAppUi::ProcessCommandParametersL
+	iStarter = CIdle::NewL(CActive::EPriorityStandard);
+	iStarter->Start(TCallBack(StartCallback, this));
+	}
+
+TInt CPwView::StartCallback(TAny* aSelf)
+	{
+	CPwView* v = (CPwView*)aSelf;
+	TRAPD(r, v->StartEngineL());
+	(void)r;
+	return 0;
+	}
+
+// a page to open: now if NetSurf is running, else as its first page
+void CPwView::OpenUrlL(const TDesC& aUrl)
+	{
+	if (iRunning)
+		Command(PW_CMD_OPEN, aUrl);
+	else
+		{
+		iStartUrl = aUrl.Left(iStartUrl.MaxLength());
+		if (iStarter && !iStarter->IsActive())
+			StartEngineL();
+		}
 	}
 
 void CPwView::StartEngineL()
@@ -153,6 +178,8 @@ void CPwView::StartEngineL()
 		? _L("D:\\PsiWeb-update.sis") : _L("C:\\PsiWeb-update.sis"));
 	CopyToC(s->net.save_as, sizeof(s->net.save_as), iUpdateFile);
 	CopyToC(s->home_url, sizeof(s->home_url), iSettings.iHome);
+	CopyToC(s->start_url, sizeof(s->start_url), iStartUrl);
+	iStartUrl.Zero();
 
 	// the engine and its resources (Messages, CSS) live next to the app
 	TParse parse;
@@ -805,6 +832,36 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 	default:
 		break;
 		}
+	}
+
+// PsiMail starts PsiWeb with a URL as the command line's tail ...
+TBool CPwAppUi::ProcessCommandParametersL(TApaCommand /*aCommand*/, TFileName& aDocumentName, const TDesC8& aTail)
+	{
+	if (aTail.Length() > 0)
+		{
+		TBuf<PW_URL_MAX> url;
+		url.Copy(aTail.Left(url.MaxLength()));
+		url.Trim();
+		if (url.Length() > 0)
+			iView->OpenUrlL(url);
+		}
+	aDocumentName.Zero();          // PsiWeb has no document file
+	return EFalse;
+	}
+
+// ... or, when PsiWeb is already running, sends it the URL as a message
+void CPwAppUi::ProcessMessageL(TUid aUid, const TDesC8& aParams)
+	{
+	if (aUid != KUidPsiWeb)
+		{
+		CEikAppUi::ProcessMessageL(aUid, aParams);
+		return;
+		}
+	TBuf<PW_URL_MAX> url;
+	url.Copy(aParams.Left(url.MaxLength()));
+	url.Trim();
+	if (url.Length() > 0)
+		iView->OpenUrlL(url);
 	}
 
 // ===========================================================================

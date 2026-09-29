@@ -17,6 +17,7 @@
 #include <apgcli.h>
 #include <txtetext.h>
 #include <apacmdln.h>
+#include <apgtask.h>
 #include <eikdll.h>
 #include "pmapp.h"
 
@@ -1967,18 +1968,23 @@ void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
 
 const TUid KUidPsiWeb = { 0x01000A7A };
 
+const TInt PM_WEB_URL_MAX = 500;      // PsiWeb takes up to 511 bytes
+
 void CPmView::OpenWebL(const TDesC& aUrl)
 	{
-	// PsiWeb needs the serial port: let go of it
-	Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
-	// already running? then tell it through its shared memory
-	RChunk chunk;
-	if (chunk.OpenGlobal(_L("PsiWebShared"), EFalse) == KErrNone)
+	// PsiWeb needs the serial port for web addresses (not for our own files)
+	if (aUrl.Left(5).CompareF(_L("file:")) != 0)
+		Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
+	TBuf8<PM_WEB_URL_MAX> url8;
+	url8.Copy(aUrl.Left(PM_WEB_URL_MAX));
+	// already running? then hand it the address (CPwAppUi::ProcessMessageL)
+	TApaTaskList tasks(iEikonEnv->WsSession());
+	TApaTask task = tasks.FindApp(KUidPsiWeb);
+	if (task.Exists())
 		{
-		// PwShared (web/psiweb.h): the command is at a known place; rather
-		// than depend on its layout, start PsiWeb again: it hands the
-		// address to the running copy
-		chunk.Close();
+		task.SendMessage(KUidPsiWeb, url8);
+		task.BringToForeground();
+		return;
 		}
 	RApaLsSession ls;
 	User::LeaveIfError(ls.Connect());
@@ -1994,9 +2000,7 @@ void CPmView::OpenWebL(const TDesC& aUrl)
 	CApaCommandLine* cmd = CApaCommandLine::NewLC();
 	cmd->SetLibraryNameL(info.iFullName);
 	cmd->SetCommandL(EApaCommandRun);
-	TBuf8<256> tail;
-	tail.Copy(aUrl.Left(250));
-	cmd->SetTailEndL(tail);
+	cmd->SetTailEndL(url8);
 	EikDll::StartAppL(*cmd);
 	CleanupStack::PopAndDestroy();          // cmd
 	Toast(_L("Opening in PsiWeb..."));
