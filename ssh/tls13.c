@@ -338,9 +338,11 @@ int tls_connect(const char *host, char *why, int whymax)
 			0xCF,0x21,0xAD,0x74,0xE5,0x9A,0x61,0x11,0xBE,0x1D,0x8C,0x02,0x1E,0x65,0xB8,0x91,
 			0xC2,0xA2,0x11,0x16,0x7A,0xBB,0x8C,0x5E,0x07,0x9E,0x09,0xE2,0xC8,0xA8,0x33,0x9C };
 		if (hs[0] != 2) { g_err = "expected ServerHello"; goto fail; }
+		if (mlen < 38 || 4 + mlen > hlen) { g_err = "bad ServerHello"; goto fail; }
 		if (!memcmp(hs + 6, hrr, 32)) { g_err = "server wants a different key exchange"; goto fail; }
 		p += 2 + 32;
 		sid = hs[p]; p += 1 + sid;
+		if (p + 5 > 4 + mlen) { g_err = "bad ServerHello"; goto fail; }
 		if (hs[p] != 0x13 || hs[p + 1] != 0x03) { g_err = "server chose an unsupported cipher"; goto fail; }
 		p += 3;
 		el = (hs[p] << 8) | hs[p + 1]; p += 2;
@@ -349,6 +351,7 @@ int tls_connect(const char *host, char *why, int whymax)
 		while (p + 4 <= end) {
 			int et = (hs[p] << 8) | hs[p + 1], elen = (hs[p + 2] << 8) | hs[p + 3];
 			p += 4;
+			if (p + elen > end) goto fail;
 			if (et == 51 && elen >= 36 && ((hs[p] << 8) | hs[p + 1]) == 0x001d && hs[p + 3] == 32) {
 				memcpy(server_pub, hs + p + 4, 32);
 				got_sh = 1;

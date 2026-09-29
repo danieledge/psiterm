@@ -32,6 +32,7 @@ static TUint8 gRx[1024];
 static int gRxLen = 0;
 static int gRxPos = 0;
 static int gNetClosed = 0;
+extern "C" int pg_net_closed() { return gNetClosed; }
 
 // Psion TCP/IP mode (off by default): instead of the WiRSa's "ATDT host:port"
 // pipe, connect a real socket through EPOC's own networking - normally a

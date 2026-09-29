@@ -63,7 +63,8 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.54");           // also in psiterm.pkg; version.txt must match
+_LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
+_LIT(KPsiTermVersion, "0.55");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -80,6 +81,28 @@ static TBps BaudFromIndex(TInt aIndex)
 static TPtrC LeftSafe(const TDesC& aText, TInt aMax)
 	{
 	return aText.Left(aText.Length() < aMax ? aText.Length() : aMax);
+	}
+
+// Saves a whole data file safely: into "<name>~" first, then swapped in, so
+// a flat battery mid-write never leaves a half-written (or empty) file
+static TInt SafeWrite(RFs& aFs, const TDesC& aName, const TDesC8& aData)
+	{
+	aFs.MkDirAll(aName);
+	TFileName tmp(aName);
+	tmp.Append('~');
+	RFile file;
+	TInt r = file.Replace(aFs, tmp, EFileWrite);
+	if (r != KErrNone)
+		return r;
+	r = file.Write(aData);
+	if (r == KErrNone)
+		r = file.Flush();
+	file.Close();
+	if (r == KErrNone)
+		r = aFs.Replace(tmp, aName);
+	if (r != KErrNone)
+		aFs.Delete(tmp);
+	return r;
 	}
 
 _LIT(KPppSuffix, " (Psion Internet)");
@@ -879,11 +902,21 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 	{
 	if (iSshActive && iShared)
 		{
+		// wait a little for room (psissh drains it), but never overwrite
+		// keys it has not read yet: past ~2 s the rest is dropped
+		TInt waited = 0;
 		for (TInt i = 0; i < aBytes.Length(); i++)
 			{
-			TInt guard = 0;
-			while (iShared->kbd_head - iShared->kbd_tail >= PSI_KBD_SIZE && guard++ < 200)
+			while (iShared->kbd_head - iShared->kbd_tail >= PSI_KBD_SIZE && waited < 400)
+				{
 				User::After(5000);
+				waited++;
+				}
+			if (iShared->kbd_head - iShared->kbd_tail >= PSI_KBD_SIZE)
+				{
+				iEikonEnv->InfoMsg(_L("The connection is busy - some text was not sent"));
+				return;
+				}
 			iShared->kbd[iShared->kbd_head % PSI_KBD_SIZE] = aBytes[i];
 			iShared->kbd_head++;
 			}
@@ -1477,7 +1510,7 @@ void CTermView::ShowWelcome()
 			w.Append(_L8("\x1b[0m  "));
 			AppendText(w, e.iName, 14);
 			w.Append(_L8(" \x1b[90m"));
-			TBuf<80> where(e.iUser);
+			TBuf<164> where(e.iUser);
 			where.Append('@');
 			where.Append(LeftSafe(e.iHost, 60));
 			AppendText(w, where, width - 20 > 10 ? width - 20 : 10);
@@ -2773,16 +2806,25 @@ void CTermView::InstallLoginKeyL(const TDesC& aBase)
 void CTermView::StartSpeedTestL()
 	{
 	if (iSshActive || iGatheringEntropy)
+		{
+		LocalMessage(_L8("Busy - finish typing the random keys (or press Esc) first.\r\n"));
 		return;
+		}
 	LaunchSshL(1);
 	}
 
 void CTermView::StartUpdateL()
 	{
 	if (iSshActive || iGatheringEntropy)
+		{
+		LocalMessage(_L8("Busy - finish typing the random keys (or press Esc) first.\r\n"));
 		return;
+		}
 	if (iSettings.iUpdSource == 1 && iSettings.iUpdHost.Length() == 0)
+		{
+		LocalMessage(_L8("No local update server set: Settings > Update source.\r\n"));
 		return;
+		}
 	LaunchSshL(2);
 	}
 
@@ -2947,7 +2989,7 @@ void CTermView::SendScreenshotsL()
 	for (TInt i = 0; i < list->Count(); i++)
 		{
 		const TEntry& e = (*list)[i];
-		TBuf8<64> hdr;
+		TBuf8<300> hdr;
 		hdr.Append(_L8("PSIFILE1"));
 		PutU32(hdr, e.iName.Length());
 		hdr.Append(e.iName);
@@ -2978,7 +3020,22 @@ void CTermView::LaunchSshL(TInt aMode)
 
 	TInt r = iChunk.CreateGlobal(_L(PSI_SHARED_NAME), sizeof(PsiShared), sizeof(PsiShared));
 	if (r == KErrAlreadyExists)
+		{
 		r = iChunk.OpenGlobal(_L(PSI_SHARED_NAME), EFalse);
+		if (r == KErrNone)
+			{
+			// a psissh left over from a PsiTerm that crashed may still be
+			// running (and holding the serial port): ask it to stop first
+			PsiShared* old = (PsiShared*)iChunk.Base();
+			if (old->magic == PSI_SHARED_MAGIC && old->state != PSI_STATE_EXITED)
+				{
+				old->quit = 1;
+				for (TInt w = 0; w < 50 && old->state != PSI_STATE_EXITED; w++)
+					User::After(100000);
+				User::After(500000);           // let it hang up and let go
+				}
+			}
+		}
 	if (r != KErrNone)
 		{
 		TBuf8<64> msg;
@@ -3053,12 +3110,16 @@ void CTermView::LaunchSshL(TInt aMode)
 		{
 		// update: same link as SSH, to GitHub (HTTPS) or the local server
 		TPtr8 path((TUint8*)iShared->path, sizeof(iShared->path) - 1);
-		if (iSettings.iUpdSource == 0)
+		if (iSettings.iUpdSource != 1)
 			{
+			// GitHub: the main branch (stable), or dev (test builds)
 			iShared->tls = 1;
 			iShared->port = 443;
 			host.Copy(KGitHubHost);
-			path.Copy(KGitHubPath);
+			if (iSettings.iUpdSource == 2)
+				path.Copy(KGitHubDevPath);
+			else
+				path.Copy(KGitHubPath);
 			}
 		else
 			{
@@ -3586,14 +3647,7 @@ TInt CHostList::Save()
 		data.Append((TUint8)e.iAuth);
 		data.Append((TUint8)e.iKeyId);
 		}
-	iFs.MkDirAll(KHostsFile);
-	RFile file;
-	TInt r = file.Replace(iFs, KHostsFile, EFileWrite);
-	if (r == KErrNone)
-		{
-		r = file.Write(data);
-		file.Close();
-		}
+	TInt r = SafeWrite(iFs, KHostsFile, data);
 	data.FillZ();
 	delete buf;
 	return r;
@@ -3725,15 +3779,7 @@ TInt CKeyList::Save()
 		data.Append((TUint8)(*iEntries)[i].iId);
 		PutStr(data, (*iEntries)[i].iName);
 		}
-	iFs.MkDirAll(KKeysFile);
-	RFile file;
-	TInt r = file.Replace(iFs, KKeysFile, EFileWrite);
-	if (r == KErrNone)
-		{
-		r = file.Write(data);
-		file.Close();
-		}
-	return r;
+	return SafeWrite(iFs, KKeysFile, data);
 	}
 
 // 0.44-0.49 kept one key as id_ed25519(.pub): it becomes key 1, "Psion key"
@@ -3868,14 +3914,7 @@ TInt CSnippetList::Save()
 		data.Append((TUint8)(s.iEnter ? 1 : 0));
 		data.Append((TUint8)s.iKey);
 		}
-	iFs.MkDirAll(KSnippetsFile);
-	RFile file;
-	TInt r = file.Replace(iFs, KSnippetsFile, EFileWrite);
-	if (r == KErrNone)
-		{
-		r = file.Write(data);
-		file.Close();
-		}
+	TInt r = SafeWrite(iFs, KSnippetsFile, data);
 	delete buf;
 	return r;
 	}
@@ -4046,7 +4085,7 @@ void CHostListDialog::PreLayoutDynInitL()
 		if (e.iPassword.Length())
 			line.Append(_L(" *"));          // has a saved password
 		// "name - user@host", as much as fits
-		TBuf<80> where(e.iUser);
+		TBuf<164> where(e.iUser);
 		where.Append('@');
 		where.Append(LeftSafe(e.iHost, 60));
 		if (e.iName.CompareF(e.iHost) == 0 && e.iUser.Length())
@@ -4357,14 +4396,16 @@ TBool CToolDialog::OkToExitL(TInt /*aButtonId*/)
 
 void CUpdateDialog::PreLayoutDynInitL()
 	{
-	((CEikChoiceList*)Control(EPtDlgSource))->SetCurrentItem(iSource ? 1 : 0);
+	// choices: GitHub stable, GitHub testing, local server (iSource 0, 2, 1)
+	((CEikChoiceList*)Control(EPtDlgSource))->SetCurrentItem(iSource == 2 ? 1 : (iSource == 1 ? 2 : 0));
 	SetEdwinTextL(EPtDlgHost, &iHost);
 	SetNumberEditorValue(EPtDlgPort, iPort);
 	}
 
 TBool CUpdateDialog::OkToExitL(TInt /*aButtonId*/)
 	{
-	iSource = ((CEikChoiceList*)Control(EPtDlgSource))->CurrentItem() == 1 ? 1 : 0;
+	TInt item = ((CEikChoiceList*)Control(EPtDlgSource))->CurrentItem();
+	iSource = item == 1 ? 2 : (item == 2 ? 1 : 0);
 	GetEdwinText(iHost, EPtDlgHost);
 	iHost.Trim();
 	iPort = NumberEditorValue(EPtDlgPort);
@@ -4609,7 +4650,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 										aSettings.iStartCmd.Copy(data.Mid(pos, clen));
 									pos += clen;
 									if (pos < data.Length())      // v7: update source
-										aSettings.iUpdSource = (data[pos] == 1) ? 1 : 0;
+										aSettings.iUpdSource = data[pos] <= 2 ? data[pos] : 0;
 									pos++;
 									if (pos + 4 < data.Length())  // v8: appearance, tmux
 										{
@@ -4639,10 +4680,6 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	{
 	RFs& fs = iCoeEnv->FsSession();
-	fs.MkDirAll(KIniFile);
-	RFile file;
-	if (file.Replace(fs, KIniFile, EFileWrite) != KErrNone)
-		return;
 	TBuf8<512> data;
 	data.Append((TUint8)aSettings.iBaudIndex);
 	data.Append((TUint8)aSettings.iRtsCts);
@@ -4667,7 +4704,7 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	tmp.Copy(aSettings.iStartCmd);
 	data.Append((TUint8)tmp.Length());
 	data.Append(tmp);
-	data.Append((TUint8)(aSettings.iUpdSource ? 1 : 0));
+	data.Append((TUint8)(aSettings.iUpdSource <= 2 ? aSettings.iUpdSource : 0));
 	data.Append((TUint8)aSettings.iTheme);
 	data.Append((TUint8)aSettings.iCursor);
 	data.Append((TUint8)(aSettings.iBlink ? 1 : 0));
@@ -4676,8 +4713,7 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append((TUint8)(aSettings.iBell ? 1 : 0));
 	data.Append((TUint8)(aSettings.iStartScreen ? 1 : 0));
 	data.Append((TUint8)(aSettings.iTmuxTabs ? 1 : 0));
-	file.Write(data);
-	file.Close();
+	SafeWrite(fs, KIniFile, data);
 	}
 
 // The Debug tools need the serial port: offer to end the SSH session first.

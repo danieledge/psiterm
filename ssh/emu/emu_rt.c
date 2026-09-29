@@ -194,6 +194,7 @@ void pg_msleep(int ms) { emu_hc(PG(6), ms, 0, 0, 0); }
 int pg_serial_write(const void *b, int n) { return emu_hc(PG(7), (int)b, n, 0, 0); }
 int pg_net_avail(void) { return emu_hc(PG(8), 0, 0, 0, 0); }
 int pg_net_read(void *b, int m) { return emu_hc(PG(9), (int)b, m, 0, 0); }
+int pg_net_closed(void) { return 0; }
 void pg_net_set_closed(void) { emu_hc(PG(10), 0, 0, 0, 0); }
 int pg_kbd_avail(void) { return emu_hc(PG(11), 0, 0, 0, 0); }
 int pg_kbd_read(void *b, int m) { return emu_hc(PG(12), (int)b, m, 0, 0); }

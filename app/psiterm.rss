@@ -495,7 +495,7 @@ RESOURCE DIALOG r_pt_about_dialog
 // Update: where to fetch version.txt and PsiTerm.sis from
 RESOURCE ARRAY r_pt_source_array
 	{
-	items={ LBUF { txt="GitHub (HTTPS)"; }, LBUF { txt="Local server"; } };
+	items={ LBUF { txt="GitHub"; }, LBUF { txt="GitHub - test builds (dev)"; }, LBUF { txt="Local server"; } };
 	}
 
 // Where updates come from; the local server is also where Debug >

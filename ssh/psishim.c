@@ -43,6 +43,7 @@ extern int pg_init(void);
 extern void pg_close(void);
 extern void pg_set_state(int);
 extern void pg_dial_verbose(int);
+extern int pg_net_closed(void);
 extern void pg_set_exit(int);
 extern int pg_quit_requested(void);
 extern void pg_msleep(int);
@@ -326,8 +327,8 @@ int psi_read(int fd, void *buf, size_t len)
 	if (fd == PSI_FD_NET) {
 		int n;
 		while ((n = pg_net_read(buf, len)) == 0) {
-			if (pg_quit_requested())
-				return 0;
+			if (pg_quit_requested() || pg_net_closed())
+				return 0;            /* EOF: the connection is gone */
 			pg_wait(-1, 1, 0);
 		}
 		return n;
@@ -901,7 +902,7 @@ static int run_update(void)
 	if (g_tls)
 		seedrandom();                         /* TLS needs fresh random numbers */
 
-	sprintf(msg, "Checking %s://%s%s ...\r\n", scheme, s->host, s->path);
+	sprintf(msg, "Checking %s://%.60s%.60s ...\r\n", scheme, s->host, s->path);
 	pg_out_write(msg, strlen(msg));
 	/* GitHub's CDN caches each file for up to 5 minutes, independently, so
 	   right after a release version.txt, the .sig and the .sis can disagree.
@@ -925,10 +926,14 @@ static int run_update(void)
 	   (.../v0.30/dist/ instead of .../main/dist/): a tag never changes, so
 	   no cache anywhere can hand out a mix of old and new files. */
 	if (g_tls) {
+		/* main (stable) or dev (testing) channel */
 		char *m = strstr(s->path, "/main/");
+		int skip = 6;
+		if (!m) { m = strstr(s->path, "/dev/"); skip = 5; }
 		if (m && strlen(s->path) + strlen(remote) < sizeof(s->path) - 2) {
 			char rest[64];
-			strcpy(rest, m + 6);
+			strncpy(rest, m + skip, sizeof(rest) - 1);
+			rest[sizeof(rest) - 1] = 0;
 			sprintf(m, "/v%s/%s", remote, rest);
 		}
 	}
@@ -955,6 +960,12 @@ static int run_update(void)
 			long want, clen;
 			int k;
 			if (total >= 0 && got >= total) break;
+			if (pg_quit_requested()) {          /* Stop: don't redial */
+				fclose(f);
+				remove(s->save_as);
+				sprintf(why, "cancelled");
+				goto fail;
+			}
 			if (g_tls) {
 				sprintf(path, "%sPsiTerm.sis", s->path);
 				clen = http_request(path, got, chunk, why, sizeof(why));
@@ -963,7 +974,9 @@ static int run_update(void)
 				clen = http_request(path, 0, 0, why, sizeof(why));
 			}
 			if (clen == -2) {
-				if (!strcmp(why, "cancelled") || ++tries > 6) { fclose(f); goto fail; }
+				if (!strcmp(why, "cancelled") || pg_quit_requested() || ++tries > 6) {
+					fclose(f); remove(s->save_as); goto fail;
+				}
 				sprintf(msg, "\r  %ld KB - %.40s, retrying (%d) ", got / 1024, why, tries);
 				pg_out_write(msg, strlen(msg));
 				continue;
@@ -978,10 +991,11 @@ static int run_update(void)
 			want = total - got < chunk ? total - got : chunk;
 			k = (clen == want) ? read_body(buf, (int)want) : -1;
 			pg_hangup();
-			if (k == -2) { fclose(f); sprintf(why, "cancelled"); goto fail; }
+			if (k == -2) { fclose(f); remove(s->save_as); sprintf(why, "cancelled"); goto fail; }
 			if (k != want || (g_has_crc && (crc32(0L, buf, (unsigned)want) & 0xffffffffUL) != g_crc)) {
 				if (++tries > 6) {
 					fclose(f);
+					remove(s->save_as);
 					sprintf(why, "piece at %ld kept failing (%d of %ld bytes)", got, k, want);
 					goto fail;
 				}
@@ -990,7 +1004,7 @@ static int run_update(void)
 				continue;
 			}
 			tries = 0;
-			if ((long)fwrite(buf, 1, (size_t)want, f) != want) { fclose(f); sprintf(why, "disk full?"); goto fail; }
+			if ((long)fwrite(buf, 1, (size_t)want, f) != want) { fclose(f); remove(s->save_as); sprintf(why, "disk full?"); goto fail; }
 			got += want;
 			sprintf(msg, "\r  %ld of %ld KB                    ", got / 1024, total / 1024);
 			pg_out_write(msg, strlen(msg));
@@ -1058,7 +1072,7 @@ static int run_upload(void)
 	}
 	size = ftell(f);
 	sprintf(id, "%08lx%lx", crc & 0xffffffffUL, size);
-	sprintf(msg, "Sending %ld KB to http://%s:%d%s ...\r\n", (size + 1023) / 1024, s->host, s->port, s->path);
+	sprintf(msg, "Sending %ld KB to http://%.50s:%d%.30s ...\r\n", (size + 1023) / 1024, s->host, s->port, s->path);
 	pg_out_write(msg, strlen(msg));
 	while (sent < size) {
 		int n, r;

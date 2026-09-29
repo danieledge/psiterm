@@ -90,6 +90,7 @@ static void rx_fill(int timeout_us)
 int pg_net_avail(void) { return gRxLen - gRxPos; }
 int pg_net_read(void* b, int m) { int n = gRxLen - gRxPos; if (n > m) n = m; memcpy(b, gRx + gRxPos, n); gRxPos += n; return n; }
 void pg_net_set_closed(void) { gNetClosed = 1; }
+int pg_net_closed(void) { return gNetClosed; }
 
 /* keyboard: stdin is pumped into the shared ring, as PsiTerm would do */
 static void pump_stdin(int timeout_ms)
