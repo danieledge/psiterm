@@ -59,7 +59,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.41");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.42");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -1011,6 +1011,14 @@ void CTermView::ApplyAppearanceL()
 	iCacheValid = EFalse;
 	SetFontL(iSettings.iZoom);      // lays out again (status line on/off) and redraws
 	StartTick();
+	// start screen switched on or off while not connected: show / drop it now
+	if (!iSshActive && !iReconnectWait)
+		{
+		if (iSettings.iStartScreen && !iWelcome)
+			ShowWelcome();
+		else if (!iSettings.iStartScreen)
+			iWelcome = EFalse;
+		}
 	}
 
 // ----- welcome screen -------------------------------------------------------------
@@ -1044,13 +1052,21 @@ static void AppendText(TDes8& aOut, const TDesC& aText, TInt aWidth)
 
 void CTermView::ShowWelcome()
 	{
+	iWelcome = EFalse;
+	if (!iSettings.iStartScreen)
+		return;
 	TInt width = iCols - 4;
 	if (width > 56) width = 56;
-	HBufC8* buf = HBufC8::New(2400);
+	HBufC8* buf = HBufC8::New(2600);
 	if (!buf)
 		return;
 	TPtr8 w = buf->Des();
-	w.Append(_L8("\r\n  \x1b[7m PsiTerm "));
+	// a clean screen: scroll what was there up into the scrollback (so a
+	// session's last messages stay a Shift+PgUp away), then go home
+	w.Append(_L8("\x1b[999;1H"));
+	for (TInt r = 0; r < iRows && r < 60; r++)
+		w.Append(_L8("\r\n"));
+	w.Append(_L8("\x1b[H\x1b[J\r\n  \x1b[7m PsiTerm "));
 	TBuf<8> ver(KPsiTermVersion);
 	AppendText(w, ver, ver.Length());
 	w.Append(_L8(" \x1b[0m  SSH for the Psion Series 5mx\r\n  "));
@@ -3371,6 +3387,7 @@ void CAppearanceDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPtDlgBlink))->SetCurrentItem(iSettings.iBlink ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgStatus))->SetCurrentItem(iSettings.iStatus ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgBell))->SetCurrentItem(iSettings.iBell ? 0 : 1);
+	((CEikChoiceList*)Control(EPtDlgStartScreen))->SetCurrentItem(iSettings.iStartScreen ? 1 : 0);
 	}
 
 TBool CAppearanceDialog::OkToExitL(TInt /*aButtonId*/)
@@ -3380,6 +3397,7 @@ TBool CAppearanceDialog::OkToExitL(TInt /*aButtonId*/)
 	iSettings.iBlink = ((CEikChoiceList*)Control(EPtDlgBlink))->CurrentItem() == 1;
 	iSettings.iStatus = ((CEikChoiceList*)Control(EPtDlgStatus))->CurrentItem() == 1;
 	iSettings.iBell = ((CEikChoiceList*)Control(EPtDlgBell))->CurrentItem() == 1 ? 0 : 1;
+	iSettings.iStartScreen = ((CEikChoiceList*)Control(EPtDlgStartScreen))->CurrentItem() == 1;
 	return ETrue;
 	}
 
@@ -3627,6 +3645,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iStatus = 1;
 	aSettings.iTmuxPrefix = 0;
 	aSettings.iBell = 0;
+	aSettings.iStartScreen = 1;
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
@@ -3698,6 +3717,8 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 										aSettings.iTmuxPrefix = data[pos + 4] ? 1 : 0;
 										if (pos + 5 < data.Length())   // v9: bell
 											aSettings.iBell = data[pos + 5] ? 1 : 0;
+										if (pos + 6 < data.Length())   // v10: start screen
+											aSettings.iStartScreen = data[pos + 6] ? 1 : 0;
 										}
 									}
 								}
@@ -3748,6 +3769,7 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append((TUint8)(aSettings.iStatus ? 1 : 0));
 	data.Append((TUint8)(aSettings.iTmuxPrefix ? 1 : 0));
 	data.Append((TUint8)(aSettings.iBell ? 1 : 0));
+	data.Append((TUint8)(aSettings.iStartScreen ? 1 : 0));
 	file.Write(data);
 	file.Close();
 	}

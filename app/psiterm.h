@@ -56,6 +56,7 @@ struct TPsiSettings
 	TInt iStatus;         // 1 = status line at the bottom
 	TInt iTmuxPrefix;     // 0 = Ctrl+B, 1 = Ctrl+A
 	TInt iBell;           // 0 = beep, 1 = silent
+	TInt iStartScreen;    // 1 = start screen (host menu) when not connected
 	};
 
 // ---------------------------------------------------------------------------

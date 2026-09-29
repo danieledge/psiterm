@@ -131,6 +131,7 @@ enum TPsiTermDialogControls
 	EPtDlgBlink,
 	EPtDlgStatus,
 	EPtDlgBell,
+	EPtDlgStartScreen,
 	EPtDlgBold,
 	EPtDlgSnipHint
 	};
