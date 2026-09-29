@@ -51,7 +51,9 @@ _LIT8(KHangupCommand, "ATH\r");
 const TInt KMoreDataTimeout = 25000;   // microseconds to wait for more bytes
 _LIT(KSshExeName, "psissh.exe");
 _LIT(KSeedFile, "C:\\System\\Apps\\PsiTerm\\ssh_seed.bin");
-_LIT(KKeyPubFile, "C:\\System\\Apps\\PsiTerm\\id_ed25519.pub");   // written by psissh mode 4
+_LIT(KKeysFile, "C:\\System\\Apps\\PsiTerm\\Keys.dat");
+_LIT(KKeysDir, "C:\\System\\Apps\\PsiTerm\\Keys\\");
+_LIT(KOldKey, "C:\\System\\Apps\\PsiTerm\\id_ed25519");       // 0.44-0.49
 _LIT(KSshHome, "C:\\System\\Apps\\PsiTerm");
 const TInt KEntropyKeysNeeded = 40;
 const TInt KScrollbackLines = 300;       // ~150 KB of history
@@ -60,7 +62,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.49");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.50");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -947,7 +949,8 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 		if (iLaunchMode == 1) aText.Append(_L("Running the speed test..."));
 		else if (iLaunchMode == 2) aText.Append(_L("Updating PsiTerm..."));
 		else if (iLaunchMode == 3) aText.Append(_L("Sending screenshots..."));
-		else if (iLaunchMode == 4) aText.Append(_L("Making the SSH login key..."));
+		else if (iLaunchMode == 4) aText.Append(_L("Making an SSH key..."));
+		else if (iLaunchMode == 5) aText.Append(_L("Importing an SSH key..."));
 		else if (state == PSI_STATE_DIALING) aText.Format(_L("Connecting to %S..."), &host);
 		else if (state == PSI_STATE_KEYEX) aText.Format(_L("Securing the connection to %S..."), &host);
 		else if (state == PSI_STATE_CONNECTED)
@@ -1945,7 +1948,7 @@ TKeyResponse CTermView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aT
 			iGatheringEntropy = EFalse;
 			LocalMessage(_L8(" done.\r\n"));
 			if (iEntropyMode == 4)
-				StartKeyGenL();
+				KeyToolL(iPendKeyMode, iPendKeyBase, iPendKeyName, iPendKeySrc);
 			else
 				LaunchSshL();
 			}
@@ -2468,81 +2471,113 @@ TBool CTermView::SshLoggedIn() const
 	return iSshActive && iLaunchMode == 0 && iShared && iShared->state == PSI_STATE_CONNECTED;
 	}
 
-TBool CTermView::HaveLoginKey() const
+// Reads <base>.pub (the OpenSSH public key line)
+static TInt ReadPubKey(RFs& aFs, const TDesC& aBase, TDes8& aKey)
 	{
-	TEntry entry;
-	return iCoeEnv->FsSession().Entry(KKeyPubFile, entry) == KErrNone;
-	}
-
-static TInt ReadPubKey(RFs& aFs, TDes8& aKey)
-	{
-	RFile f;
-	TInt r = f.Open(aFs, KKeyPubFile, EFileRead);
+	TFileName f(aBase);
+	f.Append(_L(".pub"));
+	RFile file;
+	TInt r = file.Open(aFs, f, EFileRead);
 	if (r != KErrNone)
 		return r;
-	r = f.Read(aKey);
-	f.Close();
+	r = file.Read(aKey);
+	file.Close();
 	while (aKey.Length() && (aKey[aKey.Length() - 1] == '\n' || aKey[aKey.Length() - 1] == '\r'))
 		aKey.SetLength(aKey.Length() - 1);
-	if (r == KErrNone && (aKey.Length() < 20 || aKey.Left(12) != _L8("ssh-ed25519 ")))
+	if (r == KErrNone && (aKey.Length() < 20 || aKey.Left(4) != _L8("ssh-")))
 		r = KErrCorrupt;
 	return r;
 	}
 
-static void AppendKeyHelp(TDes8& aOut, const TDesC8& aKey)
+// The key's name, fingerprint, public line and how to use it
+static void AppendKeyHelp(RFs& aFs, TDes8& aOut, const TDesC& aBase, const TDesC& aName)
 	{
-	aOut.Append(_L8("\r\nYour SSH login key (public half):\r\n\r\n"));
-	aOut.Append(aKey);
-	aOut.Append(_L8("\r\n\r\nTo use it with a server: connect with your password, then choose "
-		"Terminal > Install login key on server (at a shell prompt). Then set the "
-		"host to log in with the key: SSH to... > Edit > Log in with.\r\n\r\n"
-		"The key is also saved in C:\\System\\Apps\\PsiTerm\\id_ed25519.pub. "
-		"If this Psion is lost, remove that line from the server's "
+	HBufC8* key = HBufC8::New(900);
+	if (!key)
+		return;
+	TPtr8 k = key->Des();
+	if (ReadPubKey(aFs, aBase, k) != KErrNone)
+		{
+		delete key;
+		aOut.Append(_L8("\r\n(The key's files are missing.)\r\n"));
+		return;
+		}
+	aOut.Append(_L8("\r\nKey: "));
+	TBuf8<24> name;
+	name.Copy(aName);
+	aOut.Append(name);
+	TFileName fp(aBase);
+	fp.Append(_L(".fp"));
+	RFile f;
+	if (f.Open(aFs, fp, EFileRead) == KErrNone)
+		{
+		TBuf8<64> b;
+		f.Read(b);
+		f.Close();
+		aOut.Append(_L8("\r\nFingerprint: "));
+		aOut.Append(b);
+		}
+	aOut.Append(_L8("\r\n\r\nPublic key (for a server's ~/.ssh/authorized_keys):\r\n\r\n"));
+	aOut.Append(k);
+	delete key;
+	aOut.Append(_L8("\r\n\r\nTo use it: connect with your password, choose Terminal > "
+		"Install login key on server (at a shell prompt), then SSH to... > Edit > "
+		"Log in with. If this Psion is lost, remove the line from the server's "
 		"~/.ssh/authorized_keys.\r\n"));
 	}
 
-void CTermView::ShowLoginKeyL()
+void CTermView::ShowKeyL(const TDesC& aBase, const TDesC& aName)
 	{
-	TBuf8<200> key;
-	if (ReadPubKey(iCoeEnv->FsSession(), key) != KErrNone)
-		return;
-	HBufC8* buf = HBufC8::NewLC(1000);
+	HBufC8* buf = HBufC8::NewLC(2000);
 	TPtr8 t = buf->Des();
-	AppendKeyHelp(t, key);
-	BeginDebugL(_L("SSH login key"));
+	AppendKeyHelp(iCoeEnv->FsSession(), t, aBase, aName);
+	BeginDebugL(_L("SSH key"));
 	LocalMessage(t);
 	CleanupStack::PopAndDestroy();
 	ShowDebugL();
 	}
 
-void CTermView::StartKeyGenL()
+// Make (4) or import (5) a key with psissh, in the tool window. EFalse if it
+// has to wait for randomness first (typed in the terminal; it then runs).
+TBool CTermView::KeyToolL(TInt aMode, const TDesC& aBase, const TDesC& aName, const TDesC& aSrc)
 	{
 	if (iSshActive || iGatheringEntropy)
-		return;
-	if (!SeedFileExists() && iKeyCount < KEntropyKeysNeeded)
+		return ETrue;
+	iPendKeyMode = aMode;
+	iPendKeyBase = aBase;
+	iPendKeyName = LeftSafe(aName, iPendKeyName.MaxLength());
+	iPendKeySrc = LeftSafe(aSrc, iPendKeySrc.MaxLength());
+	if (aMode == 4 && !SeedFileExists() && iKeyCount < KEntropyKeysNeeded)
 		{
 		LocalMessage(_L8("\r\nMaking a key needs some randomness.\r\n"
 			"Please type random keys until it says done (Esc cancels): "));
 		iGatheringEntropy = ETrue;
 		iEntropyMode = 4;
-		return;
+		return EFalse;
 		}
-	BeginDebugL(_L("SSH login key"));
-	LaunchSshL(4);
+	iCoeEnv->FsSession().MkDirAll(KKeysDir);
+	BeginDebugL(aMode == 4 ? _L("New SSH key") : _L("Import SSH key"));
+	LaunchSshL(aMode);
 	RunToolDialogL();
+	return ETrue;
 	}
 
-void CTermView::InstallLoginKeyL()
+void CTermView::InstallLoginKeyL(const TDesC& aBase)
 	{
-	TBuf8<200> key;
-	if (!SshLoggedIn() || ReadPubKey(iCoeEnv->FsSession(), key) != KErrNone)
+	HBufC8* keyBuf = HBufC8::NewLC(900);
+	TPtr8 key = keyBuf->Des();
+	if (!SshLoggedIn() || ReadPubKey(iCoeEnv->FsSession(), aBase, key) != KErrNone)
+		{
+		CleanupStack::PopAndDestroy();
 		return;
+		}
 	// the key's middle (the base64 blob) is what grep looks for
-	TPtrC8 blob(key.Mid(12));
+	TInt sp1 = key.Locate(' ');
+	TPtrC8 blob(key.Mid(sp1 + 1));
 	TInt sp = blob.Locate(' ');
 	if (sp > 0)
 		blob.Set(blob.Left(sp));
-	HBufC8* buf = HBufC8::NewLC(700);
+	HBufC8* buf = HBufC8::NewLC(2200);
 	TPtr8 c = buf->Des();
 	// in a subshell, so the umask does not stick to the user's shell
 	c.Append(_L8(" (umask 077; mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && "
@@ -2552,7 +2587,7 @@ void CTermView::InstallLoginKeyL()
 	c.Append(key);
 	c.Append(_L8("' >> ~/.ssh/authorized_keys; }) && echo 'PsiTerm: login key installed'\r"));
 	SendString(c);
-	CleanupStack::PopAndDestroy();
+	CleanupStack::PopAndDestroy(2);
 	}
 
 void CTermView::StartSpeedTestL()
@@ -2797,9 +2832,28 @@ void CTermView::LaunchSshL(TInt aMode)
 	Mem::Copy(iShared->entropy, iEntropy, PSI_ENTROPY_SIZE);
 	iShared->entropy_len = PSI_ENTROPY_SIZE;
 	iShared->mode = aMode;
-	iShared->use_key = iUseKey ? 1 : 0;
+	{
+	// the key to offer (SSH), or where a new / imported key goes (4, 5)
+	TPtr8 kf((TUint8*)iShared->keyfile, sizeof(iShared->keyfile) - 1);
+	kf.Zero();
+	if (aMode == 0)
+		kf.Copy(iKeyBase);
+	else if (aMode >= 4)
+		kf.Copy(iPendKeyBase);
+	kf.ZeroTerminate();
+	TPtr8 ks((TUint8*)iShared->keysrc, sizeof(iShared->keysrc) - 1);
+	ks.Zero();
+	if (aMode == 5)
+		ks.Copy(iPendKeySrc);
+	ks.ZeroTerminate();
+	TPtr8 kn((TUint8*)iShared->keyname, sizeof(iShared->keyname) - 1);
+	kn.Zero();
+	if (aMode >= 4)
+		kn.Copy(iPendKeyName);
+	kn.ZeroTerminate();
+	}
 	iLaunchMode = aMode;
-	iShared->net_mode = (aMode != 1 && aMode != 4 && iSettings.iNetMode) ? 1 : 0;
+	iShared->net_mode = (aMode != 1 && aMode < 4 && iSettings.iNetMode) ? 1 : 0;
 	if (aMode == 3)
 		{
 		// send screenshots: POST the bundle to the update server
@@ -3082,19 +3136,15 @@ void CTermView::SshProcessEnded()
 			TRAP_IGNORE(dlg->CloseL());
 			}
 		}
-	if (iLaunchMode == 4 && type != EExitPanic && exitCode == 0)
+	if ((iLaunchMode == 4 || iLaunchMode == 5) && type != EExitPanic && exitCode == 0)
 		{
-		TBuf8<200> key;
-		if (ReadPubKey(iCoeEnv->FsSession(), key) == KErrNone)
+		HBufC8* buf = HBufC8::New(2000);
+		if (buf)
 			{
-			HBufC8* buf = HBufC8::New(1000);
-			if (buf)
-				{
-				TPtr8 t = buf->Des();
-				AppendKeyHelp(t, key);
-				LocalMessage(t);
-				delete buf;
-				}
+			TPtr8 t = buf->Des();
+			AppendKeyHelp(iCoeEnv->FsSession(), t, iPendKeyBase, iPendKeyName);
+			LocalMessage(t);
+			delete buf;
 			}
 		}
 	if (iToolDlg)
@@ -3260,7 +3310,7 @@ void CHostList::Load()
 	TPtr8 data(buf->Des());
 	TInt r = file.Read(data);
 	file.Close();
-	if (r != KErrNone || data.Length() < 9 || data[0] != 'P' || data[1] != 'H' || (data[2] < 1 || data[2] > 3))
+	if (r != KErrNone || data.Length() < 9 || data[0] != 'P' || data[1] != 'H' || (data[2] < 1 || data[2] > 4))
 		{
 		delete buf;
 		return;
@@ -3295,6 +3345,9 @@ void CHostList::Load()
 		e.iAuth = e.iPassword.Length() ? 2 : 0;
 		if (fileVer >= 3 && pos < data.Length())
 			e.iAuth = data[pos++] <= 3 ? data[pos - 1] : 0;
+		e.iKeyId = 0;
+		if (fileVer >= 4 && pos < data.Length())
+			e.iKeyId = data[pos++];
 		TRAPD(err, iEntries->AppendL(e));
 		e.iPassword.FillZ();
 		if (err != KErrNone)
@@ -3319,7 +3372,7 @@ TInt CHostList::Save()
 	TUint32 key = KeyFor(salt);
 	data.Append('P');
 	data.Append('H');
-	data.Append(3);
+	data.Append(4);
 	data.Append((TUint8)iEntries->Count());
 	data.Append((TUint8)iLast);
 	for (TInt b = 0; b < 4; b++)
@@ -3340,6 +3393,7 @@ TInt CHostList::Save()
 		pw.FillZ();
 		PutStr(data, e.iCommand);
 		data.Append((TUint8)e.iAuth);
+		data.Append((TUint8)e.iKeyId);
 		}
 	iFs.MkDirAll(KHostsFile);
 	RFile file;
@@ -3352,6 +3406,164 @@ TInt CHostList::Save()
 	data.FillZ();
 	delete buf;
 	return r;
+	}
+
+// ----- SSH keys -------------------------------------------------------------
+// Keys.dat: "PK" 1 count last, then per key: id, name. The key files are
+// Keys\k<id>.key (private, Dropbear format), .pub (OpenSSH line) and .fp
+// (SHA256 fingerprint), all written by psissh.
+
+CKeyList* CKeyList::NewL(RFs& aFs)
+	{
+	CKeyList* self = new(ELeave) CKeyList(aFs);
+	CleanupStack::PushL(self);
+	self->iEntries = new(ELeave) CArrayFixFlat<TSshKey>(4);
+	CleanupStack::Pop();
+	return self;
+	}
+
+CKeyList::~CKeyList()
+	{
+	delete iEntries;
+	}
+
+void CKeyList::Base(TInt aId, TDes& aBase)
+	{
+	aBase.Copy(KKeysDir);
+	aBase.Append('k');
+	aBase.AppendNum(aId);
+	}
+
+TInt CKeyList::Find(TInt aId) const
+	{
+	for (TInt i = 0; i < iEntries->Count(); i++)
+		if ((*iEntries)[i].iId == aId)
+			return i;
+	return -1;
+	}
+
+TInt CKeyList::AddL(const TDesC& aName)
+	{
+	TInt id = 1;
+	for (TInt i = 0; i < iEntries->Count(); i++)
+		if ((*iEntries)[i].iId >= id)
+			id = (*iEntries)[i].iId + 1;
+	TSshKey k;
+	k.iId = id;
+	k.iName = LeftSafe(aName, k.iName.MaxLength());
+	iEntries->AppendL(k);
+	return id;
+	}
+
+void CKeyList::Delete(TInt aIndex)
+	{
+	TFileName f;
+	Base((*iEntries)[aIndex].iId, f);
+	TInt n = f.Length();
+	f.Append(_L(".key")); iFs.Delete(f); f.SetLength(n);
+	f.Append(_L(".pub")); iFs.Delete(f); f.SetLength(n);
+	f.Append(_L(".fp"));  iFs.Delete(f);
+	iEntries->Delete(aIndex);
+	if (iLast >= iEntries->Count())
+		iLast = 0;
+	}
+
+TBool CKeyList::HasFile(TInt aIndex)
+	{
+	TFileName f;
+	Base((*iEntries)[aIndex].iId, f);
+	f.Append(_L(".key"));
+	TEntry e;
+	return iFs.Entry(f, e) == KErrNone;
+	}
+
+void CKeyList::Fingerprint(TInt aIndex, TDes& aFp)
+	{
+	aFp.Zero();
+	TFileName f;
+	Base((*iEntries)[aIndex].iId, f);
+	f.Append(_L(".fp"));
+	RFile file;
+	if (file.Open(iFs, f, EFileRead) != KErrNone)
+		return;
+	TBuf8<64> b;
+	file.Read(b);
+	file.Close();
+	aFp.Copy(b.Left(aFp.MaxLength() < b.Length() ? aFp.MaxLength() : b.Length()));
+	}
+
+void CKeyList::Load()
+	{
+	iEntries->Reset();
+	iLast = 0;
+	RFile file;
+	if (file.Open(iFs, KKeysFile, EFileRead) != KErrNone)
+		return;
+	TBuf8<512> data;
+	TInt r = file.Read(data);
+	file.Close();
+	if (r != KErrNone || data.Length() < 5 || data[0] != 'P' || data[1] != 'K' || data[2] != 1)
+		return;
+	TInt count = data[3];
+	iLast = data[4];
+	TInt pos = 5;
+	for (TInt i = 0; i < count && i < KMaxKeys && pos < data.Length(); i++)
+		{
+		TSshKey k;
+		k.iId = data[pos++];
+		if (!GetStr(data, pos, k.iName))
+			break;
+		TRAPD(err, iEntries->AppendL(k));
+		if (err != KErrNone)
+			break;
+		}
+	if (iLast >= iEntries->Count())
+		iLast = 0;
+	}
+
+TInt CKeyList::Save()
+	{
+	TBuf8<512> data;
+	data.Append('P');
+	data.Append('K');
+	data.Append(1);
+	data.Append((TUint8)iEntries->Count());
+	data.Append((TUint8)iLast);
+	for (TInt i = 0; i < iEntries->Count(); i++)
+		{
+		data.Append((TUint8)(*iEntries)[i].iId);
+		PutStr(data, (*iEntries)[i].iName);
+		}
+	iFs.MkDirAll(KKeysFile);
+	RFile file;
+	TInt r = file.Replace(iFs, KKeysFile, EFileWrite);
+	if (r == KErrNone)
+		{
+		r = file.Write(data);
+		file.Close();
+		}
+	return r;
+	}
+
+// 0.44-0.49 kept one key as id_ed25519(.pub): it becomes key 1, "Psion key"
+void CKeyList::MigrateL()
+	{
+	TFileName old(KOldKey);
+	TEntry e;
+	if (iEntries->Count() > 0 || iFs.Entry(old, e) != KErrNone)
+		return;
+	iFs.MkDirAll(KKeysDir);
+	TInt id = AddL(_L("Psion key"));
+	TFileName to;
+	Base(id, to);
+	TInt n = to.Length();
+	to.Append(_L(".key"));
+	iFs.Rename(old, to);
+	to.SetLength(n);
+	to.Append(_L(".pub"));
+	old.Append(_L(".pub"));
+	iFs.Rename(old, to);
+	Save();
 	}
 
 // ----- snippets -------------------------------------------------------------
@@ -3679,8 +3891,8 @@ TBool CHostListDialog::OkToExitL(TInt aButtonId)
 
 // ----- add / edit one host ---------------------------------------------------
 
-CHostEditDialog::CHostEditDialog(THostEntry& aEntry)
-	: iEntry(aEntry)
+CHostEditDialog::CHostEditDialog(THostEntry& aEntry, CKeyList& aKeys)
+	: iEntry(aEntry), iKeys(aKeys)
 	{
 	}
 
@@ -3696,7 +3908,42 @@ void CHostEditDialog::PreLayoutDynInitL()
 	SetEdwinTextL(EPtDlgStartCmd, &iEntry.iCommand);
 	// (the secret editor holds at most CEikSecretEditor::EMaxSecEdLength = 32
 	//  characters; its limit is set in the resource - more panics EIKON 12)
-	((CEikChoiceList*)Control(EPtDlgAuth))->SetCurrentItem(iEntry.iAuth >= 0 && iEntry.iAuth <= 3 ? iEntry.iAuth : 1);
+	// "Log in with": each key (alone, or then the saved password), then the
+	// two password choices
+	CDesCArrayFlat* opts = new(ELeave) CDesCArrayFlat(8);
+	CleanupStack::PushL(opts);
+	iOptCount = 0;
+	TInt current = -1;
+	for (TInt i = 0; i < iKeys.Count() && i < KMaxKeys; i++)
+		{
+		TBool mine = (iEntry.iKeyId == iKeys.At(i).iId) || (iEntry.iKeyId == 0 && i == 0);
+		for (TInt pass = 0; pass < 2; pass++)
+			{
+			TBuf<48> line(_L("Key: "));
+			line.Append(iKeys.At(i).iName);
+			if (pass)
+				line.Append(_L(" + saved password"));
+			opts->AppendL(line);
+			iOptAuth[iOptCount] = pass ? 3 : 0;
+			iOptKey[iOptCount] = iKeys.At(i).iId;
+			if (mine && iEntry.iAuth == iOptAuth[iOptCount] && current < 0)
+				current = iOptCount;
+			iOptCount++;
+			}
+		}
+	opts->AppendL(_L("Password (ask)"));
+	iOptAuth[iOptCount] = 1;
+	iOptKey[iOptCount++] = 0;
+	opts->AppendL(_L("Saved password"));
+	iOptAuth[iOptCount] = 2;
+	iOptKey[iOptCount++] = 0;
+	if (current < 0)
+		current = (iEntry.iAuth == 2 || iEntry.iAuth == 3) ? iOptCount - 1 : iOptCount - 2;
+	CEikChoiceList* list = (CEikChoiceList*)Control(EPtDlgAuth);
+	list->SetArrayL(opts);
+	list->SetArrayExternalOwnership(EFalse);
+	CleanupStack::Pop();
+	list->SetCurrentItem(current);
 	}
 
 TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
@@ -3744,7 +3991,11 @@ TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
 	iEntry.iCommand.Trim();
 	TBuf<63> typed;
 	GetSecretEditorText(typed, EPtDlgPassword);
-	TInt auth = ((CEikChoiceList*)Control(EPtDlgAuth))->CurrentItem();
+	TInt opt = ((CEikChoiceList*)Control(EPtDlgAuth))->CurrentItem();
+	if (opt < 0 || opt >= iOptCount)
+		opt = iOptCount - 2;
+	TInt auth = iOptAuth[opt];
+	iEntry.iKeyId = iOptKey[opt];
 	if (auth == 2 || auth == 3)          // the password is remembered
 		{
 		if (typed.Length())                 // blank keeps the saved password
@@ -3950,6 +4201,7 @@ void CPsiTermAppUi::ConstructL()
 		// carry over the host from PsiTerm 0.3's single "SSH to" setting
 		THostEntry e;
 		e.iAuth = 1;
+		e.iKeyId = 0;
 		e.iName = LeftSafe(settings.iSshHost, 24);
 		e.iHost = settings.iSshHost;
 		e.iUser = settings.iSshUser;
@@ -3968,6 +4220,9 @@ void CPsiTermAppUi::ConstructL()
 		settings.iStartCmd.Zero();
 		SaveSettings(settings);
 		}
+	iKeys = CKeyList::NewL(iCoeEnv->FsSession());
+	iKeys->Load();
+	iKeys->MigrateL();
 	iSnippets = CSnippetList::NewL(iCoeEnv->FsSession());
 	iSnippets->Load();
 	iView = new(ELeave) CTermView;
@@ -3986,12 +4241,13 @@ CPsiTermAppUi::~CPsiTermAppUi()
 		}
 	delete iHosts;
 	delete iSnippets;
+	delete iKeys;
 	}
 
 // Add / edit dialog. Returns ETrue if the user pressed OK.
 TBool CPsiTermAppUi::EditHostL(THostEntry& aEntry)
 	{
-	CHostEditDialog* dlg = new(ELeave) CHostEditDialog(aEntry);
+	CHostEditDialog* dlg = new(ELeave) CHostEditDialog(aEntry, *iKeys);
 	return dlg->ExecuteLD(R_PT_HOST_EDIT_DIALOG) != 0;
 	}
 
@@ -4009,7 +4265,8 @@ void CPsiTermAppUi::SshToL()
 			{
 			THostEntry e;
 			e.iPort = 22;
-			e.iAuth = iView->HaveLoginKey() ? 0 : 1;
+			e.iAuth = iKeys->Count() ? 0 : 1;
+			e.iKeyId = 0;
 			if (!EditHostL(e))
 				return;
 			iHosts->AddL(e);
@@ -4037,7 +4294,8 @@ void CPsiTermAppUi::SshToL()
 				}
 			THostEntry e;
 			e.iPort = 22;
-			e.iAuth = iView->HaveLoginKey() ? 0 : 1;
+			e.iAuth = iKeys->Count() ? 0 : 1;
+			e.iKeyId = 0;
 			e.iUser = iHosts->At(index).iUser;     // most people reuse a user name
 			if (EditHostL(e))
 				{
@@ -4258,7 +4516,14 @@ void CPsiTermAppUi::ConnectHostL(TInt aIndex)
 	SaveSettings(s);
 	iView->SetSshPassword(e.iPassword);
 	iView->SetLoginCommand(e.iCommand);
-	iView->SetUseKey(e.iAuth == 0 || e.iAuth == 3);
+	TFileName base;
+	if (e.iAuth == 0 || e.iAuth == 3)
+		{
+		TInt k = e.iKeyId ? iKeys->Find(e.iKeyId) : (iKeys->Count() ? 0 : -1);
+		if (k >= 0)
+			CKeyList::Base(iKeys->At(k).iId, base);
+		}
+	iView->SetKeyBase(base);
 	iView->StartSshL();
 	}
 
@@ -4361,7 +4626,7 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemDimmed(EPtCmdSsh, ssh);
 		aMenuPane->SetItemDimmed(EPtCmdSshDisconnect, !ssh);
 		aMenuPane->SetItemDimmed(EPtCmdHangup, ssh || !iView->ModemOnline());
-		aMenuPane->SetItemDimmed(EPtCmdInstallKey, !iView->SshLoggedIn() || !iView->HaveLoginKey());
+		aMenuPane->SetItemDimmed(EPtCmdInstallKey, !iView->SshLoggedIn() || iKeys->Count() == 0);
 		return;
 		}
 	if (aMenuId == R_PT_SNIPPETS_MENU)
@@ -4463,13 +4728,10 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdHangup:   iView->HangUp(); break;
 	case EPtCmdSendSize: iView->SendScreenSize(); break;
 	case EPtCmdLoginKey:
-		if (iView->HaveLoginKey())
-			iView->ShowLoginKeyL();
-		else if (ConfirmDisconnectL(aCommand))
-			iView->StartKeyGenL();
+		ManageKeysL();
 		break;
 	case EPtCmdInstallKey:
-		iView->InstallLoginKeyL();
+		InstallKeyCmdL();
 		iEikonEnv->InfoMsg(_L("To use it: SSH to... > Edit > Log in with"));
 		break;
 	case EPtCmdSerialInfo:
@@ -4703,4 +4965,230 @@ EXPORT_C CApaApplication* NewApplication()
 GLDEF_C TInt E32Dll(TDllReason)
 	{
 	return KErrNone;
+	}
+
+// ----- SSH keys: list and dialogs ---------------------------------------------
+
+void CKeyListDialog::SetSizeAndPositionL(const TSize& aSize) { SetCornerAndSizeL(EHCenterVCenter, ClampToScreen(aSize)); }
+
+void CKeyListDialog::PreLayoutDynInitL()
+	{
+	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(4);
+	CleanupStack::PushL(names);
+	for (TInt i = 0; i < iKeys.Count(); i++)
+		{
+		TBuf<64> line(iKeys.At(i).iName);
+		TBuf<60> fp;
+		iKeys.Fingerprint(i, fp);
+		if (fp.Length() > 7)
+			{
+			line.Append(_L("  "));
+			line.Append(fp.Mid(7, fp.Length() - 7 < 10 ? fp.Length() - 7 : 10));   // after "SHA256:"
+			line.Append(_L("..."));
+			}
+		names->AppendL(line);
+		}
+	if (iKeys.Count() == 0)
+		names->AppendL(_L("(no keys yet - New or Import)"));
+	CEikChoiceList* list = (CEikChoiceList*)Control(EPtDlgKeyList);
+	list->SetArrayL(names);
+	list->SetArrayExternalOwnership(EFalse);
+	CleanupStack::Pop();
+	list->SetCurrentItem(iIndex >= 0 && iIndex < iKeys.Count() ? iIndex : 0);
+	}
+
+TBool CKeyListDialog::OkToExitL(TInt aButtonId)
+	{
+	iIndex = ChoiceListCurrentItem(EPtDlgKeyList);
+	iAction = (aButtonId == EEikBidCancel) ? 0 : aButtonId;
+	return ETrue;
+	}
+
+void CKeyEditDialog::SetSizeAndPositionL(const TSize& aSize) { SetCornerAndSizeL(EHCenterVCenter, ClampToScreen(aSize)); }
+
+void CKeyEditDialog::PreLayoutDynInitL()
+	{
+	SetEdwinTextL(EPtDlgKeyName, &iName);
+	if (iFile)
+		SetEdwinTextL(EPtDlgKeyFile, iFile);
+	if (iRegen)
+		((CEikChoiceList*)Control(EPtDlgKeyRegen))->SetCurrentItem(0);
+	}
+
+TBool CKeyEditDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	GetEdwinText(iName, EPtDlgKeyName);
+	iName.Trim();
+	if (iName.Length() == 0)
+		{
+		CEikonEnv::Static()->InfoMsg(_L("Give the key a name"));
+		TryChangeFocusToL(EPtDlgKeyName);
+		return EFalse;
+		}
+	if (iFile)
+		{
+		GetEdwinText(*iFile, EPtDlgKeyFile);
+		iFile->Trim();
+		TEntry e;
+		if (iFile->Length() == 0 || CEikonEnv::Static()->FsSession().Entry(*iFile, e) != KErrNone)
+			{
+			CEikonEnv::Static()->InfoMsg(_L("No such file"));
+			TryChangeFocusToL(EPtDlgKeyFile);
+			return EFalse;
+			}
+		}
+	if (iRegen)
+		*iRegen = ((CEikChoiceList*)Control(EPtDlgKeyRegen))->CurrentItem() == 1;
+	return ETrue;
+	}
+
+void CKeyPickDialog::SetSizeAndPositionL(const TSize& aSize) { SetCornerAndSizeL(EHCenterVCenter, ClampToScreen(aSize)); }
+
+void CKeyPickDialog::PreLayoutDynInitL()
+	{
+	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(4);
+	CleanupStack::PushL(names);
+	for (TInt i = 0; i < iKeys.Count(); i++)
+		names->AppendL(iKeys.At(i).iName);
+	CEikChoiceList* list = (CEikChoiceList*)Control(EPtDlgKeyPick);
+	list->SetArrayL(names);
+	list->SetArrayExternalOwnership(EFalse);
+	CleanupStack::Pop();
+	list->SetCurrentItem(iIndex >= 0 && iIndex < iKeys.Count() ? iIndex : 0);
+	}
+
+TBool CKeyPickDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	iIndex = ChoiceListCurrentItem(EPtDlgKeyPick);
+	return ETrue;
+	}
+
+// Settings > SSH keys: the key list (New / Import / Show / Edit / Delete)
+void CPsiTermAppUi::ManageKeysL()
+	{
+	for (;;)
+		{
+		// forget keys whose making or import did not finish
+		for (TInt i = iKeys->Count() - 1; i >= 0; i--)
+			if (!iKeys->HasFile(i))
+				iKeys->Delete(i);
+		iKeys->Save();
+
+		TInt index = iKeys->iLast;
+		TInt action = 0;
+		CKeyListDialog* dlg = new(ELeave) CKeyListDialog(*iKeys, index, action);
+		dlg->ExecuteLD(R_PT_KEYS_DIALOG);
+		if (action == 0)
+			return;
+		TBool have = (index >= 0 && index < iKeys->Count());
+		if ((action == EPtBidNew || action == EPtBidImport) && iView->SshActive())
+			{
+			iEikonEnv->InfoMsg(_L("Disconnect SSH first"));
+			continue;
+			}
+		if ((action == EPtBidNew || action == EPtBidImport) && iKeys->Count() >= KMaxKeys)
+			{
+			iEikonEnv->InfoMsg(_L("Key list is full - delete one first"));
+			continue;
+			}
+		if (!have && action != EPtBidNew && action != EPtBidImport)
+			continue;
+		TFileName base;
+		switch (action)
+			{
+		case EPtBidNew:
+		case EPtBidImport:
+			{
+			TBuf<24> name;
+			name.Format(_L("Key %d"), iKeys->Count() + 1);
+			TFileName file(_L("D:\\id_ed25519"));
+			CKeyEditDialog* ed = new(ELeave) CKeyEditDialog(name, action == EPtBidImport ? &file : NULL, NULL);
+			if (!ed->ExecuteLD(action == EPtBidImport ? R_PT_KEY_IMPORT_DIALOG : R_PT_KEY_NEW_DIALOG))
+				break;
+			TInt id = iKeys->AddL(name);
+			iKeys->iLast = iKeys->Count() - 1;
+			iKeys->Save();
+			CKeyList::Base(id, base);
+			if (!iView->KeyToolL(action == EPtBidNew ? 4 : 5, base, name, file))
+				return;                  // gathering randomness first
+			break;
+			}
+		case EPtBidShow:
+			CKeyList::Base(iKeys->At(index).iId, base);
+			iView->ShowKeyL(base, iKeys->At(index).iName);
+			break;
+		case EPtBidEdit:
+			{
+			TBuf<24> name(iKeys->At(index).iName);
+			TInt regen = 0;
+			CKeyEditDialog* ed = new(ELeave) CKeyEditDialog(name, NULL, &regen);
+			if (!ed->ExecuteLD(R_PT_KEY_EDIT_DIALOG))
+				break;
+			iKeys->At(index).iName = name;
+			iKeys->iLast = index;
+			iKeys->Save();
+			if (regen)
+				{
+				if (iView->SshActive())
+					{
+					iEikonEnv->InfoMsg(_L("Disconnect SSH first"));
+					break;
+					}
+				if (!iEikonEnv->QueryWinL(_L("Replace this key?"),
+					_L("Servers set up with the old key will stop accepting it")))
+					break;
+				CKeyList::Base(iKeys->At(index).iId, base);
+				if (!iView->KeyToolL(4, base, name, KNullDesC))
+					return;
+				}
+			break;
+			}
+		case EPtBidDelete:
+			{
+			TBuf<30> what(iKeys->At(index).iName);
+			if (iEikonEnv->QueryWinL(_L("Delete this key?"), what))
+				{
+				iKeys->Delete(index);
+				iKeys->Save();
+				}
+			break;
+			}
+		default:
+			break;
+			}
+		}
+	}
+
+// Terminal > Install login key on server: the host's own key, or the only
+// one, or ask which
+void CPsiTermAppUi::InstallKeyCmdL()
+	{
+	if (!iView->SshLoggedIn())
+		return;
+	if (iKeys->Count() == 0)
+		{
+		iEikonEnv->InfoMsg(_L("Make a key first: Settings > SSH keys"));
+		return;
+		}
+	TFileName base;
+	TInt pick = -1;
+	for (TInt i = 0; i < iKeys->Count() && pick < 0; i++)
+		{
+		CKeyList::Base(iKeys->At(i).iId, base);
+		if (base == iView->KeyBase())
+			pick = i;
+		}
+	if (pick < 0 && iKeys->Count() == 1)
+		pick = 0;
+	if (pick < 0)
+		{
+		TInt index = iKeys->iLast;
+		CKeyPickDialog* dlg = new(ELeave) CKeyPickDialog(*iKeys, index);
+		if (!dlg->ExecuteLD(R_PT_KEY_PICK_DIALOG))
+			return;
+		pick = index;
+		}
+	CKeyList::Base(iKeys->At(pick).iId, base);
+	iView->InstallLoginKeyL(base);
+	iEikonEnv->InfoMsg(_L("To use it: SSH to... > Edit > Log in with"));
 	}

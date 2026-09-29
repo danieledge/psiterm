@@ -1088,24 +1088,30 @@ fail:
 	return 2;
 }
 
-extern int psi_keygen(const char *dir, char *pub, int pubmax, char *why, int whymax);
-extern int psi_have_key(const char *dir, char *path, int max);
+extern int psi_keygen(const char *base, const char *name, char *pub, int pubmax, char *why, int whymax);
+extern int psi_keyimport(const char *src, const char *base, const char *name,
+	char *pub, int pubmax, char *why, int whymax);
+extern int psi_have_key(const char *base, char *path, int max);
 
-/* Mode 4: make the SSH login key (once) and show its public half. */
-static int run_keygen(void)
+/* Mode 4: make a new SSH key (Ed25519). Mode 5: import one from a file. */
+static int run_keytool(int import)
 {
-	char pub[200], why[96];
+	PsiShared *s = pg_shared();
+	char pub[900], why[120];
 	int r;
-	const char *m = "Making your SSH login key (Ed25519)...\r\n";
+	const char *m = import ? "Importing the key...\r\n" : "Making a new SSH key (Ed25519)...\r\n";
 	pg_out_write(m, strlen(m));
-	r = psi_keygen(pg_home(), pub, sizeof(pub), why, sizeof(why));
+	s->keyfile[sizeof(s->keyfile) - 1] = 0;
+	s->keysrc[sizeof(s->keysrc) - 1] = 0;
+	s->keyname[sizeof(s->keyname) - 1] = 0;
+	r = import ? psi_keyimport(s->keysrc, s->keyfile, s->keyname, pub, sizeof(pub), why, sizeof(why))
+		: psi_keygen(s->keyfile, s->keyname, pub, sizeof(pub), why, sizeof(why));
 	if (r < 0) {
-		sprintf(psi_fmtbuf, "Could not make the key: %s\r\n", why);
+		sprintf(psi_fmtbuf, "%s failed: %s\r\n", import ? "Import" : "Making the key", why);
 		pg_out_write(psi_fmtbuf, strlen(psi_fmtbuf));
 		return 1;
 	}
-	m = r == 0 ? "Done - a new key was made.\r\n" : "You already have a key.\r\n";
-	pg_out_write(m, strlen(m));
+	pg_out_write("Done.\r\n", 7);
 	return 0;
 }
 
@@ -1128,8 +1134,8 @@ int main(int argc, char **argv)
 		saved_pw[sizeof(saved_pw) - 1] = 0;
 		memset(s->password, 0, sizeof(s->password));
 	}
-	if (s && s->mode == 4) {             /* no serial port needed */
-		r = run_keygen();
+	if (s && (s->mode == 4 || s->mode == 5)) {   /* no serial port needed */
+		r = run_keytool(s->mode == 5);
 		pg_set_exit(r);
 		pg_close();
 		return r;
@@ -1191,7 +1197,8 @@ int main(int argc, char **argv)
 	dargv[dargc++] = portstr;
 	dargv[dargc++] = "-K";                 /* keepalive: notice a dead link in ~30 s */
 	dargv[dargc++] = "10";
-	if (s->use_key && psi_have_key(pg_home(), keyfile, sizeof(keyfile))) {
+	s->keyfile[sizeof(s->keyfile) - 1] = 0;
+	if (s->keyfile[0] && psi_have_key(s->keyfile, keyfile, sizeof(keyfile))) {
 		dargv[dargc++] = "-i";             /* the login key: tried before the password */
 		dargv[dargc++] = keyfile;
 	}

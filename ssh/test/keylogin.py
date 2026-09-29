@@ -5,6 +5,7 @@ import pexpect, sys, os
 home = os.environ.get("KEYHOME", "/tmp/kh")
 env = dict(os.environ, PSI_HOST="127.0.0.1", PSI_PORT="2222", PSI_USER="psitest", PSI_HOME=home)
 env.pop("PSI_PASS", None)
+env.setdefault("PSI_KEY", home + "/id_ed25519")
 c = pexpect.spawn("./psissh-host", env=env, timeout=60, encoding="latin-1")
 c.logfile_read = sys.stdout
 while True:

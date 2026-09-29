@@ -216,6 +216,82 @@ struct THostEntry
 	TBuf<100> iCommand;   // run on login, e.g. tmux new -A -s psion (optional)
 	TInt iAuth;           // log in with: 0 = SSH key, 1 = password (ask), 2 = saved password,
 	                      // 3 = SSH key, then the saved password
+	TInt iKeyId;          // which key (TSshKey::iId); 0 = the first one
+	};
+
+// ---------------------------------------------------------------------------
+// SSH keys: named, each stored as Keys\k<id>.key/.pub/.fp (made by psissh)
+// ---------------------------------------------------------------------------
+const TInt KMaxKeys = 10;
+
+struct TSshKey
+	{
+	TInt iId;
+	TBuf<24> iName;
+	};
+
+class CKeyList : public CBase
+	{
+public:
+	static CKeyList* NewL(RFs& aFs);
+	~CKeyList();
+	void Load();
+	TInt Save();
+	TInt Count() const { return iEntries->Count(); }
+	TSshKey& At(TInt aIndex) { return (*iEntries)[aIndex]; }
+	TInt Find(TInt aId) const;                     // index, or -1
+	TInt AddL(const TDesC& aName);                 // returns the new key's id
+	void Delete(TInt aIndex);                      // and its files
+	static void Base(TInt aId, TDes& aBase);       // C:\...\Keys\k<id>
+	TBool HasFile(TInt aIndex);                    // its .key is there
+	void Fingerprint(TInt aIndex, TDes& aFp);      // "SHA256:..." or empty
+	void MigrateL();                               // 0.44-0.49's single key
+	TInt iLast;
+private:
+	CKeyList(RFs& aFs) : iFs(aFs) {}
+	RFs& iFs;
+	CArrayFixFlat<TSshKey>* iEntries;
+	};
+
+class CKeyListDialog : public CEikDialog
+	{
+public:
+	CKeyListDialog(CKeyList& aKeys, TInt& aIndex, TInt& aAction)
+		: iKeys(aKeys), iIndex(aIndex), iAction(aAction) { iAction = 0; }
+private:
+	void SetSizeAndPositionL(const TSize& aSize);
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	CKeyList& iKeys;
+	TInt& iIndex;
+	TInt& iAction;
+	};
+
+// New key (name), Import (name + file) or Edit (name + regenerate)
+class CKeyEditDialog : public CEikDialog
+	{
+public:
+	CKeyEditDialog(TDes& aName, TDes* aFile, TInt* aRegen)
+		: iName(aName), iFile(aFile), iRegen(aRegen) {}
+private:
+	void SetSizeAndPositionL(const TSize& aSize);
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	TDes& iName;
+	TDes* iFile;
+	TInt* iRegen;
+	};
+
+class CKeyPickDialog : public CEikDialog
+	{
+public:
+	CKeyPickDialog(CKeyList& aKeys, TInt& aIndex) : iKeys(aKeys), iIndex(aIndex) {}
+private:
+	void SetSizeAndPositionL(const TSize& aSize);
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	CKeyList& iKeys;
+	TInt& iIndex;
 	};
 
 class CHostList : public CBase
@@ -317,12 +393,16 @@ private:
 class CHostEditDialog : public CEikDialog
 	{
 public:
-	CHostEditDialog(THostEntry& aEntry);
+	CHostEditDialog(THostEntry& aEntry, CKeyList& aKeys);
 private:
 	void SetSizeAndPositionL(const TSize& aSize);
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
 	THostEntry& iEntry;
+	CKeyList& iKeys;
+	TInt iOptCount;
+	TInt iOptAuth[2 * KMaxKeys + 2];
+	TInt iOptKey[2 * KMaxKeys + 2];
 	};
 
 // ---------------------------------------------------------------------------
@@ -369,7 +449,7 @@ public:
 	void StartSshL();
 	void SetSshPassword(const TDesC& aPassword) { iSshPassword.Copy(aPassword); }
 	void SetLoginCommand(const TDesC& aCommand) { iLoginCmd.Copy(aCommand); }
-	void SetUseKey(TBool aUseKey) { iUseKey = aUseKey; }
+	void SetKeyBase(const TDesC& aBase) { iKeyBase.Copy(aBase); }
 	void StartSpeedTestL();
 	void StartUpdateL();
 	void ScreenshotL();                 // after a short delay (menu gone)
@@ -382,13 +462,13 @@ public:
 	TBool SshLoggedIn() const;
 	TBool InTmux() const { return iTabRow >= 0; }
 	void TmuxNextWindow(TBool aBack);
-	TBool HaveLoginKey() const;
-	void ShowLoginKeyL();          // the public key and how to use it
-	void StartKeyGenL();
+	TBool KeyToolL(TInt aMode, const TDesC& aBase, const TDesC& aName, const TDesC& aSrc);
+	void ShowKeyL(const TDesC& aBase, const TDesC& aName);
+	const TDesC& KeyBase() const { return iKeyBase; }
 	void ParseTmuxTabs();
 	void DrawTabs(CWindowGc& aGc) const;
 	void SelectTmuxWindow(TInt aIndex);           // make the key (psissh mode 4)
-	void InstallLoginKeyL();       // type the authorized_keys command into the session
+	void InstallLoginKeyL(const TDesC& aBase);   // type the authorized_keys command into the session
 	static TInt PumpCallback(TAny* aSelf);
 
 	// from CCoeControl
@@ -566,7 +646,11 @@ private:
 	TUint iLastRx;            // tick of the last serial data outside SSH
 	TBuf8<16> iRxTail;        // end of the last serial data, for split words
 	TUint iLastBell;          // tick of the last beep
-	TBool iUseKey;            // offer the login key to this host
+	TBuf<96> iKeyBase;        // the key offered to this host (base name), or empty
+	TInt iPendKeyMode;        // key tool waiting for randomness: 4 make, 5 import
+	TBuf<96> iPendKeyBase;
+	TBuf<24> iPendKeyName;
+	TBuf<96> iPendKeySrc;
 	TBuf<100> iLoginCmd;      // the connected host's command on login
 	TBuf8<64> iSshPassword;   // saved password for the next launch, then wiped
 	// auto-reconnect
@@ -602,7 +686,10 @@ private:
 	CTermView* iView;
 	CHostList* iHosts;
 	CSnippetList* iSnippets;
+	CKeyList* iKeys;
 	void ManageSnippetsL();
+	void ManageKeysL();
+	void InstallKeyCmdL();
 	void ConnectHostL(TInt aIndex);
 	TBool EditSnippetL(TSnippet& aEntry, TInt aSelf);
 	void SendTmux(TUint aKey);

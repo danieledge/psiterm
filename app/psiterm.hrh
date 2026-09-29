@@ -113,6 +113,11 @@ enum TPsiTermDialogControls
 	EPtDlgPassword,
 	EPtDlgRemember,
 	EPtDlgAuth,
+	EPtDlgKeyList,
+	EPtDlgKeyName,
+	EPtDlgKeyFile,
+	EPtDlgKeyRegen,
+	EPtDlgKeyPick,
 	EPtDlgHostList,
 	EPtDlgAboutStatus,
 	EPtDlgDebugText,
@@ -145,5 +150,7 @@ enum TPsiTermDialogButtons
 	{
 	EPtBidNew = 100,
 	EPtBidEdit,
-	EPtBidDelete
+	EPtBidDelete,
+	EPtBidImport,
+	EPtBidShow
 	};

@@ -67,6 +67,11 @@ typedef struct
 	char command[128];             /* optional remote command, e.g. tmux new -A -s psion */
 	int tls;                       /* update over HTTPS (TLS 1.3), e.g. from GitHub (0.23) */
 	int use_key;                   /* offer the SSH login key to this host (0.48) */
+	/* SSH keys (0.50): mode 0 offers <keyfile>.key if set; mode 4 makes a
+	   new key and mode 5 imports <keysrc>, both saving <keyfile>.key/.pub/.fp */
+	char keyfile[96];
+	char keysrc[96];
+	char keyname[32];              /* the comment on the .pub line */
 	} PsiShared;
 
 #endif

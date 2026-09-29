@@ -232,7 +232,7 @@ RESOURCE MENU_PANE r_pt_settings_menu
 		MENU_ITEM { cascade=r_pt_font_menu; txt="Font size"; },
 		MENU_ITEM { command=EPtCmdBold; txt="Bold text"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPtCmdAppearance; txt="Appearance..."; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdLoginKey; txt="SSH login key..."; },
+		MENU_ITEM { command=EPtCmdLoginKey; txt="SSH keys..."; },
 		MENU_ITEM { command=EPtCmdConnSettings; txt="Connection settings..."; },
 		MENU_ITEM { command=EPtCmdUpdateServer; txt="Update source..."; }
 		};
@@ -317,6 +317,79 @@ RESOURCE DLG_BUTTONS r_pt_hosts_buttons
 
 // Add or edit one saved host
 // Snippets: pick one and Send, or manage the list
+// SSH keys (0.50): the key list and its small dialogs
+RESOURCE DIALOG r_pt_keys_dialog
+	{
+	title="SSH keys";
+	flags=EEikDialogFlagWait;
+	buttons=r_pt_keys_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Key"; id=EPtDlgKeyList; control=CHOICELIST { maxdisplaychar=30; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pt_keys_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPtBidNew; button=CMBUT { txt="New"; }; hotkey='N'; },
+		DLG_BUTTON { id=EPtBidImport; button=CMBUT { txt="Import"; }; hotkey='I'; },
+		DLG_BUTTON { id=EPtBidShow; button=CMBUT { txt="Show"; }; hotkey='S'; },
+		DLG_BUTTON { id=EPtBidEdit; button=CMBUT { txt="Edit"; }; hotkey='E'; },
+		DLG_BUTTON { id=EPtBidDelete; button=CMBUT { txt="Delete"; }; hotkey='D'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Close"; }; hotkey=EEikBidCancel; flags=0; }
+		};
+	}
+
+RESOURCE DIALOG r_pt_key_new_dialog
+	{
+	title="New SSH key (Ed25519)";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgKeyName; control=EDWIN { width=20; maxlength=24; }; }
+		};
+	}
+
+RESOURCE DIALOG r_pt_key_import_dialog
+	{
+	title="Import SSH key";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgKeyName; control=EDWIN { width=20; maxlength=24; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Private key file"; id=EPtDlgKeyFile; control=EDWIN { width=24; maxlength=90; }; },
+		DLG_LINE { type=EEikCtLabel; control=LABEL { standard_font=EEikLabelFontAnnotation;
+			txt="OpenSSH or Dropbear, Ed25519 or RSA, no passphrase"; }; }
+		};
+	}
+
+RESOURCE DIALOG r_pt_key_edit_dialog
+	{
+	title="SSH key";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgKeyName; control=EDWIN { width=20; maxlength=24; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Make a new key (replaces it)"; id=EPtDlgKeyRegen; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
+		};
+	}
+
+RESOURCE DIALOG r_pt_key_pick_dialog
+	{
+	title="Install which key?";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Key"; id=EPtDlgKeyPick; control=CHOICELIST { maxdisplaychar=28; }; }
+		};
+	}
+
 RESOURCE DIALOG r_pt_snippets_dialog
 	{
 	title="Snippets";
@@ -393,7 +466,7 @@ RESOURCE DIALOG r_pt_host_edit_dialog
 		DLG_LINE { type=EEikCtEdwin; prompt="Host (host:port)"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=106; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="User"; id=EPtDlgUser; control=EDWIN { width=22; maxlength=60; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Command on login"; id=EPtDlgStartCmd; control=EDWIN { width=22; maxlength=100; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Log in with"; id=EPtDlgAuth; control=CHOICELIST { array_id=r_pt_auth_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Log in with"; id=EPtDlgAuth; control=CHOICELIST { maxdisplaychar=26; }; },
 		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPtDlgPassword; control=SECRETED { num_letters=32; }; }
 		};
 	}

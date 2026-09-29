@@ -22,7 +22,7 @@ DB_SRCS  := dbutil buffer dbhelpers signkey rsa dbrandom queue atomicio compat l
             common-channel common-chansession termcodes process-packet common-runopts circbuffer \
             list chachapoly kex-x25519 cli-main cli-auth cli-authpasswd cli-kex cli-session \
             cli-runopts cli-chansession cli-channel cli-authinteract cli-readconf bignum dh_groups \
-            signkey_ossh netio listener fake-rfc2553 cli-authpubkey gened25519 psi-keygen
+            signkey_ossh netio listener fake-rfc2553 cli-authpubkey gened25519 keyimport psi-keygen
 DB_OBJS  := $(addprefix obj/db/,$(addsuffix .o,$(DB_SRCS)))
 LTC_SRCS := $(shell sed 's|^libtomcrypt/|db/libtomcrypt/|' ltc_sources.txt)
 LTM_SRCS := $(shell sed 's|^libtommath/|db/libtommath/|' ltm_sources.txt)
