@@ -7,6 +7,7 @@
 //                   backed-up 16-grey window, maps Psion keys to vterm keys
 //   CPsiTermAppUi - menus, commands, settings file
 
+#include <basched.h>        // KLeaveExit
 #include <e32keys.h>
 #include <e32svr.h>
 #include <estlib.h>
@@ -62,7 +63,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
-_LIT(KPsiTermVersion, "0.50");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.51");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -719,7 +720,14 @@ TInt CTermView::PendingCallback(TAny* aSelf)
 	TInt cmd = self->iPendingCmd;
 	self->iPendingCmd = 0;
 	if (cmd)
-		TRAP_IGNORE(CEikonEnv::Static()->EikAppUi()->HandleCommandL(cmd));
+		{
+		TRAPD(err, CEikonEnv::Static()->EikAppUi()->HandleCommandL(cmd));
+		// PsiTerm closing (e.g. to let the installer run after an update
+		// that first had to end the SSH session) leaves with KLeaveExit:
+		// that must reach EIKON, not be swallowed here
+		if (err == KLeaveExit)
+			User::Leave(err);
+		}
 	return 0;
 	}
 
