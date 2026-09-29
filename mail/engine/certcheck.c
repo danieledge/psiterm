@@ -337,10 +337,45 @@ static void fingerprint(const Cert *c)
 	for (i = 0; i < 32; i++) k += sprintf(g_fp + k, i ? ":%02X" : "%02X", h[i]);
 }
 
+/* Intermediate certificates already checked up to a root are remembered
+   (certs.txt in the store: SHA-256 of each), so later connections skip the
+   slowest part - a 4096-bit RSA check takes the Psion a few seconds. */
+static int g_known_loaded;
+
+static void hexof(const unsigned char *h, char *out)
+{
+	static const char x[] = "0123456789abcdef";
+	int i;
+	for (i = 0; i < 32; i++) { out[2 * i] = x[h[i] >> 4]; out[2 * i + 1] = x[h[i] & 15]; }
+	out[64] = 0;
+}
+
+static void load_known(void)
+{
+	char path[160], line[80];
+	FILE *f;
+	g_known_loaded = 1;
+	snprintf(path, sizeof(path), "%scerts.txt", pm_shared()->store_dir);
+	if (!(f = fopen(path, "r"))) return;
+	while (g_nknown < 8 && fgets(line, sizeof(line), f)) {
+		int i;
+		if (strlen(line) < 64) continue;
+		for (i = 0; i < 32; i++) {
+			int hi = line[2 * i], lo = line[2 * i + 1];
+			hi = hi <= '9' ? hi - '0' : hi - 'a' + 10;
+			lo = lo <= '9' ? lo - '0' : lo - 'a' + 10;
+			g_known[g_nknown][i] = (unsigned char)(hi * 16 + lo);
+		}
+		g_nknown++;
+	}
+	fclose(f);
+}
+
 static int known(const Cert *c)
 {
 	unsigned char h[32];
 	int i;
+	if (!g_known_loaded) load_known();
 	hash_n(256, c->der, c->derlen, h);
 	for (i = 0; i < g_nknown; i++) if (!memcmp(g_known[i], h, 32)) return 1;
 	return 0;
@@ -348,7 +383,16 @@ static int known(const Cert *c)
 
 static void remember(const Cert *c)
 {
-	if (g_nknown < 8 && !known(c)) { hash_n(256, c->der, c->derlen, g_known[g_nknown]); g_nknown++; }
+	char path[160], hex[65];
+	FILE *f;
+	if (known(c)) return;
+	if (g_nknown >= 8) g_nknown = 0;        /* start again rather than grow */
+	hash_n(256, c->der, c->derlen, g_known[g_nknown]);
+	hexof(g_known[g_nknown], hex);
+	g_nknown++;
+	pm_mkdir(pm_shared()->store_dir);
+	snprintf(path, sizeof(path), "%scerts.txt", pm_shared()->store_dir);
+	if ((f = fopen(path, g_nknown == 1 ? "w" : "a")) != 0) { fprintf(f, "%s\n", hex); fclose(f); }
 }
 
 /* 1 if the chain from the leaf reaches a built-in root */
