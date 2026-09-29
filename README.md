@@ -42,6 +42,12 @@ and Claude Code - on a 1999 palmtop.
 modem/dial-up link and TLS 1.3 client - see [web/README.md](web/README.md)
 (`dist/PsiWeb.sis`, built by `web/build.sh`).
 
+## PsiMail: email
+
+`mail/` builds **PsiMail**, an IMAP/SMTP email client made for Fastmail, on the
+same link and TLS client, with the server's certificate checked - see
+[mail/README.md](mail/README.md) (`dist/PsiMail.sis`, built by `mail/build.sh`).
+
 ## Install
 
 Download [`PsiTerm.sis`](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis),
