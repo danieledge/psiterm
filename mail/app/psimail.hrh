@@ -38,7 +38,9 @@ enum TPmCommands
 	EPmCmdSmooth,
 	EPmCmdCalendar,
 	EPmCmdCalSettings,
-	EPmCmdShowCalendar
+	EPmCmdShowCalendar,
+	EPmCmdNewEvent,
+	EPmCmdMonth
 	};
 
 enum TPmDialogControls
@@ -85,7 +87,14 @@ enum TPmDialogControls
 	EPmDlgCalAhead,
 	EPmDlgCalAlarms,
 	EPmDlgCalDefault,
-	EPmDlgCalExisting
+	EPmDlgCalExisting,
+	EPmDlgEvTitle,
+	EPmDlgEvDate,
+	EPmDlgEvStart,
+	EPmDlgEvEnd,
+	EPmDlgEvAllDay,
+	EPmDlgEvLoc,
+	EPmDlgEvAlarm
 	};
 
 enum TPmButtons

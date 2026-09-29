@@ -15,6 +15,7 @@ NAME PSMA
 #include <eiklabel.rh>
 #include <eikseced.rh>
 #include <eikctrls.hrh>
+#include <eikmfne.hrh>
 #include <eikon.rsg>
 
 #include "psimail.hrh"
@@ -112,7 +113,9 @@ RESOURCE MENU_PANE r_pm_folder_menu
 		{
 		MENU_ITEM { command=EPmCmdFolders; txt="Folders"; },
 		MENU_ITEM { command=EPmCmdOutbox; txt="Outbox"; },
-		MENU_ITEM { command=EPmCmdShowCalendar; txt="Calendar"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdShowCalendar; txt="Calendar"; },
+		MENU_ITEM { command=EPmCmdMonth; txt="Month / week"; },
+		MENU_ITEM { command=EPmCmdNewEvent; txt="New event..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdRefresh; txt="Check for new mail"; },
 		MENU_ITEM { command=EPmCmdOlder; txt="Get older messages"; },
 		MENU_ITEM { command=EPmCmdSearch; txt="Search..."; }
@@ -443,4 +446,35 @@ RESOURCE ARRAY r_pm_zones
 		LBUF { txt="Atlantic (Canada)"; },
 		LBUF { txt="Sao Paulo, Buenos Aires"; }
 		};
+	}
+
+RESOURCE DIALOG r_pm_event_dialog
+	{
+	title="New event";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="What"; id=EPmDlgEvTitle;
+			control=EDWIN { width=24; maxlength=180; }; },
+		DLG_LINE { type=EEikCtDateEditor; prompt="Date"; id=EPmDlgEvDate;
+			control=DATE_EDITOR { minDate=DATE { year=1990; }; maxDate=DATE { year=2099; month=11; day=30; }; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="All day"; id=EPmDlgEvAllDay;
+			control=CHOICELIST { array_id=r_pm_yesno_array; }; },
+		DLG_LINE { type=EEikCtTimeEditor; prompt="From"; id=EPmDlgEvStart;
+			control=TIME_EDITOR { minTime=TIME {}; maxTime=TIME { hour=23; minute=59; second=59; }; flags=EEikTimeWithoutSecondsField; }; },
+		DLG_LINE { type=EEikCtTimeEditor; prompt="To"; id=EPmDlgEvEnd;
+			control=TIME_EDITOR { minTime=TIME {}; maxTime=TIME { hour=23; minute=59; second=59; }; flags=EEikTimeWithoutSecondsField; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Where"; id=EPmDlgEvLoc;
+			control=EDWIN { width=24; maxlength=110; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Alarm"; id=EPmDlgEvAlarm;
+			control=CHOICELIST { array_id=r_pm_alarm_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_alarm_array
+	{
+	items={ LBUF { txt="None"; }, LBUF { txt="When it starts"; }, LBUF { txt="5 minutes before"; },
+		LBUF { txt="15 minutes before"; }, LBUF { txt="30 minutes before"; }, LBUF { txt="1 hour before"; },
+		LBUF { txt="1 day before"; } };
 	}

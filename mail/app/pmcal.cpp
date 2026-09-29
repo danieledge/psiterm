@@ -1152,3 +1152,63 @@ void CPmCalSync::FinishL()
 	iPhase = EIdle;
 	iObserver.CalSyncDone(KErrNone, msg, pushed && iSent > 0);
 	}
+
+// ---------------------------------------------------------------- a new entry
+
+void CPmCalSync::AddToAgendaL(const TDesC& aFile, const TDesC& aTitle, const TDesC& aLocation,
+	const TTime& aStart, const TTime& aEnd, TBool aAllDay, TInt aAlarm)
+	{
+	RFs fs;
+	User::LeaveIfError(fs.Connect());
+	CleanupClosePushL(fs);
+	TEntry entry;
+	if (fs.Entry(aFile, entry) != KErrNone)
+		User::Leave(KErrNotFound);
+	CleanupStack::PopAndDestroy();       // fs
+	CParaFormatLayer* para = CParaFormatLayer::NewL();
+	CleanupStack::PushL(para);
+	CCharFormatLayer* chr = CCharFormatLayer::NewL();
+	CleanupStack::PushL(chr);
+	RAgendaServ* serv = RAgendaServ::NewL();
+	CleanupStack::PushL(serv);
+	User::LeaveIfError(serv->Connect());
+	CleanupClosePushL(*serv);
+	CAgnEntryModel* model = CAgnEntryModel::NewL();
+	CleanupStack::PushL(model);
+	model->SetServer(serv);
+	model->OpenL(aFile, TTimeIntervalMinutes(9 * 60), TTimeIntervalMinutes(9 * 60), TTimeIntervalMinutes(9 * 60));
+	serv->WaitUntilLoaded();
+	CAgnEntry* e;
+	if (aAllDay)
+		{
+		CAgnEvent* ev = CAgnEvent::NewL(para, chr);
+		e = ev;
+		CleanupStack::PushL(e);
+		ev->SetStartAndEndDate(aStart, aEnd);
+		}
+	else
+		{
+		CAgnAppt* a = CAgnAppt::NewL(para, chr);
+		e = a;
+		CleanupStack::PushL(e);
+		a->SetStartAndEndDateTime(aStart, aEnd);
+		}
+	e->RichTextL()->InsertL(0, aTitle);
+	if (aLocation.Length())
+		e->SetLocationL(aLocation);
+	if (aAlarm >= 0)
+		{
+		TTime at = aStart - TTimeIntervalMinutes(aAlarm);
+		TInt days = Midnight(aStart).DaysFrom(Midnight(at)).Int();
+		TDateTime d = at.DateTime();
+		e->SetAlarm(TTimeIntervalDays(days), TTimeIntervalMinutes(d.Hour() * 60 + d.Minute()));
+		}
+	model->AddEntryL(e);
+	CleanupStack::PopAndDestroy();       // e
+	CleanupStack::PopAndDestroy();       // model
+	serv->CloseAgenda();
+	CleanupStack::PopAndDestroy();       // serv->Close()
+	CleanupStack::Pop();                 // serv
+	delete serv;
+	CleanupStack::PopAndDestroy(2);      // chr, para
+	}

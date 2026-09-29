@@ -79,6 +79,12 @@ server as PsiWin does.
 * The server keeps what the Psion doesn't show (descriptions, guests,
   other alarms): PsiMail changes only the fields it knows.
 
+PsiMail has its own calendar screen too (Ctrl+D, or Calendar in the folder
+column): the week with the chosen day's events, or the month; Enter shows
+an event in full; N adds an event (to the Agenda, and from there to the
+server). It shows what has been synced, and new Psion entries waiting to
+be sent.
+
 Not yet: repeating entries made on the Psion (they stay on the Psion), to-do
 lists, anniversaries, more than one calendar account.
 
@@ -102,7 +108,10 @@ lists, anniversaries, more than one calendar account.
 | Ctrl+J / Ctrl+K | switch account / account settings |
 | Tab / Shift+Tab in a message | next / previous link or attachment (Enter opens it) |
 | Ctrl+P | view the message as a web page (PsiWeb) |
+| Ctrl+D | the calendar |
 | Shift+Ctrl+C | sync the calendar |
+| In the calendar: Left/Right, PgUp/PgDn, Home | day, week (month), today |
+| In the calendar: M / N (or Ctrl+N) / Enter | month or week / new event / the event in full |
 | Tab or Left in the message list | the folder column |
 
 In the message editor: Ctrl+S sends, Ctrl+D saves to the outbox, Ctrl+A

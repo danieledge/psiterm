@@ -136,24 +136,65 @@ void ui_sidebar(PmCanvas* c, const PmUiMailbox* m)
 		}
 	}
 
+static int upper_ch(int ch)
+	{
+	if (ch >= 'a' && ch <= 'z') return ch - 32;
+	if (ch >= 0xe0 && ch <= 0xfe && ch != 0xf7) return ch - 32;
+	return ch;
+	}
+
+/* a name's initials ("Alice Angstrom" -> "AA", "big@example.com" -> "B") */
+static int initials(const char* s, int n, char* out)
+	{
+	int k = 0, start = 1;
+	for (int i = 0; i < n && k < 2; i++)
+		{
+		unsigned char ch = (unsigned char)s[i];
+		if (ch == '@' || ch == '<' || ch == '(') break;
+		if (ch == ' ' || ch == '.' || ch == '_' || ch == '-' || ch == '"') { start = 1; continue; }
+		if (start && (ch >= 'A' || (ch >= '0' && ch <= '9'))) { out[k++] = (char)upper_ch(ch); start = 0; }
+		else start = 0;
+		}
+	if (k == 0 && n > 0) out[k++] = (char)upper_ch((unsigned char)s[0]);
+	return k;
+	}
+
+/* the same name always gets the same grey */
+static int avatar_grey(const char* s, int n)
+	{
+	static const signed char g[5] = { 3, 5, 6, 7, 4 };
+	unsigned int h = 0;
+	for (int i = 0; i < n; i++) h = h * 31 + (unsigned char)s[i];
+	return g[h % 5];
+	}
+
+enum { KAvatarX = KSide + 25, KRowText = KSide + 44 };
+
 static void draw_row(PmCanvas* c, const PmUiRow* r, int y, int sel, int last)
 	{
 	int x0 = KSide + 6, x1 = c->w - 6;
 	int unread = r->flags & KRowUnread;
-	int fg = 0, sub = unread ? 1 : 5, dg = 6;
+	int fg = 0, sub = unread ? 1 : 5, dg = unread ? 3 : 6;
 	if (sel)
 		{
-		gfx_round(c, x0, y + 1, x1 - x0, KRow - 2, 5, 3);
+		gfx_round(c, x0, y + 1, x1 - x0, KRow - 2, 6, 3);
 		fg = 15; sub = unread ? 15 : 12; dg = 12;
 		}
 	else if (!last)
-		gfx_hline(c, KSide + 20, y + KRow - 1, c->w - KSide - 30, 13);
+		gfx_hline(c, KRowText, y + KRow - 1, c->w - KRowText - 12, 13);
+	/* the sender's initials in a circle; unread: a dot beside it */
+	char in[2];
+	int ni = initials(r->from, r->flen, in);
+	int ag = avatar_grey(r->from, r->flen);
+	gfx_circle(c, 2 * KAvatarX, 2 * (y + 15), 2 * 11, sel ? 15 : ag);
+	int iw = gfx_text_width(&KFontS11, in, ni);
+	gfx_text(c, &KFontS11, KAvatarX - iw / 2 + (iw & 1), y + 19, in, ni, sel ? 3 : 15);
 	if (unread)
-		gfx_circle(c, 2 * (KSide + 13), 2 * (y + 9), 6, sel ? 15 : 2);
+		gfx_circle(c, 2 * (KSide + 9), 2 * (y + 15), 5, sel ? 15 : 2);
 	const PmFont* ff = unread ? &KFontS12 : &KFontR12;
 	const PmFont* df = unread ? &KFontS11 : &KFontR11;
 	int dw = gfx_text_right(c, df, x1 - 8, y + 13, r->date, r->dlen, dg);
-	gfx_text_clip(c, ff, KSide + 22, y + 13, r->from, r->flen, x1 - 8 - dw - 10 - (KSide + 22), fg);
+	gfx_text_clip(c, ff, KRowText, y + 13, r->from, r->flen, x1 - 8 - dw - 10 - KRowText, fg);
 	/* the flags at the right of the second line */
 	int ix = x1 - 8;
 	if (r->flags & KRowFlagged) { ix -= 15; gfx_icon(c, &KFontICON14, EIconFlag, ix, y + 14, sel ? 15 : 1); }
@@ -161,7 +202,7 @@ static void draw_row(PmCanvas* c, const PmUiRow* r, int y, int sel, int last)
 	if (r->flags & KRowAnswered) { ix -= 15; gfx_icon(c, &KFontICON14, EIconReply, ix, y + 14, sel ? 13 : 6); }
 	if (r->flags & KRowError) { ix -= 15; gfx_icon(c, &KFontICON14, EIconCircleAlert, ix, y + 14, sel ? 15 : 1); }
 	if (r->flags & KRowDraft) { ix -= 15; gfx_icon(c, &KFontICON14, EIconPencil, ix, y + 14, sel ? 13 : 5); }
-	gfx_text_clip(c, &KFontR12, KSide + 22, y + 26, r->subj, r->slen, ix - 6 - (KSide + 22), sub);
+	gfx_text_clip(c, unread ? &KFontR12 : &KFontR12, KRowText, y + 26, r->subj, r->slen, ix - 6 - KRowText, sub);
 	}
 
 static void header_button(PmCanvas* c, int x, int icon)
@@ -362,10 +403,10 @@ void ui_reader(PmCanvas* c, const PmUiReader* r)
 	gfx_fill(c, 0, 0, c->w, c->h, 15);
 
 	/* top bar: back to the folder, position, actions */
-	gfx_fill(c, 0, 0, c->w, KBar, 14);
-	gfx_hline(c, 0, KBar - 1, c->w, 12);
-	gfx_icon(c, &KFontICON14, EIconChevronLeft, 8, 7, 3);
-	int fw = gfx_text_clip(c, &KFontS12, 24, 18, r->folder, r->flen, 140, 3);
+	/* a quiet bar: the message is what matters */
+	gfx_hline(c, 12, KBar - 1, c->w - 24, 13);
+	gfx_icon(c, &KFontICON14, EIconChevronLeft, 8, 7, 5);
+	int fw = gfx_text_clip(c, &KFontS12, 24, 18, r->folder, r->flen, 140, 4);
 	int x = 24 + fw + 12;
 	if (r->count > 0)
 		{
@@ -374,7 +415,7 @@ void ui_reader(PmCanvas* c, const PmUiReader* r)
 		const char* of = " of ";
 		while (*of) b[k++] = *of++;
 		k += num(b + k, r->count);
-		x += gfx_text(c, &KFontR11, x, 18, b, k, 6) + 12;
+		x += gfx_text(c, &KFontR11, x, 18, b, k, 7) + 12;
 		}
 	int icons[8];
 	int nb = reader_buttons(r, icons);
@@ -388,7 +429,7 @@ void ui_reader(PmCanvas* c, const PmUiReader* r)
 			gfx_icon(c, &KFontICON18, ic, bx, 5, 15);
 			}
 		else
-			gfx_icon(c, &KFontICON18, ic, bx, 5, 3);
+			gfx_icon(c, &KFontICON18, ic, bx, 5, 5);
 		bx -= 30;
 		}
 	if (r->busy || r->statlen)

@@ -78,6 +78,9 @@ public:
 	static void SetDefaultCalendarL(const TDesC& aStoreDir, const TDesC8& aId);
 	// forgets the links between Agenda entries and server events
 	static void ForgetL(const TDesC& aStoreDir);
+	// adds an entry to the Agenda (aAlarm: minutes before, -1 none)
+	static void AddToAgendaL(const TDesC& aFile, const TDesC& aTitle, const TDesC& aLocation,
+		const TTime& aStart, const TTime& aEnd, TBool aAllDay, TInt aAlarm);
 private:
 	enum TPhase { EIdle, EOpen, EPushed, EMapped, ENew, ELocal, EFinish };
 	CPmCalSync(MPmCalObserver& aObserver);

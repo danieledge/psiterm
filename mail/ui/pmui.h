@@ -80,7 +80,7 @@ void ui_mailbox(PmCanvas* c, const PmUiMailbox* m);
 enum { EHitNone, EHitFolder, EHitRow, EHitRefresh, EHitNew, EHitSearch, EHitBack, EHitReply,
        EHitReplyAll, EHitForward, EHitDelete, EHitArchive, EHitFlag, EHitLink, EHitAttach,
        EHitWeb, EHitCalendar, EHitTop, EHitBottom, EHitDay, EHitPrev, EHitNext, EHitToday,
-       EHitSync };
+       EHitSync, EHitMonth, EHitAdd };
 int  ui_mailbox_hit(int aW, int aH, const PmUiMailbox* m, int x, int y, int* aIndex);
 /* the folder column alone (also beside the calendar) */
 void ui_sidebar(PmCanvas* c, const PmUiMailbox* m);
@@ -130,6 +130,12 @@ struct PmUiCalendar
 	const char* next; int nlen;        /* "Next: Thu 1 Oct, Dentist" */
 	int focus;                         /* keys are in the event list (not the sidebar) */
 	int enabled;                       /* calendar sync set up */
+	/* the month instead of the week and day (calm_month fills these) */
+	int month;
+	PmUiDay mdays[42];                 /* 6 weeks from the Monday on or before the 1st */
+	const char* mtitle[42]; int mtlen[42];   /* each day's first event */
+	int mSel;                          /* 0..41 */
+	int mThis;                         /* mdays[i].mon == mThis: in the month shown */
 	};
 
 int  ui_calendar_rows(int aHeight);          /* event rows that fit */
@@ -187,6 +193,8 @@ struct PmCalText { char title[40]; char day[80]; char empty[48]; char next[120];
 void calm_view(const PmCalModel* m, long today, int now, long sel, PmUiCalendar* k,
                PmUiEvent* ev, int max, PmCalText* t);
 void calm_event_view(const PmUiEvent* e, long day, PmUiEventView* v, PmCalText* t);
+/* the month around day 'sel' (after calm_view) */
+void calm_month(const PmCalModel* m, long today, long sel, PmUiCalendar* k);
 
 
 

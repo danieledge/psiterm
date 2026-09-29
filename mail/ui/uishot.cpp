@@ -85,6 +85,7 @@ static void fmt_date(long t, char* out)
 	struct tm n = *localtime(&now);
 	static const char* mon[] = { "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec" };
 	if (tm->tm_year == n.tm_year && tm->tm_yday == n.tm_yday) sprintf(out, "%02d:%02d", tm->tm_hour, tm->tm_min);
+	else if (tm->tm_year == n.tm_year && tm->tm_yday == n.tm_yday - 1) sprintf(out, "Yesterday");
 	else sprintf(out, "%d %s", tm->tm_mday, mon[tm->tm_mon]);
 	}
 
@@ -233,6 +234,7 @@ int main(int argc, char** argv)
 		k.sel = argc > 5 ? atoi(argv[5]) : (k.nevents ? 0 : -1);
 		k.focus = !side.sidebarFocus;
 		k.enabled = 1;
+		if (getenv("MONTH")) calm_month(&m, today, sel, &k);
 		if (getenv("STATUS")) { k.status = getenv("STATUS"); k.statlen = strlen(k.status); k.busy = 1; }
 		if (!strcmp(argv[2], "event") && k.sel >= 0 && k.sel < k.nevents)
 			{

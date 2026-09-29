@@ -177,6 +177,95 @@ static void draw_timed(PmCanvas* c, const PmUiEvent* e, int y, int sel, int focu
 		gfx_text_clip(c, &KFontR11, KTitleX, y + 27, e->cal, e->clen, tw, sel && focus ? 12 : 7);
 	}
 
+/* ------------------------------------------------------------ header */
+
+/* where the header's buttons are (the same for drawing and the pen) */
+struct HeadPos { int sync, view, add, next, today, todayW, prev; };
+
+static void head_pos(int w, HeadPos* p)
+	{
+	p->sync = w - 30;
+	p->view = p->sync - 32;
+	p->add = p->view - 32;
+	p->next = p->add - 38;
+	p->todayW = gfx_text_width(&KFontS11, "Today", 5) + 16;
+	p->today = p->next - 6 - p->todayW;
+	p->prev = p->today - 26;
+	}
+
+static void draw_header(PmCanvas* c, const PmUiCalendar* k)
+	{
+	HeadPos p;
+	head_pos(c->w, &p);
+	gfx_icon(c, &KFontICON18, EIconCalendarSync, p.sync, 9, 3);
+	gfx_icon(c, &KFontICON18, k->month ? EIconCalendar : EIconCalendarDays, p.view, 9, 3);
+	gfx_icon(c, &KFontICON18, EIconPlus, p.add, 9, 3);
+	gfx_vline(c, p.add - 12, 10, 16, 12);
+	gfx_icon(c, &KFontICON18, EIconChevronRight, p.next, 9, 3);
+	gfx_round_frame(c, p.today, 8, p.todayW, 20, 6, 10);
+	gfx_text(c, &KFontS11, p.today + 8, 22, "Today", 5, 3);
+	gfx_icon(c, &KFontICON18, EIconChevronLeft, p.prev, 9, 3);
+	int hx = KSide + 16;
+	int w = gfx_text_clip(c, &KFontS16, hx, 23, k->title, k->tlen, p.prev - 70 - hx, 0);
+	int sx = hx + w + 10;
+	if (k->busy) { gfx_icon(c, &KFontICON14, EIconLoader, sx, 11, 5); sx += 18; }
+	if (k->statlen) gfx_text_clip(c, &KFontR11, sx, 22, k->status, k->statlen, p.prev - 8 - sx, 5);
+	gfx_hline(c, KSide + 1, KHead - 1, c->w - KSide - 1, 13);
+	}
+
+/* ------------------------------------------------------------ the month */
+
+enum { KMonthNames = KHead + 13, KGridTop = KHead + 17 };
+
+static int month_row_h(int h) { return (h - KGridTop) / 6; }
+
+static void draw_month(PmCanvas* c, const PmUiCalendar* k)
+	{
+	int cw = strip_col(c->w);
+	int x0 = KSide + 1 + 8;
+	int rh = month_row_h(c->h);
+	for (int i = 0; i < 7; i++)
+		text_c(c, &KFontR11, x0 + i * cw + cw / 2, KMonthNames, KWeekday[i], 3, i >= 5 ? 8 : 6);
+	for (int r = 0; r < 6; r++)
+		{
+		int y = KGridTop + r * rh;
+		gfx_hline(c, x0, y, 7 * cw, 13);
+		for (int i = 0; i < 7; i++)
+			{
+			int n = r * 7 + i;
+			const PmUiDay* d = &k->mdays[n];
+			int x = x0 + i * cw;
+			int in = d->mon == k->mThis;
+			int sel = n == k->mSel;
+			if (sel)
+				gfx_round(c, x + 2, y + 2, cw - 4, rh - 3, 6, k->focus ? 3 : 12);
+			char b[4];
+			int bn = 0;
+			int v = d->mday;
+			if (v >= 10) b[bn++] = (char)('0' + v / 10);
+			b[bn++] = (char)('0' + v % 10);
+			int grey = sel && k->focus ? 15 : !in ? 11 : i >= 5 ? 5 : 1;
+			if (d->today && !(sel && k->focus))
+				{
+				gfx_circle(c, 2 * (x + 13), 2 * (y + 9), 2 * 7, 2);
+				text_c(c, &KFontS11, x + 13, y + 13, b, bn, 15);
+				}
+			else
+				text_c(c, d->today || sel ? &KFontS11 : &KFontR11, x + 13, y + 13, b, bn, grey);
+			/* how busy, and the first thing on */
+			if (d->count > 0)
+				{
+				int dots = d->count > 3 ? 3 : d->count;
+				for (int j = 0; j < dots; j++)
+					gfx_circle(c, 2 * (x + cw - 10 - j * 6), 2 * (y + 9), 3, sel && k->focus ? 15 : in ? 5 : 11);
+				if (k->mtitle[n] && rh >= 26)
+					gfx_text_clip(c, &KFontR11, x + 6, y + rh - 3, k->mtitle[n], k->mtlen[n], cw - 10,
+						sel && k->focus ? 13 : in ? 4 : 11);
+				}
+			}
+		}
+	}
+
 /* the first row to show so that 'sel' is on screen */
 static int fix_top(const PmUiCalendar* k, int h)
 	{
@@ -198,25 +287,12 @@ void ui_calendar(PmCanvas* c, const PmUiCalendar* k)
 	gfx_fill(c, KSide + 1, 0, c->w - KSide - 1, c->h, 15);
 	ui_sidebar(c, k->side);
 
-	/* header: the month; buttons: back a week, today, on a week, sync */
-	int bx = c->w - 30;
-	gfx_icon(c, &KFontICON18, EIconCalendarSync, bx, 9, 3);
-	int nx = bx - 34;
-	gfx_icon(c, &KFontICON18, EIconChevronRight, nx, 9, 3);
-	const char* td = "Today";
-	int tw = gfx_text_width(&KFontS11, td, 5) + 16;
-	int tx0 = nx - 6 - tw;
-	gfx_round_frame(c, tx0, 8, tw, 20, 6, 10);
-	gfx_text(c, &KFontS11, tx0 + 8, 22, td, 5, 3);
-	int px = tx0 - 26;
-	gfx_icon(c, &KFontICON18, EIconChevronLeft, px, 9, 3);
-	int hx = KSide + 16;
-	int w = gfx_text_clip(c, &KFontS16, hx, 23, k->title, k->tlen, px - 80 - hx, 0);
-	int sx = hx + w + 10;
-	if (k->busy) { gfx_icon(c, &KFontICON14, EIconLoader, sx, 11, 5); sx += 18; }
-	if (k->statlen) gfx_text_clip(c, &KFontR11, sx, 22, k->status, k->statlen, px - 8 - sx, 5);
-	gfx_hline(c, KSide + 1, KHead - 1, c->w - KSide - 1, 13);
-
+	draw_header(c, k);
+	if (k->month)
+		{
+		draw_month(c, k);
+		return;
+		}
 	draw_strip(c, k);
 
 	/* the day */
@@ -306,13 +382,22 @@ int ui_calendar_hit(int aW, int aH, const PmUiCalendar* k, int x, int y, int* aI
 		}
 	if (y < KHead)
 		{
-		int bx = aW - 30;
-		if (x >= bx - 4) return EHitSync;
-		if (x >= bx - 38) return EHitNext;
-		int tw = gfx_text_width(&KFontS11, "Today", 5) + 16;
-		int tx0 = bx - 34 - 6 - tw;
-		if (x >= tx0) return EHitToday;
-		if (x >= tx0 - 30) return EHitPrev;
+		HeadPos p;
+		head_pos(aW, &p);
+		if (x >= p.sync - 4) return EHitSync;
+		if (x >= p.view - 4) return EHitMonth;
+		if (x >= p.add - 4) return EHitAdd;
+		if (x >= p.next - 4) return EHitNext;
+		if (x >= p.today) return EHitToday;
+		if (x >= p.prev - 4) return EHitPrev;
+		return EHitNone;
+		}
+	if (k->month)
+		{
+		if (y < KGridTop) return EHitNone;
+		int col = (x - KSide - 9) / strip_col(aW);
+		int row = (y - KGridTop) / month_row_h(aH);
+		if (col >= 0 && col < 7 && row >= 0 && row < 6) { *aIndex = row * 7 + col; return EHitDay; }
 		return EHitNone;
 		}
 	if (y < KStripTop + KStripH)
@@ -347,10 +432,9 @@ void ui_event(PmCanvas* c, const PmUiEventView* v)
 	const PmUiEvent* e = v->ev;
 	gfx_noclip(c);
 	gfx_fill(c, 0, 0, c->w, c->h, 15);
-	gfx_fill(c, 0, 0, c->w, KBar, 14);
-	gfx_hline(c, 0, KBar - 1, c->w, 12);
-	gfx_icon(c, &KFontICON14, EIconChevronLeft, 8, 7, 3);
-	gfx_text(c, &KFontS12, 24, 18, "Calendar", 8, 3);
+	gfx_hline(c, 12, KBar - 1, c->w - 24, 13);
+	gfx_icon(c, &KFontICON14, EIconChevronLeft, 8, 7, 5);
+	gfx_text(c, &KFontS12, 24, 18, "Calendar", 8, 4);
 	if (e->clen)
 		{
 		/* which calendar, at the right: a chip in its grey */

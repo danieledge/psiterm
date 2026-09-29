@@ -110,6 +110,8 @@ public:
 	void ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSettings& aCal);
 	void CalendarSyncL();                    // ask the engine, then update the Agenda
 	void ShowCalendarL();                    // the calendar screen
+	void ToggleMonthL();
+	void NewEventL();                        // straight into the Agenda (then synced)
 	TBool CalendarBusy() const { return iCalPending || (iCalSync && iCalSync->Running()); }
 	void StoreDirectory(TDes& aDir) const { StoreDir(aDir); }
 	// MPmCalObserver
@@ -199,6 +201,7 @@ private:
 	void LoadCalendarL();
 	void CalendarToday();
 	void CalGoTo(TInt aDays);
+	void MonthStep(TInt aDir);
 	void RenderCalendar();
 	void RenderEvent();
 	void FillCalendar(PmUiCalendar& k);
@@ -269,6 +272,7 @@ private:
 	TInt iCalDay;                    // the day shown
 	TInt iCalSel;
 	TInt iCalTop;
+	TBool iCalMonth;                 // the month grid instead of the week
 	PmUiEvent iCalEvents[40];
 	PmCalText iCalText;
 	PmCalText iCalText2;
@@ -365,6 +369,28 @@ private:
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
 	TPmSettings& iSettings;
+	};
+
+// a new Agenda entry
+struct TPmNewEvent
+	{
+	TBuf<180> iTitle;
+	TBuf<110> iLocation;
+	TTime iDate, iStart, iEnd;
+	TInt iAllDay;
+	TInt iAlarm;                     // choice index
+	};
+
+class CPmEventDialog : public CEikDialog
+	{
+public:
+	CPmEventDialog(TPmNewEvent& aEvent) : iEv(aEvent) {}
+private:
+	void PreLayoutDynInitL();
+	void HandleControlStateChangeL(TInt aControlId);
+	TBool OkToExitL(TInt aButtonId);
+	void Dim();
+	TPmNewEvent& iEv;
 	};
 
 class CPmCalDialog : public CEikDialog

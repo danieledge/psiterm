@@ -1574,6 +1574,17 @@ void CPmView::HandleCalResultL(const PmCmd& aCmd, TInt aRes, const TDesC& aMsg)
 		iCalSync->StartL(dir, *iCal);
 		return;
 		}
+	if (aRes == PM_RES_OFFLINE && !list)
+		{
+		// no network: the Agenda half still runs (new Psion entries are
+		// kept in push.txt for next time)
+		iCalSecond = ETrue;
+		iCalMsg.Zero();
+		TBuf<100> dir;
+		StoreDir(dir);
+		iCalSync->StartL(dir, *iCal);
+		return;
+		}
 	iCalSecond = EFalse;
 	if (aRes == PM_RES_NEED_PASS || aRes == PM_RES_LOGIN_FAILED)
 		{
@@ -1642,10 +1653,15 @@ void CPmView::FormatDate(TInt aDate, TDes& aOut) const
 	const TText* KMonths[] = { _S("Jan"), _S("Feb"), _S("Mar"), _S("Apr"), _S("May"), _S("Jun"),
 		_S("Jul"), _S("Aug"), _S("Sep"), _S("Oct"), _S("Nov"), _S("Dec") };
 	const TText* KDays[] = { _S("Mon"), _S("Tue"), _S("Wed"), _S("Thu"), _S("Fri"), _S("Sat"), _S("Sun") };
-	TTimeIntervalDays ago = now.DaysFrom(t);
-	if (d.Year() == n.Year() && d.Month() == n.Month() && d.Day() == n.Day())
+	// whole days between the two dates (not 24-hour periods)
+	TTime dm(TDateTime(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0));
+	TTime nm(TDateTime(n.Year(), n.Month(), n.Day(), 0, 0, 0, 0));
+	TTimeIntervalDays ago = nm.DaysFrom(dm);
+	if (ago.Int() == 0)
 		aOut.Format(_L("%02d:%02d"), d.Hour(), d.Minute());
-	else if (ago.Int() >= 0 && ago.Int() < 6)
+	else if (ago.Int() == 1)
+		aOut = _L("Yesterday");
+	else if (ago.Int() > 1 && ago.Int() < 7)
 		aOut.Format(_L("%s %02d:%02d"), KDays[t.DayNoInWeek()], d.Hour(), d.Minute());
 	else if (d.Year() == n.Year())
 		aOut.Format(_L("%d %s"), d.Day() + 1, KMonths[d.Month()]);
@@ -2657,6 +2673,53 @@ void CPmAppUi::EditCalendarL()
 		iView->CalendarSyncL();
 	}
 
+// ----- a new event
+
+void CPmEventDialog::PreLayoutDynInitL()
+	{
+	SetEdwinTextL(EPmDlgEvTitle, &iEv.iTitle);
+	SetEdwinTextL(EPmDlgEvLoc, &iEv.iLocation);
+	((CEikDateEditor*)Control(EPmDlgEvDate))->SetDate(iEv.iDate);
+	((CEikTimeEditor*)Control(EPmDlgEvStart))->SetTime(iEv.iStart);
+	((CEikTimeEditor*)Control(EPmDlgEvEnd))->SetTime(iEv.iEnd);
+	SetChoiceListCurrentItem(EPmDlgEvAllDay, iEv.iAllDay ? 1 : 0);
+	SetChoiceListCurrentItem(EPmDlgEvAlarm, iEv.iAlarm);
+	Dim();
+	}
+
+// no times for an all-day event
+void CPmEventDialog::Dim()
+	{
+	TBool allday = ChoiceListCurrentItem(EPmDlgEvAllDay) == 1;
+	SetLineDimmedNow(EPmDlgEvStart, allday);
+	SetLineDimmedNow(EPmDlgEvEnd, allday);
+	}
+
+void CPmEventDialog::HandleControlStateChangeL(TInt aControlId)
+	{
+	if (aControlId == EPmDlgEvAllDay)
+		Dim();
+	}
+
+TBool CPmEventDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	GetEdwinText(iEv.iTitle, EPmDlgEvTitle);
+	iEv.iTitle.Trim();
+	if (iEv.iTitle.Length() == 0)
+		{
+		iEikonEnv->InfoMsg(_L("Say what the event is"));
+		return EFalse;
+		}
+	GetEdwinText(iEv.iLocation, EPmDlgEvLoc);
+	iEv.iLocation.Trim();
+	iEv.iDate = ((CEikDateEditor*)Control(EPmDlgEvDate))->Date();
+	iEv.iStart = ((CEikTimeEditor*)Control(EPmDlgEvStart))->Time();
+	iEv.iEnd = ((CEikTimeEditor*)Control(EPmDlgEvEnd))->Time();
+	iEv.iAllDay = ChoiceListCurrentItem(EPmDlgEvAllDay);
+	iEv.iAlarm = ChoiceListCurrentItem(EPmDlgEvAlarm);
+	return ETrue;
+	}
+
 CPmCalDialog::~CPmCalDialog()
 	{
 	delete iIds;
@@ -3234,7 +3297,11 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		AboutL();
 		break;
 	case EPmCmdNew:
-		NewMessageL();
+		// in the calendar, Ctrl+N makes an event
+		if (iView->Mode() == CPmView::ECalendar || iView->Mode() == CPmView::ECalEvent)
+			iView->NewEventL();
+		else
+			NewMessageL();
 		break;
 	case EPmCmdReply:
 		ReplyL(EFalse);
@@ -3286,6 +3353,12 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdShowCalendar:
 		iView->ShowCalendarL();
+		break;
+	case EPmCmdMonth:
+		iView->ToggleMonthL();
+		break;
+	case EPmCmdNewEvent:
+		iView->NewEventL();
 		break;
 	case EPmCmdCalSettings:
 		EditCalendarL();

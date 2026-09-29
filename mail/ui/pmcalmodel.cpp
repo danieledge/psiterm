@@ -419,3 +419,35 @@ void calm_event_view(const PmUiEvent* e, long day, PmUiEventView* v, PmCalText* 
 	v->note = (e->flags & KEvPending) ? "Made on the Psion: goes to the server at the next sync" : "";
 	v->nlen = (e->flags & KEvPending) ? 54 : 0;
 	}
+
+void calm_month(const PmCalModel* m, long today, long sel, PmUiCalendar* k)
+	{
+	int y, mo, d;
+	cal_date_of(sel, &y, &mo, &d);
+	long first = cal_days_from(y, mo, 1);
+	long start = first - cal_weekday(first);
+	k->month = 1;
+	k->mThis = mo - 1;
+	for (int i = 0; i < 42; i++)
+		{
+		long day = start + i;
+		int yy, mm, dd;
+		cal_date_of(day, &yy, &mm, &dd);
+		PmUiDay* p = &k->mdays[i];
+		p->mday = dd;
+		p->wday = i % 7;
+		p->mon = mm - 1;
+		p->month1 = 0;
+		p->today = day == today;
+		PmUiEvent ev[12];
+		p->count = calm_count(m, day);
+		k->mtitle[i] = 0;
+		k->mtlen[i] = 0;
+		if (p->count && calm_day(m, day, ev, 12) > 0)
+			{
+			k->mtitle[i] = ev[0].title;
+			k->mtlen[i] = ev[0].tlen;
+			}
+		}
+	k->mSel = (int)(sel - start);
+	}

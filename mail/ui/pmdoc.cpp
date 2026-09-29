@@ -323,11 +323,11 @@ int doc_build(PmDoc* d, const char* t, int len, int width,
 	d->ops = 0; d->nops = d->cap = 0; d->height = 0; d->nlinks = 0;
 	d->linkOff = d->linkLen = 0; d->linkCap = 0; d->bodyTop = 0; d->natt = natt;
 
-	f.d = d; f.t = t; f.right = width - M; f.y = 10; f.runLen = 0;
+	f.d = d; f.t = t; f.right = width - M; f.y = 12; f.runLen = 0;
 
 	/* subject, large */
 	n = doc_header(t, len, "Subject", &v);
-	start_block(&f, EF_S16, 0, M, 21, 0, -1);
+	start_block(&f, EF_S20, 0, M, 26, 0, -1);
 	if (n) flow_text(&f, (int)(v - t), (int)(v - t) + n);
 	else
 		{
@@ -451,7 +451,7 @@ int doc_build(PmDoc* d, const char* t, int len, int width,
 				{
 			case 'p':
 				while (q < e && t[q] == ' ') q++;
-				start_block(&f, EF_R13, 0, M, 17, 0, -1);
+				start_block(&f, EF_R13, 0, M, 19, 0, -1);
 				flow_text(&f, q, e);
 				end_block(&f);
 				break;
@@ -480,7 +480,7 @@ int doc_build(PmDoc* d, const char* t, int len, int width,
 				int ml = q - m0;
 				if (q < e) q++;
 				int ind = M + depth * 16;
-				start_block(&f, EF_R13, 0, ind, 17, 0, -1);
+				start_block(&f, EF_R13, 0, ind, 19, 0, -1);
 				if (ml == 1 && (unsigned char)t[m0] == 0x95)
 					op(d, EOpCircle, ind - 9, f.y + 9, 2, 2, 3);
 				else
@@ -499,7 +499,7 @@ int doc_build(PmDoc* d, const char* t, int len, int width,
 				if (depth > 6) depth = 6;
 				q++;
 				while (q < e && t[q] == ' ') q++;
-				start_block(&f, EF_R13, depth > 1 ? 7 : 5, M + depth * 10 + 4, 17, depth, -1);
+				start_block(&f, EF_R13, depth > 1 ? 7 : 5, M + depth * 10 + 4, 19, depth, -1);
 				flow_text(&f, q, e);
 				end_block(&f);
 				break;
@@ -556,7 +556,7 @@ int doc_build(PmDoc* d, const char* t, int len, int width,
 		else
 			{
 			/* a plain line */
-			start_block(&f, EF_R13, 0, M, 17, 0, -1);
+			start_block(&f, EF_R13, 0, M, 19, 0, -1);
 			flow_text(&f, p, e);
 			end_block(&f);
 			}

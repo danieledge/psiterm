@@ -83,6 +83,8 @@ void CPmView::FillCalendar(PmUiCalendar& k)
 		k.empty = "Calendar sync is off"; k.elen = 20;
 		k.next = "Turn it on in Tools > Calendar settings"; k.nlen = 39;
 		}
+	if (iCalMonth)
+		calm_month(&iCalModel, iCalToday, iCalDay, &k);
 	k.busy = Busy() || CalendarBusy();
 	if (Busy() && iLastProgress.Length()) { k.status = CStr(iLastProgress); k.statlen = iLastProgress.Length(); }
 	else if (iStatus.Length()) { k.status = CStr(iStatus); k.statlen = iStatus.Length(); }
@@ -137,8 +139,39 @@ TKeyResponse CPmView::CalendarKeyL(TUint aCode)
 		}
 	PmUiCalendar k;
 	FillCalendar(k);
+	if (iCalMonth)
+		{
+		switch (aCode)
+			{
+		case EKeyLeftArrow: CalGoTo(-1); break;
+		case EKeyRightArrow: CalGoTo(1); break;
+		case EKeyUpArrow: CalGoTo(-7); break;
+		case EKeyDownArrow: CalGoTo(7); break;
+		case EKeyPageUp: MonthStep(-1); break;
+		case EKeyPageDown: MonthStep(1); break;
+		case EKeyHome: iCalDay = iCalToday; CalGoTo(0); break;
+		case EKeyEnter: iCalMonth = EFalse; Render(); break;
+		case 'm': case 'M': ToggleMonthL(); break;
+		case 'n': case 'N': NewEventL(); break;
+		case EKeyTab:
+		case EKeyEscape:
+			FocusFoldersL();
+			break;
+		default:
+			return EKeyWasNotConsumed;
+			}
+		return EKeyWasConsumed;
+		}
 	switch (aCode)
 		{
+	case 'm':
+	case 'M':
+		ToggleMonthL();
+		break;
+	case 'n':
+	case 'N':
+		NewEventL();
+		break;
 	case EKeyLeftArrow: CalGoTo(-1); break;
 	case EKeyRightArrow: CalGoTo(1); break;
 	case EKeyPageUp: CalGoTo(-7); break;
@@ -215,9 +248,18 @@ void CPmView::CalendarPointerL(const TPoint& aPoint)
 		iFolderSel = index;
 		OpenCurrentL();
 		break;
-	case EHitDay: CalGoTo(index - k.daySel); break;
-	case EHitPrev: CalGoTo(-7); break;
-	case EHitNext: CalGoTo(7); break;
+	case EHitDay:
+		if (iCalMonth)
+			{
+			if (index == k.mSel) { iCalMonth = EFalse; Render(); }
+			else CalGoTo(index - k.mSel);
+			}
+		else CalGoTo(index - k.daySel);
+		break;
+	case EHitMonth: ToggleMonthL(); break;
+	case EHitAdd: NewEventL(); break;
+	case EHitPrev: if (iCalMonth) MonthStep(-1); else CalGoTo(-7); break;
+	case EHitNext: if (iCalMonth) MonthStep(1); else CalGoTo(7); break;
 	case EHitToday: iCalDay = iCalToday; CalGoTo(0); break;
 	case EHitSync: CalendarSyncL(); break;
 	case EHitRow:
@@ -227,5 +269,79 @@ void CPmView::CalendarPointerL(const TPoint& aPoint)
 		break;
 	default:
 		break;
+		}
+	}
+
+// the same day a month on (or the month's last day)
+void CPmView::MonthStep(TInt aDir)
+	{
+	int y, m, d;
+	cal_date_of(iCalDay, &y, &m, &d);
+	m += aDir;
+	if (m > 12) { m = 1; y++; }
+	if (m < 1) { m = 12; y--; }
+	static const TInt8 KLen[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+	TInt len = KLen[m - 1] + (m == 2 && (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)));
+	if (d > len) d = len;
+	iCalDay = cal_days_from(y, m, d);
+	CalGoTo(0);
+	}
+
+void CPmView::ToggleMonthL()
+	{
+	if (iMode != ECalendar && iMode != ECalEvent)
+		ShowCalendarL();
+	iMode = ECalendar;
+	iCalMonth = !iCalMonth;
+	iSidebar = EFalse;
+	Render();
+	}
+
+void CPmView::NewEventL()
+	{
+	TPmNewEvent ev;
+	TInt y, m, d;
+	CalendarToday();
+	TInt day = (iMode == ECalendar || iMode == ECalEvent) ? iCalDay : iCalToday;
+	cal_date_of(day, &y, &m, &d);
+	ev.iDate = TTime(TDateTime(y, TMonth(m - 1), d - 1, 0, 0, 0, 0));
+	// the next whole hour today, else nine o'clock
+	TInt hour = day == iCalToday ? iCalNow / 60 + 1 : 9;
+	if (hour > 22) hour = 22;
+	ev.iStart = TTime(TDateTime(2000, EJanuary, 0, hour, 0, 0, 0));
+	ev.iEnd = TTime(TDateTime(2000, EJanuary, 0, hour + 1, 0, 0, 0));
+	ev.iAllDay = 0;
+	ev.iAlarm = 0;
+	CPmEventDialog* dlg = new(ELeave) CPmEventDialog(ev);
+	if (!dlg->ExecuteLD(R_PM_EVENT_DIALOG))
+		return;
+	static const TInt16 KAlarms[7] = { -1, 0, 5, 15, 30, 60, 1440 };
+	TDateTime dd = ev.iDate.DateTime();
+	TDateTime s = ev.iStart.DateTime(), e = ev.iEnd.DateTime();
+	TTime start(TDateTime(dd.Year(), dd.Month(), dd.Day(), ev.iAllDay ? 0 : s.Hour(), ev.iAllDay ? 0 : s.Minute(), 0, 0));
+	TTime end(TDateTime(dd.Year(), dd.Month(), dd.Day(), ev.iAllDay ? 0 : e.Hour(), ev.iAllDay ? 0 : e.Minute(), 0, 0));
+	if (end < start) end += TTimeIntervalDays(1);      // past midnight
+	TRAPD(err, CPmCalSync::AddToAgendaL(iCal->iAgendaFile, ev.iTitle, ev.iLocation, start, end,
+		ev.iAllDay, KAlarms[ev.iAlarm >= 0 && ev.iAlarm < 7 ? ev.iAlarm : 0]));
+	if (err != KErrNone)
+		{
+		TBuf<80> t;
+		t.Format(err == KErrNotFound ? _L("No Agenda file at the place set in Calendar settings") : _L("Could not add it to the Agenda (%d)"), err);
+		Toast(t);
+		return;
+		}
+	iCalDay = cal_days_from(dd.Year(), dd.Month() + 1, dd.Day() + 1);
+	if (iCal->iCal.enabled)
+		{
+		Toast(_L("Added to the Agenda; sending it to the calendar"));
+		CalendarSyncL();
+		}
+	else
+		Toast(_L("Added to the Agenda"));
+	if (iMode == ECalendar || iMode == ECalEvent)
+		{
+		iMode = ECalendar;
+		iCalMonth = EFalse;
+		Render();
 		}
 	}
