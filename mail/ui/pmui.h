@@ -79,8 +79,116 @@ void ui_mailbox(PmCanvas* c, const PmUiMailbox* m);
 /* what the pen touched */
 enum { EHitNone, EHitFolder, EHitRow, EHitRefresh, EHitNew, EHitSearch, EHitBack, EHitReply,
        EHitReplyAll, EHitForward, EHitDelete, EHitArchive, EHitFlag, EHitLink, EHitAttach,
-       EHitWeb, EHitCalendar, EHitTop, EHitBottom };
+       EHitWeb, EHitCalendar, EHitTop, EHitBottom, EHitDay, EHitPrev, EHitNext, EHitToday,
+       EHitSync };
 int  ui_mailbox_hit(int aW, int aH, const PmUiMailbox* m, int x, int y, int* aIndex);
+/* the folder column alone (also beside the calendar) */
+void ui_sidebar(PmCanvas* c, const PmUiMailbox* m);
+
+/* ---- the calendar (pmcalui.cpp): a week strip and the chosen day's events */
+
+enum { KEvAlarm = 1, KEvRepeat = 2, KEvPending = 4, KEvReadOnly = 8 };
+
+struct PmUiEvent
+	{
+	const char* title; int tlen;
+	const char* loc; int llen;
+	const char* cal; int clen;         /* which calendar */
+	int allday;
+	int start, end;                    /* minutes from the day's midnight (may be <0 or >1440) */
+	int days;                          /* how many days it covers (1 = just this one) */
+	int alarm;                         /* minutes before, -1 */
+	int shade;                         /* the calendar's grey (0..3) */
+	unsigned int flags;                /* KEv* */
+	};
+
+struct PmUiDay
+	{
+	int mday;                          /* 1..31 */
+	int wday;                          /* 0 = Monday */
+	int count;                         /* events that day */
+	int today;
+	int month1;                        /* the first of a month (shows the month's name) */
+	int mon;                           /* 0..11 */
+	};
+
+struct PmUiCalendar
+	{
+	const PmUiMailbox* side;           /* the folder column (its folders, account, focus) */
+	const char* title; int tlen;       /* "September 2026" */
+	const char* status; int statlen;
+	int busy;
+	PmUiDay days[7];                   /* Monday .. Sunday */
+	int daySel;                        /* 0..6 */
+	const char* dayTitle; int dlen;    /* "Tuesday 29 September" */
+	int dayIsToday;
+	const PmUiEvent* events; int nevents;   /* the chosen day's, all-day ones first */
+	int sel;                           /* chosen event, -1 */
+	int top;                           /* first event row shown */
+	int now;                           /* minutes since midnight if the day is today, else -1 */
+	const char* empty; int elen;       /* "Nothing on" */
+	const char* next; int nlen;        /* "Next: Thu 1 Oct, Dentist" */
+	int focus;                         /* keys are in the event list (not the sidebar) */
+	int enabled;                       /* calendar sync set up */
+	};
+
+int  ui_calendar_rows(int aHeight);          /* event rows that fit */
+void ui_calendar(PmCanvas* c, const PmUiCalendar* k);
+int  ui_calendar_hit(int aW, int aH, const PmUiCalendar* k, int x, int y, int* aIndex);
+
+/* one event, in full */
+struct PmUiEventView
+	{
+	const PmUiEvent* ev;
+	const char* date; int dlen;        /* "Thursday 1 October 2026" */
+	const char* time; int tmlen;       /* "10:00 - 11:00  (1 hour)" / "All day" */
+	const char* alarm; int alen;       /* "15 minutes before" */
+	const char* repeat; int rlen;      /* "Repeats: one of a series" */
+	const char* note; int nlen;        /* "Waiting to be sent" ... */
+	};
+void ui_event(PmCanvas* c, const PmUiEventView* v);
+
+/* ---- the calendar's data (pmcalmodel.cpp): the engine's events.txt (and
+   new Psion entries still in push.txt), by day. Days are counted from
+   1970-01-01; times are the Psion's wall clock. */
+struct PmCalItem
+	{
+	long day0, day1;                   /* first and last day */
+	int start, end;                    /* minutes from the first day's midnight / the last's */
+	int allday, alarm, shade;
+	unsigned int flags;
+	const char* title; int tlen;
+	const char* loc; int llen;
+	const char* cal; int clen;
+	};
+struct PmCalModel
+	{
+	char* text;                        /* copies of the files (the items point in) */
+	char* cals;
+	PmCalItem* items; int n, cap;
+	const char* calName[8]; int calLen[8]; const char* calId[8]; int ncal;
+	};
+long cal_days_from(int y, int m, int d);     /* m 1..12 */
+void cal_date_of(long days, int* y, int* m, int* d);
+int  cal_weekday(long days);                  /* 0 = Monday */
+void calm_init(PmCalModel* m);
+void calm_free(PmCalModel* m);
+/* events.txt, calendars.txt, push.txt (any may be 0) */
+void calm_load(PmCalModel* m, const char* events, int elen, const char* cals, int clen, const char* push, int plen);
+int  calm_count(const PmCalModel* m, long day);
+/* the day's events, all-day ones first, then by time */
+int  calm_day(const PmCalModel* m, long day, PmUiEvent* out, int max);
+/* the next event after day/minute: index, -1 */
+int  calm_next(const PmCalModel* m, long day, int minute);
+/* the words the screens show, kept here */
+struct PmCalText { char title[40]; char day[80]; char empty[48]; char next[120]; };
+/* fills the week, the chosen day's events (into ev) and the words; the
+   caller adds side, status, busy, sel, top, focus, enabled */
+void calm_view(const PmCalModel* m, long today, int now, long sel, PmUiCalendar* k,
+               PmUiEvent* ev, int max, PmCalText* t);
+void calm_event_view(const PmUiEvent* e, long day, PmUiEventView* v, PmCalText* t);
+
+
 
 /* ---- a message */
 

@@ -37,7 +37,8 @@ enum TPmCommands
 	EPmCmdWeb,
 	EPmCmdSmooth,
 	EPmCmdCalendar,
-	EPmCmdCalSettings
+	EPmCmdCalSettings,
+	EPmCmdShowCalendar
 	};
 
 enum TPmDialogControls

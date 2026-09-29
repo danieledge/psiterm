@@ -51,7 +51,8 @@ RESOURCE HOTKEYS r_pm_hotkeys
 		HOTKEY { command=EPmCmdEditAccount; key='k'; },
 		HOTKEY { command=EPmCmdHangup; key='h'; },
 		HOTKEY { command=EPmCmdOffline; key='o'; },
-		HOTKEY { command=EPmCmdWeb; key='p'; }
+		HOTKEY { command=EPmCmdWeb; key='p'; },
+		HOTKEY { command=EPmCmdShowCalendar; key='d'; }
 		};
 	shift_control=
 		{
@@ -110,7 +111,8 @@ RESOURCE MENU_PANE r_pm_folder_menu
 	items=
 		{
 		MENU_ITEM { command=EPmCmdFolders; txt="Folders"; },
-		MENU_ITEM { command=EPmCmdOutbox; txt="Outbox"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdOutbox; txt="Outbox"; },
+		MENU_ITEM { command=EPmCmdShowCalendar; txt="Calendar"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdRefresh; txt="Check for new mail"; },
 		MENU_ITEM { command=EPmCmdOlder; txt="Get older messages"; },
 		MENU_ITEM { command=EPmCmdSearch; txt="Search..."; }

@@ -171,6 +171,7 @@ CPmView::~CPmView()
 	{
 	StopEngine();
 	delete iCalSync;
+	calm_free(&iCalModel);
 	delete iTimer;
 	delete iWatcher;
 	delete iFolders;
@@ -228,6 +229,8 @@ void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSetti
 	iTimer->Start(KTick, KTick, TCallBack(TickCallback, this));
 	ActivateL();
 	StartEngineL();
+	calm_init(&iCalModel);
+	TRAPD(err, LoadCalendarL());
 	AccountChangedL();
 	}
 
@@ -758,6 +761,11 @@ void CPmView::ReloadL()
 	case EOutbox:
 		LoadOutboxL();
 		break;
+	case ECalendar:
+	case ECalEvent:
+		LoadFoldersL();
+		LoadCalendarL();
+		break;
 	case EMessage:
 		LoadFoldersL();
 		if (iListMode == EList)
@@ -785,6 +793,15 @@ void CPmView::FocusFoldersL()
 	{
 	if (iMode == EMessage)
 		BackL();
+	if (iMode == ECalEvent)
+		iMode = ECalendar;
+	if (iMode == ECalendar)
+		{
+		iSidebar = ETrue;
+		iFolderSel = iFolders->Count() + 1;
+		Render();
+		return;
+		}
 	if (iMode != EList && iMode != EOutbox)
 		return;
 	iSidebar = ETrue;
@@ -839,7 +856,9 @@ void CPmView::OpenCurrentL()
 	{
 	if (iSidebar)
 		{
-		if (iFolderSel >= iFolders->Count())
+		if (iFolderSel > iFolders->Count())
+			ShowCalendarL();
+		else if (iFolderSel == iFolders->Count())
 			ShowOutboxL();
 		else if ((*iFolders)[iFolderSel].iKind == 'N')
 			Toast(_L("That folder holds only other folders"));
@@ -881,6 +900,12 @@ void CPmView::OpenCurrentL()
 
 void CPmView::BackL()
 	{
+	if (iMode == ECalEvent)
+		{
+		iMode = ECalendar;
+		Render();
+		return;
+		}
 	if (iMode == EMessage)
 		{
 		iMode = iListMode;
@@ -1089,6 +1114,8 @@ void CPmView::CalSyncDone(TInt aError, const TDesC& aSummary, TBool aPushed)
 		Toast(aSummary);
 	iCalSecond = EFalse;
 	iCalMsg.Zero();
+	TRAPD(err, LoadCalendarL());
+	Render();
 	}
 
 void CPmView::WholeMessageL()
@@ -1628,10 +1655,9 @@ void CPmView::FormatDate(TInt aDate, TDes& aOut) const
 
 static const char* CStr(const TDesC& aDes) { return (const char*)aDes.Ptr(); }
 
-void CPmView::RenderMailbox()
+// the folder column: folders, the outbox, the calendar
+void CPmView::FillSidebar(PmUiMailbox& m)
 	{
-	PmUiMailbox m;
-	Mem::FillZ(&m, sizeof(m));
 	PmAccount& a = iSettings->iAccounts[iSettings->iAcct];
 	m.account = a.name;
 	m.alen = User::StringLength((const TUint8*)a.name);
@@ -1656,6 +1682,9 @@ void CPmView::RenderMailbox()
 	PmUiFolder& ob = iUiFolders[k++];
 	ob.name = "Outbox"; ob.len = 6; ob.kind = 'O'; ob.depth = 0;
 	ob.unread = OutboxCount();
+	PmUiFolder& cal = iUiFolders[k++];
+	cal.name = "Calendar"; cal.len = 8; cal.kind = 'C'; cal.depth = 0;
+	cal.unread = iCalLoaded ? calm_count(&iCalModel, iCalToday) : 0;
 	m.folders = iUiFolders;
 	m.nfolders = k;
 	m.folderSel = iFolderSel < k ? iFolderSel : k - 1;
@@ -1665,6 +1694,15 @@ void CPmView::RenderMailbox()
 	if (iFolderTop < 0) iFolderTop = 0;
 	m.folderTop = iFolderTop;
 	m.sidebarFocus = iSidebar;
+	m.online = iShared->online;
+	m.offline = iSettings->iOffline;
+	}
+
+void CPmView::RenderMailbox()
+	{
+	PmUiMailbox m;
+	Mem::FillZ(&m, sizeof(m));
+	FillSidebar(m);
 
 	TBuf<80> title;
 	TBuf<80> sub;
@@ -1780,6 +1818,12 @@ void CPmView::Render()
 		{
 	case EMessage:
 		RenderReader();
+		break;
+	case ECalendar:
+		RenderCalendar();
+		break;
+	case ECalEvent:
+		RenderEvent();
 		break;
 	case ENoAccount:
 		{
@@ -1898,6 +1942,10 @@ TKeyResponse CPmView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 		return ReaderKeyL(code, aKeyEvent.iModifiers);
 	if (iMode == EList || iMode == EOutbox)
 		return MailboxKeyL(code);
+	if (iMode == ECalendar)
+		return CalendarKeyL(code);
+	if (iMode == ECalEvent)
+		return EventKeyL(code);
 	return EKeyWasNotConsumed;
 	}
 
@@ -2024,6 +2072,11 @@ void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
 	if (aEvent.iType != TPointerEvent::EButton1Down)
 		return;
 	TInt index = -1;
+	if (iMode == ECalendar || iMode == ECalEvent)
+		{
+		CalendarPointerL(p);
+		return;
+		}
 	if (iMode == EList || iMode == EOutbox)
 		{
 		PmUiMailbox m;
@@ -3230,6 +3283,9 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdCalendar:
 		iView->CalendarSyncL();
+		break;
+	case EPmCmdShowCalendar:
+		iView->ShowCalendarL();
 		break;
 	case EPmCmdCalSettings:
 		EditCalendarL();

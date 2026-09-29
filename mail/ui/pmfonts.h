@@ -57,5 +57,9 @@ enum TPmIcon {
 	EIconCircleAlert = 39,
 	EIconFile = 40,
 	EIconPlus = 41,
+	EIconRepeat = 42,
+	EIconCalendarDays = 43,
+	EIconText = 44,
+	EIconSun = 45,
 	EIconCount };
 #endif

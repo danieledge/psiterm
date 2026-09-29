@@ -114,7 +114,7 @@ $(O)/psimail-emu.pe: $(EMU_OBJS)
 	arm-pe-ld -o $@ -e main -Map $(O)/psimail-emu.map $(EMU_OBJS) $(LIBGCC)
 emu: $(O)/psimail-emu.pe
 # the screens' drawing speed (emu/uibench.cpp)
-UI_OBJS := $(addprefix $(O)/ui/,pmgfx.o pmfonts.o pmdoc.o pmscreens.o)
+UI_OBJS := $(addprefix $(O)/ui/,pmgfx.o pmfonts.o pmdoc.o pmscreens.o pmcalui.o pmcalmodel.o)
 $(O)/ui/%.o: ui/%.cpp ui/pmui.h ui/pmgfx.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(ARCH) -O2 -fno-builtin -fno-exceptions -fno-rtti -w -x c++ $< -o $@

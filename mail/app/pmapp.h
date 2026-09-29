@@ -105,10 +105,11 @@ private:
 class CPmView : public CCoeControl, public MPmCalObserver
 	{
 public:
-	enum TMode { EList, EMessage, EOutbox, ENoAccount };
+	enum TMode { EList, EMessage, EOutbox, ENoAccount, ECalendar, ECalEvent };
 	~CPmView();
 	void ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSettings& aCal);
 	void CalendarSyncL();                    // ask the engine, then update the Agenda
+	void ShowCalendarL();                    // the calendar screen
 	TBool CalendarBusy() const { return iCalPending || (iCalSync && iCalSync->Running()); }
 	void StoreDirectory(TDes& aDir) const { StoreDir(aDir); }
 	// MPmCalObserver
@@ -192,7 +193,18 @@ private:
 	void SetStatus(const TDesC& aText);
 	void RenderMailbox();
 	void RenderReader();
-	TInt SidebarCount() const { return iFolders->Count() + 1; }   // + the outbox
+	TInt SidebarCount() const { return iFolders->Count() + 2; }   // + the outbox and the calendar
+	void FillSidebar(PmUiMailbox& m);
+	// the calendar screen (pmcalview.cpp)
+	void LoadCalendarL();
+	void CalendarToday();
+	void CalGoTo(TInt aDays);
+	void RenderCalendar();
+	void RenderEvent();
+	void FillCalendar(PmUiCalendar& k);
+	TKeyResponse CalendarKeyL(TUint aCode);
+	TKeyResponse EventKeyL(TUint aCode);
+	void CalendarPointerL(const TPoint& aPoint);
 private:
 	TPmSettings* iSettings;
 	TPmCalSettings* iCal;
@@ -248,7 +260,18 @@ private:
 	CFbsBitmap* iBitmap;
 	TUint8* iBits;                   // 640x240, 4 bits a pixel
 	PmCanvas iCanvas;
-	PmUiFolder iUiFolders[82];
+	PmUiFolder iUiFolders[84];
+	// the calendar screen
+	PmCalModel iCalModel;
+	TBool iCalLoaded;
+	TInt iCalToday;                  // days since 1970
+	TInt iCalNow;                    // minutes since midnight
+	TInt iCalDay;                    // the day shown
+	TInt iCalSel;
+	TInt iCalTop;
+	PmUiEvent iCalEvents[40];
+	PmCalText iCalText;
+	PmCalText iCalText2;
 	PmUiRow iUiRows[12];
 	TBuf<16> iDates[12];
 	PmUiAttachment iUiAtt[8];

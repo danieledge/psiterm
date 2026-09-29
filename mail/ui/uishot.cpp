@@ -3,6 +3,8 @@
  *
  *   uishot STOREDIR mailbox FOLDER OUT.pgm [SEL] [sidebar]
  *   uishot STOREDIR reader FOLDER UID OUT.pgm [SCROLL] [FOCUSLINK]
+ *   uishot STOREDIR calendar OUT.pgm [YYYYMMDD] [EVENT] [sidebar]   (TODAY=, NOW= minutes)
+ *   uishot STOREDIR event OUT.pgm YYYYMMDD EVENT
  *   uishot - welcome OUT.pgm
  *
  * Writes a 640x240 16-grey PGM (mail/ui/shot.py turns it into a PNG). */
@@ -86,6 +88,42 @@ static void fmt_date(long t, char* out)
 	else sprintf(out, "%d %s", tm->tm_mday, mon[tm->tm_mon]);
 	}
 
+static void load_folders(const char* store, const char* folder, PmUiFolder* folders, int* pnf, int* pfsel)
+	{
+	char path[400];
+	int nf = 0, fsel = 0;
+	sprintf(path, "%s/A0/folders.txt", store);
+	int len;
+	char* ft = slurp(path, &len);
+	char* line = ft ? strtok(ft, "\n") : 0;
+	while (line && nf < 37)
+		{
+		if (line[0] != '#')
+			{
+			char* p = line;
+			char* kind = field(&p); char* un = field(&p); field(&p); char* imap = field(&p); char* disp = field(&p);
+			folders[nf].kind = kind[0];
+			folders[nf].unread = atoi(un);
+			folders[nf].name = disp; folders[nf].len = strlen(disp);
+			folders[nf].depth = 0;
+			if (!strcmp(imap, folder)) fsel = nf;
+			nf++;
+			}
+		line = strtok(0, "\n");
+		}
+	folders[nf].kind = 'O'; folders[nf].name = "Outbox"; folders[nf].len = 6; folders[nf].unread = 2; folders[nf].depth = 0; nf++;
+	folders[nf].kind = 'C'; folders[nf].name = "Calendar"; folders[nf].len = 8; folders[nf].unread = 0; folders[nf].depth = 0; nf++;
+	*pnf = nf;
+	*pfsel = fsel;
+	}
+
+static long parse_day(const char* s)
+	{
+	int y, m, d;
+	if (!s || sscanf(s, "%4d%2d%2d", &y, &m, &d) != 3) return -1;
+	return cal_days_from(y, m, d);
+	}
+
 int main(int argc, char** argv)
 	{
 	PmCanvas c;
@@ -104,32 +142,12 @@ int main(int argc, char** argv)
 	const char* folder = argv[3];
 	if (!strcmp(argv[2], "mailbox"))
 		{
-		/* folders */
 		PmUiFolder folders[40];
-		char* names[40];
 		int nf = 0, fsel = 0;
-		sprintf(path, "%s/A0/folders.txt", store);
-		int len;
-		char* ft = slurp(path, &len);
-		char* line = ft ? strtok(ft, "\n") : 0;
-		while (line && nf < 39)
-			{
-			if (line[0] != '#')
-				{
-				char* p = line;
-				char* kind = field(&p); char* un = field(&p); field(&p); char* imap = field(&p); char* disp = field(&p);
-				folders[nf].kind = kind[0];
-				folders[nf].unread = atoi(un);
-				names[nf] = disp;
-				folders[nf].name = disp; folders[nf].len = strlen(disp);
-				folders[nf].depth = 0;
-				if (!strcmp(imap, folder)) fsel = nf;
-				nf++;
-				}
-			line = strtok(0, "\n");
-			}
-		folders[nf].kind = 'O'; folders[nf].name = "Outbox"; folders[nf].len = 6; folders[nf].unread = 2; folders[nf].depth = 0; nf++;
+		load_folders(store, folder, folders, &nf, &fsel);
 		/* messages */
+		int len;
+		char* line;
 		sprintf(path, "%s/A0/F%08lX/index.txt", store, fnv(folder));
 		char* it = slurp(path, &len);
 		static PmUiRow rows[600];
@@ -176,6 +194,58 @@ int main(int argc, char** argv)
 		ui_mailbox(&c, &m);
 		if (getenv("TOAST")) ui_toast(&c, getenv("TOAST"), strlen(getenv("TOAST")));
 		save(argv[argc > 6 ? 4 : 4]);
+		return 0;
+		}
+	if (!strcmp(argv[2], "calendar") || !strcmp(argv[2], "event"))
+		{
+		/* uishot STORE calendar OUT.pgm [DAY] [EVENT] [side]; TODAY=YYYYMMDD NOW=minutes */
+		static PmUiFolder folders[40];
+		int nf = 0, fsel = 0;
+		load_folders(store, "", folders, &nf, &fsel);
+		fsel = nf - 1;
+		int len1, len2, len3;
+		sprintf(path, "%s/cal/events.txt", store);
+		char* ev = slurp(path, &len1);
+		sprintf(path, "%s/cal/calendars.txt", store);
+		char* cals = slurp(path, &len2);
+		sprintf(path, "%s/cal/push.txt", store);
+		char* push = slurp(path, &len3);
+		PmCalModel m;
+		calm_init(&m);
+		calm_load(&m, ev, len1, cals, len2, push, len3);
+		time_t now = time(0);
+		struct tm* lt = localtime(&now);
+		long today = getenv("TODAY") ? parse_day(getenv("TODAY")) : cal_days_from(lt->tm_year + 1900, lt->tm_mon + 1, lt->tm_mday);
+		int nowmin = getenv("NOW") ? atoi(getenv("NOW")) : lt->tm_hour * 60 + lt->tm_min;
+		long sel = argc > 4 ? parse_day(argv[4]) : today;
+		if (sel < 0) sel = today;
+		static PmUiEvent evs[64];
+		PmCalText t;
+		PmUiCalendar k;
+		memset(&k, 0, sizeof(k));
+		calm_view(&m, today, nowmin, sel, &k, evs, 64, &t);
+		PmUiMailbox side;
+		memset(&side, 0, sizeof(side));
+		side.account = "Fastmail"; side.alen = 8;
+		side.folders = folders; side.nfolders = nf; side.folderSel = fsel; side.online = 1;
+		side.sidebarFocus = argc > 6;
+		k.side = &side;
+		k.sel = argc > 5 ? atoi(argv[5]) : (k.nevents ? 0 : -1);
+		k.focus = !side.sidebarFocus;
+		k.enabled = 1;
+		if (getenv("STATUS")) { k.status = getenv("STATUS"); k.statlen = strlen(k.status); k.busy = 1; }
+		if (!strcmp(argv[2], "event") && k.sel >= 0 && k.sel < k.nevents)
+			{
+			PmUiEventView v;
+			PmCalText t2;
+			calm_event_view(&evs[k.sel], sel, &v, &t2);
+			ui_event(&c, &v);
+			}
+		else
+			ui_calendar(&c, &k);
+		if (getenv("TOAST")) ui_toast(&c, getenv("TOAST"), strlen(getenv("TOAST")));
+		save(argv[3]);
+		fprintf(stderr, "%d events that day, %d in all\n", k.nevents, m.n);
 		return 0;
 		}
 	if (!strcmp(argv[2], "reader"))

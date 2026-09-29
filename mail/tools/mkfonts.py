@@ -38,7 +38,8 @@ ICONS = ["inbox", "send", "pencil", "archive", "trash-2", "shield-alert", "folde
          "mail", "mail-open", "reply-all", "forward", "globe", "chevron-right", "cloud-off",
          "wifi", "arrow-up-from-line", "calendar-sync", "image", "download", "check", "x",
          "circle-user", "users", "bell", "map-pin", "folder-open", "settings", "chevron-left",
-         "external-link", "loader", "circle-alert", "file", "plus"]
+         "external-link", "loader", "circle-alert", "file", "plus", "repeat", "calendar-days",
+         "text", "sun"]
 ICON_SIZES = [14, 18]
 
 GAMMA = 0.85     # a touch darker than linear: thin strokes stay visible on the LCD

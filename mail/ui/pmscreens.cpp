@@ -46,6 +46,7 @@ static int folder_icon(int kind)
 	case 'T': return EIconTrash2;
 	case 'J': return EIconShieldAlert;
 	case 'O': return EIconArrowUpFromLine;
+	case 'C': return EIconCalendarDays;
 	case 'N': return EIconFolderOpen;
 		}
 	return EIconFolder;
@@ -72,7 +73,7 @@ static void spinner(PmCanvas* c, int x, int y, int grey)
 int ui_mailbox_rows(int aHeight) { return (aHeight - KHead - 1) / KRow; }
 int ui_sidebar_rows(int aHeight) { return (aHeight - KFolderTop - 8) / KFolderRow; }
 
-static void draw_sidebar(PmCanvas* c, const PmUiMailbox* m)
+void ui_sidebar(PmCanvas* c, const PmUiMailbox* m)
 	{
 	const PmFont* r12 = &KFontR12;
 	const PmFont* s11 = &KFontS11;
@@ -172,7 +173,7 @@ void ui_mailbox(PmCanvas* c, const PmUiMailbox* m)
 	{
 	gfx_noclip(c);
 	gfx_fill(c, KSide + 1, 0, c->w - KSide - 1, c->h, 15);
-	draw_sidebar(c, m);
+	ui_sidebar(c, m);
 
 	/* header: title, what's happening, buttons */
 	int bx = c->w - 30;
