@@ -21,6 +21,15 @@
 #include "curve25519.h"
 #include "tls13.h"
 
+#ifdef TLS_VERIFY
+/* PsiMail checks the server's certificate chain and its CertificateVerify
+   signature (mail/engine/certcheck.c); PsiTerm and PsiWeb don't */
+extern void tlsv_start(void);
+extern const char *tlsv_certificate(const unsigned char *msg, int len);
+extern const char *tlsv_verify(const unsigned char *msg, int len, const unsigned char th[32]);
+extern int tlsv_ok(void);
+#endif
+
 /* psiglue */
 extern int pg_net_avail(void);
 extern int pg_net_read(void *buf, int max);
@@ -279,6 +288,9 @@ int tls_connect(const char *host, char *why, int whymax)
 	g_first = 1;
 	g_junk[0] = 0;
 	g_app_pos = g_app_len = 0;
+#ifdef TLS_VERIFY
+	tlsv_start();
+#endif
 	memset(zero, 0, 32);
 	sha256_buf((const unsigned char *)"", 0, empty_hash);
 
@@ -302,7 +314,12 @@ int tls_connect(const char *host, char *why, int whymax)
 	put16(ch + n, 10); put16(ch + n + 2, 4); put16(ch + n + 4, 2); put16(ch + n + 6, 0x001d); n += 8;
 	/* signature_algorithms (we don't check the signature, but must offer some) */
 	{
+#ifdef TLS_VERIFY
+		/* RSA-PSS for CertificateVerify; PKCS#1 v1.5 for certificates */
+		static const unsigned short sa[] = { 0x0804, 0x0401, 0x0501, 0x0601 };
+#else
 		static const unsigned short sa[] = { 0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601, 0x0807 };
+#endif
 		int k, cnt = sizeof(sa) / sizeof(sa[0]);
 		put16(ch + n, 13); put16(ch + n + 2, 2 + 2 * cnt); put16(ch + n + 4, 2 * cnt); n += 6;
 		for (k = 0; k < cnt; k++) { put16(ch + n, sa[k]); n += 2; }
@@ -396,12 +413,26 @@ int tls_connect(const char *host, char *why, int whymax)
 			hkdf_label(s_hs, "finished", NULL, 0, fkey, 32);
 			hmac_sha256(fkey, 32, th, 32, NULL, 0, fin);
 			if (mlen != 32 || memcmp(fin, hs + 4, 32)) { g_err = "server Finished did not verify"; goto fail; }
+#ifdef TLS_VERIFY
+			if (!tlsv_ok()) { g_err = "the server did not prove who it is"; goto fail; }
+#endif
 			sha256_process(&transcript, hs, 4 + mlen);
 			memmove(hs, hs + 4 + mlen, hlen - 4 - mlen);
 			hlen -= 4 + mlen;
 			break;
 		}
 		if (mt != 8 && mt != 11 && mt != 15) { g_err = "unexpected handshake message"; goto fail; }
+#ifdef TLS_VERIFY
+		if (mt == 11) {
+			const char *e = tlsv_certificate(hs + 4, mlen);
+			if (e) { g_err = e; goto fail; }
+		} else if (mt == 15) {
+			const char *e;
+			tmp = transcript; sha256_done(&tmp, th);   /* up to the Certificate */
+			e = tlsv_verify(hs + 4, mlen, th);
+			if (e) { g_err = e; goto fail; }
+		}
+#endif
 		sha256_process(&transcript, hs, 4 + mlen);   /* certificate contents not checked - see top */
 		memmove(hs, hs + 4 + mlen, hlen - 4 - mlen);
 		hlen -= 4 + mlen;
