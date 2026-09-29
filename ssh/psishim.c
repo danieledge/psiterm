@@ -727,7 +727,14 @@ static long http_request(const char *path, long rfrom, long rlen, char *why, int
 		pg_hangup();
 		return -2;
 	}
-	return http_response(path, why, whymax);
+	{
+		/* on any failure - Stop included - hang up here: a modem left
+		   online keeps streaming the download into PsiTerm's terminal */
+		long r = http_response(path, why, whymax);
+		if (r == -2)
+			pg_hangup();
+		return r;
+	}
 }
 
 /* Reads the status line and headers. Returns Content-Length (-1 if none),
