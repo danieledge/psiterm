@@ -22,6 +22,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.environ.get("PW_BUILD", os.path.join(HERE, "../../build/web-epoc"))
 args = sys.argv[1:]
 COUNT = "--count" in args
+# --modem: behave like the WiRSa modem link on the Psion: the far end
+# closing shows up only as "NO CARRIER" in the data, never as a closed
+# flag, and pg_net_avail counts only bytes already taken from the port
+MODEM = "--modem" in args
 PROXY = None
 if "--proxy" in args:
     PROXY = args[args.index("--proxy") + 1]
@@ -129,21 +133,26 @@ def script_step():
         state["queue"].append((4, 0, 0, 0))
 
 # ------------------------------------------------------------------ network
-net = {"sock": None, "rx": bytearray(), "closed": False}
+net = {"sock": None, "rx": bytearray(), "closed": False, "eof": False}
 def rx_fill(timeout):
     s = net["sock"]
-    if net["rx"] or s is None or net["closed"]:
+    if net["rx"] or s is None or net["closed"] or net["eof"]:
+        if MODEM and not net["rx"] and timeout > 0:
+            time.sleep(min(timeout, 0.05))
         return
     r, _, _ = select.select([s], [], [], timeout)
     if r:
         d = s.recv(8192)
         if d: net["rx"] += d
+        elif MODEM:
+            net["rx"] += b"\r\nNO CARRIER\r\n"; net["eof"] = True
+            log("(modem: NO CARRIER)")
         else: net["closed"] = True
 
 def pg_dial(host, port, why, maxlen):
     if net["sock"]:
         net["sock"].close()
-    net.update(sock=None, rx=bytearray(), closed=False)
+    net.update(sock=None, rx=bytearray(), closed=False, eof=False)
     log("dial %s:%d" % (host, port))
     try:
         net["sock"] = socket.create_connection((host, port), timeout=15)
@@ -254,7 +263,7 @@ def hc(op, a, b, c, d):
         if PROXY:
             h, _, p = PROXY.partition(":")
             wr(a, struct.pack("<i", 1)); wr(b, h.encode() + b"\0"); wr(c, struct.pack("<i", int(p or 8080)))
-        wr(d, struct.pack("<i", 1))                  # "Psion TCP/IP": no in-band NO CARRIER
+        wr(d, struct.pack("<i", 0 if MODEM else 1))  # modem: in-band NO CARRIER
         return 0
     if op == 211:                                    # update config
         src = os.environ.get("PW_UPD", "")           # "host:port" = local server
@@ -268,7 +277,9 @@ def hc(op, a, b, c, d):
     if op == 301:
         if net["sock"]: net["sock"].close()
         net.update(sock=None, closed=True); log("hang up"); return 0
-    if op == 302: rx_fill(0); return len(net["rx"])
+    if op == 302:
+        if not MODEM: rx_fill(0)                     # EPOC: only what was read already
+        return len(net["rx"])
     if op == 303:
         n = min(b, len(net["rx"])); wr(a, bytes(net["rx"][:n])); del net["rx"][:n]; return n
     if op == 304:
@@ -279,7 +290,7 @@ def hc(op, a, b, c, d):
         if not b: time.sleep(max(ms, 0) / 1000.0); return 0
         if net["rx"] or net["closed"]: return 1
         rx_fill(60 if ms < 0 else ms / 1000.0)
-        return 1 if (net["rx"] or net["closed"]) else 0
+        return 1 if (net["rx"] or net["closed"]) else 0     # (never 'closed' in modem mode)
     if op == 306:
         data = os.urandom(min(b, 64)); wr(a, data); return len(data)
     log("unknown hypercall", op)

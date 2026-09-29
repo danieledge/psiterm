@@ -1,0 +1,13 @@
+diff --git a/src/time.c b/src/time.c
+index 34519a1..ae909dd 100644
+--- a/src/time.c
++++ b/src/time.c
+@@ -83,7 +83,7 @@ nsuerror nsu_getmonotonic_ms(uint64_t *current_out)
+ 
+     gettimeofday(&tv, NULL);
+ 
+-    current = (tv.tv_sec * 1000) + (tv.tv_usec / 1000);
++    current = ((uint64_t)tv.tv_sec * 1000) + (tv.tv_usec / 1000);
+ #endif
+ 
+     /* ensure time never goes backwards */

@@ -224,11 +224,17 @@ static void NetRxFill(int aTimeoutUs)
 		gSock->RecvOneOrMore(*gRecvDes, 0, gRecvStat, gRecvLen);
 		gRecvPending = 1;
 		}
-	if (gRecvStat == KRequestPending && !WaitFor(gRecvStat, aTimeoutUs, 0))
-		return;                          // still waiting; try again later
+	// The receive's completion signal must be consumed exactly once:
+	// WaitFor consumes it when the receive completes while it waits;
+	// if it had already completed, consume it here. (Waiting a second
+	// time blocked the thread for good - "Loading" forever in TCP/IP mode.)
 	if (gRecvStat == KRequestPending)
-		return;
-	User::WaitForRequest(gRecvStat);     // consume its completion signal
+		{
+		if (!WaitFor(gRecvStat, aTimeoutUs, 0))
+			return;                      // still waiting; try again later
+		}
+	else
+		User::WaitForRequest(gRecvStat);
 	gRecvPending = 0;
 	gRxPos = 0;
 	if (gRecvStat.Int() == KErrNone)

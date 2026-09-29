@@ -216,8 +216,12 @@ static int Housekeeping(PwShared* s)
 		gLastBeat = s->app_beat;
 		gBeatSeen = now;
 		}
-	else if (now - gBeatSeen > 64 * 20)  // 20 s without a sign of the app
+	else if (now - gBeatSeen > 64 * 60)  // a minute without a sign of the app
+		{
+		SetText(s->exit_msg, sizeof(s->exit_msg),
+			"PsiWeb.app stopped responding, so the browser engine closed");
 		return 1;
+		}
 	return 0;
 	}
 
@@ -229,8 +233,7 @@ extern "C" int pwb_next_event(pwb_event* aEv, int aTimeoutMs)
 		{
 		if (gPw && Housekeeping(s))
 			{
-			s->quitting = 1;
-			aEv->type = PWB_QUIT;
+			aEv->type = PWB_QUIT;     // (not 'quitting': the app should say why)
 			return 1;
 			}
 		if (gQn || TakeShared())
@@ -267,8 +270,12 @@ extern "C" int pwb_take_command(char* aArg, int aMax)
 		{
 		SetText(aArg, aMax, s->cmd_arg);
 		s->cmd = PW_CMD_NONE;
-		if (c == PW_CMD_STOP && !s->quitting)
-			s->net.quit = 0;          // the interrupted dial/download has ended
+		// Stop sets net.quit to interrupt a dial or download; it has done
+		// that by now. Clear it on any command, not just Stop: if another
+		// command replaced Stop before we saw it, a leftover quit would
+		// cancel every fetch from then on.
+		if (!s->quitting)
+			s->net.quit = 0;
 		}
 	return c;
 	}
