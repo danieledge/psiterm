@@ -317,6 +317,16 @@ if "--align" in args:
                 log("UNALIGNED %s size %d at %08x, pc %s" % ("write" if access == 17 else "read", size, address, where(pc)))
     uc.hook_add(UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, on_mem)
 
+# --stack: the deepest the stack went (psimail.exe gets 64 KB on the Psion)
+if "--stack" in args:
+    low = [STACK + 0x100000]
+    def on_blk(uc_, addr, size, user):
+        sp = uc.reg_read(UC_ARM_REG_SP)
+        if sp < low[0]: low[0] = sp
+    uc.hook_add(UC_HOOK_BLOCK, on_blk)
+    import atexit
+    atexit.register(lambda: print("[stack] deepest use %d bytes" % (STACK + 0x100000 - 64 - low[0])))
+
 argv0 = SCRATCH + 0x100
 wr(argv0, b"psimail\0")
 wr(SCRATCH + 0x200, struct.pack("<II", argv0, 0))

@@ -863,6 +863,8 @@ void CPmView::OpenCurrentL()
 	iMsgUid = row.iUid;
 	iMode = EMessage;
 	iMsgTop = 0;
+	iMsg1.Zero();
+	iMsg2.Zero();
 	if (row.iFlags.Locate('S') < 0)
 		row.iFlags.Append('S');                  // the engine marks it read
 	LoadMessageL();

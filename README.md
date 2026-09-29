@@ -73,6 +73,7 @@ PsiTerm app, and packages `dist/PsiTerm.sis`.
 | `server/` | optional local update/debug server (plain HTTP) |
 | `tools/` | font and icon converters, screenshot renderer, test harnesses |
 | `ssh/test/` | host-side tests (build `ssh/test/Makefile.host`; `update-test.key` is a throwaway key only the host test build trusts) |
+| `mail/` | PsiMail - an email client (IMAP/SMTP over TLS, made for Fastmail): see `mail/README.md` |
 
 ## Updates
 
