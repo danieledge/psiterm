@@ -68,7 +68,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.62");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.63");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -1455,10 +1455,12 @@ void CTermView::DrawTabs(CWindowGc& aGc) const
 	TInt farY = bottom ? y0 + h - 1 : y0;          // the tabs' free edge
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	aGc.SetBrushColor(Grey(10));
+	// strong contrast: the 5mx's LCD washes out neighbouring light greys, so
+	// a dark bar, black outlines and black text
+	aGc.SetBrushColor(Grey(6));
 	aGc.DrawRect(bar);
 	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-	aGc.SetPenColor(Grey(4));
+	aGc.SetPenColor(Grey(0));
 	aGc.DrawLine(TPoint(bar.iTl.iX, edgeY), TPoint(bar.iBr.iX, edgeY));
 
 	TInt x = bar.iTl.iX + 4;
@@ -1485,14 +1487,15 @@ void CTermView::DrawTabs(CWindowGc& aGc) const
 			if (bottom) top++; else bot--;
 			}
 		TRect t(x, top, x + w, bot);
-		aGc.SetPenStyle(CGraphicsContext::ENullPen);
-		aGc.SetBrushColor(cur ? Grey(15) : Grey(12));
-		aGc.DrawRect(t);
+		aGc.SetPenStyle(cur ? CGraphicsContext::ENullPen : CGraphicsContext::ESolidPen);
+		aGc.SetPenColor(Grey(0));
+		aGc.SetBrushColor(cur ? Grey(15) : Grey(11));
+		aGc.DrawRect(t);                         // back tabs: filled, black outline
 		aGc.SetPenStyle(CGraphicsContext::ESolidPen);
 		if (cur)
 			{
 			// outline on the three free sides, rounded corners on the free edge
-			aGc.SetPenColor(Grey(3));
+			aGc.SetPenColor(Grey(0));
 			TInt yIn = bottom ? top : bot - 1;      // terminal side: open
 			TInt yOut = farY;
 			aGc.DrawLine(TPoint(x, yIn), TPoint(x, yOut + (bottom ? -1 : 1)));
@@ -1500,30 +1503,24 @@ void CTermView::DrawTabs(CWindowGc& aGc) const
 			aGc.DrawLine(TPoint(x + 2, yOut), TPoint(x + w - 2, yOut));
 			aGc.Plot(TPoint(x + 1, yOut + (bottom ? -1 : 1)));
 			aGc.Plot(TPoint(x + w - 2, yOut + (bottom ? -1 : 1)));
-			aGc.SetPenColor(Grey(10));             // clear the outer corner pixels
+			aGc.SetPenColor(Grey(6));              // clear the outer corner pixels
 			aGc.Plot(TPoint(x, yOut));
 			aGc.Plot(TPoint(x + w - 1, yOut));
 			// joins the terminal: no line along that side
 			aGc.SetPenColor(Grey(15));
 			aGc.DrawLine(TPoint(x + 1, edgeY), TPoint(x + w - 1, edgeY));
 			}
-		else if (i + 1 < iTabCount && !iTabs[i + 1].iCurrent)
-			{
-			// a thin separator between two tabs at the back
-			aGc.SetPenColor(Grey(7));
-			aGc.DrawLine(TPoint(x + w + 1, top + 2), TPoint(x + w + 1, bot - 2));
-			}
 		// "3 VirtualTeam": the number quiet, the name bold on the current tab
 		aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
 		TInt tx = x + 7;
-		aGc.SetPenColor(cur ? Grey(6) : Grey(7));
+		aGc.SetPenColor(Grey(3));
 		aGc.DrawText(num, TPoint(tx, base));
 		tx += numW + 5;
 		TInt room = x + w - 5 - tx;
 		TPtrC shown(name);
 		while (shown.Length() > 1 && iFont->TextWidthInPixels(shown) > room)
 			shown.Set(shown.Left(shown.Length() - 1));
-		aGc.SetPenColor(cur ? Grey(0) : Grey(4));
+		aGc.SetPenColor(Grey(0));
 		aGc.DrawText(shown, TPoint(tx, base));
 		if (cur)
 			aGc.DrawText(shown, TPoint(tx + 1, base));   // bold
