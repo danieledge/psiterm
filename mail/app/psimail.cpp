@@ -19,6 +19,8 @@
 #include <apacmdln.h>
 #include <apgtask.h>
 #include <eikdll.h>
+#include <eikrted.h>
+#include <eiktbar.h>
 #include "pmapp.h"
 #include "psilink.h"
 
@@ -68,7 +70,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.4.5");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.5");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -215,6 +217,7 @@ void CPmWatcher::DoCancel()
 CPmView::~CPmView()
 	{
 	StopEngine();
+	DestroyNative();
 	delete iCalSync;
 	calm_free(&iCalModel);
 	delete iTimer;
@@ -247,8 +250,9 @@ void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSetti
 	iSettings = &aSettings;
 	iCal = &aCal;
 	iCalSync = CPmCalSync::NewL(*this);
-	// PsiMail draws everything itself, in 16 greys (see ui/)
-	CreateBackedUpWindowL(iCoeEnv->RootWin(), EGray16);
+	// the mailbox and the reader are EIKON controls (pmnative.cpp); writing
+	// and the calendar are drawn by PsiMail itself, in 16 greys (see ui/)
+	CreateWindowL();
 	SetRectL(aRect);
 	EnableDragEvents();
 	iFolders = new(ELeave) CArrayFixFlat<TPmFolder>(16);
@@ -259,7 +263,8 @@ void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSetti
 	iCmpNames = new(ELeave) CDesCArrayFlat(4);
 	iCmpSizes = new(ELeave) CDesCArrayFlat(4);
 
-	TSize size = aRect.Size();
+	// the drawn screens use the whole screen (the toolbar is hidden then)
+	TSize size = iCoeEnv->ScreenDevice()->SizeInPixels();
 	if (size.iWidth > 640) size.iWidth = 640;
 	if (size.iHeight > 240) size.iHeight = 240;
 	iBitmap = new(ELeave) CFbsBitmap;
@@ -277,6 +282,8 @@ void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSetti
 	iShared = (PmShared*)iChunk.Base();
 	Mem::FillZ(iShared, sizeof(PmShared));
 
+	CreateNativeL();
+	iNativeMode = (TMode)-1;
 	iTimer = CPeriodic::NewL(CActive::EPriorityStandard);
 	iTimer->Start(KTick, KTick, TCallBack(TickCallback, this));
 	ActivateL();
@@ -1938,6 +1945,25 @@ void CPmView::RenderReader()
 // draws the screen into iBits, then onto the window
 void CPmView::Render()
 	{
+	CPmAppUi* ui = (CPmAppUi*)iEikonEnv->EikAppUi();
+	if (NativeMode() && iFolderList)
+		{
+		if (!iNativeShown)
+			{
+			iNativeShown = ETrue;
+			iNativeMode = (TMode)-1;
+			ui->ShowToolBar(ETrue);            // (sets our rect: SizeChanged lays out)
+			}
+		TRAPD(err, UpdateNativeL());
+		(void)err;
+		return;
+		}
+	if (iNativeShown && iFolderList)
+		{
+		ShowNative(EFalse);
+		iNativeMode = (TMode)-1;
+		ui->ShowToolBar(EFalse);
+		}
 	iCanvas.mono = iSettings->iMono;
 	TBool splash = !iSplashDone && iRunning && iShared && iShared->state == PM_STATE_STARTING;
 	if (splash)
@@ -1986,6 +2012,12 @@ void CPmView::Render()
 
 void CPmView::Draw(const TRect& aRect) const
 	{
+	if (iNativeShown)
+		{
+		DrawNative(aRect);
+		DrawStatus(SystemGc());
+		return;
+		}
 	SystemGc().BitBlt(aRect.iTl, iBitmap, aRect);
 	}
 
@@ -2108,12 +2140,21 @@ TKeyResponse CPmView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 		return ComposeKeyL(code, aKeyEvent.iModifiers);
 	if (iMode == EEventEdit)
 		return EventEditKeyL(code, aKeyEvent.iModifiers);
-	if (code == EKeyEscape && Busy())
+	// Esc stops the engine when there is nothing to go back from (or the
+	// message being waited for is the thing it's fetching); otherwise it goes
+	// back, even while mail downloads ahead in the background
+	TBool escStops = ETrue;
+	if (iNativeShown && NativeMode())
+		escStops = (iMode == EMessage && iWaitingBody) ||
+			((iMode == EList || iMode == EOutbox) && iSidebar) || iMode == ENoAccount;
+	if (code == EKeyEscape && Busy() && escStops)
 		{
 		iShared->net.quit = 1;             // stop what the engine is doing
 		Toast(_L("Stopping..."));
 		return EKeyWasConsumed;
 		}
+	if (iNativeShown && NativeMode())
+		return NativeKeyL(aKeyEvent, aType);
 	if (iMode == EMessage)
 		return ReaderKeyL(code, aKeyEvent.iModifiers);
 	if (iMode == EList || iMode == EOutbox)
@@ -2245,6 +2286,24 @@ void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
 	{
 	TPoint p = aEvent.iPosition;
 	AddEntropy(p.iX * 1000 + p.iY);
+	if (iNativeShown && NativeMode())
+		{
+		// the list boxes and the reader take the pen themselves
+		CCoeControl::HandlePointerEventL(aEvent);
+		if (iMode == EMessage && aEvent.iType == TPointerEvent::EButton1Up && iLinks)
+			{
+			// a tap on a link or an attachment opens it
+			TInt pos = iReader->CursorPos();
+			for (TInt i = 0; i < iLinks->Count(); i++)
+				if (pos >= (*iLinks)[i].iPos && pos < (*iLinks)[i].iPos + (*iLinks)[i].iLen)
+					{
+					iLinkSel = i;
+					NativeActivateLinkL();
+					break;
+					}
+			}
+		return;
+		}
 	// the folder column: the pen drags it up and down; a tap (no drag)
 	// opens the folder when the pen lifts
 	TBool side = (iMode == EList || iMode == EOutbox || iMode == ECalendar) && p.iX < UI_SIDE_W;
@@ -2473,6 +2532,15 @@ TBool CPmChoiceDialog::OkToExitL(TInt /*aButtonId*/)
 	}
 
 // ----- compose ---------------------------------------------------------------
+
+// EIKON sizes a dialog to fit its contents: keep it on the 640x240 screen
+void CPmComposeDialog::SetSizeAndPositionL(const TSize& aSize)
+	{
+	TSize screen = iEikonEnv->ScreenDevice()->SizeInPixels();
+	TSize size(aSize.iWidth < screen.iWidth - 4 ? aSize.iWidth : screen.iWidth - 4,
+		aSize.iHeight < screen.iHeight - 4 ? aSize.iHeight : screen.iHeight - 4);
+	SetCornerAndSizeL(EHCenterVCenter, size);
+	}
 
 void CPmComposeDialog::PreLayoutDynInitL()
 	{
@@ -2721,6 +2789,19 @@ void CPmAppUi::ConstructL()
 		{
 		if (EditAccountL(iSettings.iAcct, ETrue))
 			iView->AccountChangedL();
+		}
+	}
+
+// the mailbox and the reader have the standard toolbar; writing and the
+// calendar are drawn screens that use all of it
+void CPmAppUi::ShowToolBar(TBool aShow)
+	{
+	if (iToolBar && iToolBar->IsVisible() != aShow)
+		iToolBar->MakeVisible(aShow);
+	if (iView)
+		{
+		TRAPD(err, iView->SetRectL(ClientRect()));
+		(void)err;
 		}
 	}
 
@@ -3067,8 +3148,14 @@ void CPmAppUi::AddSignature(CPmDraft& /*aDraft*/, TDes& aBody)
 
 void CPmAppUi::ComposeL(CPmDraft* aDraft, const TDesC& aTitle)
 	{
-	// a screen of PsiMail's own (pmwrite.cpp): it takes the draft
-	iView->ComposeL(aDraft, aTitle);
+	// the standard EIKON dialog: To, Cc, Subject, the attachments, the text,
+	// and Send / Save / Attach buttons on the right, like the built-in programs
+	CleanupStack::PushL(aDraft);
+	CPmComposeDialog* dlg = new(ELeave) CPmComposeDialog(*aDraft, aTitle);
+	TInt r = dlg->ExecuteLD(R_PM_COMPOSE_DIALOG);
+	if (r == EPmBidSend || r == EPmBidSave)
+		iView->SaveDraftL(*aDraft, r == EPmBidSend);
+	CleanupStack::PopAndDestroy();          // the draft
 	}
 
 void CPmAppUi::NewMessageL()
@@ -3525,6 +3612,11 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 
 void CPmAppUi::HandleCommandL(TInt aCommand)
 	{
+	if (aCommand == EEikCmdZoomIn || aCommand == EEikCmdZoomOut)
+		{
+		iView->ZoomL(aCommand == EEikCmdZoomIn ? 1 : -1);
+		return;
+		}
 	if (iView->ModalCommandL(aCommand))
 		return;
 	CPmView::TMode m = iView->Mode();

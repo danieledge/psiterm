@@ -13,10 +13,11 @@ an emulator; the screens have been drawn on a PC from real mail
 
 ## What it does
 
-* Its own look: anti-aliased text (Inter, with Lucide icons) in the 5mx's 16
-  greys - a folder column, two-line message rows, a reader with the sender's
-  initials, proper headings, lists, quotes and links. (Tools > Smooth text
-  turns the anti-aliasing off.) A screen takes ~75 ms to draw on a 5mx.
+* The Psion's own look (EIKON): a folder list and a message list, a
+  read-only rich text reader with a scroll bar, the standard toolbar (New,
+  Send & receive, Reply, Delete, the clock) and the standard compose dialog.
+  The sidebar's zoom buttons change the text size. (The calendar screen is
+  still drawn by PsiMail itself.)
 * Folders with unread counts; the newest 50 messages per folder (more with
   Folder > Get older messages), kept on the CF card to read offline.
 * Message text downloaded when opened, up to 64 KB (the rest on request).

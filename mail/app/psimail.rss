@@ -17,6 +17,9 @@ NAME PSMA
 #include <eikctrls.hrh>
 #include <eikmfne.hrh>
 #include <eikon.rsg>
+#include <eiktbar.rh>
+#include <eikclock.rh>
+#include <eikspace.rh>
 
 #include "psimail.hrh"
 
@@ -28,6 +31,46 @@ RESOURCE EIK_APP_INFO
 	{
 	menubar=r_pm_menubar;
 	hotkeys=r_pm_hotkeys;
+	toolbar=r_pm_toolbar;
+	}
+
+// the standard toolbar, as the built-in programs have it
+RESOURCE TOOLBAR r_pm_toolbar
+	{
+	breadth=KEikStdToolBarWidth;
+	controls=
+		{
+		TBAR_CTRL
+			{
+			type=EEikCtLabel;
+			flags=EEikToolBarCtrlHasSetMinLength;
+			length=KEikStdFileNameLabelHeight;
+			control=LABEL { txt="PsiMail"; horiz_align=EEikLabelAlignHCenter; };
+			},
+		TBAR_BUTTON { id=EPmCmdNew; txt="New"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPmCmdSendRecv; txt="Send &\nreceive"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPmCmdReply; txt="Reply"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPmCmdDelete; txt="Delete"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_CTRL
+			{
+			type=EEikCtSpacer;
+			flags=EEikToolBarCtrlHasSetMinLength|EEikToolBarCtrlIsStretchable;
+			length=0;
+			control=SPACER;
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtClock;
+			control=CLOCK { digitalresourceid=R_EIK_DIGITAL_CLOCK; analogresourceid=R_EIK_ANALOG_CLOCK; };
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtSpacer;
+			flags=EEikToolBarCtrlHasSetMinLength;
+			length=KEikStdGapBelowClock;
+			control=SPACER;
+			}
+		};
 	}
 
 RESOURCE HOTKEYS r_pm_hotkeys
@@ -234,15 +277,15 @@ RESOURCE DIALOG r_pm_compose_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="To"; id=EPmDlgTo;
-			control=EDWIN { width=34; maxlength=500; }; },
+			control=EDWIN { width=26; maxlength=500; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Cc"; id=EPmDlgCc;
-			control=EDWIN { width=34; maxlength=500; }; },
+			control=EDWIN { width=26; maxlength=500; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Subject"; id=EPmDlgSubject;
-			control=EDWIN { width=34; maxlength=200; }; },
+			control=EDWIN { width=26; maxlength=200; }; },
 		DLG_LINE { type=EEikCtLabel; prompt="Attached"; id=EPmDlgAttachments;
 			control=LABEL { txt="none"; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Text"; id=EPmDlgBody; itemflags=EEikDlgItemTakesEnterKey;
-			control=EDWIN { flags=EEikEdwinNoAutoSelection; width=34; lines=6; maxlength=60000; }; }
+			control=EDWIN { flags=EEikEdwinNoAutoSelection; width=26; lines=5; maxlength=60000; }; }
 		};
 	}
 

@@ -22,6 +22,14 @@
 #include <eikdialg.hrh>
 #include <badesca.h>
 #include <fbs.h>
+#include <eiklbo.h>
+#include <gdi.h>
+
+class CEikTextListBox;
+class CEikColumnListBox;
+class CEikRichTextEditor;
+class CEikLabel;
+class CPmFolderListBox;
 
 extern "C" {
 #include <psimail.h>
@@ -46,7 +54,8 @@ struct TPmSettings
 	TInt iMono;            // 1 = text without anti-aliasing
 	TInt iCalSync;         // calendar: sync with the Agenda at Send & receive
 	TInt iPrefetch;        // download the newest N messages' text ahead: 0 = the default (10), -1 = off
-	TInt iSpare[5];        // (TPmSettings is saved whole: keep its size)
+	TInt iZoom;            // text size: 0 = the default (2), else 1..4
+	TInt iSpare[4];        // (TPmSettings is saved whole: keep its size)
 	PmAccount iAccounts[PM_MAX_ACCOUNTS];
 	};
 
@@ -103,7 +112,10 @@ private:
 	RProcess* iProcess;
 	};
 
-class CPmView : public CCoeControl, public MPmCalObserver
+// a link in the reader (native screens): where it is, and what it is
+struct TPmLinkRange { TInt iPos; TInt iLen; TInt iLink; };
+
+class CPmView : public CCoeControl, public MPmCalObserver, public MEikListBoxObserver
 	{
 public:
 	enum TMode { EList, EMessage, EOutbox, ENoAccount, ECalendar, ECalEvent, ECompose, EEventEdit };
@@ -170,7 +182,32 @@ public:
 	TInt OutboxCount();
 	void Toast(const TDesC& aText);
 	void Render();                           // draw the screen again
+	void ZoomL(TInt aStep);                  // the sidebar's zoom buttons
+	TBool NativeMode() const;                // shown with EIKON controls, not drawn
+	// MEikListBoxObserver
+	void HandleListBoxEventL(CEikListBox* aListBox, TListBoxEvent aEventType);
 private:
+	// the native (EIKON) screens: the mailbox and the reader (pmnative.cpp)
+	TInt CountComponentControls() const;
+	CCoeControl* ComponentControl(TInt aIndex) const;
+	void SizeChanged();
+	void CreateNativeL();
+	void DestroyNative();
+	void LayoutNative();
+	void ShowNative(TBool aShow);
+	void ApplyZoomL();
+	void UpdateNativeL();
+	void UpdateFolderListL();
+	void UpdateMessageListL();
+	void UpdateReaderL();
+	void UpdateStatusLine();
+	void SyncSelectionFromLists();
+	TKeyResponse NativeKeyL(const TKeyEvent& aKeyEvent, TEventCode aType);
+	void NativeLinkStepL(TInt aDir);
+	void NativeActivateLinkL();
+	TInt NativeLinkUrl(TInt aLink, TDes& aUrl) const;
+	void DrawNative(const TRect& aRect) const;
+	void DrawStatus(CWindowGc& aGc) const;
 	void Draw(const TRect& aRect) const;
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
 	TKeyResponse MailboxKeyL(TUint aCode);
@@ -331,6 +368,24 @@ private:
 	PmUiRow iUiRows[12];
 	TBuf<16> iDates[12];
 	PmUiAttachment iUiAtt[8];
+	// native screens
+	CPmFolderListBox* iFolderList;
+	CEikColumnListBox* iMsgList;
+	CEikRichTextEditor* iReader;
+	CEikLabel* iStatusLine;
+	CEikLabel* iEmptyLabel;          // "No messages here", the first-run text
+	CFont* iListFont;
+	CFont* iSmallFont;
+	TZoomFactor* iZoomFactor;
+	TBool iNativeShown;
+	TMode iNativeMode;               // what the controls last showed
+	TUint iReaderUid;                // what the reader last showed
+	TBool iReaderWaiting;
+	CArrayFixFlat<TPmLinkRange>* iLinks;
+	TInt iLinkSel;                   // index in iLinks, -1 none
+	TInt iSplitX;                    // where the folder list ends
+	TInt iStatusH;
+	TUint iMsgListSum;               // what the message list shows (to skip rebuilds)
 	};
 
 class CPmInfoDialog : public CEikDialog
@@ -391,6 +446,7 @@ class CPmComposeDialog : public CEikDialog
 public:
 	CPmComposeDialog(CPmDraft& aDraft, const TDesC& aTitle) : iDraft(aDraft), iTitle(aTitle) {}
 private:
+	void SetSizeAndPositionL(const TSize& aSize);   // never larger than the screen
 	void PreLayoutDynInitL();
 	void PostLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
@@ -446,6 +502,7 @@ public:
 	void SaveSettings();
 	void SaveCalSettings();
 	void ComposeDraftL(CPmDraft* aDraft, const TDesC& aTitle) { ComposeL(aDraft, aTitle); }
+	void ShowToolBar(TBool aShow);          // native screens have it; the drawn ones use the whole screen
 private:
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
