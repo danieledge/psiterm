@@ -595,6 +595,9 @@ private:
 	TBool iTabsDrawn;         // PsiTerm draws its tab bar over that row
 	TBuf<200> iTabSig;        // what was parsed last, to notice changes
 	TBool iPenOnTabs;
+	TBool iTabsTop;           // tab strip moved to the top (tmux's bar hidden at the bottom)
+	TInt iOriginY0;           // iOriginY without the strip
+	void SetTabsTop(TBool aTop);
 	TBuf8<240> iTitle;         // the terminal title as it arrives (OSC 0/2)
 	TTmuxTab iTitleTabs[KMaxTabs];   // tmux's window list from a PSITABS title
 	TInt iTitleTabCount;

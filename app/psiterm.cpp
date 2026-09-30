@@ -64,7 +64,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.56");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.57");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -525,7 +525,8 @@ void CTermView::SetFontL(TInt aZoom)
 	if (iCols < 20) iCols = 20;
 	if (iRows < 5) iRows = 5;
 	iOriginX = (size.iWidth - iCols * iCellW) / 2;
-	iOriginY = (size.iHeight - iRows * iCellH) / 2;
+	iOriginY0 = (size.iHeight - iRows * iCellH) / 2;
+	iOriginY = iOriginY0 + (iTabsTop ? iCellH : 0);
 
 	iScrollOffset = 0;                       // back to the live screen
 	iSelActive = EFalse;
@@ -983,6 +984,8 @@ void CTermView::Draw(const TRect& /*aRect*/) const
 	gc.DrawRect(Rect());
 	CONST_CAST(CTermView*, this)->iDamaged = EFalse;
 	DrawAll(gc);
+	if (iTabsTop)
+		DrawTabs(gc);
 	DrawCursor(gc);
 	DrawStatus(gc);
 	gc.UseFont(iFont);
@@ -1257,8 +1260,25 @@ void CTermView::ParseTmuxTabs()
 			TBool bar = RowIsBar(r);
 			if (iTitleTabCount > 0)
 				{
-				// tmux sends the list itself: just find its status bar
-				if (bar || (pass == 1 && row < 0))
+				// tmux sends the list itself: just find its status bar - the row
+				// showing the current window's name (not a tmux prompt or message)
+				TBool named = EFalse;
+				for (TInt t = 0; t < iTitleTabCount && !named; t++)
+					if (iTitleTabs[t].iCurrent)
+						{
+						TBuf<200> rowText;
+						for (TInt c = 0; c < iCols && c < rowText.MaxLength(); c++)
+							{
+							VTermPos pos;
+							pos.row = r;
+							pos.col = c;
+							VTermScreenCell cell;
+							TUint ch = vterm_screen_get_cell(iScreen, pos, &cell) ? cell.chars[0] : 0;
+							rowText.Append((TText)(ch >= 0x20 && ch < 0x7f ? ch : ' '));
+							}
+						named = rowText.Find(iTitleTabs[t].iName) >= 0;
+						}
+				if (bar && named)
 					{
 					row = bar ? r : iRows - 1;
 					count = iTitleTabCount;
@@ -1335,8 +1355,25 @@ void CTermView::ParseTmuxTabs()
 	for (TInt t = 0; t < count; t++)
 		iTabs[t] = tabs[t];
 	iTabsDrawn = drawn;
+	// tmux's bar at the bottom: the tabs go to the top of the screen instead
+	TBool top = drawn && row == iRows - 1;
+	if (top != iTabsTop)
+		{
+		SetTabsTop(top);
+		return;
+		}
 	if (iPaintGc || iScrollOffset > 0)
 		return;
+	if (iTabsTop)
+		{
+		if (IsActivated())
+			{
+			BeginPaint();
+			DrawTabs(*iPaintGc);
+			EndPaint();
+			}
+		return;
+		}
 	if (oldRow >= 0 && oldRow != row)
 		RepaintRows(oldRow, oldRow);
 	if (drawn)
@@ -1350,9 +1387,9 @@ void CTermView::ParseTmuxTabs()
 // terminal; at the top they stand up from it.
 void CTermView::DrawTabs(CWindowGc& aGc) const
 	{
-	TInt y0 = iOriginY + iTabRow * iCellH;
+	TInt y0 = iTabsTop ? iOriginY - iCellH : iOriginY + iTabRow * iCellH;
 	TInt h = iCellH;
-	TBool bottom = (iTabRow > 0);
+	TBool bottom = !iTabsTop && iTabRow > 0;
 	TRect bar(Rect().iTl.iX, y0, Rect().iBr.iX, y0 + h);
 	TInt edgeY = bottom ? y0 : y0 + h - 1;         // the line along the terminal side
 	TInt farY = bottom ? y0 + h - 1 : y0;          // the tabs' free edge
@@ -1478,6 +1515,17 @@ void CTermView::CheckTabsL()
 	m.Append(_L8("\r\n"));
 	LocalMessage(m);
 	ShowDebugL();
+	}
+
+void CTermView::SetTabsTop(TBool aTop)
+	{
+	iTabsTop = aTop;
+	iOriginY = iOriginY0 + (aTop ? iCellH : 0);
+	iCacheValid = EFalse;
+	if (!iPaintGc)
+		DrawNow();
+	else
+		iNeedFull = ETrue;
 	}
 
 void CTermView::SelectTmuxWindow(TInt aIndex)
@@ -1622,6 +1670,8 @@ void CTermView::DrawCells(CWindowGc& aGc, TInt aRow0, TInt aCol0, TInt aRow1, TI
 	const TUint KRunFlags = KSbBold | KSbUnderline | KSbStrike;
 	for (TInt r = aRow0; r < aRow1; r++)
 		{
+		if (iTabsTop && r == iRows - 1)
+			continue;                     // tmux's bar: shown as tabs at the top
 		if (iTabsDrawn && r == iTabRow && iScrollOffset == 0)
 			{
 			DrawTabs(aGc);                // tmux's status line, drawn as tabs
@@ -2448,7 +2498,9 @@ void CTermView::HandlePointerEventL(const TPointerEvent& aEvent)
 	TInt rowC = row < 0 ? 0 : (row >= iRows ? iRows - 1 : row);
 
 	// a tap on a tab switches to that tmux window
-	if (iTabsDrawn && row == iTabRow && iScrollOffset == 0 && aEvent.iType == TPointerEvent::EButton1Down)
+	TBool onTabs = iTabsTop ? (p.iY >= iOriginY - iCellH && p.iY < iOriginY)
+		: (iTabsDrawn && row == iTabRow && iScrollOffset == 0);
+	if (onTabs && aEvent.iType == TPointerEvent::EButton1Down)
 		{
 		iPenOnTabs = ETrue;
 		for (TInt i = 0; i < iTabCount; i++)
