@@ -6,6 +6,7 @@
 | [TweetNaCl](https://tweetnacl.cr.yp.to/) (X25519 and Ed25519, as modified in Dropbear) | `ssh/db/src/curve25519.c` | public domain |
 | [libvterm](https://www.leonerd.org.uk/code/libvterm/) (upstream `934bc2fb`, Psion changes in `docs/patches/libvterm-psion.diff`) | `libvterm/` | MIT - see `libvterm/LICENSE` |
 | [zlib](https://zlib.net/) | `ssh/zlib/` | zlib licence - see `ssh/zlib/LICENSE` |
+| [NetSurf](https://www.netsurf-browser.org/) and its libraries (libcss, libdom, hubbub, libparserutils, libwapcaplet, libnsfb, libnsutils, libnslog, libnsgif, libnsbmp, libnspsl), [utf8proc](https://github.com/JuliaStrings/utf8proc) - PsiWeb only | fetched by `web/netsurf.sh`, Psion changes in `web/patches/` | NetSurf GPL v2; libraries MIT-style - so `psiweb.exe` is GPL v2 |
 | [Terminus Font](https://terminus-font.sourceforge.net/) (converted to EPOC format) | `tools/fonts/`, `pkg/psiterm.gdr` | SIL Open Font License 1.1 - see `pkg/terminus-licence.txt` |
 | EPOC C Standard Library (`stdlib.sis`, ESTLIB.DLL) from the Psion EPOC R5 C++ SDK | embedded in `dist/PsiTerm.sis` (not in this repository) | Psion's redistributable runtime, shipped with apps that use it as the SDK directs |
 

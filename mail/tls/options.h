@@ -1,0 +1,25 @@
+/* options.h - the Dropbear options libtomcrypt's Dropbear config reads,
+ * for PsiMail's TLS (ChaCha20-Poly1305, SHA-2, X25519). */
+#ifndef PSIMAIL_TLS_OPTIONS_H
+#define PSIMAIL_TLS_OPTIONS_H
+#define DROPBEAR_SMALL_CODE 1
+#define DROPBEAR_AES 0
+#define DROPBEAR_3DES 0
+#define DROPBEAR_ENABLE_CBC_MODE 0
+#define DROPBEAR_ENABLE_CTR_MODE 0
+#define DROPBEAR_ENABLE_GCM_MODE 0
+#define DROPBEAR_CHACHA20POLY1305 1
+#define DROPBEAR_SHA512 1
+#define DROPBEAR_SHA384 1
+#define DROPBEAR_SHA256 1
+#define DROPBEAR_SHA1 0
+#define DROPBEAR_ECC 0
+#define DROPBEAR_ECC_256 0
+#define DROPBEAR_ECC_384 0
+#define DROPBEAR_ECC_521 0
+#define DROPBEAR_CURVE25519_DEP 1
+#define DROPBEAR_ED25519 1
+#define DROPBEAR_SIGNKEY_VERIFY 1
+#define LTC_NO_TEST
+#define LTC_NO_FILE
+#endif

@@ -1,0 +1,20 @@
+// PSIMAIL.MMP - PsiMail.app (the engine, psimail.exe, is built by ../Makefile)
+TARGET        psimail.app
+TARGETTYPE    app
+UID           0x1000006c 0x01000A7C
+TARGETPATH    \system\apps\psimail
+
+PROJECT       ptproj
+SUBPROJECT    psimail
+
+SOURCE        psimail.cpp pmcal.cpp pmcalview.cpp pmwrite.cpp
+SUBPROJECT    psimailinc\ui
+SOURCE        pmgfx.cpp pmfonts.cpp pmdoc.cpp pmscreens.cpp pmcalui.cpp pmcalmodel.cpp pmedit.cpp pmcompose.cpp
+SUBPROJECT    psimail
+RESOURCE      psimail.rss
+
+USERINCLUDE   \ptproj\psimail \ptproj\psimailinc\ui
+SYSTEMINCLUDE \ptproj\psimailinc \ptproj\psitermssh \epoc32\include\libc \epoc32\include
+
+LIBRARY       euser.lib efsrv.lib apparc.lib cone.lib eikon.lib ws32.lib gdi.lib
+LIBRARY       fbscli.lib bafl.lib apgrfx.lib etext.lib agnmodel.lib estor.lib

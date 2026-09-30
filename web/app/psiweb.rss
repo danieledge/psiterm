@@ -1,0 +1,184 @@
+// PSIWEB.RSS - menus, hotkeys and dialogs for PsiWeb
+
+NAME PSIW
+
+#include <eikdef.rh>
+#include <eikmenu.rh>
+#include <eikmenu.hrh>
+#include <eikcmds.hrh>
+#include <eikdialg.rh>
+#include <eikdialg.hrh>
+#include <eikedwin.rh>
+#include <eikmfne.rh>
+#include <eikchlst.rh>
+#include <eikcmbut.rh>
+#include <eiklabel.rh>
+#include <eikctrls.hrh>
+#include <eikon.rsg>
+
+#include "psiweb.hrh"
+
+RESOURCE RSS_SIGNATURE { }
+
+RESOURCE TBUF { buf=""; }
+
+RESOURCE EIK_APP_INFO
+	{
+	menubar=r_pw_menubar;
+	hotkeys=r_pw_hotkeys;
+	}
+
+// Ctrl+A/C/V/X/Z/U stay with the page (select all, copy, paste...)
+RESOURCE HOTKEYS r_pw_hotkeys
+	{
+	control=
+		{
+		HOTKEY { command=EEikCmdExit; key='e'; },
+		HOTKEY { command=EPwCmdOpen; key='l'; },
+		HOTKEY { command=EPwCmdOpen; key='o'; },
+		HOTKEY { command=EPwCmdHome; key='h'; },
+		HOTKEY { command=EPwCmdReload; key='r'; },
+		HOTKEY { command=EPwCmdBack; key='b'; },
+		HOTKEY { command=EPwCmdForward; key='f'; },
+		HOTKEY { command=EPwCmdZoomIn; key='m'; },
+		HOTKEY { command=EPwCmdImages; key='i'; },
+		HOTKEY { command=EPwCmdPageInfo; key='g'; }
+		};
+	shift_control=
+		{
+		HOTKEY { command=EPwCmdZoomOut; key='m'; }
+		};
+	}
+
+RESOURCE MENU_BAR r_pw_menubar
+	{
+	titles=
+		{
+		MENU_TITLE { menu_pane=r_pw_file_menu; txt="File"; },
+		MENU_TITLE { menu_pane=r_pw_go_menu; txt="Go"; },
+		MENU_TITLE { menu_pane=r_pw_view_menu; txt="View"; },
+		MENU_TITLE { menu_pane=r_pw_tools_menu; txt="Tools"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pw_file_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPwCmdOpen; txt="Open address..."; },
+		MENU_ITEM { command=EPwCmdHome; txt="Home page"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdReload; txt="Reload"; },
+		MENU_ITEM { command=EPwCmdStop; txt="Stop (Esc)"; },
+		MENU_ITEM { command=EPwCmdHangup; txt="Hang up (free the serial port)"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdAbout; txt="About PsiWeb"; },
+		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pw_go_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPwCmdBack; txt="Back"; },
+		MENU_ITEM { command=EPwCmdForward; txt="Forward"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdTop; txt="Top of page"; },
+		MENU_ITEM { command=EPwCmdBottom; txt="End of page"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pw_view_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPwCmdZoomIn; txt="Zoom in"; },
+		MENU_ITEM { command=EPwCmdZoomOut; txt="Zoom out"; },
+		MENU_ITEM { command=EPwCmdZoomNormal; txt="Normal size"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdImages; txt="Load images"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdPageInfo; txt="Page info"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pw_tools_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPwCmdConnSettings; txt="Connection settings..."; },
+		MENU_ITEM { command=EPwCmdBrowserSettings; txt="Proxy and home page..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdUpdate; txt="Update PsiWeb"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdRestart; txt="Restart browser engine"; }
+		};
+	}
+
+RESOURCE DIALOG r_pw_open_dialog
+	{
+	title="Open address";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Address or search"; id=EPwDlgUrl;
+			control=EDWIN { width=40; maxlength=500; }; }
+		};
+	}
+
+RESOURCE DIALOG r_pw_conn_dialog
+	{
+	title="Connection settings";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Connect via"; id=EPwDlgLink; control=CHOICELIST { array_id=r_pw_link_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Baud rate"; id=EPwDlgBaud; control=CHOICELIST { array_id=r_pw_baud_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Flow control"; id=EPwDlgFlow; control=CHOICELIST { array_id=r_pw_flow_array; }; }
+		};
+	}
+
+RESOURCE DIALOG r_pw_browser_dialog
+	{
+	title="Proxy and home page";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Use a proxy"; id=EPwDlgProxy; control=CHOICELIST { array_id=r_pw_proxy_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Proxy host"; id=EPwDlgProxyHost; control=EDWIN { width=24; maxlength=60; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Proxy port"; id=EPwDlgProxyPort; control=NUMBER_EDITOR { min=1; max=65535; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Home page"; id=EPwDlgHome; control=EDWIN { width=24; maxlength=200; }; }
+		};
+	}
+
+RESOURCE DIALOG r_pw_info_dialog
+	{
+	title="PsiWeb";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CONTINUE;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgInfo1; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgInfo2; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgInfo3; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgInfo4; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgInfo5; control=LABEL { txt=""; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pw_baud_array
+	{
+	items={ LBUF { txt="9600"; }, LBUF { txt="19200"; }, LBUF { txt="38400"; }, LBUF { txt="57600"; }, LBUF { txt="115200"; } };
+	}
+
+RESOURCE ARRAY r_pw_flow_array
+	{
+	items={ LBUF { txt="None"; }, LBUF { txt="RTS/CTS"; } };
+	}
+
+RESOURCE ARRAY r_pw_link_array
+	{
+	items={ LBUF { txt="Modem (ATDT host:port)"; }, LBUF { txt="Psion TCP/IP (dial-up)"; } };
+	}
+
+RESOURCE ARRAY r_pw_proxy_array
+	{
+	items={ LBUF { txt="No - fetch directly"; }, LBUF { txt="Yes (e.g. WebOne)"; } };
+	}

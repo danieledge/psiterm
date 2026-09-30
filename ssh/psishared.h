@@ -10,7 +10,9 @@
 #ifndef PSISHARED_H
 #define PSISHARED_H
 
+#ifndef PSI_SHARED_NAME
 #define PSI_SHARED_NAME   "PsiTermSSH"
+#endif
 #define PSI_SHARED_MAGIC  0x48535350u      /* 'PSSH' */
 #define PSI_KBD_SIZE      2048
 #define PSI_OUT_SIZE      16384

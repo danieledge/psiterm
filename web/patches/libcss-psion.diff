@@ -1,0 +1,15 @@
+diff --git a/src/select/bloom.h b/src/select/bloom.h
+index baba48f..3f55865 100644
+--- a/src/select/bloom.h
++++ b/src/select/bloom.h
+@@ -147,8 +147,8 @@ static inline bool css_bloom_in_bloom(
+  * \param b	target bloom
+  */
+ static inline void css_bloom_merge(
+-		const css_bloom a[restrict CSS_BLOOM_SIZE],
+-		      css_bloom b[restrict CSS_BLOOM_SIZE])
++		const css_bloom a[CSS_BLOOM_SIZE],
++		      css_bloom b[CSS_BLOOM_SIZE])
+ {
+ 	b[0] |= a[0];
+ 	b[1] |= a[1];
