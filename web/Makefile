@@ -53,6 +53,11 @@ ALL_OBJS := $(foreach p,$(NS_LIBS),$(OBJS_$(p))) $(OBJS_netsurf) $(WEB_OBJS)
 
 all: $(OUT)
 
+# psiweb.h embeds ssh/psishared.h: if either changes, every object that may
+# touch the shared chunk must be rebuilt, or app and engine disagree on its
+# layout and the engine crashes at start
+$(WEB_OBJS): psiweb.h $(TOP)/ssh/psishared.h
+
 $(O)/web/nsfb_epoc.o: fb/nsfb_epoc.c fb/pwback.h
 	@mkdir -p $(dir $@)
 	$(TCC) -c $(TFLAGS) -I$(NS)/libnsfb/include -I$(NS)/libnsfb/src $< -o $@

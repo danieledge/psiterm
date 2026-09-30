@@ -50,7 +50,7 @@ ENG_OBJS := $(addprefix $(O)/,$(ENGINE:=.o))
 TLS_OBJS := $(O)/tls13.o $(O)/x25519.o $(O)/pmrandom.o
 LTC_OBJS := $(addprefix $(O)/ltc/,$(subst /,__,$(LTC_SRCS:=.o)))
 LTM_OBJS := $(addprefix $(O)/ltm/,$(LTM_SRCS:=.o))
-HDRS    := $(MAIL)/psimail.h $(MAIL)/engine/pm.h
+HDRS    := $(MAIL)/psimail.h $(MAIL)/engine/pm.h $(TOP)/ssh/psishared.h
 
 all: $(OUT)
 
