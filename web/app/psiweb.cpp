@@ -38,7 +38,7 @@ static void SaveSharedLink(RFs& aFs, const TPwSettings& aSettings)
 
 _LIT(KEngineExe, "psiweb.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiWeb\\PsiWeb.ini");
-_LIT(KVersion, "0.5.2");          // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt
+_LIT(KVersion, "0.5.3");          // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt
 _LIT(KDefaultHome, "http://68k.news/");
 const TInt KZoomSteps[] = { 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200 };
 const TInt KZoomCount = 11;

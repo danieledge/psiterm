@@ -39,6 +39,7 @@ extern "C" int pg_net_closed() { return gNetClosed; }
 // dial-up (PPP) connection to the WiRSa dialled with "ATDT PPP".
 static int gNet = 0;
 static int gServerOpen = 0;
+static int gNetSent = 0, gNetGotData = 0;   // for the progress messages
 static RSocketServ* gSs = 0;
 static int gSsOpen = 0;
 static RSocket* gSock = 0;
@@ -158,10 +159,19 @@ static void NetClose()
 extern "C" void pg_out_write(const void* aData, int aLen);
 static int gDialVerbose = 0;
 extern "C" void pg_dial_verbose(int aOn) { gDialVerbose = aOn; }
+static void LinkMsg(const char* aText);
 static void Say(const char* aText)
 	{
 	int n = 0;
 	while (aText[n]) n++;
+	LinkMsg(aText);
+	if (gDialVerbose)
+		pg_out_write(aText, n);
+	}
+
+// the one-line status only (not in PsiTerm's terminal)
+static void LinkMsg(const char* aText)
+	{
 	if (gShared)
 		{
 		// also as a one-line status for apps without a terminal
@@ -179,8 +189,6 @@ static void Say(const char* aText)
 			gShared->link_seq++;
 			}
 		}
-	if (gDialVerbose)
-		pg_out_write(aText, n);
 	}
 
 // Explains the dial-up errors people meet when setting this up
@@ -309,6 +317,7 @@ static int NetConnect(char* aResult, int aMax)
 		return -1;
 		}
 	gSockOpen = 1;
+	gNetSent = gNetGotData = 0;
 	Say("  TCP connection open.\r\n");
 	return 0;
 	}
@@ -339,11 +348,20 @@ static void NetRxFill(int aTimeoutUs)
 	gRecvPending = 0;
 	gRxPos = 0;
 	if (gRecvStat.Int() == KErrNone)
+		{
 		gRxLen = gRecvDes->Length();
+		if (!gNetGotData && gRxLen > 0)
+			{
+			gNetGotData = 1;
+			LinkMsg("  Receiving the reply...\r\n");
+			}
+		}
 	else
 		{
 		gRxLen = 0;
 		gNetClosed = 1;                  // KErrEof or a link error
+		LinkMsg(gRecvStat.Int() == KErrEof ? "  The server closed the connection.\r\n"
+			: "  The connection dropped.\r\n");
 		}
 	}
 
@@ -360,7 +378,17 @@ static int NetWrite(const void* aBuf, int aLen)
 		User::WaitForRequest(stat);
 		return -1;
 		}
-	return stat.Int() == KErrNone ? aLen : -1;
+	if (stat.Int() != KErrNone)
+		{
+		LinkMsg("  Could not send to the server.\r\n");
+		return -1;
+		}
+	if (!gNetSent)
+		{
+		gNetSent = 1;
+		LinkMsg("  Request sent, waiting for the reply...\r\n");
+		}
+	return aLen;
 	}
 
 static TBps BaudFromIndex(int aIndex)
