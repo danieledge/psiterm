@@ -181,6 +181,68 @@ static int send_outbox(int acct, char *why, int whymax, int *nsent)
 	return r;
 }
 
+/* ------------------------------------------------------- downloading ahead */
+
+/* After a sync, the text of the newest few messages is downloaded while
+ * the engine has nothing else to do, so they open at once. One message per
+ * step: a command from the app is taken before the next one. They stay
+ * unread. */
+static struct { int on; int acct; char folder[128]; } g_pf[2];
+
+static void pf_want(int acct, const char *folder)
+{
+	int i, slot = -1;
+	if (pm_shared()->prefetch <= 0 || !folder[0]) return;
+	for (i = 0; i < 2; i++)
+		if (g_pf[i].on && g_pf[i].acct == acct && !strcmp(g_pf[i].folder, folder)) return;
+	for (i = 0; i < 2 && slot < 0; i++)
+		if (!g_pf[i].on) slot = i;
+	if (slot < 0) slot = 1;
+	g_pf[slot].on = 1;
+	g_pf[slot].acct = acct;
+	pm_copy(g_pf[slot].folder, folder, sizeof(g_pf[slot].folder));
+}
+
+static int have_text(int acct, const char *folder, unsigned int uid)
+{
+	char path[190];
+	FILE *f;
+	st_msg_path(acct, folder, uid, ".txt", path, sizeof(path));
+	f = fopen(path, "rb");
+	if (!f) return 0;
+	fclose(f);
+	return 1;
+}
+
+/* 1 = downloaded one (or tried), 0 = nothing left to do */
+static int pf_step(void)
+{
+	PmShared *s = pm_shared();
+	static PmIndex ix;
+	int k, i, n, want = s->prefetch;
+	unsigned int uid = 0;
+	char why[160];
+	for (k = 0; k < 2 && !g_pf[k].on; k++) ;
+	if (k == 2) return 0;
+	if (want <= 0 || s->offline || !s->acct[g_pf[k].acct].used) { g_pf[0].on = g_pf[1].on = 0; return 0; }
+	if (want > 50) want = 50;
+	if (st_index_load(g_pf[k].acct, g_pf[k].folder, "index.txt", &ix) != 0) { g_pf[k].on = 0; return 0; }
+	for (i = ix.n - 1, n = 0; i >= 0 && n < want; i--, n++)
+		if (!have_text(g_pf[k].acct, g_pf[k].folder, ix.m[i].uid)) { uid = ix.m[i].uid; break; }
+	st_index_free(&ix);
+	if (!uid) { g_pf[k].on = 0; return 0; }
+	s->busy = 1;
+	pm_progress("Downloading ahead (%d of %d)", n + 1, want);
+	if (imap_body(g_pf[k].acct, g_pf[k].folder, uid, 2, why, sizeof(why)) != PM_RES_OK) {
+		pm_log("download ahead stopped: %s", why);
+		g_pf[0].on = g_pf[1].on = 0;          /* stopped (Esc) or failed: leave it */
+		s->net.quit = 0;
+	}
+	s->progress[0] = 0;
+	s->busy = 0;
+	return 1;
+}
+
 /* --------------------------------------------------------------- commands */
 
 static int replay(int acct, char *why, int whymax)
@@ -218,6 +280,7 @@ static int run(PmCmd *c, char *why, int whymax)
 	case PM_CMD_SYNC:
 		replay(a, why, whymax);
 		r = imap_sync(a, c->folder, 0, why, whymax);
+		if (r == PM_RES_OK) pf_want(a, c->folder);
 		break;
 	case PM_CMD_OLDER:
 		r = imap_sync(a, c->folder, 1, why, whymax);
@@ -269,8 +332,11 @@ static int run(PmCmd *c, char *why, int whymax)
 		r = imap_list_folders(a, why, whymax);
 		if (r == PM_RES_OK) r = imap_sync(a, "INBOX", 0, why, whymax);
 		if (r == PM_RES_OK) got = s->new_mail;
-		if (r == PM_RES_OK && c->folder[0] && strcmp(c->folder, "INBOX"))
+		if (r == PM_RES_OK) pf_want(a, "INBOX");
+		if (r == PM_RES_OK && c->folder[0] && strcmp(c->folder, "INBOX")) {
 			r = imap_sync(a, c->folder, 0, w2, sizeof(w2));
+			if (r == PM_RES_OK) pf_want(a, c->folder);
+		}
 		if (r == PM_RES_OK) {
 			if (n) snprintf(why, whymax, "%d sent, %d new", n, got);
 			else if (got) snprintf(why, whymax, "%d new in the Inbox", got);
@@ -322,6 +388,7 @@ void pm_loop(int (*housekeeping)(void))
 			continue;
 		}
 		if (housekeeping && housekeeping()) break;
+		if (pf_step()) continue;
 		pm_idle(100);
 	}
 	pmn_release_now();

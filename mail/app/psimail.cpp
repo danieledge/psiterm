@@ -22,6 +22,16 @@
 #include "pmapp.h"
 #include "psilink.h"
 
+// how many of the newest messages to download ahead after a sync
+static TInt PrefetchCount(const TPmSettings& aSettings)
+	{
+	if (aSettings.iPrefetch < 0)
+		return 0;
+	if (aSettings.iPrefetch == 0)
+		return 10;                           // the default
+	return aSettings.iPrefetch > 50 ? 50 : aSettings.iPrefetch;
+	}
+
 // The link settings (speed, flow control, modem or Psion Internet, the PPP
 // start command) are shared with PsiTerm and PsiWeb in PsiLink.ini. The
 // start command lives only there: TPmSettings is saved as a whole struct,
@@ -58,7 +68,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.4.4");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.4.5");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -291,6 +301,7 @@ void CPmView::CopySettingsToShared()
 	s->net.net_mode = iSettings->iNetMode;
 	CopyToC(s->net.ppp_start, sizeof(s->net.ppp_start), ppp);
 	s->offline = iSettings->iOffline;
+	s->prefetch = PrefetchCount(*iSettings);
 	CopyToC(s->net.version, sizeof(s->net.version), KVersion);
 	Mem::Copy(s->acct, iSettings->iAccounts, sizeof(s->acct));
 	Mem::Copy(&s->cal, &iCal->iCal, sizeof(s->cal));
@@ -2609,6 +2620,7 @@ void CPmAccountDialog::PreLayoutDynInitL()
 	SetNumberEditorValue(EPmDlgBodyKb, iAcct.max_body_kb);
 	SetChoiceListCurrentItem(EPmDlgSaveSent, iAcct.save_sent ? 1 : 0);
 	SetChoiceListCurrentItem(EPmDlgStore, iStore);
+	SetNumberEditorValue(EPmDlgPrefetch, iPrefetch);
 	// the signature's lines are kept as "\n"
 	TBuf<200> sig;
 	FromC(sig, iAcct.signature);
@@ -2661,6 +2673,7 @@ TBool CPmAccountDialog::OkToExitL(TInt /*aButtonId*/)
 	iAcct.max_body_kb = NumberEditorValue(EPmDlgBodyKb);
 	iAcct.save_sent = ChoiceListCurrentItem(EPmDlgSaveSent);
 	iStore = ChoiceListCurrentItem(EPmDlgStore);
+	iPrefetch = NumberEditorValue(EPmDlgPrefetch);
 	TBuf<200> sig;
 	GetEdwinText(sig, EPmDlgSignature);
 	sig.Trim();
@@ -3022,11 +3035,13 @@ TBool CPmAppUi::EditAccountL(TInt aIndex, TBool aNew)
 		a.save_sent = 1;
 		}
 	TInt store = iSettings.iStore;
-	CPmAccountDialog* dlg = new(ELeave) CPmAccountDialog(a, store);
+	TInt ahead = PrefetchCount(iSettings);
+	CPmAccountDialog* dlg = new(ELeave) CPmAccountDialog(a, store, ahead);
 	if (!dlg->ExecuteLD(R_PM_ACCOUNT_DIALOG))
 		return EFalse;
 	iSettings.iAccounts[aIndex] = a;
 	iSettings.iStore = store;
+	iSettings.iPrefetch = ahead > 0 ? ahead : -1;
 	SaveSettings();
 	iView->SettingsChanged();
 	return ETrue;

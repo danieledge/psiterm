@@ -1028,12 +1028,15 @@ static void on_fetch_struct(ImapNode *r, void *ctx)
 
 int imap_body(int acct, const char *folder, unsigned int uid, int full, char *why, int whymax)
 {
+	int keep_unread = (full & 2) != 0;     /* 2: downloaded ahead - not read yet */
 	PmAccount *a = &pm_shared()->acct[acct];
 	static BodyCtx b;
 	char path[190], tmp[190], dir[160];
 	int r, i;
 	long limit = (a->max_body_kb > 0 ? a->max_body_kb : 64) * 1024L;
 	FILE *f;
+
+	full &= 1;
 
 	if ((r = open_folder(acct, folder, why, whymax)) != PM_RES_OK) return r;
 	memset(&b, 0, sizeof(b));
@@ -1133,13 +1136,14 @@ int imap_body(int acct, const char *folder, unsigned int uid, int full, char *wh
 		int was_seen = 1;
 		if (st_index_load(acct, folder, "index.txt", &ix) == 0 && (m = st_index_find(&ix, uid)) != 0) {
 			was_seen = st_flag_has(m->flags, 'S');
-			st_flag_set(m->flags, 'S', 1);
+			if (!keep_unread)
+				st_flag_set(m->flags, 'S', 1);
 			st_flag_set(m->flags, 'B', 1);
 			m->attach = b.st.nattach > 0;
 			st_index_save(acct, folder, "index.txt", &ix);
 		}
 		st_index_free(&ix);
-		if (!was_seen) cmd(0, 0, why, whymax, "UID STORE %u +FLAGS.SILENT (\\Seen)", uid);
+		if (!was_seen && !keep_unread) cmd(0, 0, why, whymax, "UID STORE %u +FLAGS.SILENT (\\Seen)", uid);
 	}
 	st_changed();
 	return PM_RES_OK;

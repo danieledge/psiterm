@@ -45,7 +45,8 @@ struct TPmSettings
 	TInt iStore;           // 0 = CF card if there is one, 1 = internal disk
 	TInt iMono;            // 1 = text without anti-aliasing
 	TInt iCalSync;         // calendar: sync with the Agenda at Send & receive
-	TInt iSpare[6];
+	TInt iPrefetch;        // download the newest N messages' text ahead: 0 = the default (10), -1 = off
+	TInt iSpare[5];        // (TPmSettings is saved whole: keep its size)
 	PmAccount iAccounts[PM_MAX_ACCOUNTS];
 	};
 
@@ -402,7 +403,7 @@ private:
 class CPmAccountDialog : public CEikDialog
 	{
 public:
-	CPmAccountDialog(PmAccount& aAccount, TInt& aStore) : iAcct(aAccount), iStore(aStore) {}
+	CPmAccountDialog(PmAccount& aAccount, TInt& aStore, TInt& aPrefetch) : iAcct(aAccount), iStore(aStore), iPrefetch(aPrefetch) {}
 private:
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
@@ -410,6 +411,7 @@ private:
 	void GetText(TInt aId, char* aText, TInt aMax);
 	PmAccount& iAcct;
 	TInt& iStore;
+	TInt& iPrefetch;          // messages: 0 = off
 	};
 
 class CPmConnDialog : public CEikDialog
