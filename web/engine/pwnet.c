@@ -74,6 +74,11 @@ int pwn_is_open(const char *host, int port, int tls)
 {
 	if (!g_open || g_dead || g_tls != tls || g_port != port || strcmp(g_host, host))
 		return 0;
+	/* EPOC's pg_net_avail only counts bytes already taken from the port:
+	   look for anything the modem has said since the last reply (a
+	   "NO CARRIER" when the server dropped the kept-alive connection) */
+	if (pwn_modem() && pg_net_avail() == 0)
+		pg_wait(2, 1, 0);
 	if (pg_net_avail() > 0) {
 		char junk[64];
 		while (pg_net_avail() > 0)
@@ -96,6 +101,17 @@ int pwn_write(const void *buf, int len)
 	return pg_serial_write(buf, len) == len ? 0 : -1;
 }
 
+/* byte search: bodies may contain NULs, so no strstr */
+static int find_nc(const unsigned char *b, int n)
+{
+	int i;
+	for (i = 0; i + 10 <= n; i++)
+		if (b[i] == 'N' && memcmp(b + i, "NO CARRIER", 10) == 0)
+			return i;
+	return -1;
+}
+
+/* a "NO CARRIER" split across two reads is caught here */
 static void note_tail(const unsigned char *b, int n)
 {
 	int keep = (int)sizeof(g_tail) - 1;
@@ -105,9 +121,24 @@ static void note_tail(const unsigned char *b, int n)
 		memmove(g_tail, g_tail + n, keep - n);
 		memcpy(g_tail + keep - n, b, n);
 	}
-	g_tail[keep] = 0;
-	if (strstr(g_tail, "NO CARRIER"))
+	if (find_nc((const unsigned char *)g_tail, keep) >= 0)
 		g_dead = 1;
+}
+
+/* Modem: the WiRSa reports the far end closing (or the link dropping)
+ * in-band, with "NO CARRIER" - there is no other sign of it. Cut the
+ * message out of the data and remember, so the next read says "closed".
+ * Returns how many of the n bytes are real data. */
+static int modem_data(unsigned char *b, int n)
+{
+	int i = find_nc(b, n);
+	note_tail(b, n);
+	if (i < 0)
+		return n;
+	g_dead = 1;
+	while (i > 0 && (b[i - 1] == '\r' || b[i - 1] == '\n'))
+		i--;
+	return i;
 }
 
 int pwn_read(void *buf, int max, int timeout_ms)
@@ -116,6 +147,8 @@ int pwn_read(void *buf, int max, int timeout_ms)
 	used();
 	if (!g_open)
 		return -1;
+	if (g_dead)
+		return 0;                           /* the modem said NO CARRIER */
 #ifndef PW_NO_TLS
 	if (g_tls) {
 		if (!tls_pending() && pg_net_avail() == 0) {
@@ -138,8 +171,11 @@ int pwn_read(void *buf, int max, int timeout_ms)
 			return (m & 1) ? 0 : PWN_TIMEOUT;
 	}
 	n = pg_net_read(buf, max);
-	if (n > 0 && pwn_modem())
-		note_tail((const unsigned char *)buf, n);
+	if (n > 0 && pwn_modem()) {
+		n = modem_data((unsigned char *)buf, n);
+		if (n == 0)
+			return 0;                       /* closed */
+	}
 	return n;
 }
 

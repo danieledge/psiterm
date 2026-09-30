@@ -45,6 +45,8 @@
 #define LINE_MAX_  4096
 #define IO_CHUNK   2048
 #define POLL_MS    60          /* longest one poll may take once data flows */
+#define REUSE_WAIT_MS 15000   /* no reply on a kept-alive link: redial once */
+#define IDLE_TIMEOUT_MS 60000 /* nothing at all for this long: give up */
 
 enum fstate {
 	F_QUEUED, F_CONNECT, F_HEADERS, F_BODY, F_DONE
@@ -84,6 +86,7 @@ struct pf {
 	int port;
 	int tls;
 	long last_progress;
+	unsigned long last_rx;                 /* pwb_ms() of the last byte (or the request) */
 };
 
 static struct pf *ring = NULL;             /* all fetches, in order */
@@ -505,6 +508,30 @@ static int pf_body(struct pf *f, const unsigned char *d, int n)
 	return 0;
 }
 
+/* the connection has gone (closed, dropped, or the modem is back at its
+ * command prompt). Returns after handling it one way or another. */
+static void pf_closed(struct pf *f)
+{
+	fetch_msg msg;
+	if (f->st == F_HEADERS && f->code == 0 && f->reused && !f->retried) {
+		f->retried = true;                 /* the kept-alive link had gone */
+		pwn_close(1);
+		f->st = F_QUEUED;
+		f->linelen = 0;
+		return;
+	}
+	if (f->st == F_BODY && !f->chunked && f->clen < 0) {
+		/* body delimited by the close */
+		msg.type = FETCH_FINISHED;
+		pf_send(f, &msg);
+		pf_finish(f, false);
+		return;
+	}
+	pf_error(f, f->st == F_HEADERS ? "The server closed the connection"
+	                               : "The page was cut short");
+	pf_finish(f, false);
+}
+
 /* ------------------------------------------------------------------ poll */
 
 static void pf_run(struct pf *f)
@@ -555,6 +582,7 @@ static void pf_run(struct pf *f)
 		}
 		f->st = F_HEADERS;
 		f->last_progress = 0;
+		f->last_rx = pwb_ms();
 		pf_progress(f, "Waiting for %s...", f->host);
 		if (f->aborted) return;
 	}
@@ -565,8 +593,24 @@ static void pf_run(struct pf *f)
 		 * the page can be redrawn between pieces */
 		r = pwn_read(buf, sizeof(buf), f->st == F_HEADERS && f->code == 0 ? 50 : 10);
 		if (r == PWN_TIMEOUT) {
-			if (f->st == F_HEADERS && f->code == 0 && f->reused && !f->retried) {
-				/* stay in the queue: poll again soon */
+			/* nothing yet. Without these limits any lost reply meant
+			   "Loading" for ever */
+			unsigned long idle = pwb_ms() - f->last_rx;
+			if (f->st == F_HEADERS && f->code == 0 && f->reused && !f->retried &&
+			    idle > REUSE_WAIT_MS) {
+				f->retried = true;
+				pwn_close(1);
+				f->st = F_QUEUED;
+				f->linelen = 0;
+				return;
+			}
+			if (idle > IDLE_TIMEOUT_MS) {
+				char m[160];
+				snprintf(m, sizeof(m), f->st == F_HEADERS
+					? "No reply from %s (timed out)"
+					: "%s stopped sending (timed out)", f->host);
+				pf_error(f, m);
+				pf_finish(f, false);
 			}
 			return;
 		}
@@ -576,26 +620,10 @@ static void pf_run(struct pf *f)
 			return;
 		}
 		if (r <= 0) {
-			/* connection closed */
-			if (f->st == F_HEADERS && f->code == 0 && f->reused && !f->retried) {
-				f->retried = true;
-				pwn_close(1);
-				f->st = F_QUEUED;
-				f->linelen = 0;
-				return;
-			}
-			if (f->st == F_BODY && !f->chunked && f->clen < 0) {
-				/* body delimited by the close */
-				msg.type = FETCH_FINISHED;
-				pf_send(f, &msg);
-				pf_finish(f, false);
-				return;
-			}
-			pf_error(f, f->st == F_HEADERS ? "The server closed the connection"
-			                               : "The page was cut short");
-			pf_finish(f, false);
+			pf_closed(f);
 			return;
 		}
+		f->last_rx = pwb_ms();
 		i = 0;
 		if (f->st == F_HEADERS) {
 			while (i < r && f->st == F_HEADERS) {
@@ -635,6 +663,15 @@ static void pf_run(struct pf *f)
 					break;
 				}
 				if (f->code == 0 && strncmp(f->line, "HTTP/", 5) != 0) {
+					/* a modem result instead of a reply: the modem is at
+					   its command prompt, so the connection had gone */
+					if (pwn_modem() && (!strcmp(f->line, "ERROR") ||
+					    !strcmp(f->line, "OK") ||
+					    !strncmp(f->line, "NO CARRIER", 10))) {
+						pwn_close(1);
+						pf_closed(f);
+						return;
+					}
 					f->linelen = 0;               /* noise before the status line */
 					continue;
 				}
