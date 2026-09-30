@@ -81,6 +81,9 @@ enum { EHitNone, EHitFolder, EHitRow, EHitRefresh, EHitNew, EHitSearch, EHitBack
        EHitReplyAll, EHitForward, EHitDelete, EHitArchive, EHitFlag, EHitLink, EHitAttach,
        EHitWeb, EHitCalendar, EHitTop, EHitBottom, EHitDay, EHitPrev, EHitNext, EHitToday,
        EHitSync, EHitMonth, EHitAdd, EHitSend, EHitSave, EHitField, EHitBody, EHitCancel };
+/* the folder column: EHitFolder (index), or EHitTop / EHitBottom for a tap
+   on its scroll bar above or below the thumb (a page of folders) */
+int  ui_sidebar_hit(int aH, const PmUiMailbox* m, int x, int y, int* aIndex);
 int  ui_mailbox_hit(int aW, int aH, const PmUiMailbox* m, int x, int y, int* aIndex);
 /* the folder column alone (also beside the calendar) */
 void ui_sidebar(PmCanvas* c, const PmUiMailbox* m);

@@ -138,7 +138,7 @@ static int raw_read(void *buf, int max, int timeout_ms)
 				return (m & 1) ? 0 : PMN_TIMEOUT;
 			}
 		}
-		n = tls_read(buf, max, 30000);
+		n = tls_read(buf, max, 10000);   /* mid-record: silence means bytes were lost */
 		if (n == -2) return PMN_CANCEL;
 		if (n <= 0) snprintf(g_err, sizeof(g_err), "tls: %s", n == 0 ? "closed" : tls_error());
 		if (n < 0 && modem() && pg_net_avail() == 0) return 0;

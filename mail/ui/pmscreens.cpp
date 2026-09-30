@@ -73,6 +73,8 @@ static void spinner(PmCanvas* c, int x, int y, int grey)
 int ui_mailbox_rows(int aHeight) { return (aHeight - KHead - 1) / KRow; }
 int ui_sidebar_rows(int aHeight) { return (aHeight - KFolderTop - 8) / KFolderRow; }
 
+static int sidebar_thumb(int aH, const PmUiMailbox* m, int* ty, int* th);
+
 void ui_sidebar(PmCanvas* c, const PmUiMailbox* m)
 	{
 	const PmFont* r12 = &KFontR12;
@@ -126,13 +128,12 @@ void ui_sidebar(PmCanvas* c, const PmUiMailbox* m)
 		}
 	gfx_noclip(c);
 	/* more folders than fit: a little scroll mark */
-	if (m->nfolders > rows)
+	int ty, th;
+	if (sidebar_thumb(c->h, m, &ty, &th))
 		{
-		int h = c->h - KFolderTop - 6;
-		int th = h * rows / m->nfolders;
-		if (th < 8) th = 8;
-		int ty = KFolderTop + (h - th) * m->folderTop / (m->nfolders - rows > 0 ? m->nfolders - rows : 1);
-		gfx_round(c, KSide - 4, ty, 3, th, 1, 10);
+		/* (a track to tap: above or below the thumb turns a page) */
+		gfx_round(c, KSide - 7, KFolderTop, 5, c->h - KFolderTop - 6, 2, 13);
+		gfx_round(c, KSide - 7, ty, 5, th, 2, 8);
 		}
 	}
 
@@ -263,22 +264,46 @@ void ui_mailbox(PmCanvas* c, const PmUiMailbox* m)
 		}
 	}
 
+/* where the folder column's scroll thumb is (when it has one) */
+static int sidebar_thumb(int aH, const PmUiMailbox* m, int* ty, int* th)
+	{
+	int rows = ui_sidebar_rows(aH);
+	if (m->nfolders <= rows) return 0;
+	int h = aH - KFolderTop - 6;
+	*th = h * rows / m->nfolders;
+	if (*th < 12) *th = 12;
+	*ty = KFolderTop + (h - *th) * m->folderTop / (m->nfolders - rows > 0 ? m->nfolders - rows : 1);
+	return 1;
+	}
+
+int ui_sidebar_hit(int aH, const PmUiMailbox* m, int x, int y, int* aIndex)
+	{
+	*aIndex = -1;
+	if (y < KFolderTop) return EHitNone;
+	int ty, th;
+	if (x >= KSide - 14 && sidebar_thumb(aH, m, &ty, &th))
+		{
+		if (y < ty) return EHitTop;
+		if (y >= ty + th) return EHitBottom;
+		return EHitNone;
+		}
+	int i = m->folderTop + (y - KFolderTop) / KFolderRow;
+	if (i >= 0 && i < m->nfolders) { *aIndex = i; return EHitFolder; }
+	return EHitNone;
+	}
+
 int ui_mailbox_hit(int aW, int aH, const PmUiMailbox* m, int x, int y, int* aIndex)
 	{
 	*aIndex = -1;
 	if (x < KSide)
-		{
-		if (y < KFolderTop) return EHitNone;
-		int i = m->folderTop + (y - KFolderTop) / KFolderRow;
-		if (i >= 0 && i < m->nfolders) { *aIndex = i; return EHitFolder; }
-		return EHitNone;
-		}
+		return ui_sidebar_hit(aH, m, x, y, aIndex);
 	if (y < KHead)
 		{
+		/* the buttons are 18 px icons 30 apart: split halfway between */
 		int bx = aW - 30;
-		if (x >= bx - 4) return EHitNew;
-		if (x >= bx - 34) return EHitSearch;
-		if (x >= bx - 64) return EHitRefresh;
+		if (x >= bx - 6) return EHitNew;
+		if (x >= bx - 36) return EHitSearch;
+		if (x >= bx - 70) return EHitRefresh;
 		return EHitNone;
 		}
 	int i = m->top + (y - KHead) / KRow;

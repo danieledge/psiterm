@@ -756,10 +756,13 @@ static int fetch_part(int acct, const char *folder, unsigned int uid, const char
 	long total, StreamFn fn, void *ctx, char *why, int whymax)
 {
 	static Piece p;
-	long step = piece_size();
+	static long s_step;                   /* smaller after a drop, for the next message too */
+	long step;
 	int again = 0, drops = 0, r;
 	p.fn = fn; p.ctx = ctx; p.got = 0;
+	if (s_step <= 0 || s_step > piece_size()) s_step = piece_size();
 	for (;;) {
+		step = s_step;
 		long before = p.got, want;
 		if (total > 0 && p.got >= total) {
 			if (drops) why[0] = 0;
@@ -774,6 +777,7 @@ static int fetch_part(int acct, const char *folder, unsigned int uid, const char
 			pm_log("imap: %u [%s] dropped at %ld of %ld; again", uid, part, p.got, total);
 			again++;
 			drops++;
+			if (s_step > 2048) s_step /= 2;   /* the line can't take that much at once */
 			pm_progress("Reconnecting...");
 			if ((r = open_folder(acct, folder, why, whymax)) != PM_RES_OK) return r;
 			continue;
@@ -943,6 +947,7 @@ static void spool_stream(const char *data, int n, void *ctx)
 	if (s->total > 0) {
 		int pc = (int)(s->got * 100 / s->total);
 		if (pc > 100) pc = 100;
+		pc -= pc % 5;                     /* (each update redraws the screen) */
 		if (pc != s->percent) { s->percent = pc; pm_progress("Downloading the message... %d%%", pc); }
 	}
 	if (fwrite(data, 1, n, s->f) != (size_t)n) s->err = 1;
@@ -1159,6 +1164,7 @@ static void att_stream(const char *data, int n, void *ctx)
 	c->got += n;
 	if (c->total > 0) {
 		int pc = (int)(c->got * 100 / c->total);
+		pc -= pc % 5;
 		if (pc != c->percent) { c->percent = pc; pm_progress("Downloading the attachment... %d%%", pc); }
 	}
 	dn = dec_feed(&c->dec, data, n, dec);

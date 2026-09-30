@@ -308,6 +308,9 @@ void CPmView::StartEngineL()
 	if (!iWatcher)
 		iWatcher = new(ELeave) CPmWatcher(*this);
 	iWatcher->Watch(iProcess);
+	// above this (foreground) app: the engine must drain the serial port
+	// while the screen is being drawn, or bytes are lost without RTS/CTS
+	iProcess.SetPriority(EPriorityHigh);
 	iProcess.Resume();
 	}
 
@@ -1718,8 +1721,15 @@ void CPmView::FillSidebar(PmUiMailbox& m)
 	m.nfolders = k;
 	m.folderSel = iFolderSel < k ? iFolderSel : k - 1;
 	TInt srows = ui_sidebar_rows(iCanvas.h);
-	if (iFolderSel < iFolderTop) iFolderTop = iFolderSel;
-	if (iFolderSel >= iFolderTop + srows) iFolderTop = iFolderSel - srows + 1;
+	if (iSidebar || iFolderFollow)
+		{
+		// (the keyboard moves the highlight: keep it in view; the pen
+		// scrolls the column by itself)
+		if (iFolderSel < iFolderTop) iFolderTop = iFolderSel;
+		if (iFolderSel >= iFolderTop + srows) iFolderTop = iFolderSel - srows + 1;
+		iFolderFollow = EFalse;
+		}
+	if (iFolderTop > k - srows) iFolderTop = k - srows;
 	if (iFolderTop < 0) iFolderTop = 0;
 	m.folderTop = iFolderTop;
 	m.sidebarFocus = iSidebar;
@@ -1922,6 +1932,40 @@ void CPmView::MoveSel(TInt aDelta)
 		iSel += aDelta;
 		EnsureVisible();
 		}
+	Render();
+	}
+
+// the entry in the folder column for what's showing
+TInt CPmView::CurrentSidebarItem() const
+	{
+	if (iMode == ECalendar || iMode == ECalEvent)
+		return iFolders->Count() + 1;
+	if (iMode == EOutbox)
+		return iFolders->Count();
+	for (TInt i = 0; i < iFolders->Count(); i++)
+		if ((*iFolders)[i].iImap == iFolder)
+			return i;
+	return 0;
+	}
+
+// the pen on the folder column's scroll bar: a page of folders
+void CPmView::SidebarPage(TInt aDir)
+	{
+	TInt rows = ui_sidebar_rows(iCanvas.h);
+	iFolderTop += aDir * (rows > 1 ? rows - 1 : 1);
+	Render();                              // (FillSidebar keeps it in range)
+	}
+
+// Folder > Go to folder...: one of the column's entries
+void CPmView::OpenSidebarItemL(TInt aIndex)
+	{
+	if (iMode == EMessage)
+		BackL();
+	iSidebar = ETrue;
+	iFolderSel = aIndex;
+	iFolderFollow = ETrue;
+	OpenCurrentL();
+	iFolderFollow = ETrue;
 	Render();
 	}
 
@@ -2151,6 +2195,8 @@ void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
 			if (index == iSel && !iSidebar) OpenCurrentL();
 			else { iSidebar = EFalse; iSel = index; EnsureVisible(); Render(); }
 			break;
+		case EHitTop: SidebarPage(-1); break;
+		case EHitBottom: SidebarPage(1); break;
 		case EHitRefresh: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdSendRecv); break;
 		case EHitSearch: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdSearch); break;
 		case EHitNew: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdNew); break;
@@ -3140,6 +3186,30 @@ void CPmAppUi::SaveAttachmentL()
 		iView->SaveAttachmentL(choice);
 	}
 
+// Folder > Go to folder: every folder, however many the column can show
+void CPmAppUi::FoldersL()
+	{
+	TInt n = iView->FolderCount();
+	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(n + 2);
+	CleanupStack::PushL(names);
+	TBuf<120> item;
+	for (TInt i = 0; i < n; i++)
+		{
+		const TPmFolder& f = iView->FolderAt(i);
+		item = Clip(f.iName, 100);
+		if (f.iUnread > 0 && f.iKind != 'S' && f.iKind != 'D' && f.iKind != 'T' && f.iKind != 'J')
+			item.AppendFormat(_L("  (%d)"), f.iUnread);
+		names->AppendL(item);
+		}
+	names->AppendL(_L("Outbox"));
+	names->AppendL(_L("Calendar"));
+	TInt choice = iView->CurrentSidebarItem();
+	CleanupStack::Pop();                    // the dialog takes the names
+	CPmChoiceDialog* dlg = new(ELeave) CPmChoiceDialog(_L("Go to folder"), _L("Folder"), names, choice);
+	if (dlg->ExecuteLD(R_PM_CHOICE_DIALOG) && choice >= 0 && choice < n + 2)
+		iView->OpenSidebarItemL(choice);
+	}
+
 void CPmAppUi::SearchL()
 	{
 	TBuf<60> words;
@@ -3375,7 +3445,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		iView->Render();
 		break;
 	case EPmCmdFolders:
-		iView->FocusFoldersL();
+		FoldersL();
 		break;
 	case EPmCmdRefresh:
 		iView->RefreshL();

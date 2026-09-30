@@ -256,6 +256,8 @@ void CPmView::CalendarPointerL(const TPoint& aPoint)
 			}
 		else CalGoTo(index - k.daySel);
 		break;
+	case EHitTop: SidebarPage(-1); break;
+	case EHitBottom: SidebarPage(1); break;
 	case EHitMonth: ToggleMonthL(); break;
 	case EHitAdd: NewEventL(); break;
 	case EHitPrev: if (iCalMonth) MonthStep(-1); else CalGoTo(-7); break;

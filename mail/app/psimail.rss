@@ -111,7 +111,7 @@ RESOURCE MENU_PANE r_pm_folder_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPmCmdFolders; txt="Folders"; },
+		MENU_ITEM { command=EPmCmdFolders; txt="Go to folder..."; },
 		MENU_ITEM { command=EPmCmdOutbox; txt="Outbox"; },
 		MENU_ITEM { command=EPmCmdShowCalendar; txt="Calendar"; },
 		MENU_ITEM { command=EPmCmdMonth; txt="Month / week"; },

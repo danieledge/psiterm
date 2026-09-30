@@ -373,13 +373,7 @@ int ui_calendar_hit(int aW, int aH, const PmUiCalendar* k, int x, int y, int* aI
 	{
 	*aIndex = -1;
 	if (x < KSide)
-		{
-		int dummy;
-		(void)dummy;
-		int i = k->side->folderTop + (y - 36) / 22;
-		if (y >= 36 && i >= 0 && i < k->side->nfolders) { *aIndex = i; return EHitFolder; }
-		return EHitNone;
-		}
+		return ui_sidebar_hit(aH, k->side, x, y, aIndex);
 	if (y < KHead)
 		{
 		HeadPos p;

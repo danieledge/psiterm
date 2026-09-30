@@ -137,6 +137,9 @@ public:
 	TInt FolderCount() const;
 	const TPmFolder& FolderAt(TInt aIndex) const;
 	void FocusFoldersL();
+	void SidebarPage(TInt aDir);
+	void OpenSidebarItemL(TInt aIndex);
+	TInt CurrentSidebarItem() const;
 	void OpenFolderL(const TDesC8& aImap);
 	void ShowOutboxL();
 	void OpenCurrentL();
@@ -249,6 +252,7 @@ private:
 	TBool iSidebar;                  // keys move in the folder column
 	TInt iFolderSel;
 	TInt iFolderTop;
+	TBool iFolderFollow;                 // bring the highlighted folder into view
 	TBool iSearch;                   // the list shows search results
 	TBuf<60> iSearchWords;
 	TBuf8<128> iFolder;              // IMAP name of the open folder
@@ -446,6 +450,7 @@ private:
 	void MoveL();
 	void SaveAttachmentL();
 	void SearchL();
+	void FoldersL();
 	void SwitchAccountL();
 	void DeleteAccountL();
 	void AboutL();
