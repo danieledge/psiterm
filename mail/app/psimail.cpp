@@ -1305,7 +1305,7 @@ void CPmView::SaveDraftL(CPmDraft& aDraft, TBool aSend)
 	for (TInt i = 0; i < aDraft.iAttach->Count(); i++)
 		{
 		h = _L("Attach: ");
-		h.Append((*aDraft.iAttach)[i].Left(500));
+		h.Append(Clip((*aDraft.iAttach)[i], 500));
 		h.Append('\n');
 		f.Write(h);
 		}
@@ -1508,7 +1508,7 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		lines[1].Append(_L(": "));
 		lines[1].Append(why);
 		lines[2] = _L("Key: ");
-		lines[2].Append(fp.Left(95));
+		lines[2].Append(Clip(fp, 95));
 		lines[3] = _L("Trust it only if you expected this (e.g. your own server).");
 		TPtrC ptrs[4];
 		for (TInt k = 0; k < 4; k++) ptrs[k].Set(lines[k]);
@@ -1530,7 +1530,7 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		{
 		PmAccount& a = iSettings->iAccounts[iSettings->iAcct];
 		if (res == PM_RES_LOGIN_FAILED)
-			iEikonEnv->InfoWinL(_L("The server refused the login"), msg.Left(100));
+			iEikonEnv->InfoWinL(_L("The server refused the login"), Clip(msg, 100));
 		TBuf<100> prompt;
 		prompt = _L("Password for ");
 		TBuf<60> user;
@@ -1562,7 +1562,7 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 	default:
 		if (aCmd.op == PM_CMD_BODY || aCmd.op == PM_CMD_ATTACH || aCmd.op == PM_CMD_SEND ||
 			aCmd.op == PM_CMD_SENDRECV || aCmd.op == PM_CMD_SEARCH)
-			iEikonEnv->InfoWinL(_L("PsiMail"), msg.Left(120));
+			iEikonEnv->InfoWinL(_L("PsiMail"), Clip(msg, 120));
 		else
 			Toast(msg);
 		ReloadL();
@@ -1624,7 +1624,7 @@ void CPmView::HandleCalResultL(const PmCmd& aCmd, TInt aRes, const TDesC& aMsg)
 		return;
 		}
 	TBuf<160> t(_L("Calendar: "));
-	t.Append(aMsg.Left(140));
+	t.Append(Clip(aMsg, 140));
 	Toast(t);
 	}
 
@@ -1747,13 +1747,13 @@ void CPmView::RenderMailbox()
 			{
 			title = _L("Search");
 			sub = _L("\x93");
-			sub.Append(iSearchWords.Left(40));
+			sub.Append(Clip(iSearchWords, 40));
 			sub.Append(_L("\x94 in "));
-			sub.Append(f ? f->iName.Left(30) : TPtrC(_L("Inbox")));
+			sub.Append(f ? Clip(f->iName, 30) : TPtrC(_L("Inbox")));
 			}
 		else
 			{
-			if (f) title = f->iName.Left(60); else title.Copy(iFolder.Left(60));
+			if (f) title = Clip(f->iName, 60); else title.Copy(Clip(iFolder, 60));
 			TInt unread = 0;
 			for (TInt i = 0; i < iRows->Count(); i++)
 				if ((*iRows)[i].iFlags.Locate('S') < 0) unread++;
@@ -2092,7 +2092,7 @@ void CPmView::ActivateLinkL(TInt aLink)
 	if (!n)
 		return;
 	TPtrC8 u((const TUint8*)url, n);
-	if (u.Left(7).CompareF(_L8("mailto:")) == 0)
+	if (Clip(u, 7).CompareF(_L8("mailto:")) == 0)
 		{
 		// write to them
 		CPmDraft* d = CPmDraft::NewL();
@@ -2201,10 +2201,10 @@ const TInt PM_WEB_URL_MAX = 500;      // PsiWeb takes up to 511 bytes
 void CPmView::OpenWebL(const TDesC& aUrl)
 	{
 	// PsiWeb needs the serial port for web addresses (not for our own files)
-	if (aUrl.Left(5).CompareF(_L("file:")) != 0)
+	if (Clip(aUrl, 5).CompareF(_L("file:")) != 0)
 		Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
 	TBuf8<PM_WEB_URL_MAX> url8;
-	url8.Copy(aUrl.Left(PM_WEB_URL_MAX));
+	url8.Copy(Clip(aUrl, PM_WEB_URL_MAX));
 	// already running? then hand it the address (CPwAppUi::ProcessMessageL)
 	TApaTaskList tasks(iEikonEnv->WsSession());
 	TApaTask task = tasks.FindApp(KUidPsiWeb);
@@ -2342,7 +2342,7 @@ void CPmComposeDialog::ShowAttachments()
 		for (TInt i = 0; i < n; i++)
 			{
 			TParsePtrC parse((*iDraft.iAttach)[i]);
-			TPtrC name = parse.NameAndExt().Left(40);
+			TPtrC name = Clip(parse.NameAndExt(), 40);
 			if (t.Length() + name.Length() + 6 > t.MaxLength())
 				{
 				t.Append(_L(" ..."));
@@ -2994,9 +2994,9 @@ CPmDraft* CPmAppUi::ReplyDraftL(TBool aAll)
 				}
 			}
 		}
-	if (h->iSubject.Left(3).CompareF(_L("Re:")) != 0)
+	if (Clip(h->iSubject, 3).CompareF(_L("Re:")) != 0)
 		d->iSubject = _L("Re: ");
-	d->iSubject.Append(h->iSubject.Left(d->iSubject.MaxLength() - d->iSubject.Length()));
+	d->iSubject.Append(Clip(h->iSubject, d->iSubject.MaxLength() - d->iSubject.Length()));
 	SafeCopy(d->iInReplyTo, h->iMsgId);
 	SafeCopy(d->iReferences, h->iMsgId);
 	SafeCopy(d->iReplyFolder, iView->FolderImap());
@@ -3009,9 +3009,9 @@ CPmDraft* CPmAppUi::ReplyDraftL(TBool aAll)
 	DisplayName(who, h->iFrom);
 	p.Append('\n');
 	p.Append(_L("On "));
-	p.Append(h->iDate.Left(40));
+	p.Append(Clip(h->iDate, 40));
 	p.Append(_L(", "));
-	p.Append(who.Left(60));
+	p.Append(Clip(who, 60));
 	p.Append(_L(" wrote:\n"));
 	iView->PlainBodyL(p, ETrue);
 	delete d->iBody;
@@ -3047,20 +3047,20 @@ CPmDraft* CPmAppUi::ForwardDraftL()
 	CPmDraft* d = CPmDraft::NewL();
 	CleanupStack::PushL(d);
 	d->iSubject = _L("Fwd: ");
-	d->iSubject.Append(h->iSubject.Left(190));
+	d->iSubject.Append(Clip(h->iSubject, 190));
 	HBufC* body = HBufC::NewL(32 * 1024);
 	CleanupStack::PushL(body);
 	TPtr p = body->Des();
 	p.Append('\n');
 	AddSignature(*d, p);
 	p.Append(_L("\n---------- Forwarded message ----------\nFrom: "));
-	p.Append(h->iFrom.Left(200));
+	p.Append(Clip(h->iFrom, 200));
 	p.Append(_L("\nDate: "));
-	p.Append(h->iDate.Left(60));
+	p.Append(Clip(h->iDate, 60));
 	p.Append(_L("\nSubject: "));
-	p.Append(h->iSubject.Left(200));
+	p.Append(Clip(h->iSubject, 200));
 	p.Append(_L("\nTo: "));
-	p.Append(h->iTo.Left(200));
+	p.Append(Clip(h->iTo, 200));
 	p.Append(_L("\n\n"));
 	// the text (leaving room for the note below)
 	{
@@ -3164,7 +3164,7 @@ void CPmAppUi::SwitchAccountL()
 		TBuf<96> e;
 		FromC(e, iSettings.iAccounts[i].email);
 		n.Append(_L(" - "));
-		n.Append(e.Left(80));
+		n.Append(Clip(e, 80));
 		if (i == iSettings.iAcct) current = names->Count();
 		names->AppendL(n);
 		User::LeaveIfError(map.Append(i));

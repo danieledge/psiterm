@@ -24,6 +24,13 @@ extern "C" {
 #include <psimail.h>
 }
 
+// Left() that doesn't mind a short text: EPOC's Left(n) panics (USER 22)
+// when n is more than the length
+inline TPtrC Clip(const TDesC& aText, TInt aMax)
+	{
+	return aText.Left(aMax < 0 ? 0 : aMax < aText.Length() ? aMax : aText.Length());
+	}
+
 class CAgnEntryModel;
 class RAgendaServ;
 class CAgnEntry;

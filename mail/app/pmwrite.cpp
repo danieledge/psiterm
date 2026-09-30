@@ -45,7 +45,7 @@ void CPmView::ComposeAttachmentsL()
 	for (TInt i = 0; i < n; i++)
 		{
 		TParsePtrC parse((*iDraft->iAttach)[i]);
-		iCmpNames->AppendL(parse.NameAndExt().Left(60));
+		iCmpNames->AppendL(Clip(parse.NameAndExt(), 60));
 		TEntry e;
 		TBuf<20> size;
 		if (iCoeEnv->FsSession().Entry((*iDraft->iAttach)[i], e) == KErrNone)
@@ -75,7 +75,7 @@ void CPmView::ComposeL(CPmDraft* aDraft, const TDesC& aTitle)
 		return;
 		}
 	iDraft = aDraft;
-	iCmpTitle = aTitle.Left(iCmpTitle.MaxLength());
+	iCmpTitle = Clip(aTitle, iCmpTitle.MaxLength());
 	iCmpReturn = iMode;
 	PmComposeLayout l;
 	ui_compose_layout(iCanvas.w, iCanvas.h, 0, &l);
@@ -105,13 +105,13 @@ void CPmView::ComposeL(CPmDraft* aDraft, const TDesC& aTitle)
 void CPmView::ComposeCollect()
 	{
 	TBuf<500> t;
-	t.Copy(TPtrC8((const TUint8*)iEd[0].text, iEd[0].len).Left(500));
+	t.Copy(Clip(TPtrC8((const TUint8*)iEd[0].text, iEd[0].len), 500));
 	t.Trim();
 	iDraft->iTo = t;
-	t.Copy(TPtrC8((const TUint8*)iEd[1].text, iEd[1].len).Left(500));
+	t.Copy(Clip(TPtrC8((const TUint8*)iEd[1].text, iEd[1].len), 500));
 	t.Trim();
 	iDraft->iCc = t;
-	iDraft->iSubject.Copy(TPtrC8((const TUint8*)iEd[2].text, iEd[2].len).Left(200));
+	iDraft->iSubject.Copy(Clip(TPtrC8((const TUint8*)iEd[2].text, iEd[2].len), 200));
 	iDraft->iSubject.Trim();
 	HBufC* body = HBufC::New(iEd[3].len + 1);
 	if (body)
@@ -182,7 +182,7 @@ void CPmView::ComposeRemoveAttachL(TInt aIndex)
 	if (aIndex < 0 || aIndex >= n) aIndex = n - 1;
 	TBuf<80> t(_L("Took off "));
 	TParsePtrC parse((*iDraft->iAttach)[aIndex]);
-	t.Append(parse.NameAndExt().Left(60));
+	t.Append(Clip(parse.NameAndExt(), 60));
 	iDraft->iAttach->Delete(aIndex);
 	ComposeAttachmentsL();
 	Toast(t);
@@ -392,7 +392,7 @@ void CPmView::NewEventL()
 	else if (def >= 0 && def < names->Count())
 		{
 		iEvCal = _L("To the Agenda, then ");
-		iEvCal.Append((*names)[def].Left(40));
+		iEvCal.Append(Clip((*names)[def], 40));
 		}
 	else
 		iEvCal = _L("To the Agenda, then the calendar");

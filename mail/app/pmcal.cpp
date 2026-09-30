@@ -352,9 +352,9 @@ TPtrC8 CPmCalSync::Field(const TDesC8& aLine, TInt aIndex) const
 void CPmCalSync::EventKey(const TDesC8& aLine, TDes8& aKey) const
 	{
 	aKey.Zero();
-	aKey.Append(Field(aLine, 1).Left(aKey.MaxLength() - 30));
+	aKey.Append(Clip(Field(aLine, 1), aKey.MaxLength() - 30));
 	aKey.Append('|');
-	aKey.Append(Field(aLine, 3).Left(24));
+	aKey.Append(Clip(Field(aLine, 3), 24));
 	}
 
 void CPmCalSync::LoadEventsL()
@@ -453,7 +453,7 @@ void CPmCalSync::LoadMapL()
 			if (line.Length() == 0) continue;
 			if (line[0] == '#')
 				{
-				TBuf8<130> f(Field(line, 1).Left(128));
+				TBuf8<130> f(Clip(Field(line, 1), 128));
 				f.LowerCase();
 				if (Field(line, 0) == KMapMagic && f == file)
 					{
@@ -546,7 +546,7 @@ void CPmCalSync::LoadCalendarsL()
 		// id sync ctag href flags name
 		TPtrC8 flags = Field(line, 4);
 		if (flags.Locate('W') >= 0) iWritable->AppendL(Field(line, 0));
-		if (flags.Locate('D') >= 0) iDefaultCal = Field(line, 0).Left(12);
+		if (flags.Locate('D') >= 0) iDefaultCal = Clip(Field(line, 0), 12);
 		}
 	CleanupStack::PopAndDestroy();
 	}
@@ -583,7 +583,7 @@ void CPmCalSync::CalendarsL(const TDesC& aStoreDir, CDesCArray& aNames, CDesC8Ar
 				}
 			if (fields[4].Locate('W') < 0) continue;     // can't add events there
 			TBuf<64> name;
-			name.Copy(fields[5].Left(64));
+			name.Copy(Clip(fields[5], 64));
 			if (fields[4].Locate('D') >= 0) aDefault = aNames.Count();
 			aNames.AppendL(name);
 			aIds.AppendL(fields[0]);
@@ -799,9 +799,9 @@ void CPmCalSync::PushEntryL(TChar aOp, TUint32 aAuid, CAgnEntry* aEntry, const T
 		rt->Extract(text, 0, Min(rt->DocumentLength(), text.MaxLength()));
 		text.Trim();
 		if (text.Length() == 0) text = _L("(no title)");
-		AppendClean(line, text.Left(190));
+		AppendClean(line, Clip(text, 190));
 		line.Append('\t');
-		AppendClean(line, aEntry->Location().Left(110));
+		AppendClean(line, Clip(aEntry->Location(), 110));
 		if (aOp == 'N')
 			{
 			// the event's UID on the server: the same if this is sent again
@@ -820,10 +820,10 @@ void CPmCalSync::FillL(CAgnEntry* aEntry, const TDesC8& aLine, const TTime& aSta
 	CRichText* rt = aEntry->RichTextL();
 	rt->Reset();
 	TBuf<200> text;
-	text.Copy(Field(aLine, 8).Left(200));
+	text.Copy(Clip(Field(aLine, 8), 200));
 	rt->InsertL(0, text);
 	TBuf<120> loc;
-	loc.Copy(Field(aLine, 9).Left(120));
+	loc.Copy(Clip(Field(aLine, 9), 120));
 	aEntry->SetLocationL(loc);
 	if (iSettings.iAlarms)
 		{

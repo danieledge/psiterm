@@ -143,7 +143,7 @@ void CPwView::OpenUrlL(const TDesC& aUrl)
 		Command(PW_CMD_OPEN, aUrl);
 	else
 		{
-		iStartUrl = aUrl.Left(iStartUrl.MaxLength());
+		iStartUrl = Clip(aUrl, iStartUrl.MaxLength());
 		if (iStarter && !iStarter->IsActive())
 			StartEngineL();
 		}
@@ -705,7 +705,7 @@ void CPwAppUi::PageInfoL()
 	if (iView->Settings().iUseProxy)
 		{
 		lines[4] = _L("Via proxy ");
-		lines[4].Append(iView->Settings().iProxyHost.Left(60));
+		lines[4].Append(Clip(iView->Settings().iProxyHost, 60));
 		}
 	else
 		lines[4] = _L("Direct connection");
@@ -840,7 +840,7 @@ TBool CPwAppUi::ProcessCommandParametersL(TApaCommand /*aCommand*/, TFileName& a
 	if (aTail.Length() > 0)
 		{
 		TBuf<PW_URL_MAX> url;
-		url.Copy(aTail.Left(url.MaxLength()));
+		url.Copy(Clip(aTail, url.MaxLength()));
 		url.Trim();
 		if (url.Length() > 0 && iView)
 			iView->OpenUrlL(url);
@@ -858,7 +858,7 @@ void CPwAppUi::ProcessMessageL(TUid aUid, const TDesC8& aParams)
 		return;
 		}
 	TBuf<PW_URL_MAX> url;
-	url.Copy(aParams.Left(url.MaxLength()));
+	url.Copy(Clip(aParams, url.MaxLength()));
 	url.Trim();
 	if (url.Length() > 0 && iView)
 		iView->OpenUrlL(url);
