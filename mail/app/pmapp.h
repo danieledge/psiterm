@@ -123,16 +123,16 @@ struct TPmLinkRange { TInt iPos; TInt iLen; TInt iLink; };
 class CPmView : public CCoeControl, public MPmCalObserver, public MEikListBoxObserver
 	{
 public:
-	enum TMode { EList, EMessage, EOutbox, ENoAccount, ECalendar, ECalEvent, ECompose, EEventEdit };
+	enum TMode { EList, EMessage, EOutbox, ENoAccount, ECalendar };
 	~CPmView();
 	void ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSettings& aCal);
 	void CalendarSyncL();                    // ask the engine, then update the Agenda
 	void ShowCalendarL();                    // the calendar screen
-	void ToggleMonthL();
-	void NewEventL();                        // straight into the Agenda (then synced)
-	void ComposeL(CPmDraft* aDraft, const TDesC& aTitle);   // takes the draft
-	TBool ModalCommandL(TInt aCommand);      // compose / new event: their menus
-	TBool InScreenOfItsOwn() const { return iMode == ECompose || iMode == EEventEdit; }
+	void ToggleMonthL();                     // View > Switch view: the week or the month
+	void CalendarTodayL();                   // Event > Go to today
+	void NewEventL();                        // the Create new event dialog: into the Agenda (then synced)
+	void EventDetailsL();                    // Event > Details: the chosen event in a dialog
+	TBool EventSelected() const;             // the calendar shows a day with an event chosen
 	TBool CalendarBusy() const { return iCalPending || (iCalSync && iCalSync->Running()); }
 	void StoreDirectory(TDes& aDir) const { StoreDir(aDir); }
 	// MPmCalObserver
@@ -191,7 +191,7 @@ public:
 	void Toast(const TDesC& aText);
 	void Render();                           // draw the screen again
 	void ZoomL(TInt aStep);                  // the sidebar's zoom buttons
-	TBool NativeMode() const;                // shown with EIKON controls, not drawn
+	TBool NativeMode() const;                // shown with EIKON controls (every mode now)
 	// MEikListBoxObserver
 	void HandleListBoxEventL(CEikListBox* aListBox, TListBoxEvent aEventType);
 private:
@@ -231,6 +231,26 @@ private:
 	void ReaderToL(TBool aEnd);
 	void FormatNativeDate(TInt aDate, TDes& aOut) const;
 	void SortRows();
+	TInt RowHeight() const;                  // a list row at this zoom
+	// the calendar, drawn with EIKON's fonts and colours beside the folder
+	// tree (pmcalview.cpp)
+	TRect CalRect() const;                   // its pane: right of the folders, under the title band
+	TRect CalHeadRect() const;               // the row of buttons at the top of the pane
+	TRect CalStripRect() const;              // the week's seven days
+	TRect CalDayRect() const;                // the chosen day's name
+	TRect CalListRect() const;               // its events
+	TInt CalRows() const;                    // event rows that fit
+	TInt CalHeadButtons(TRect* aRects) const;   // where the buttons are: prev, today, next, view
+	void DrawCalendar(CWindowGc& aGc) const;
+	void DrawCalHead(CWindowGc& aGc) const;
+	void DrawCalWeek(CWindowGc& aGc, const PmUiCalendar& k) const;
+	void DrawCalMonth(CWindowGc& aGc, const PmUiCalendar& k) const;
+	void DrawCalEvent(CWindowGc& aGc, const PmUiEvent& e, const TRect& aRect, TBool aSel) const;
+	void MonthGrid(TRect& aNames, TRect& aGrid, TInt& aCellW, TInt& aCellH) const;
+	TInt CalHit(const TPoint& aPos, TInt& aIndex) const;
+	TBool CalendarPointerL(const TPointerEvent& aEvent);
+	void CalendarText(TDes& aMid) const;     // the title band's middle
+	void CalScrollL(TInt aMovement);         // the event list's scroll bar
 public:
 	void SortL(TInt aMode);                  // Tools > Sort, a column heading
 	void ToggleViewL(TInt aFlag);            // View > Show toolbar / title bar / folders
@@ -272,36 +292,14 @@ private:
 	void RenderReader();
 	TInt SidebarCount() const { return iFolders->Count() + 2; }   // + the outbox and the calendar
 	void FillSidebar(PmUiMailbox& m);
-	// the calendar screen (pmcalview.cpp)
+	// the calendar (pmcalview.cpp)
 	void LoadCalendarL();
 	void CalendarToday();
 	void CalGoTo(TInt aDays);
 	void MonthStep(TInt aDir);
-	void RenderCalendar();
-	void RenderEvent();
-	void FillCalendar(PmUiCalendar& k);
+	void FillCalendar(PmUiCalendar& k) const;
+	void UseMenus(TBool aCalendar);          // the mail or the calendar menu bar
 	TKeyResponse CalendarKeyL(TUint aCode);
-	// writing (pmwrite.cpp)
-	void UseMenus(TBool aOwn, TInt aMenuBar, TInt aHotKeys);
-	void ComposeAttachmentsL();
-	void ComposeCollect();
-	void EndComposeL(TInt aHow);
-	void ComposeAttachL();
-	void ComposeRemoveAttachL(TInt aIndex);
-	void FillCompose(PmUiCompose& k);
-	void RenderCompose();
-	TKeyResponse ComposeKeyL(TUint aCode, TUint aMods);
-	void ComposePointerL(const TPoint& aPoint);
-	void EventEditTexts();
-	void FillEventEdit(PmUiEventEdit& k);
-	void RenderEventEdit();
-	void EndEventEditL(TBool aSave);
-	TInt EventNextField(TInt aDir);
-	void EventStep(TInt aDir);
-	TKeyResponse EventEditKeyL(TUint aCode, TUint aMods);
-	void EventEditPointerL(const TPoint& aPoint);
-	TKeyResponse EventKeyL(TUint aCode);
-	void CalendarPointerL(const TPoint& aPoint);
 private:
 	TPmSettings* iSettings;
 	TPmCalSettings* iCal;
@@ -370,7 +368,7 @@ private:
 	TUint8* iBits;                   // 640x240, 4 bits a pixel
 	PmCanvas iCanvas;
 	PmUiFolder iUiFolders[84];
-	// the calendar screen
+	// the calendar
 	PmCalModel iCalModel;
 	TBool iCalLoaded;
 	TBool iSplashDone;               // the start-up screen has gone
@@ -380,26 +378,11 @@ private:
 	TInt iCalSel;
 	TInt iCalTop;
 	TBool iCalMonth;                 // the month grid instead of the week
+	TBool iCalMenus;                 // the calendar's menu bar is up
+	TInt iCalPress;                  // the pen on one of the pane's buttons (CalHit), 0 none
 	PmUiEvent iCalEvents[40];
 	PmCalText iCalText;
 	PmCalText iCalText2;
-	// writing
-	CPmDraft* iDraft;
-	PmEditor iEd[6];                 // To, Cc, Subject, text; event name, place
-	TBool iEdOpen, iEvOpen;
-	TInt iCmpFocus;
-	TBool iCmpChanged, iCmpDiscard;
-	TMode iCmpReturn;
-	TBuf<30> iCmpTitle;
-	CDesCArrayFlat* iCmpNames;
-	CDesCArrayFlat* iCmpSizes;
-	PmUiAttachment iCmpAtt[8];
-	TInt iEvDay, iEvFrom, iEvTo, iEvAlarm, iEvFocus;
-	TBool iEvAllDay;
-	TBuf<48> iEvDate;
-	TBuf<8> iEvFromText, iEvToText;
-	TBuf<30> iEvAlarmText;
-	TBuf<80> iEvCal;
 	PmUiRow iUiRows[12];
 	TBuf<16> iDates[12];
 	PmUiAttachment iUiAtt[8];
@@ -577,6 +560,42 @@ private:
 	CDesC8ArrayFlat* iIds;
 	};
 
+// Event > Create new event: what, where, when, and an alarm
+struct TPmNewEvent
+	{
+	TBuf<180> iTitle;
+	TBuf<110> iWhere;
+	TTime iDate;              // midnight of the day
+	TBool iAllDay;
+	TTime iStart, iEnd;       // times of day (the date part is ignored)
+	TInt iAlarm;              // 0 none, 1 when it starts, 2.. minutes before (see pmwrite.cpp)
+	};
+
+class CPmEventDialog : public CEikDialog
+	{
+public:
+	CPmEventDialog(TPmNewEvent& aEvent, const TDesC& aNote) : iEvent(aEvent), iNote(aNote) {}
+private:
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	void HandleControlStateChangeL(TInt aControlId);
+	void TimesDimmed();
+	TPmNewEvent& iEvent;
+	TPtrC iNote;
+	};
+
+// EIKON's greys on the 5mx (the workspace is white with black text; button
+// faces and headings light grey; dimmed text dark grey), and the pieces the
+// native screens share (pmnative.cpp)
+#define KPmDarkGrey  TRgb(85, 85, 85)
+#define KPmLightGrey TRgb(170, 170, 170)
+void PmDrawButtonFace(CWindowGc& aGc, const TRect& aRect, TBool aDown);
+void PmDrawIcon(CWindowGc& aGc, CArrayPtr<CFbsBitmap>* aIcons, TInt aId, const TPoint& aPos);
+// a scroll bar as EIKON draws its own: the shaft and thumb, the up and down
+// buttons at the bottom; aPress 1 up, 2 down
+void PmDrawScrollBar(CWindowGc& aGc, const TRect& aRect, TInt aTotal, TInt aShown, TInt aAbove, TInt aPress);
+void PmScrollBarParts(const TRect& aRect, TInt aTotal, TInt aShown, TInt aAbove, TRect& aShaft, TRect& aThumb, TRect& aUp, TRect& aDown);
+
 class CPmAppUi : public CEikAppUi
 	{
 public:
@@ -589,7 +608,7 @@ public:
 	void ToolbarPicturesL();
 	void ButtonPictureL(TInt aId, TInt aIcon, const TDesC* aText = NULL);
 	void SetTool4L(TBool aClose);
-	CCoeControl* ToolBarButton(TInt aId);          // native screens have it; the drawn ones use the whole screen
+	CCoeControl* ToolBarButton(TInt aId);          // (NULL when the toolbar is hidden)
 private:
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);

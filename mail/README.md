@@ -22,11 +22,12 @@ an emulator; the screens have been drawn on a PC from real mail
   and View > Show toolbar / title bar / list of folders. Menus, shortcuts,
   wording and messages follow Symbian's EIKON Application Style Guide
   (standard shortcuts, busy messages bottom left, infoprints, a second tap
-  opens, zoom goes round three sizes like the built-in Email program).
-  (The calendar screen is still drawn by PsiMail itself.) The pictures are
-  original pixel art, made by `tools/mkicons.py` into PsiMail.mbm.
+  opens, zoom goes round three sizes like the built-in Email program). The
+  menus are laid out as the built-in Email program's: File, Edit, Message
+  (Event in the calendar), View, Tools. The pictures are original pixel
+  art, made by `tools/mkicons.py` into PsiMail.mbm.
 * Folders with unread counts; the newest 50 messages per folder (more with
-  Folder > Get older messages), kept on the CF card to read offline.
+  File > Get older messages), kept on the CF card to read offline.
 * Message text downloaded when opened, up to 64 KB (the rest on request).
   HTML mail is shown as rich text - headings, bold and italic, lists,
   quotes, links you can move to with Tab and open with Enter - and
@@ -87,11 +88,16 @@ server as PsiWin does.
 * The server keeps what the Psion doesn't show (descriptions, guests,
   other alarms): PsiMail changes only the fields it knows.
 
-PsiMail has its own calendar screen too (Shift+Ctrl+N, or Calendar in the folder
-column): the week with the chosen day's events, or the month; Enter shows
-an event in full; N adds an event (to the Agenda, and from there to the
-server). It shows what has been synced, and new Psion entries waiting to
-be sent.
+PsiMail has its own calendar too (Shift+Ctrl+N, View > Go to > Calendar,
+or Calendar in the folder tree), drawn beside the folder tree with the
+mail list's fonts, rows, zoom and colours: the week's seven days and the
+chosen day's events (times, name, place; marks for an alarm, one of a
+series, waiting to be sent; a line where "now" is), or the month with each
+day's first event. Today has a frame; the chosen day or event is shown
+inverted, as EIKON's lists do. Enter (or a second tap) shows an event in
+full; Event > Create new event (Ctrl+N) adds one through a standard dialog
+(to the Agenda, and from there to the server). It shows what has been
+synced, and new Psion entries waiting to be sent.
 
 Not yet: repeating entries made on the Psion (they stay on the Psion), to-do
 lists, anniversaries, more than one calendar account.
@@ -128,7 +134,7 @@ without the `cryptography` package too). The version must go up each time.
 | Shift+Ctrl+U / Shift+Ctrl+F | unread / flagged |
 | Ctrl+S | save an attachment |
 | Ctrl+I / Ctrl+G / Ctrl+B / Ctrl+F | inbox / go to folder / outbox / find |
-| Ctrl+Y / Shift+Ctrl+G | check for new mail / get older messages |
+| Ctrl+Y / Shift+Ctrl+G | check this folder / get older messages |
 | Ctrl+M / Shift+Ctrl+M | zoom in / out (three sizes, going round) |
 | Ctrl+T / Shift+Ctrl+T / Shift+Ctrl+L | show the toolbar / title bar / folder list |
 | Shift+Ctrl+Q / Shift+Ctrl+B | status information / sort |
@@ -136,10 +142,10 @@ without the `cryptography` package too). The version must go up each time.
 | Shift+Ctrl+A / Ctrl+E | about PsiMail / close |
 | Tab / Shift+Tab in a message | next / previous link or attachment (Enter opens it) |
 | Ctrl+P | view the message as a web page (PsiWeb) |
-| Shift+Ctrl+N / Ctrl+Q | the calendar / switch its view (month or week) |
-| Shift+Ctrl+Y | sync the calendar |
+| Shift+Ctrl+N / Ctrl+Q | the calendar / switch its view (week or month) |
+| Shift+Ctrl+Y / Shift+Ctrl+D | sync the calendar / go to today |
 | In the calendar: Left/Right, PgUp/PgDn, Home | day, week (month), today |
-| In the calendar: M / N (or Ctrl+N) / Enter | month or week / new event / the event in full |
+| In the calendar: Ctrl+N / Enter | new event / the event in full |
 | Tab or Left in the message list | the folder column |
 
 Writing a message fills the screen, as in the built-in Email program: To,
@@ -148,8 +154,8 @@ right. Ctrl+B, Ctrl+I and Ctrl+U make the text bold, italic or underlined
 (it then goes as HTML email, with a plain text copy for mail programs that
 want one). Ctrl+S sends, Ctrl+D saves it as a draft (in the outbox), Ctrl+A
 adds or removes attachments, Esc closes (asking before it throws anything
-away). A new event (N in the calendar) is a PsiMail screen: Up/Down between the lines, Left/Right (or +
-and -) to change the date, times and alarm, Enter to save.
+away). A new event (Ctrl+N in the calendar) is a standard dialog: the
+event, where, the date, all day or start and end, and an alarm.
 
 ## How it works
 
@@ -167,7 +173,10 @@ Like PsiWeb, two programs share a chunk of memory (`psimail.h`):
 * `PsiMail.app` (`app/`, EIKON C++): keys, menus, dialogs, and the Agenda
   side of the calendar (`pmcal.cpp`). It reads the store's text files
   directly and sends the engine commands.
-* `ui/` (C++ without EIKON, so it also builds on a PC): the drawing -
+* `ui/` (C++ without EIKON, so it also builds on a PC): `pmcalmodel.cpp`
+  (the calendar's events by day, from the engine's files), and the drawing
+  of PsiMail's earlier screens, which the app no longer shows (the message
+  layout in `pmdoc.cpp` still makes the plain text quoted in a reply) -
   `pmgfx.cpp` (anti-aliased text and shapes into a 4-bit bitmap),
   `pmdoc.cpp` (lays out a message), `pmscreens.cpp` (the screens) and
   `pmfonts.cpp`, made by `tools/mkfonts.py` from the fonts in `fonts/`.

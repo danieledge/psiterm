@@ -92,7 +92,9 @@ RESOURCE TOOLBAR r_pm_toolbar
 // Ctrl+N create new, Ctrl+D delete, Ctrl+F find, Ctrl+G go to, Ctrl+K
 // preferences, Ctrl+M zoom, Ctrl+Q switch view, Ctrl+T toolbar, Shift+Ctrl+A
 // about), then the built-in Email program's (Shift+Ctrl+C check mail, Ctrl+U
-// disconnect, Ctrl+X move), then free shifted keys for the rest
+// disconnect, Ctrl+X move, Shift+Ctrl+L folders, Shift+Ctrl+Q status,
+// Shift+Ctrl+B sort), then free shifted keys for the rest. The same keys
+// serve both menu bars (the mail's and the calendar's).
 RESOURCE HOTKEYS r_pm_hotkeys
 	{
 	control=
@@ -133,10 +135,14 @@ RESOURCE HOTKEYS r_pm_hotkeys
 		HOTKEY { command=EPmCmdShowCalendar; key='n'; },
 		HOTKEY { command=EPmCmdCalendar; key='y'; },
 		HOTKEY { command=EPmCmdUnread; key='u'; },
-		HOTKEY { command=EPmCmdFlag; key='f'; }
+		HOTKEY { command=EPmCmdFlag; key='f'; },
+		HOTKEY { command=EPmCmdToday; key='d'; }
 		};
 	}
 
+// The menus, laid out as the built-in Email program's: File, Edit, Message,
+// View, Tools (Tools last, ending with About). In the calendar an Event menu
+// stands where Message is; the other four are the same panes.
 RESOURCE MENU_BAR r_pm_menubar
 	{
 	titles=
@@ -145,21 +151,35 @@ RESOURCE MENU_BAR r_pm_menubar
 		MENU_TITLE { menu_pane=r_pm_edit_menu; txt="Edit"; },
 		MENU_TITLE { menu_pane=r_pm_message_menu; txt="Message"; },
 		MENU_TITLE { menu_pane=r_pm_view_menu; txt="View"; },
-		MENU_TITLE { menu_pane=r_pm_folder_menu; txt="Folder"; },
 		MENU_TITLE { menu_pane=r_pm_tools_menu; txt="Tools"; }
 		};
 	}
 
+RESOURCE MENU_BAR r_pm_cal_menubar
+	{
+	titles=
+		{
+		MENU_TITLE { menu_pane=r_pm_file_menu; txt="File"; },
+		MENU_TITLE { menu_pane=r_pm_edit_menu; txt="Edit"; },
+		MENU_TITLE { menu_pane=r_pm_event_menu; txt="Event"; },
+		MENU_TITLE { menu_pane=r_pm_cal_view_menu; txt="View"; },
+		MENU_TITLE { menu_pane=r_pm_tools_menu; txt="Tools"; }
+		};
+	}
+
+// File: fetching (the whole account, this folder, more of it, the calendar),
+// the connection, Close
 RESOURCE MENU_PANE r_pm_file_menu
 	{
 	items=
 		{
 		MENU_ITEM { command=EPmCmdSendRecv; txt="Check mail (send & receive)"; },
+		MENU_ITEM { command=EPmCmdRefresh; txt="Check this folder"; },
+		MENU_ITEM { command=EPmCmdOlder; txt="Get older messages"; },
+		MENU_ITEM { command=EPmCmdCalendar; txt="Sync calendar"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdHangup; txt="Disconnect"; },
 		MENU_ITEM { command=EPmCmdStop; txt="Stop"; },
 		MENU_ITEM { command=EPmCmdOffline; txt="Work offline"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdCalendar; txt="Sync calendar"; },
-		MENU_ITEM { command=EPmCmdUpdate; txt="Update PsiMail..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
 		};
 	}
@@ -199,6 +219,17 @@ RESOURCE MENU_PANE r_pm_reply_menu
 		};
 	}
 
+// the calendar's Event menu, where Message is in the mail
+RESOURCE MENU_PANE r_pm_event_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdNewEvent; txt="Create new event..."; },
+		MENU_ITEM { command=EPmCmdEventDetails; txt="Details..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdToday; txt="Go to today"; }
+		};
+	}
+
 RESOURCE MENU_PANE r_pm_view_menu
 	{
 	items=
@@ -209,22 +240,35 @@ RESOURCE MENU_PANE r_pm_view_menu
 		MENU_ITEM { command=EPmCmdToggleTitle; txt="Show title bar"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPmCmdToggleFolders; txt="Show list of folders"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdSort; txt="Sort..."; },
-		MENU_ITEM { command=EPmCmdStatusInfo; txt="Status information..."; }
+		MENU_ITEM { command=EPmCmdStatusInfo; txt="Status information..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdGoToMenu; cascade=r_pm_goto_menu; txt="Go to"; }
 		};
 	}
 
-RESOURCE MENU_PANE r_pm_folder_menu
+// the calendar's View: Switch view (the week or the month) where Sort is
+RESOURCE MENU_PANE r_pm_cal_view_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdZoomIn; txt="Zoom in"; },
+		MENU_ITEM { command=EPmCmdZoomOut; txt="Zoom out"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdToggleToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPmCmdToggleTitle; txt="Show title bar"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPmCmdToggleFolders; txt="Show list of folders"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdMonth; txt="Switch view"; },
+		MENU_ITEM { command=EPmCmdStatusInfo; txt="Status information..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdGoToMenu; cascade=r_pm_goto_menu; txt="Go to"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pm_goto_menu
 	{
 	items=
 		{
 		MENU_ITEM { command=EPmCmdInbox; txt="Inbox"; },
-		MENU_ITEM { command=EPmCmdFolders; txt="Go to folder..."; },
-		MENU_ITEM { command=EPmCmdOutbox; txt="Outbox"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdRefresh; txt="Check for new mail"; },
-		MENU_ITEM { command=EPmCmdOlder; txt="Get older messages"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdOutbox; txt="Outbox"; },
 		MENU_ITEM { command=EPmCmdShowCalendar; txt="Calendar"; },
-		MENU_ITEM { command=EPmCmdMonth; txt="Switch view"; },
-		MENU_ITEM { command=EPmCmdNewEvent; txt="Create new event..."; }
+		MENU_ITEM { command=EPmCmdFolders; txt="Folder..."; }
 		};
 	}
 
@@ -235,8 +279,9 @@ RESOURCE MENU_PANE r_pm_tools_menu
 		MENU_ITEM { command=EPmCmdPrefs; txt="Preferences..."; },
 		MENU_ITEM { command=EPmCmdConnSettings; txt="Connection settings..."; },
 		MENU_ITEM { command=EPmCmdCalSettings; txt="Calendar settings..."; },
-		MENU_ITEM { command=EPmCmdAccountsMenu; cascade=r_pm_accounts_menu; txt="Accounts"; },
-		MENU_ITEM { command=EPmCmdRestart; txt="Restart mail engine"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdAccountsMenu; cascade=r_pm_accounts_menu; txt="Accounts"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdRestart; txt="Restart mail engine"; },
+		MENU_ITEM { command=EPmCmdUpdate; txt="Update PsiMail..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdAbout; txt="About PsiMail"; }
 		};
 	}
@@ -482,9 +527,7 @@ RESOURCE DIALOG r_pm_prefs_dialog
 		DLG_LINE { type=EEikCtNumberEditor; prompt="Download ahead (newest)"; id=EPmDlgPrefetch;
 			control=NUMBER_EDITOR { min=0; max=50; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Keep mail on"; id=EPmDlgStore;
-			control=CHOICELIST { array_id=r_pm_store_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Smooth text in the calendar"; id=EPmDlgSmooth;
-			control=CHOICELIST { array_id=r_pm_yesno_array; }; }
+			control=CHOICELIST { array_id=r_pm_store_array; }; }
 		};
 	}
 
@@ -652,53 +695,39 @@ RESOURCE ARRAY r_pm_zones
 	}
 
 
-// ----------------------------------------------------------------- writing
-
-RESOURCE HOTKEYS r_pm_compose_hotkeys
-	{
-	control=
-		{
-		HOTKEY { command=EPmCmdSend; key='s'; },
-		HOTKEY { command=EPmCmdSaveDraft; key='d'; },
-		HOTKEY { command=EPmCmdAttachFile; key='a'; },
-		HOTKEY { command=EPmCmdRemoveAttach; key='u'; },
-		HOTKEY { command=EEikCmdExit; key='e'; }
-		};
-	}
-
-RESOURCE MENU_BAR r_pm_compose_menubar
-	{
-	titles=
-		{
-		MENU_TITLE { menu_pane=r_pm_compose_menu; txt="Message"; }
-		};
-	}
-
-RESOURCE MENU_PANE r_pm_compose_menu
+// Event > Create new event: into the Agenda, then to the calendar
+RESOURCE ARRAY r_pm_alarm_array
 	{
 	items=
 		{
-		MENU_ITEM { command=EPmCmdSend; txt="Send"; },
-		MENU_ITEM { command=EPmCmdSaveDraft; txt="Keep in the outbox"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdAttachFile; txt="Attach a file..."; },
-		MENU_ITEM { command=EPmCmdRemoveAttach; txt="Take off the last attachment"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdDiscard; txt="Throw away"; }
+		LBUF { txt="None"; }, LBUF { txt="When it starts"; }, LBUF { txt="5 minutes before"; },
+		LBUF { txt="15 minutes before"; }, LBUF { txt="30 minutes before"; }, LBUF { txt="1 hour before"; },
+		LBUF { txt="1 day before"; }
 		};
 	}
 
-RESOURCE MENU_BAR r_pm_event_menubar
+RESOURCE DIALOG r_pm_event_dialog
 	{
-	titles=
-		{
-		MENU_TITLE { menu_pane=r_pm_event_menu; txt="Event"; }
-		};
-	}
-
-RESOURCE MENU_PANE r_pm_event_menu
-	{
+	title="Create new event";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
 		{
-		MENU_ITEM { command=EPmCmdSend; txt="Save"; },
-		MENU_ITEM { command=EPmCmdDiscard; txt="Cancel"; }
+		DLG_LINE { type=EEikCtEdwin; prompt="Event"; id=EPmDlgEvTitle;
+			control=EDWIN { width=24; maxlength=180; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Where"; id=EPmDlgEvLoc;
+			control=EDWIN { width=24; maxlength=110; }; },
+		DLG_LINE { type=EEikCtDateEditor; prompt="Date"; id=EPmDlgEvDate;
+			control=DATE_EDITOR { minDate=DATE { year=1980; }; maxDate=DATE { year=2099; month=11; day=30; }; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="All day"; id=EPmDlgEvAllDay;
+			control=CHOICELIST { array_id=r_pm_yesno_array; }; },
+		DLG_LINE { type=EEikCtTimeEditor; prompt="Start"; id=EPmDlgEvStart;
+			control=TIME_EDITOR { minTime=TIME { }; maxTime=TIME { hour=23; minute=59; second=59; }; flags=EEikTimeWithoutSecondsField; }; },
+		DLG_LINE { type=EEikCtTimeEditor; prompt="End"; id=EPmDlgEvEnd;
+			control=TIME_EDITOR { minTime=TIME { }; maxTime=TIME { hour=23; minute=59; second=59; }; flags=EEikTimeWithoutSecondsField; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Alarm"; id=EPmDlgEvAlarm;
+			control=CHOICELIST { array_id=r_pm_alarm_array; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1;
+			control=LABEL { standard_font=EEikLabelFontAnnotation; txt=""; }; }
 		};
 	}

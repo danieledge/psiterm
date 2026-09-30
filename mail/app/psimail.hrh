@@ -61,7 +61,10 @@ enum TPmCommands
 	EPmCmdInbox,
 	EPmCmdTool4,             // the toolbar's last button: Delete, or Close in a message
 	EPmCmdAccountsMenu,
-	EPmCmdPrefs
+	EPmCmdPrefs,
+	EPmCmdGoToMenu,          // View > Go to (a cascade)
+	EPmCmdToday,             // Event > Go to today
+	EPmCmdEventDetails       // Event > Details
 	};
 
 enum TPmDialogControls
