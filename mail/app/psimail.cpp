@@ -75,7 +75,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.63");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.64");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -4008,7 +4008,10 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		{
 		aMenuPane->SetItemDimmed(EPmCmdReply, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdReplyAll, !msg);
-		aMenuPane->SetItemDimmed(EPmCmdForward, !msg);
+		// (only the toolbar's pop-up has Forward: EIKON panics if asked to
+		// dim an item a menu doesn't have)
+		if (aMenuId == R_PM_REPLY_POPUP)
+			aMenuPane->SetItemDimmed(EPmCmdForward, !msg);
 		}
 
 	}
