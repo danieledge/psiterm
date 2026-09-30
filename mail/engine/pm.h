@@ -30,6 +30,10 @@ void pm_ahead_label(const char *label);    /* "3 of 10": pm_progress says "Ahead
 #define PM_SEP "/"
 #endif
 
+/* engine-internal result: a download ahead stepped aside for a command
+   from the app (never reaches the app; see pf_step) */
+#define PM_RES_PAUSED 100
+
 /* ---- network (pmnet.c): one connection at a time */
 #define PMN_TIMEOUT (-3)
 #define PMN_CANCEL  (-2)
@@ -43,6 +47,7 @@ int  pmn_read(void *buf, int max, int timeout_ms); /* >0, 0 closed, <0 */
 int  pmn_getc(int timeout_ms);                     /* byte, or <0 */
 int  pmn_readline(char *buf, int max, int timeout_ms); /* length without CRLF, <0 error */
 void pmn_close(int hangup);
+void pmn_close_why(int hangup, const char *why);   /* the same, saying why in the log */
 int  pm_update(const char *src, const char *save, char *why, int whymax);
 int  pm_version_newer(const char *remote, const char *local);
 const char *pmn_error(void);      /* why the last read failed, if known */
@@ -148,6 +153,7 @@ typedef struct
 
 int  imap_open(int acct, char *why, int whymax);        /* connect + login (reuses) */
 void imap_logout(void);
+int  imap_drops(void);                    /* connections lost mid-command so far */
 int  imap_list_folders(int acct, char *why, int whymax);
 int  imap_sync(int acct, const char *folder, int older, char *why, int whymax);
 /* full: bit 0 = past max_body_kb, bit 1 = downloaded ahead (stays unread) */

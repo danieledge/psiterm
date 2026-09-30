@@ -5,6 +5,9 @@
  * EPOC's own dial-up (PPP) stack - so there is one connection at a time.
  * TLS is PsiTerm's TLS 1.3 client (ssh/tls13.c), here with the server's
  * certificate checked (certcheck.c).
+ *
+ * Every dial, close and hang-up is logged with its reason (psimail.log):
+ * on a modem line each one costs seconds, so the log must say why.
  */
 #include <string.h>
 #include <stdio.h>
@@ -25,16 +28,23 @@ extern int  pg_serial_write(const void *buf, int len);
 extern int  pg_wait(int ms, int want_net, int want_kbd);
 extern void pg_link_close(void);
 extern int  pg_link_is_open(void);
+extern int  pg_rx_errors(int *last);      /* psiglue: serial line errors so far (host: 0) */
 
 #define IDLE_RELEASE_MS 90000
 
+/* After the modem's "NO CARRIER" nothing more ever arrives. Text that only
+   looks like it (an email about modems, on plain IMAP) is followed by more
+   data, so the line is only given up when it goes quiet for this long. */
+#define NO_CARRIER_QUIET_MS 3000
+
 static unsigned long g_last_use;
-static int  g_open, g_tls, g_dead;
+static int  g_open, g_tls, g_dead, g_suspect;
 static char g_tail[16];
 static unsigned char g_buf[2048];
 static int g_bpos, g_blen;
 
 static int g_connid;
+static int g_dials;                       /* this session, for the log */
 
 static char g_err[48];
 
@@ -51,23 +61,36 @@ static int modem(void) { return pg_shared() && !pg_shared()->net_mode; }
 int pmn_connect(const char *host, int port, int tls, char *why, int whymax)
 {
 	PsiShared *s = pg_shared();
-	pmn_close(1);
+	unsigned long t0;
+	int errs, last;
+	if (g_open) pmn_close_why(1, "making way for a new connection");
 	used();
 	pm_copy(s->host, host, sizeof(s->host));
 	s->port = port;
 	pm_progress("Connecting to %s...", host);
-	if (pg_dial(why, whymax) != 0)
+	g_dials++;
+	pm_log("net: dial %d: %s:%d%s (%s)", g_dials, host, port, tls ? " tls" : "", modem() ? "modem" : "psion tcp/ip");
+	t0 = pm_ms();
+	if (pg_dial(why, whymax) != 0) {
+		pm_log("net: dial failed after %lu ms: %s%s", pm_ms() - t0, why, pm_cancelled() ? " (stopped)" : "");
 		return -1;
+	}
 	g_bpos = g_blen = 0;
 	g_err[0] = 0;
 	g_open = 1;
 	g_connid++;
 	g_dead = 0;
+	g_suspect = 0;
 	g_tls = 0;
 	memset(g_tail, 0, sizeof(g_tail));
 	pm_shared()->online = 1;
+	errs = pg_rx_errors(&last);
+	pm_log("net: connected in %lu ms (conn %d%s)", pm_ms() - t0, g_connid,
+		errs ? ", serial line errors so far" : "");
 	if (tls) {
-		if (pmn_starttls(host, why, whymax) != 0) { pmn_close(1); return -1; }
+		t0 = pm_ms();
+		if (pmn_starttls(host, why, whymax) != 0) { pmn_close_why(1, why); return -1; }
+		pm_log("net: tls up in %lu ms", pm_ms() - t0);
 	}
 	return 0;
 }
@@ -115,13 +138,15 @@ int pmn_printf(const char *fmt, ...)
 	return pmn_write(b, n);
 }
 
+/* plain (non-TLS) modem line: has the modem's "NO CARRIER" gone by? It is
+   only a suspicion until the line falls silent (see NO_CARRIER_QUIET_MS) */
 static void note_tail(const unsigned char *b, int n)
 {
 	int keep = (int)sizeof(g_tail) - 1;
 	if (n >= keep) memcpy(g_tail, b + n - keep, keep);
 	else { memmove(g_tail, g_tail + n, keep - n); memcpy(g_tail + keep - n, b, n); }
 	g_tail[keep] = 0;
-	if (strstr(g_tail, "NO CARRIER")) g_dead = 1;
+	if (strstr(g_tail, "NO CARRIER")) g_suspect = 1;
 }
 
 static int raw_read(void *buf, int max, int timeout_ms)
@@ -141,17 +166,36 @@ static int raw_read(void *buf, int max, int timeout_ms)
 		n = tls_read(buf, max, 10000);   /* mid-record: silence means bytes were lost */
 		if (n == -2) return PMN_CANCEL;
 		if (n <= 0) snprintf(g_err, sizeof(g_err), "tls: %s", n == 0 ? "closed" : tls_error());
-		if (n < 0 && modem() && pg_net_avail() == 0) return 0;
+		if (n < 0 && modem() && pg_net_avail() == 0) {
+			/* on a modem line what is not TLS is the modem talking: after
+			   the handshake that is its NO CARRIER (the TCP side closed) */
+			if (strstr(tls_error(), "not TLS")) { pm_copy(g_err, "NO CARRIER (modem)", sizeof(g_err)); g_dead = 1; }
+			return 0;
+		}
 		return n;
 	}
 #endif
 	if (pg_net_avail() == 0) {
-		int m = pg_wait(timeout_ms, 1, 0);
+		int t = timeout_ms;
+		int m;
+		if (g_suspect && (t < 0 || t > NO_CARRIER_QUIET_MS)) t = NO_CARRIER_QUIET_MS;
+		m = pg_wait(t, 1, 0);
 		if (m & 8) return PMN_CANCEL;
-		if (pg_net_avail() == 0) return (m & 1) ? 0 : PMN_TIMEOUT;
+		if (pg_net_avail() == 0) {
+			if (g_suspect) {
+				pm_copy(g_err, "NO CARRIER (modem)", sizeof(g_err));
+				g_dead = 1;
+				return 0;
+			}
+			if (!(m & 1)) pm_copy(g_err, "timeout", sizeof(g_err));
+			return (m & 1) ? 0 : PMN_TIMEOUT;
+		}
 	}
 	n = pg_net_read(buf, max);
-	if (n > 0 && modem()) note_tail((const unsigned char *)buf, n);
+	if (n > 0 && modem()) {
+		if (g_suspect) g_suspect = 0;      /* more came: it was only text */
+		note_tail((const unsigned char *)buf, n);
+	}
 	return n;
 }
 
@@ -173,7 +217,7 @@ int pmn_getc(int timeout_ms)
 {
 	if (g_bpos >= g_blen) {
 		int n;
-		if (g_dead) return 0;
+		if (g_dead) return -1;           /* (0 is a byte: it made pmn_readline spin) */
 		n = raw_read(g_buf, sizeof(g_buf), timeout_ms);
 		if (n <= 0) return n == 0 ? -1 : n;
 		g_bpos = 0;
@@ -198,14 +242,28 @@ int pmn_readline(char *buf, int max, int timeout_ms)
 	return k;
 }
 
-void pmn_close(int hangup)
+void pmn_close_why(int hangup, const char *why)
 {
-	if (g_open && hangup) pg_hangup();
+	if (g_open) {
+		int last = 0, errs = pg_rx_errors(&last);
+		pm_log("net: close conn %d, hangup=%d: %s%s%s", g_connid, hangup && !g_dead, why ? why : "",
+			g_err[0] ? "; last error: " : "", g_err[0] ? g_err : "");
+		if (errs) pm_log("net: %d serial line error(s) on this connection, last %d", errs, last);
+		/* after the modem's own NO CARRIER it is at its prompt already:
+		   +++ ATH would only cost 2.5 s */
+		if (hangup && !g_dead) pg_hangup();
+	}
 	g_open = 0;
 	g_dead = 0;
+	g_suspect = 0;
 	g_tls = 0;
 	g_bpos = g_blen = 0;
 	pm_shared()->online = 0;
+}
+
+void pmn_close(int hangup)
+{
+	pmn_close_why(hangup, "closed");
 }
 
 /* Called about once a second: after a while with nothing to do, hang up and
@@ -214,12 +272,13 @@ void pmn_idle_tick(void)
 {
 	if (!g_open && !pg_link_is_open()) return;
 	if (pm_ms() - g_last_use < IDLE_RELEASE_MS) return;
+	pm_log("net: nothing to do for %d s: releasing the line", IDLE_RELEASE_MS / 1000);
 	pmn_release_now();
 }
 
 void pmn_release_now(void)
 {
 	if (g_open) imap_logout();
-	pmn_close(1);
+	pmn_close_why(1, "releasing the line");
 	pg_link_close();
 }

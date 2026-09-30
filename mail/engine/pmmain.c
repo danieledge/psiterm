@@ -252,10 +252,16 @@ static int have_text(int acct, const char *folder, unsigned int uid)
 /* Messages a download ahead failed on are not tried again this session:
  * a message the server won't give us, or one too big for the line, must
  * not be dialled for at every sync. Writes failing (the card full) stop
- * downloading ahead altogether until the engine is restarted. */
+ * downloading ahead altogether until the engine is restarted. The line
+ * dropping PF_MAX_DROPS times while downloading ahead stops it for
+ * PF_HOLD_MS: each drop is a redial, a TLS handshake and a login, and a
+ * line that bad is better left to the messages the user actually opens. */
 #define PF_SKIP 24
+#define PF_MAX_DROPS 3
+#define PF_HOLD_MS (10 * 60 * 1000L)
 static struct { int acct; unsigned int uid; char folder[128]; } g_pf_skip[PF_SKIP];
-static int g_pf_nskip, g_pf_fails, g_pf_dead;
+static int g_pf_nskip, g_pf_fails, g_pf_dead, g_pf_drops;
+static unsigned long g_pf_hold;          /* when the line-drop hold began (0 = none) */
 
 static int pf_skipped(int acct, const char *folder, unsigned int uid)
 {
@@ -278,12 +284,18 @@ static int pf_step(void)
 {
 	PmShared *s = pm_shared();
 	static PmIndex ix;
-	int k, i, n, r, want = s->prefetch;
+	int k, i, n, r, drops, want = s->prefetch;
 	unsigned int uid = 0;
 	char why[160], label[24];
 	for (k = 0; k < 2 && !g_pf[k].on; k++) ;
 	if (k == 2) return 0;
 	if (want <= 0 || g_pf_dead || s->offline || !s->acct[g_pf[k].acct].used) { g_pf[0].on = g_pf[1].on = 0; return 0; }
+	if (g_pf_hold) {
+		if (pm_ms() - g_pf_hold < (unsigned long)PF_HOLD_MS) { g_pf[0].on = g_pf[1].on = 0; return 0; }
+		pm_log("download ahead: trying again after the line kept dropping");
+		g_pf_hold = 0;
+		g_pf_drops = 0;
+	}
 	if (want > 50) want = 50;
 	if (st_index_load(g_pf[k].acct, g_pf[k].folder, "index.txt", &ix) != 0) { g_pf[k].on = 0; return 0; }
 	for (i = ix.n - 1, n = 0; i >= 0 && n < want; i--, n++)
@@ -291,10 +303,12 @@ static int pf_step(void)
 		    !pf_skipped(g_pf[k].acct, g_pf[k].folder, ix.m[i].uid)) { uid = ix.m[i].uid; break; }
 	st_index_free(&ix);
 	if (!uid) { g_pf[k].on = 0; return 0; }
+	s->cur_op = PM_CMD_NONE;                  /* not a command of the app's (OpInFlight), before busy */
 	s->busy = 1;
 	snprintf(label, sizeof(label), "%d of %d", n + 1, want);
 	pm_ahead_label(label);
 	pm_progress("Downloading...");
+	drops = imap_drops();
 	r = imap_body(g_pf[k].acct, g_pf[k].folder, uid, 2, why, sizeof(why));
 	pm_ahead_label(0);
 	if (r == PM_RES_OK && !have_text(g_pf[k].acct, g_pf[k].folder, uid)) {
@@ -302,8 +316,26 @@ static int pf_step(void)
 		pm_copy(why, "the text was not saved", sizeof(why));
 		r = PM_RES_FAILED;
 	}
+	if (r == PM_RES_PAUSED) {
+		/* a command is waiting: it runs next; this folder stays on the list */
+		pm_log("download ahead of %s %u paused: %s", g_pf[k].folder, uid, why);
+		s->progress[0] = 0;
+		s->busy = 0;
+		return 1;
+	}
+	/* the line dropped while downloading ahead (whether or not the message
+	   came in the end): a few of those and downloading ahead stops */
+	if (imap_drops() > drops) {
+		g_pf_drops += imap_drops() - drops;
+		pm_log("download ahead: the line has dropped %d time(s) (%d this message)", g_pf_drops, imap_drops() - drops);
+		if (g_pf_drops >= PF_MAX_DROPS) {
+			pm_log("download ahead is off for %ld minutes: the line keeps dropping", PF_HOLD_MS / 60000L);
+			g_pf_hold = pm_ms() ? pm_ms() : 1;
+			g_pf[0].on = g_pf[1].on = 0;
+		}
+	}
 	if (r != PM_RES_OK) {
-		pm_log("download ahead of %s %u stopped: %s", g_pf[k].folder, uid, why);
+		pm_log("download ahead of %s %u stopped: %s (%d)", g_pf[k].folder, uid, why, r);
 		g_pf[0].on = g_pf[1].on = 0;          /* stopped (Esc), offline or failed: leave it */
 		if (r == PM_RES_FAILED) pf_skip(g_pf[k].acct, g_pf[k].folder, uid);   /* not this one again */
 		if (r == PM_RES_FAILED || r == PM_RES_OFFLINE) {
@@ -337,7 +369,7 @@ static int run(PmCmd *c, char *why, int whymax)
 	char line[400];
 
 	why[0] = 0;
-	if (c->op == PM_CMD_HANGUP) { pmn_release_now(); snprintf(why, whymax, "Hung up"); return PM_RES_OK; }
+	if (c->op == PM_CMD_HANGUP) { pm_log("net: the app asked to hang up"); pmn_release_now(); snprintf(why, whymax, "Hung up"); return PM_RES_OK; }
 	if (c->op == PM_CMD_TRUST) {
 		if (!s->trust_fp[0]) { snprintf(why, whymax, "Nothing to trust"); return PM_RES_FAILED; }
 		st_pin_save(c->arg, s->trust_fp);
@@ -468,6 +500,7 @@ void pm_loop(int (*housekeeping)(void))
 		if (pf_step()) continue;
 		pm_idle(100);
 	}
+	pm_log("net: quitting: releasing the line");
 	pmn_release_now();
 	s->state = PM_STATE_EXITED;
 }

@@ -34,6 +34,29 @@ they were, and the result should match a clean run.
 (`trustlast` accepts the self-signed test certificate, as the app's
 "Trust this server's key?" does.)
 
+## The modem line (no server needed)
+
+`fakeimap.py PORT [--drop-at N,N.. | --drop-every N] [--slow MS_PER_KB]` is
+a plaintext IMAP server with five messages: one whose text has "NO CARRIER"
+on a line of its own, one of 30 KB (several pieces), three small ones. It
+can drop the TCP connection after N bytes (a modem line dropping) and pace
+its output (87 = 115200 baud). The host build runs the modem-mode code with
+`PM_NETMODE=0` (with `PM_MODEM=1` the fake modem says NO CARRIER when the
+server closes), downloads ahead with `PM_PREFETCH=n`, and the `loop` command
+runs the engine's own loop (pf_step) until it has been quiet for 3 s.
+`PM_INJECT_MS=ms PM_INJECT_UID=uid` queues a BODY that long into `loop`, as
+the app would while a download ahead runs: the download ahead should pause
+for it and carry on afterwards, all on one connection.
+
+    python3 fakeimap.py 1143 --drop-at 12000 --slow 20 &
+    PM_HOST=127.0.0.1 PM_PORT=1143 PM_TLS=0 PM_USER=x PM_PASS=x \
+    PM_NETMODE=0 PM_MODEM=1 PM_PREFETCH=5 psimail-host -s /tmp/store sync INBOX , loop
+
+Expected: all five texts in the store, one "lost #1 ... NO CARRIER" and one
+"dropped at ... again" in the log, two connections in all. Three drops
+(`--drop-at 9000,20000,30000`) end with "download ahead is off for 10
+minutes: the line keeps dropping".
+
 ## Certificates
 
 `certtest.c` + `certtest.py` check the chain code on a saved chain, e.g.

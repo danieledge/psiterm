@@ -56,15 +56,30 @@ static void set_why(char *why, int whymax, const char *fmt, ...)
 	va_end(ap);
 }
 
+static int g_rd_timeout = TIMEOUT;   /* for read_response; short while logging out */
+static int g_drops;                  /* connections lost mid-command this session (pf_step backs off on them) */
+static int g_ahead;                  /* downloading ahead: give up sooner, make way for commands */
+
+int imap_drops(void) { return g_drops; }
+
 static int lost(char *why, int whymax, int r)
 {
-	if (r == PMN_CANCEL) { set_why(why, whymax, "Stopped"); pmn_close(1); g_acct = -1; return PM_RES_CANCELLED; }
+	if (r == PMN_CANCEL) {
+		set_why(why, whymax, "Stopped");
+		pmn_close_why(1, "stopped by the user mid-command");
+		g_acct = -1;
+		g_sel[0] = 0;
+		return PM_RES_CANCELLED;
+	}
 	if (r == PMN_TIMEOUT) set_why(why, whymax, "The server stopped answering");
 	else if (strstr(pmn_error(), "damaged"))
 		set_why(why, whymax, "The line garbled the data (RTS/CTS flow control would stop that)");
+	else if (strstr(pmn_error(), "NO CARRIER"))
+		set_why(why, whymax, "The modem lost the connection (NO CARRIER)");
 	else set_why(why, whymax, "The connection was lost");
-	pm_log("imap: %s (%d) %s", why, r, pmn_error());
-	pmn_close(1);
+	g_drops++;
+	pm_log("imap: lost #%d: %s (%d) %s", g_drops, why, r, pmn_error());
+	pmn_close_why(1, why);
 	g_acct = -1;
 	g_sel[0] = 0;
 	return PM_RES_OFFLINE;
@@ -78,7 +93,7 @@ static int read_response(void)
 	g_rlen = 0;
 	for (;;) {
 		int start = g_rlen, len;
-		r = pmn_readline(g_resp + g_rlen, RESP_MAX - g_rlen - 16, TIMEOUT);
+		r = pmn_readline(g_resp + g_rlen, RESP_MAX - g_rlen - 16, g_rd_timeout);
 		if (r < 0) return r;
 		len = r;
 		g_rlen += len;
@@ -100,7 +115,7 @@ static int read_response(void)
 				g_rlen += 5;
 				g_stream_total = n;
 				while (left > 0) {
-					int k = pmn_read(chunk, left > (long)sizeof(chunk) ? (int)sizeof(chunk) : (int)left, TIMEOUT);
+					int k = pmn_read(chunk, left > (long)sizeof(chunk) ? (int)sizeof(chunk) : (int)left, g_rd_timeout);
 					if (k <= 0) return k == 0 ? -1 : k;
 					if (fn) fn(chunk, k, g_stream_ctx);
 					left -= k;
@@ -109,7 +124,7 @@ static int read_response(void)
 				long left = n;
 				g_resp[g_rlen++] = '\r'; g_resp[g_rlen++] = '\n';
 				while (left > 0) {
-					int k = pmn_read(g_resp + g_rlen, (int)left, TIMEOUT);
+					int k = pmn_read(g_resp + g_rlen, (int)left, g_rd_timeout);
 					if (k <= 0) return k == 0 ? -1 : k;
 					g_rlen += k;
 					left -= k;
@@ -216,7 +231,12 @@ static void quote(const char *s, char *out, int max)
 void imap_logout(void)
 {
 	char why[40];
-	if (g_acct >= 0 && pmn_is_open() && pmn_conn_id() == g_conn) cmd(0, 0, why, sizeof(why), "LOGOUT");
+	if (g_acct >= 0 && pmn_is_open() && pmn_conn_id() == g_conn) {
+		/* a dead line must not hold the engine for the full minute here */
+		g_rd_timeout = 5000;
+		cmd(0, 0, why, sizeof(why), "LOGOUT");
+		g_rd_timeout = TIMEOUT;
+	}
 	g_acct = -1;
 	g_sel[0] = 0;
 }
@@ -734,10 +754,18 @@ static void on_piece_quoted(ImapNode *r, void *ctx)
 	if (v) piece_stream(v->s, v->len, ctx);
 }
 
+/* On a modem line a piece must fit the serial port's 16 KB receive buffer
+ * whatever the flow control setting says: the setting only helps if the
+ * modem has been told to obey RTS too (AT&K1 on a WiRSa), and when it has
+ * not, a 64 KB piece overran the buffer on every message over 16 KB - each
+ * one a garbled TLS record, a lost connection and a redial, until three
+ * drops had halved the piece to 8 KB. With RTS/CTS on, one buffer's worth;
+ * the extra round trips cost a fraction of the throughput, a redial costs
+ * ten seconds. */
 static long piece_size(void)
 {
 	PsiShared *s = pg_shared();
-	if (s && !s->net_mode && !s->rtscts) return 8192;
+	if (s && !s->net_mode) return s->rtscts ? 16384 : 8192;
 	return 65536;
 }
 
@@ -761,8 +789,11 @@ static int fetch_part(int acct, const char *folder, unsigned int uid, const char
 {
 	static Piece p;
 	static long s_step;                   /* smaller after a drop, for the next message too */
+	static int s_clean;                   /* pieces in a row without a drop */
+	PmShared *sh = pm_shared();
 	long step;
 	int again = 0, drops = 0, r;
+	int max_drops = g_ahead ? 2 : 12;     /* ahead: the line is bad, stop dialling for it */
 	p.fn = fn; p.ctx = ctx; p.got = 0;
 	if (s_step <= 0 || s_step > piece_size()) s_step = piece_size();
 	for (;;) {
@@ -772,15 +803,22 @@ static int fetch_part(int acct, const char *folder, unsigned int uid, const char
 			if (drops) why[0] = 0;
 			return PM_RES_OK;
 		}
+		/* downloading ahead: a command from the app goes first (the rest of
+		   this message comes later, from the start) */
+		if (g_ahead && sh->cmd_head != sh->cmd_tail) {
+			set_why(why, whymax, "Paused for a command");
+			return PM_RES_PAUSED;
+		}
 		want = total > 0 && total - p.got < step ? total - p.got : step;
 		g_stream = piece_stream;
 		g_stream_ctx = &p;
 		r = cmd(on_piece_quoted, &p, why, whymax, "UID FETCH %u (BODY.PEEK[%s]<%ld.%ld>)", uid, part, p.got, want);
 		g_stream = 0;
-		if (r == PM_RES_OFFLINE && !pm_cancelled() && again < 3 && drops < 12) {
-			pm_log("imap: %u [%s] dropped at %ld of %ld; again", uid, part, p.got, total);
+		if (r == PM_RES_OFFLINE && !pm_cancelled() && again < 3 && drops < max_drops) {
+			pm_log("imap: %u [%s] dropped at %ld of %ld (piece %ld); again", uid, part, p.got, total, step);
 			again++;
 			drops++;
+			s_clean = 0;
 			if (s_step > 2048) s_step /= 2;   /* the line can't take that much at once */
 			pm_progress("Reconnecting...");
 			if ((r = open_folder(acct, folder, why, whymax)) != PM_RES_OK) return r;
@@ -788,6 +826,9 @@ static int fetch_part(int acct, const char *folder, unsigned int uid, const char
 		}
 		if (r != PM_RES_OK) return r;
 		if (p.got > before) again = 0;
+		/* a clean run earns the piece size back (a one-off drop must not
+		   leave 2 KB pieces for the rest of the session) */
+		if (++s_clean >= 8 && s_step < piece_size()) { s_step *= 2; s_clean = 0; }
 		if (p.got - before < want) {                      /* the end of the part */
 			if (drops) why[0] = 0;                        /* (not "lost": it came back) */
 			return PM_RES_OK;
@@ -1041,7 +1082,16 @@ static void on_fetch_struct(ImapNode *r, void *ctx)
 	}
 }
 
+static int imap_body_1(int acct, const char *folder, unsigned int uid, int full, char *why, int whymax);
+
 int imap_body(int acct, const char *folder, unsigned int uid, int full, char *why, int whymax)
+{
+	int r = imap_body_1(acct, folder, uid, full, why, whymax);
+	g_ahead = 0;
+	return r;
+}
+
+static int imap_body_1(int acct, const char *folder, unsigned int uid, int full, char *why, int whymax)
 {
 	int keep_unread = (full & 2) != 0;     /* 2: downloaded ahead - not read yet */
 	PmAccount *a = &pm_shared()->acct[acct];
@@ -1052,6 +1102,7 @@ int imap_body(int acct, const char *folder, unsigned int uid, int full, char *wh
 	FILE *f;
 
 	full &= 1;
+	g_ahead = keep_unread;
 
 	if ((r = open_folder(acct, folder, why, whymax)) != PM_RES_OK) return r;
 	memset(&b, 0, sizeof(b));

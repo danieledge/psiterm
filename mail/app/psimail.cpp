@@ -75,7 +75,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.65");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.66");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -436,6 +436,15 @@ void CPmView::SettingsChanged()
 TBool CPmView::Busy() const
 	{
 	return iShared->busy || iShared->cmd_head != iShared->cmd_tail;
+	}
+
+// The engine is busy with a download ahead (pf_step: busy with no command
+// of ours running). It steps aside by itself for a command we queue, so
+// there is nothing for Esc to stop - stopping it would only hang up the
+// line, and the next command would dial again.
+TBool CPmView::DownloadingAhead() const
+	{
+	return iShared->busy && iShared->cur_op == PM_CMD_NONE;
 	}
 
 // Is a command of this kind running, or waiting in the queue?
@@ -2274,7 +2283,7 @@ TKeyResponse CPmView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 		escStops = (iMode == EMessage && iWaitingBody) ||
 			((iMode == EList || iMode == EOutbox) && iSidebar) || iMode == ENoAccount ||
 			(iShared->busy && !iShared->online);   // still connecting: nothing to go back from
-	if (code == EKeyEscape && Busy() && escStops)
+	if (code == EKeyEscape && Busy() && escStops && !DownloadingAhead())
 		{
 		StopEngineWork(_L("Stopping..."));  // stop what the engine is doing
 		return EKeyWasConsumed;

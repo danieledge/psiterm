@@ -109,6 +109,35 @@ void pm_idle(int ms) { usleep(ms * 1000); }
 
 static const char *env(const char *k, const char *d) { const char *v = getenv(k); return v ? v : d; }
 
+void pm_loop(int (*housekeeping)(void));
+
+/* PM_INJECT_MS=ms: that long into 'loop', queue a BODY for INBOX uid
+   PM_INJECT_UID as the app would - a download ahead should step aside */
+#include <pthread.h>
+static void *inject(void *arg)
+{
+	PmCmd *c;
+	(void)arg;
+	usleep(atoi(env("PM_INJECT_MS", "0")) * 1000);
+	c = &g_sh.cmd[g_sh.cmd_head % PM_CMDQ];
+	memset(c, 0, sizeof(*c));
+	c->op = PM_CMD_BODY;
+	pm_copy(c->folder, "INBOX", sizeof(c->folder));
+	c->uid = (unsigned int)atoi(env("PM_INJECT_UID", "101"));
+	g_sh.cmd_head++;
+	fprintf(stderr, "[inject] queued BODY INBOX %u\n", c->uid);
+	return 0;
+}
+static unsigned long g_quiet_from;
+static unsigned int g_quiet_changed;
+static int host_housekeeping(void)
+{
+	/* between steps: stop once nothing has changed for 3 s */
+	if (g_sh.changed_seq != g_quiet_changed || !g_quiet_from) { g_quiet_changed = g_sh.changed_seq; g_quiet_from = pm_ms(); return 0; }
+	if (pm_ms() - g_quiet_from > 3000) { g_sh.quitting = 1; return 1; }
+	return 0;
+}
+
 static const char *k_res[] = { "OK", "FAILED", "OFFLINE", "CANCELLED", "UNTRUSTED", "NEED_PASS", "LOGIN_FAILED" };
 
 int main(int argc, char **argv)
@@ -120,7 +149,9 @@ int main(int argc, char **argv)
 	signal(SIGPIPE, SIG_IGN);
 	g_sh.magic = PM_MAGIC;
 	g_sh.net.magic = PSI_SHARED_MAGIC;
-	g_sh.net.net_mode = 1;
+	g_sh.net.net_mode = atoi(env("PM_NETMODE", "1"));   /* 0: the modem-mode code paths (NO CARRIER, piece size) */
+	g_sh.net.rtscts = atoi(env("PM_RTSCTS", "0"));
+	g_sh.prefetch = atoi(env("PM_PREFETCH", "0"));
 	snprintf(g_sh.store_dir, sizeof(g_sh.store_dir), "%s%s", store, store[strlen(store) - 1] == '/' ? "" : "/");
 	snprintf(g_sh.attach_dir, sizeof(g_sh.attach_dir), "%sattachments/", g_sh.store_dir);
 	pm_mkdir(g_sh.store_dir);
@@ -178,6 +209,17 @@ int main(int argc, char **argv)
 		else if (!strcmp(op, "hangup")) c.op = PM_CMD_HANGUP;
 		else if (!strcmp(op, "trust")) { c.op = PM_CMD_TRUST; pm_copy(c.arg, args[0], sizeof(c.arg)); c.folder[0] = 0; }
 		else if (!strcmp(op, "trustlast")) { c.op = PM_CMD_TRUST; pm_copy(c.arg, g_sh.trust_host, sizeof(c.arg)); c.folder[0] = 0; }
+		else if (!strcmp(op, "loop")) {
+			/* run the engine's loop (downloading ahead after a sync) until
+			   it has been quiet for 3 s */
+			g_quiet_from = 0;
+			g_sh.cmd_head = g_sh.cmd_tail = 0;
+			if (atoi(env("PM_INJECT_MS", "0"))) { pthread_t t; pthread_create(&t, 0, inject, 0); }
+			pm_loop(host_housekeeping);
+			g_sh.quitting = 0;
+			printf("loop: done\n");
+			continue;
+		}
 		else { fprintf(stderr, "unknown command %s\n", op); return 2; }
 		pm_do_command(&c);
 		printf("%s: %s %s\n", op, k_res[g_sh.last_res], g_sh.last_msg);

@@ -103,11 +103,17 @@ static int auth_has(const char *mech)
 
 static int fail(char *why, int whymax, int r, const char *what)
 {
-	if (r == PMN_CANCEL) { set_why(why, whymax, "Stopped"); pmn_close(1); return PM_RES_CANCELLED; }
-	if (r < 0) { set_why(why, whymax, "The connection was lost (%s)", what); pmn_close(1); return PM_RES_OFFLINE; }
+	if (r == PMN_CANCEL) { set_why(why, whymax, "Stopped"); pmn_close_why(1, "smtp: stopped by the user"); return PM_RES_CANCELLED; }
+	if (r < 0) {
+		set_why(why, whymax, "The connection was lost (%s)", what);
+		pm_log("smtp: lost while %s (%d) %s", what, r, pmn_error());
+		pmn_close_why(1, why);
+		return PM_RES_OFFLINE;
+	}
 	set_why(why, whymax, "%s: %.120s", what, g_line);
+	pm_log("smtp: %s", why);
 	command("QUIT");
-	pmn_close(1);
+	pmn_close_why(1, "smtp: the server said no");
 	return PM_RES_FAILED;
 }
 
@@ -215,6 +221,8 @@ int smtp_send(int acct, const char *mime_path, const char *from, const char *rcp
 	if (pmn_write(bol ? ".\r\n" : "\r\n.\r\n", bol ? 3 : 5) != 0) return fail(why, whymax, -1, "sending");
 	if ((r = reply(0)) != 250) return fail(why, whymax, r, "Message refused");
 	command("QUIT");
-	pmn_close(0);
+	/* no hang-up: after its 221 the server closes, the modem sees that and
+	   drops the call itself (a modem-mode pg_dial copes if it has not yet) */
+	pmn_close_why(0, "smtp: sent");
 	return PM_RES_OK;
 }

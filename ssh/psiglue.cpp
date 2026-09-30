@@ -33,6 +33,14 @@ static int gRxLen = 0;
 static int gRxPos = 0;
 static int gNetClosed = 0;
 extern "C" int pg_net_closed() { return gNetClosed; }
+// serial line errors (overrun, framing, parity) seen by RxFill since the
+// port was opened: PsiMail logs them when a connection is lost
+static int gRxErrors = 0, gRxLastErr = 0;
+extern "C" int pg_rx_errors(int* aLast)
+	{
+	if (aLast) *aLast = gRxLastErr;
+	return gRxErrors;
+	}
 
 // Psion TCP/IP mode (off by default): instead of the WiRSa's "ATDT host:port"
 // pipe, connect a real socket through EPOC's own networking - normally a
@@ -649,6 +657,8 @@ static int OpenSerial()
 	// at 115200 without working hardware flow control.
 	gComm->SetReceiveBufferLength(16384);
 	gComm->SetSignals(KSignalDTR | KSignalRTS, 0);
+	gRxErrors = 0;
+	gRxLastErr = 0;
 	return 0;
 	}
 
@@ -789,7 +799,11 @@ static void RxFill(int aTimeoutUs)
 	if (stat.Int() == KErrNone || stat.Int() == KErrTimedOut)
 		gRxLen = p.Length();
 	else
+		{
 		gRxLen = 0;      // line error: drop this burst, SSH will notice
+		gRxErrors++;
+		gRxLastErr = stat.Int();
+		}
 	}
 
 extern "C" int pg_net_avail()
@@ -1204,8 +1218,12 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 		int n = ReadLine(line, sizeof(line), 30000);
 		if (n < 0)
 			{
-			Say("  No reply from the modem for 30 seconds\r\n");
-			if (aResult) { const char* m = "no answer from modem"; int k = 0; while (m[k] && k < aResultMax - 1) { aResult[k] = m[k]; k++; } aResult[k] = 0; }
+			const char* m = "no answer from modem";
+			if (pg_quit_requested())
+				m = "Stopped";                // (ReadLine gives up on quit too)
+			else
+				Say("  No reply from the modem for 30 seconds\r\n");
+			if (aResult) { int k = 0; while (m[k] && k < aResultMax - 1) { aResult[k] = m[k]; k++; } aResult[k] = 0; }
 			return -1;
 			}
 		if (line[0] && !StartsWith(line, cmd) && !StartsWith(line, "AT"))

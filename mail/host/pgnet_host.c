@@ -26,6 +26,7 @@ void pg_msleep(int ms) { usleep(ms * 1000); }
 int pg_quit_requested(void) { return 0; }
 void pg_link_close(void) { if (g_fd >= 0) { close(g_fd); g_fd = -1; } fprintf(stderr, "[net] port released\n"); }
 int pg_link_is_open(void) { return g_fd >= 0; }
+int pg_rx_errors(int *last) { if (last) *last = 0; return 0; }
 
 int pg_dial(char *why, int max)
 {

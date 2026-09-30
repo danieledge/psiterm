@@ -148,6 +148,7 @@ public:
 	void AccountChangedL();                  // switched to another account
 	void Cmd(TInt aOp, const TDesC8& aFolder, TUint aUid, const TDesC8& aArg);
 	TBool Busy() const;
+	TBool DownloadingAhead() const;          // the engine's own download ahead is what is running
 	TBool OpInFlight(TInt aOp) const;        // running now, or queued
 	void StopEngineWork(const TDesC& aToast); // Esc / Stop: net.quit
 	const TPmRow* CurrentRow() const;
