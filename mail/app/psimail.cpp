@@ -376,8 +376,8 @@ void CPmView::StartEngineL()
 	if (r != KErrNone)
 		{
 		TBuf<80> e;
-		e.Format(_L("Could not start psimail.exe (error %d)"), r);
-		iEikonEnv->InfoWinL(_L("PsiMail"), e);
+		e.Format(_L("psimail.exe did not start (%d)"), r);
+		iEikonEnv->InfoWinL(_L("Could not start the mail engine"), e);
 		return;
 		}
 	iRunning = ETrue;
@@ -434,9 +434,9 @@ void CPmView::EngineEnded()
 	if (type == EExitPanic)
 		PsiLinkTimersBack();             // (0.68) the crash skipped the engine's own clean-up
 	if (type == EExitPanic)
-		why.Format(_L("The mail engine stopped: %S %d. Tools > Restart engine."), &cat, reason);
+		why.Format(_L("The mail engine stopped (%S %d) - use Tools > Restart mail engine"), &cat, reason);
 	else
-		why.Format(_L("The mail engine closed (%d). Tools > Restart engine."), reason);
+		why.Format(_L("The mail engine closed (%d) - use Tools > Restart mail engine"), reason);
 	SetStatus(why);
 	}
 
@@ -482,7 +482,7 @@ void CPmView::StopEngineWork(const TDesC& aToast)
 	{
 	iShared->net.quit = 1;
 	if (aToast.Length())
-		Toast(aToast);
+		Working(aToast);
 	}
 
 void CPmView::Cmd(TInt aOp, const TDesC8& aFolder, TUint aUid, const TDesC8& aArg)
@@ -1436,7 +1436,7 @@ void CPmView::ForwardAttachmentsL(TUint aUid)
 	if (iFwdPending == 0)
 		((CPmAppUi*)iEikonEnv->EikAppUi())->ForwardReadyL(aUid, *iFwdFiles);
 	else
-		Toast(_L("Getting the attachments first..."));
+		Working(_L("Getting the attachments first..."));
 	}
 
 // the From of a message in this folder's index, as the server gave it
@@ -1680,15 +1680,15 @@ void CPmView::SaveDraftL(CPmDraft& aDraft, TBool aSend)
 	if (aSend)
 		{
 		if (iSettings->iOffline)
-			Toast(_L("In the outbox - it goes at the next check for mail"));
+			Toast(_L("In the Outbox - it goes at the next check for mail"));
 		else
 			{
 			Cmd(PM_CMD_SEND, KNullDesC8, 0, KNullDesC8);
-			Toast(_L("Sending..."));
+			Working(_L("Sending..."));
 			}
 		}
 	else
-		Toast(_L("Saved in the outbox"));
+		Toast(_L("Saved in the Outbox"));
 	if (iMode == EOutbox)
 		LoadOutboxL();
 	Render();
@@ -1815,7 +1815,17 @@ void CPmView::TickL()
 			{
 			iEikonEnv->BusyMsgCancel();
 			iBusyShown = EFalse;
+			iWorkingSince = 0;
 			}
+		}
+	if (s->busy)
+		iWorkingSince = 0;                       // (the engine took the work up)
+	else if (iWorkingSince && iBusyShown && User::TickCount() - iWorkingSince > 64 * 5)
+		{
+		// Working()'s message, and the engine never got busy: take it down
+		iEikonEnv->BusyMsgCancel();
+		iBusyShown = EFalse;
+		iWorkingSince = 0;
 		}
 	// messages that have had their time
 	TUint now = User::TickCount();
@@ -1952,7 +1962,7 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		lines[1].Append(why);
 		lines[2] = _L("Key: ");
 		lines[2].Append(Clip(fp, 95));
-		lines[3] = _L("Trust it only if you expected this (e.g. your own server).");
+		lines[3] = _L("Trust it only if you expected this (e.g. your own server)");
 		TPtrC ptrs[4];
 		for (TInt k = 0; k < 4; k++) ptrs[k].Set(lines[k]);
 		CPmInfoDialog* dlg = new(ELeave) CPmInfoDialog(_L("Certificate not trusted"), ptrs, 4);
@@ -2011,9 +2021,17 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 			iBodyError = msg;                    // shown in place of "Downloading..."
 		if (aCmd.op == PM_CMD_ATTACH && iFwdPending > 0)
 			iFwdPending = 0;                     // (forward without them: Message > Forward again)
+		// what didn't happen, then the engine's reason (the style guide's
+		// "say what went wrong", rather than a bare program name)
 		if (aCmd.op == PM_CMD_BODY || aCmd.op == PM_CMD_ATTACH || aCmd.op == PM_CMD_SEND ||
 			aCmd.op == PM_CMD_SENDRECV || aCmd.op == PM_CMD_SEARCH)
-			iEikonEnv->InfoWinL(_L("PsiMail"), Clip(msg, 120));
+			{
+			TPtrC what(aCmd.op == PM_CMD_BODY ? _L("The message did not download") :
+				aCmd.op == PM_CMD_ATTACH ? _L("The attachments did not download") :
+				aCmd.op == PM_CMD_SEND ? _L("The message was not sent") :
+				aCmd.op == PM_CMD_SEARCH ? _L("Find did not finish") : _L("Check mail did not finish"));
+			iEikonEnv->InfoWinL(what, Clip(msg, 120));
+			}
 		else
 			Toast(msg);
 		ReloadL();
@@ -2055,9 +2073,9 @@ void CPmView::HandleCalResultL(const PmCmd& aCmd, TInt aRes, const TDesC& aMsg)
 		if (aRes == PM_RES_LOGIN_FAILED)
 			{
 			TBuf<200> lines[3];
-			lines[0] = _L("The calendar server refused the password.");
+			lines[0] = _L("The calendar server refused the password");
 			lines[1] = _L("If your provider uses app passwords, make one");
-			lines[2] = _L("that can use calendars (CalDAV), and enter it here.");
+			lines[2] = _L("that can use calendars (CalDAV), and enter it here");
 			TPtrC ptrs[3];
 			for (TInt k = 0; k < 3; k++) ptrs[k].Set(lines[k]);
 			CPmInfoDialog* info = new(ELeave) CPmInfoDialog(_L("Calendar"), ptrs, 3);
@@ -2093,6 +2111,25 @@ void CPmView::SetStatus(const TDesC& aText)
 void CPmView::Toast(const TDesC& aText)
 	{
 	iEikonEnv->InfoMsg(aText);               // EIKON's own message, as the style guide has it
+	}
+
+// "Sending...", "Stopping...": the style guide puts what the program is
+// doing bottom left, as EIKON's busy message. The engine's own progress
+// replaces it, and the tick takes it down when the engine is idle (or after
+// a few seconds, should the engine never have picked the work up)
+void CPmView::Working(const TDesC& aText)
+	{
+	if (!iRunning || !iNativeShown)
+		{
+		Toast(aText);
+		return;
+		}
+	TRAPD(err, iEikonEnv->BusyMsgL(aText, EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
+	if (err != KErrNone)
+		return;
+	iBusyShown = ETrue;
+	iWorkingSince = User::TickCount();
+	if (!iWorkingSince) iWorkingSince = 1;
 	}
 
 void CPmView::FormatDate(TInt aDate, TDes& aOut) const
@@ -2675,7 +2712,7 @@ TBool CPmComposeDialog::OkToExitL(TInt aButtonId)
 	if (aButtonId == EEikBidCancel)
 		{
 		if ((iDraft.iBody && iDraft.iBody->Length() > 0) || iDraft.iTo.Length())
-			return iEikonEnv->QueryWinL(_L("Save as draft keeps it in the outbox"), _L("Discard this message?"));
+			return iEikonEnv->QueryWinL(_L("Save as draft keeps it in the Outbox"), _L("Discard this message?"));
 		}
 	return ETrue;
 	}
@@ -3276,7 +3313,7 @@ TBool CPmCalDialog::OkToExitL(TInt /*aButtonId*/)
 		TEntry e;
 		if (file.Length() == 0 || iEikonEnv->FsSession().Entry(file, e) != KErrNone)
 			{
-			iEikonEnv->InfoMsg(_L("No Agenda file there: open it in Agenda first"));
+			iEikonEnv->InfoMsg(_L("No Agenda file there - open it in Agenda first"));
 			return EFalse;
 			}
 		}
@@ -3386,11 +3423,11 @@ void CPmAppUi::ComposeL(CPmDraft* aDraft, const TDesC& aTitle)
 		// say so and show it again, so nothing written is lost
 		TBuf<100> why;
 		if (err == KErrDiskFull)
-			why = _L("The disk is full. Make room, then try again.");
+			why = _L("The disk is full - make room, then try again");
 		else if (err == KErrNotReady || err == KErrPathNotFound)
-			why = _L("The disk is not there. Is the card in?");
+			why = _L("The disk is not present - is the card in?");
 		else
-			why.Format(_L("Not saved (error %d). Try again."), err);
+			why.Format(_L("Not saved (%d) - try again"), err);
 		iEikonEnv->InfoWinL(_L("Message not saved"), why);
 		}
 	CleanupStack::PopAndDestroy();          // the draft
@@ -3467,7 +3504,7 @@ CPmDraft* CPmAppUi::ReplyDraftL(TBool aAll)
 	THdrs* h = HeadersLC(*iView);
 	if (!h->iFrom.Length())
 		{
-		iView->Toast(_L("Wait for the message to download"));
+		iView->Toast(_L("Not available until the message has downloaded"));
 		CleanupStack::PopAndDestroy();         // h
 		return NULL;
 		}
@@ -3545,7 +3582,7 @@ CPmDraft* CPmAppUi::ForwardDraftL(CDesCArray* aFiles)
 	THdrs* h = HeadersLC(*iView);
 	if (!h->iFrom.Length())
 		{
-		iView->Toast(_L("Wait for the message to download"));
+		iView->Toast(_L("Not available until the message has downloaded"));
 		CleanupStack::PopAndDestroy();         // h
 		return NULL;
 		}
@@ -3598,7 +3635,7 @@ void CPmAppUi::ForwardL()
 		TBuf<60> t;
 		if (n == 1) t = _L("This message has an attachment");
 		else t.Format(_L("This message has %d attachments"), n);
-		if (iEikonEnv->QueryWinL(t, _L("Forward them too?")))
+		if (iEikonEnv->QueryWinL(t, n == 1 ? _L("Forward it too?") : _L("Forward them too?")))
 			{
 			iView->ForwardAttachmentsL(iView->CurrentRow()->iUid);
 			return;
@@ -3729,7 +3766,7 @@ void CPmView::StartInstallerL(const TDesC& aFile)
 		return;
 		}
 	TBuf<200> m;
-	m.Format(_L("Could not start the installer (%d). Open %S from the System screen."), err, &aFile);
+	m.Format(_L("Could not start the installer (%d) - open %S from the System screen"), err, &aFile);
 	iEikonEnv->InfoWinL(_L("Update downloaded"), m);
 	StartEngineL();
 	}
@@ -3888,7 +3925,7 @@ void CPmAppUi::NewFolderL()
 		}
 	TBuf<60> name;
 	CleanupStack::Pop();                    // the dialog's choice list takes places
-	CPmFolderDialog* dlg = new(ELeave) CPmFolderDialog(_L("New folder"), name, places, parent);
+	CPmFolderDialog* dlg = new(ELeave) CPmFolderDialog(_L("Create new folder"), name, places, parent);
 	if (!dlg->ExecuteLD(R_PM_FOLDER_DIALOG))
 		return;
 	if (!GoOnlineL(_L("Go online and create the folder?")))
@@ -3959,10 +3996,14 @@ void CPmAppUi::DeleteFolderL()
 		iView->Toast(f->iKind == 'I' ? _L("The Inbox can't be deleted") : _L("Standard folders can't be deleted"));
 		return;
 		}
-	TBuf<64> q;
+	// the statement says what goes (the folder, and how many messages), the
+	// question comes last
+	TBuf<100> q;
 	QuotedName(q, f->iName, 60);
+	if (f->iTotal == 1) q.Append(_L(" holds 1 message"));
+	else if (f->iTotal > 0) q.AppendFormat(_L(" holds %d messages"), f->iTotal);
 	TBuf8<128> imap(f->iImap);
-	if (!iEikonEnv->QueryWinL(q, f->iTotal > 0 ? _L("Delete this folder and its messages?") : _L("Delete this folder?")))
+	if (!iEikonEnv->QueryWinL(q, f->iTotal > 0 ? _L("Delete the folder and its messages?") : _L("Delete this folder?")))
 		return;
 	if (!GoOnlineL(_L("Go online and delete the folder?")))
 		return;
@@ -4009,7 +4050,7 @@ TBool CPmFolderDialog::OkToExitL(TInt /*aButtonId*/)
 void CPmAppUi::SearchL()
 	{
 	TBuf<60> words;
-	CPmTextDialog* dlg = new(ELeave) CPmTextDialog(_L("Search this folder"), _L("Find"), words);
+	CPmTextDialog* dlg = new(ELeave) CPmTextDialog(_L("Find in this folder"), _L("Search for"), words);
 	if (dlg->ExecuteLD(R_PM_TEXT_DIALOG) && words.Length())
 		iView->SearchL(words);
 	}
@@ -4065,7 +4106,7 @@ void CPmAppUi::DeleteAccountL()
 	qn.Append('"');
 	qn.Append(n.Left(n.Length() < 60 ? n.Length() : 60));
 	qn.Append('"');
-	if (!iEikonEnv->QueryWinL(qn, _L("Delete this account from PsiMail?")))
+	if (!iEikonEnv->QueryWinL(qn, _L("Remove this account from PsiMail?")))
 		return;
 	Mem::FillZ(&a, sizeof(a));
 	// its files go when the slot is next used (the engine checks account.txt)
@@ -4107,6 +4148,9 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPmCmdOffline, iSettings.iOffline ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemDimmed(EPmCmdHangup, !iView->Shared()->online);
 		aMenuPane->SetItemDimmed(EPmCmdStop, !iView->Busy());
+		// (dimmed, not gone, while calendar sync is off; Shift+Ctrl+Y then
+		// says where to turn it on)
+		aMenuPane->SetItemDimmed(EPmCmdCalendar, !iCalSettings.iCal.enabled);
 		}
 	else if (aMenuId == R_PM_FOLDER_MENU)
 		{
@@ -4148,6 +4192,12 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 	else if (aMenuId == R_PM_EVENT_MENU)
 		{
 		aMenuPane->SetItemDimmed(EPmCmdEventDetails, !iView->EventSelected());
+		}
+	else if (aMenuId == R_PM_SWITCH_VIEW_MENU)
+		{
+		TBool month = iView->MonthShown();
+		aMenuPane->SetItemButtonState(EPmCmdWeekView, month ? 0 : EEikMenuItemSymbolOn);
+		aMenuPane->SetItemButtonState(EPmCmdMonthView, month ? EEikMenuItemSymbolOn : 0);
 		}
 	else if (aMenuId == R_PM_VIEW_MENU || aMenuId == R_PM_CAL_VIEW_MENU)
 		{
@@ -4231,12 +4281,12 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		iView->SettingsChanged();
 		if (iSettings.iOffline)
 			iView->Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
-		iView->Toast(iSettings.iOffline ? _L("Working offline: changes wait until you go online")
-			: _L("Online: PsiMail will connect when it needs to"));
+		iView->Toast(iSettings.iOffline ? _L("Working offline - changes wait until you go online")
+			: _L("Online - PsiMail will connect when it needs to"));
 		break;
 	case EPmCmdHangup:
 		iView->Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
-		iView->Toast(_L("Disconnecting..."));
+		iView->Working(_L("Disconnecting..."));
 		break;
 	case EPmCmdAbout:
 		AboutL();
@@ -4380,6 +4430,12 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdMonth:
 		iView->ToggleMonthL();
+		break;
+	case EPmCmdWeekView:
+		iView->ShowMonthL(EFalse);
+		break;
+	case EPmCmdMonthView:
+		iView->ShowMonthL(ETrue);
 		break;
 	case EPmCmdToday:
 		iView->CalendarTodayL();

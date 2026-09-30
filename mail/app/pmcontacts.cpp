@@ -388,7 +388,7 @@ void CPmContacts::AddL(const TDesC& aName, const TDesC& aAddr, TDes& aMsg)
 		aMsg = _L("Already in Contacts");
 		if ((*iNames)[have].Length())
 			{
-			aMsg.Append(_L(": "));
+			aMsg.Append(_L(" - "));
 			aMsg.Append((*iNames)[have]);
 			}
 		return;
@@ -452,7 +452,7 @@ void CPmContacts::AddL(const TDesC& aName, const TDesC& aAddr, TDes& aMsg)
 		aMsg = _L("Added to Contacts");
 		if (name.Length())
 			{
-			aMsg.Append(_L(": "));
+			aMsg.Append(_L(" - "));
 			aMsg.Append(name);
 			}
 		}
@@ -579,7 +579,7 @@ TBool CPmContactsDialog::OkToExitL(TInt /*aButtonId*/)
 		}
 	if (!iChosen.Count())
 		{
-		CEikonEnv::Static()->InfoMsg(_L("No contact chosen"));
+		CEikonEnv::Static()->InfoMsg(_L("No contact selected"));
 		return EFalse;
 		}
 	return ETrue;

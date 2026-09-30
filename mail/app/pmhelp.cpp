@@ -14,6 +14,10 @@
 
 struct TPmHelpTopic { const char* iTitle; const char* iText; };
 
+// The wording follows the EIKON style guide: the user's words, key names as
+// the keyboard prints them (Ctrl, Shift, Fn, Tab, Enter, Esc), menu commands
+// named as they appear (without their "..."), and no jargon that a glossary
+// would not allow ("program", "folder", "memory disk").
 static const TPmHelpTopic KHelpTopics[] =
 	{
 	{ "Getting started",
@@ -29,25 +33,42 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "(and Calendars, for the calendar). Gmail and Outlook have the same under their security settings, "
 	  "once two-step verification is on.\n"
 	  "\n"
-	  "Then press Shift+Ctrl+C (Check mail) to fetch your folders and the Inbox. The first time PsiMail "
-	  "talks to a server it shows the server's key and asks whether to trust it." },
+	  "Then press Shift+Ctrl+C (File > Check mail) to fetch your folders and the Inbox. The first time "
+	  "PsiMail talks to a server it shows the server's key and asks whether to trust it.\n"
+	  "\n"
+	  "PsiMail opens in the Inbox, with your accounts, folders and preferences as you left them." },
 
 	{ "Reading messages",
 	  "The folders are on the left and the messages of the open folder on the right; unread messages "
 	  "are in bold. Move with the arrow keys, open with Enter, and go back with Esc. Tab moves between "
-	  "the folder list and the messages.\n"
+	  "the folder list and the messages. A tap selects a message and a second tap opens it.\n"
 	  "\n"
 	  "A message's text is downloaded when you open it (up to 64 KB - Message > Get whole message "
 	  "fetches the rest). Left and Right step to the previous and next message. Tab moves between the "
-	  "links and attachments in a message and Enter opens one; Ctrl+P shows the message as a web page "
-	  "in PsiWeb.\n"
+	  "links and attachments in a message and Enter opens one; Message > View as web page (Ctrl+P) "
+	  "shows the message in PsiWeb.\n"
 	  "\n"
-	  "Message > Save attachment (Ctrl+S) saves a file to D:\\PsiMail\\Attachments. Delete moves a "
+	  "Message > Attachments > Open opens an attached file in its own program (Word, Sketch and so on); "
+	  "Message > Attachments > Save (Ctrl+S) saves it in PsiMail's Attachments folder. Delete moves a "
 	  "message to the Trash; Edit > Archive puts it in the Archive folder; Message > Unread and Flagged "
 	  "mark it.\n"
 	  "\n"
-	  "Edit > Find (Ctrl+F) searches the open folder on the server. Tap a column heading, or use View > "
-	  "Sort, to change the order." },
+	  "Edit > Find (Ctrl+F) looks for words in the open folder on the server. Tap a column heading, or "
+	  "use View > Sort, to change the order. View > Zoom in and Zoom out (Ctrl+M, Shift+Ctrl+M) go "
+	  "round the three sizes." },
+
+	{ "Pictures in messages",
+	  "Pictures that come with a message - in the message's own HTML, or attached to it - are shown in "
+	  "the message, shrunk to fit the screen. Pictures up to 300 KB are fetched with the message; a "
+	  "bigger one is shown as its name and size, and a tap on it fetches it. Pictures on the web are "
+	  "never fetched: they appear as their words.\n"
+	  "\n"
+	  "Tools > Preferences > Show pictures chooses what is shown: Yes, Only attached files (nothing "
+	  "from inside the HTML), or No. Whatever the setting, an attached picture can still be saved or "
+	  "opened with Message > Attachments.\n"
+	  "\n"
+	  "While a picture is being fetched or decoded its frame says so; if it can't be shown, the frame "
+	  "says why. Working offline, pictures not yet fetched wait until you go online." },
 
 	{ "Writing messages",
 	  "Message > Create new email (Ctrl+N) opens a new message; Ctrl+R replies, Shift+Ctrl+R replies to "
@@ -55,7 +76,7 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "\n"
 	  "In the text, Ctrl+B, Ctrl+I and Ctrl+U make bold, italic and underlined text, which is sent as "
 	  "HTML with a plain copy for older programs. The Attachments button adds files from the Psion (up "
-	  "to 8).\n"
+	  "to 8). When you forward a message that has attachments, PsiMail asks whether to forward them too.\n"
 	  "\n"
 	  "Send puts the message in the Outbox and sends it straight away when you are online. Save as "
 	  "draft keeps it in the Outbox to finish later: open the Outbox (Ctrl+B) and press Enter on it. A "
@@ -64,15 +85,26 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "\n"
 	  "A signature, if you set one in the account settings, goes at the end of every new message." },
 
+	{ "Addresses from Contacts",
+	  "PsiMail uses the addresses in the Psion's Contacts program.\n"
+	  "\n"
+	  "In an address line (To, CC or BCC), type the start of a name or an address and press Tab: one "
+	  "match is filled in, and with several PsiMail shows them to choose from. The Contacts button "
+	  "(Ctrl+L) opens the same list: type to narrow it, press Space or tap to mark several people, and "
+	  "press Enter to add them.\n"
+	  "\n"
+	  "Edit > Add sender to Contacts adds the sender of the selected message to Contacts - as a new "
+	  "entry, or as another address for the entry with the same name." },
+
 	{ "Folders",
 	  "Every folder on the server is in the list on the left, with the number of unread messages after "
 	  "its name. Standard folders - Inbox, Sent, Drafts, Trash, Junk and Archive - have their own "
 	  "pictures.\n"
 	  "\n"
-	  "File > Folder > New folder makes a folder, at the top level or inside another one. Rename folder "
-	  "and Delete folder act on the highlighted folder (or the open one). The Inbox and the standard "
+	  "File > Folder > Create new makes a folder, at the top level or inside another one. File > Folder "
+	  "> Rename and Delete act on the highlighted folder (or the open one). The Inbox and the standard "
 	  "folders can't be renamed or deleted, and a folder that holds other folders must be emptied of "
-	  "them first. Deleting a folder deletes the messages in it too.\n"
+	  "them first. Deleting a folder deletes the messages in it too, so PsiMail asks first.\n"
 	  "\n"
 	  "Edit > Move to folder (Ctrl+X) moves the selected message. View > Go to (Ctrl+G) opens any "
 	  "folder, and Ctrl+I goes straight to the Inbox.\n"
@@ -82,16 +114,17 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "and sends what is waiting in the Outbox." },
 
 	{ "Download ahead and offline",
-	  "PsiMail keeps the newest 50 messages of each folder on the CF card (or the internal disk), so "
-	  "they can be read without a connection. After Check mail it also downloads the text of the newest "
-	  "messages ahead, so they open at once; the number is set in the account settings (Download "
-	  "ahead), and Off turns it off.\n"
+	  "PsiMail keeps the newest messages of each folder (50, unless the account's Limits page says "
+	  "otherwise) on the memory disk (the CF card) or the internal disk, so they can be read without a "
+	  "connection. After Check mail it also downloads the text of the newest messages ahead, so they "
+	  "open at once; the number is set in Tools > Preferences (Download ahead), and 0 turns it off.\n"
 	  "\n"
 	  "File > Work offline (Shift+Ctrl+W) stops PsiMail connecting. Anything you do offline - deleting, "
 	  "moving, flagging, sending - is kept and done the next time you check mail. Making, renaming and "
 	  "deleting folders needs the server, so PsiMail asks to go online for those.\n"
 	  "\n"
-	  "Esc stops a download that is running; File > Disconnect (Ctrl+U) hangs up." },
+	  "What PsiMail is doing is shown at the bottom left of the screen. Esc, or File > Stop (Ctrl+Z), "
+	  "stops a download that is running; File > Disconnect (Ctrl+U) hangs up." },
 
 	{ "The calendar",
 	  "PsiMail can keep the Psion's Agenda in step with a CalDAV calendar such as Fastmail's. Turn it on "
@@ -99,9 +132,10 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "password if it differs from the mail one, your time zone and the Agenda file.\n"
 	  "\n"
 	  "File > Sync calendar (Shift+Ctrl+Y) fetches changes and sends new Agenda entries; with Sync with "
-	  "the Agenda on, Check mail does it too. View > Go to > Calendar (Shift+Ctrl+N) shows the week, or "
-	  "the month with Ctrl+Q; Event > Create new event (Ctrl+N) adds an entry to the Agenda, which is "
-	  "then sent to the server.\n"
+	  "the Agenda on, Check mail does it too. View > Go to > Calendar (Shift+Ctrl+N) shows the week; "
+	  "View > Switch view (Ctrl+Q) changes between the week and the month. Event > Create new event "
+	  "(Ctrl+N) adds an entry to the Agenda, which is then sent to the server; Event > Details shows "
+	  "the selected event.\n"
 	  "\n"
 	  "Repeating entries made on the Psion stay on the Psion; to-do lists and anniversaries are not "
 	  "synced." },
@@ -122,23 +156,23 @@ static const TPmHelpTopic KHelpTopics[] =
 
 	{ "Updating PsiMail",
 	  "Tools > Update PsiMail looks for a newer PsiMail on GitHub (the published releases, or the test "
-	  "builds) or on a local server on your own network, downloads it in pieces to the CF card, checks "
-	  "its signature and offers to install it. PsiMail closes while the installer runs; start it again "
-	  "from the Extras bar afterwards.\n"
+	  "builds) or on a local server on your own network, downloads it in pieces to the memory disk, "
+	  "checks its signature and offers to install it. PsiMail closes while the installer runs; start it "
+	  "again from the Extras bar afterwards.\n"
 	  "\n"
-	  "Tools > About PsiMail shows the version you have." },
+	  "Tools > About PsiMail (Shift+Ctrl+A) shows the version you have." },
 
 	{ "Keyboard shortcuts",
-	  "Up/Down, PgUp/PgDn, Home/End: move and scroll\n"
+	  "Up/Down, Fn+Up/Fn+Down (Pg Up/Pg Dn), Fn+Left/Fn+Right (Home/End): move and scroll\n"
 	  "Enter or Right: open; Esc or Left: back\n"
 	  "Left/Right in a message: previous / next message\n"
-	  "Tab: between the folders and the messages; in a message, the next link\n"
+	  "Tab: between the folders and the messages; in a message, the next link; in an address, Contacts\n"
 	  "Del: delete (to the Trash)\n"
 	  "\n"
 	  "Shift+Ctrl+C: check mail (send & receive)\n"
 	  "Ctrl+Y / Shift+Ctrl+G: check this folder / get older messages\n"
 	  "Ctrl+U / Ctrl+Z / Shift+Ctrl+W: disconnect / stop / work offline\n"
-	  "Ctrl+N / Ctrl+R / Shift+Ctrl+R / Ctrl+W: new / reply / reply to all / forward\n"
+	  "Ctrl+N / Ctrl+R / Shift+Ctrl+R / Ctrl+W: create new / reply / reply to all / forward\n"
 	  "Ctrl+D / Ctrl+X / Shift+Ctrl+E: delete / move to folder / archive\n"
 	  "Shift+Ctrl+U / Shift+Ctrl+F: unread / flagged\n"
 	  "Ctrl+S: save an attachment; Ctrl+P: view as a web page\n"
@@ -146,7 +180,7 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "Ctrl+M / Shift+Ctrl+M: zoom in / out\n"
 	  "Ctrl+T / Shift+Ctrl+T / Shift+Ctrl+L: toolbar / title bar / folder list\n"
 	  "Shift+Ctrl+Q / Shift+Ctrl+B: status information / sort\n"
-	  "Shift+Ctrl+N / Ctrl+Q: the calendar / week or month\n"
+	  "Shift+Ctrl+N / Ctrl+Q: the calendar / switch view (week or month)\n"
 	  "Shift+Ctrl+Y / Shift+Ctrl+D: sync the calendar / go to today\n"
 	  "Ctrl+K / Shift+Ctrl+H / Shift+Ctrl+A / Ctrl+E: preferences / help / about / close" }
 	};

@@ -72,7 +72,10 @@ enum TPmCommands
 	EPmCmdNewFolder,         // File > Folder > New folder...
 	EPmCmdRenameFolder,      // File > Folder > Rename folder...
 	EPmCmdDeleteFolder,      // File > Folder > Delete folder
-	EPmCmdHelp               // Tools > Help on PsiMail
+	EPmCmdHelp,              // Tools > Help on PsiMail
+	EPmCmdSwitchViewMenu,    // the calendar's View > Switch view (a cascade)
+	EPmCmdWeekView,          // View > Switch view > Week
+	EPmCmdMonthView          // View > Switch view > Month
 	};
 
 enum TPmDialogControls

@@ -992,10 +992,10 @@ void CPmView::UpdateReaderL()
 			{
 			t.Append(iBodyError);
 			t.Append(KPara);
-			t.Append(_L("Press Enter on it in the list to try again."));
+			t.Append(_L("Press Enter on it in the list to try again"));
 			}
 		else
-			t.Append(iSettings->iOffline ? _L("Not downloaded - you are working offline.")
+			t.Append(iSettings->iOffline ? _L("Not downloaded - you are working offline")
 				: _L("Downloading the message..."));
 		t.Append(KPara);
 		}
@@ -1184,7 +1184,7 @@ void CPmView::UpdateReaderL()
 				t.Append(_L(", "));
 				t.Append(z);
 				if (pe.iSize > PM_PIC_MAX_KB * 1024) t.Append(_L(" - too big to download]"));
-				else t.Append(_L(" - not downloaded. Tap to get it]"));
+				else t.Append(_L(" - not downloaded, tap to get it]"));
 				lr.iLen = t.Length() - lr.iPos;
 				lr.iLink = -2000 - e;
 				if (pe.iSize <= PM_PIC_MAX_KB * 1024)
@@ -1199,7 +1199,7 @@ void CPmView::UpdateReaderL()
 		if (iTruncated > 0)
 			{
 			TBuf<120> m;
-			m.Format(_L("[%d KB more not downloaded - Message > Whole message]"), (iTruncated + 1023) / 1024);
+			m.Format(_L("[%d KB more not downloaded - Message > Get whole message]"), (iTruncated + 1023) / 1024);
 			p0 = t.Length();
 			t.Append(m);
 			AddSpan(*spans, p0, t.Length() - p0, ESpanItalic);
@@ -1329,7 +1329,7 @@ static void PictureLook(CPmPicture& aPic, const TPmPicEntry& aEntry, const CFont
 	TBool failed = EFalse;
 	if (aEntry.iState == TPmPicEntry::EFailed)
 		{
-		text = _L("Picture not shown: ");
+		text = _L("Picture not shown - ");
 		text.Append(Clip(aEntry.iWhy, 60));
 		failed = ETrue;
 		}
@@ -1992,8 +1992,8 @@ void CPmView::DrawNative(const TRect& /*aRect*/) const
 		TBuf<120> a, b;
 		if (iMode == ENoAccount)
 			{
-			a = _L("Set up your mail with Tools > Add new account.");
-			b = _L("Most providers want an app password for this.");
+			a = _L("Set up your mail with Tools > Accounts > Add");
+			b = _L("Most providers want an app password for this");
 			}
 		else if (iMode == EOutbox) a = _L("Nothing waiting to be sent");
 		else if (iSearch) a = _L("Nothing found");
@@ -2166,7 +2166,7 @@ void CPmView::StatusInfoL()
 		lines[4].Append(iRunning ? _L("the mail engine is ready") : _L("the mail engine is not running"));
 	TMemoryInfoV1Buf mem;
 	UserHal::MemoryInfo(mem);
-	lines[5].Format(_L("Free memory: %d KB. Engine: %d KB."), mem().iFreeRamInBytes / 1024,
+	lines[5].Format(_L("Free memory: %d KB - the mail engine uses %d KB"), mem().iFreeRamInBytes / 1024,
 		iShared ? iShared->heap_used / 1024 : 0);
 	TPtrC ptrs[6];
 	for (TInt k = 0; k < 6; k++) ptrs[k].Set(lines[k]);

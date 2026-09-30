@@ -167,6 +167,26 @@ void CPmView::ToggleMonthL()
 	Render();
 	}
 
+// View > Switch view > Week / Month: that view (an infoprint when it is
+// the one shown already, as the style guide asks of a cycle with no effect)
+void CPmView::ShowMonthL(TBool aMonth)
+	{
+	if (iMode != ECalendar)
+		{
+		ShowCalendarL();
+		if (iMode != ECalendar)
+			return;
+		}
+	if (iCalMonth == aMonth && !iSidebar)
+		{
+		iEikonEnv->InfoMsg(aMonth ? _L("The month is already shown") : _L("The week is already shown"));
+		return;
+		}
+	iCalMonth = aMonth;
+	iSidebar = EFalse;
+	Render();
+	}
+
 void CPmView::CalendarTodayL()
 	{
 	if (iMode != ECalendar)

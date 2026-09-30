@@ -176,8 +176,8 @@ RESOURCE MENU_PANE r_pm_file_menu
 	items=
 		{
 		MENU_ITEM { command=EPmCmdSendRecv; txt="Check mail (send & receive)"; },
-		MENU_ITEM { command=EPmCmdFolderMenu; cascade=r_pm_folder_menu; txt="Folder"; },
-		MENU_ITEM { command=EPmCmdCalendar; txt="Sync calendar"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdCalendar; txt="Sync calendar"; },
+		MENU_ITEM { command=EPmCmdFolderMenu; cascade=r_pm_folder_menu; txt="Folder"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdHangup; txt="Disconnect"; },
 		MENU_ITEM { command=EPmCmdStop; txt="Stop"; },
 		MENU_ITEM { command=EPmCmdOffline; txt="Work offline"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
@@ -185,17 +185,17 @@ RESOURCE MENU_PANE r_pm_file_menu
 		};
 	}
 
-// File > Folder: this folder's mail, and the folders themselves (as the
-// built-in Email program's New folder, Rename folder and Delete folder)
+// File > Folder: this folder's mail, and the folders themselves. The items
+// finish the phrase ("Folder > Create new"), as the style guide has cascades
 RESOURCE MENU_PANE r_pm_folder_menu
 	{
 	items=
 		{
 		MENU_ITEM { command=EPmCmdRefresh; txt="Check this folder"; },
 		MENU_ITEM { command=EPmCmdOlder; txt="Get older messages"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdNewFolder; txt="New folder..."; },
-		MENU_ITEM { command=EPmCmdRenameFolder; txt="Rename folder..."; },
-		MENU_ITEM { command=EPmCmdDeleteFolder; txt="Delete folder"; }
+		MENU_ITEM { command=EPmCmdNewFolder; txt="Create new..."; },
+		MENU_ITEM { command=EPmCmdRenameFolder; txt="Rename..."; },
+		MENU_ITEM { command=EPmCmdDeleteFolder; txt="Delete"; }
 		};
 	}
 
@@ -207,7 +207,7 @@ RESOURCE MENU_PANE r_pm_edit_menu
 		MENU_ITEM { command=EPmCmdMove; txt="Move to folder..."; },
 		MENU_ITEM { command=EPmCmdArchive; txt="Archive"; },
 		MENU_ITEM { command=EPmCmdDelete; txt="Delete"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdSearch; txt="Find..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdSearch; txt="Find..."; },
 		MENU_ITEM { command=EPmCmdAddSender; txt="Add sender to Contacts"; }
 		};
 	}
@@ -246,12 +246,13 @@ RESOURCE MENU_PANE r_pm_reply_menu
 		};
 	}
 
-// the calendar's Event menu, where Message is in the mail
+// the calendar's Event menu, where Message is in the mail (Create new is
+// EPmCmdNew, which makes an event in the calendar, so Ctrl+N shows with it)
 RESOURCE MENU_PANE r_pm_event_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPmCmdNewEvent; txt="Create new event..."; },
+		MENU_ITEM { command=EPmCmdNew; txt="Create new event..."; },
 		MENU_ITEM { command=EPmCmdEventDetails; txt="Details..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdToday; txt="Go to today"; }
 		};
@@ -272,7 +273,8 @@ RESOURCE MENU_PANE r_pm_view_menu
 		};
 	}
 
-// the calendar's View: Switch view (the week or the month) where Sort is
+// the calendar's View: Switch view (a cascade of the week and the month;
+// Ctrl+Q cycles them) where Sort is
 RESOURCE MENU_PANE r_pm_cal_view_menu
 	{
 	items=
@@ -282,9 +284,18 @@ RESOURCE MENU_PANE r_pm_cal_view_menu
 		MENU_ITEM { command=EPmCmdToggleToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPmCmdToggleTitle; txt="Show title bar"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPmCmdToggleFolders; txt="Show list of folders"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdMonth; txt="Switch view"; },
+		MENU_ITEM { command=EPmCmdSwitchViewMenu; cascade=r_pm_switch_view_menu; txt="Switch view"; },
 		MENU_ITEM { command=EPmCmdStatusInfo; txt="Status information..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdGoToMenu; cascade=r_pm_goto_menu; txt="Go to"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pm_switch_view_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdWeekView; txt="Week"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPmCmdMonthView; txt="Month"; flags=EEikMenuItemCheckBox; }
 		};
 	}
 
@@ -365,12 +376,12 @@ RESOURCE DIALOG r_pm_info_dialog
 
 RESOURCE DIALOG r_pm_text_dialog
 	{
-	title="PsiMail";
+	title="Find";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
 		{
-		DLG_LINE { type=EEikCtEdwin; prompt="Find"; id=EPmDlgWords;
+		DLG_LINE { type=EEikCtEdwin; prompt="Search for"; id=EPmDlgWords;
 			control=EDWIN { width=30; maxlength=60; }; }
 		};
 	}
@@ -429,7 +440,7 @@ RESOURCE DIALOG r_pm_choice_dialog
 // address line): type to narrow the list; Space or a tap marks several
 RESOURCE DIALOG r_pm_contacts_dialog
 	{
-	title="Contacts";
+	title="Add from Contacts";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
@@ -441,11 +452,10 @@ RESOURCE DIALOG r_pm_contacts_dialog
 		};
 	}
 
-// File > Folder > New folder / Rename folder: the name, and (for a new one)
-// where it goes
+// File > Folder > Create new: the name, and where it goes
 RESOURCE DIALOG r_pm_folder_dialog
 	{
-	title="New folder";
+	title="Create new folder";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
@@ -457,7 +467,7 @@ RESOURCE DIALOG r_pm_folder_dialog
 		};
 	}
 
-// File > Folder > Rename folder: the new name
+// File > Folder > Rename: the new name
 RESOURCE DIALOG r_pm_rename_dialog
 	{
 	title="Rename folder";
@@ -532,7 +542,7 @@ RESOURCE ARRAY r_pm_yesno_array
 
 RESOURCE ARRAY r_pm_store_array
 	{
-	items={ LBUF { txt="CF card if there is one"; }, LBUF { txt="Internal disk (C:)"; } };
+	items={ LBUF { txt="Memory disk (CF) if there is one"; }, LBUF { txt="Internal disk (C:)"; } };
 	}
 
 RESOURCE ARRAY r_pm_account_pages
@@ -542,7 +552,7 @@ RESOURCE ARRAY r_pm_account_pages
 		PAGE { text="Account"; id=EPmPageAccount; lines=r_pm_account_lines; },
 		PAGE { text="Incoming"; id=EPmPageIncoming; lines=r_pm_incoming_lines; },
 		PAGE { text="Outgoing"; id=EPmPageOutgoing; lines=r_pm_outgoing_lines; },
-		PAGE { text="Options"; id=EPmPageOptions; lines=r_pm_options_lines; }
+		PAGE { text="Limits"; id=EPmPageOptions; lines=r_pm_options_lines; }
 		};
 	}
 
@@ -673,7 +683,7 @@ RESOURCE DIALOG r_pm_about_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1; control=LABEL { standard_font=EEikLabelFontLegend; reserve_length=24; txt="PsiMail"; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo2; control=LABEL { txt="Email & calendar for the Psion Series 5mx - (c) Dan Edge"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo2; control=LABEL { txt="Email & calendar for the Psion Series 5mx - (c) 2026 Dan Edge"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo3; control=LABEL { standard_font=EEikLabelFontAnnotation; reserve_length=60; txt="-"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo4; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="IMAP, SMTP & CalDAV over TLS 1.3 - networking from PsiTerm"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo5; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="LibTomCrypt, LibTomMath - public domain"; }; },

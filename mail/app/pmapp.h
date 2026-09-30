@@ -148,7 +148,9 @@ public:
 	void ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSettings& aCal);
 	void CalendarSyncL();                    // ask the engine, then update the Agenda
 	void ShowCalendarL();                    // the calendar screen
-	void ToggleMonthL();                     // View > Switch view: the week or the month
+	void ToggleMonthL();                     // View > Switch view (Ctrl+Q): the week or the month, round and round
+	void ShowMonthL(TBool aMonth);           // View > Switch view > Week / Month
+	TBool MonthShown() const { return iMode == ECalendar && iCalMonth; }
 	void CalendarTodayL();                   // Event > Go to today
 	void NewEventL();                        // the Create new event dialog: into the Agenda (then synced)
 	void EventDetailsL();                    // Event > Details: the chosen event in a dialog
@@ -216,6 +218,7 @@ public:
 	void DeleteOutboxL();
 	TInt OutboxCount();
 	void Toast(const TDesC& aText);
+	void Working(const TDesC& aText);        // a busy message (bottom left) until the engine is idle
 	void ZoomL(TInt aStep);                  // the sidebar's zoom buttons
 	TBool NativeMode() const;                // shown with EIKON controls (every mode now)
 	void RefreshPicturesL();                 // pictures the engine has decoded since: into the reader (pmnative.cpp)
@@ -370,6 +373,7 @@ private:
 	TInt iBusyWas;
 	TInt iOnlineWas;
 	TBool iBusyShown;
+	TUint iWorkingSince;             // tick count when Working() put a busy message up (0: it didn't)
 	TBool iMsgTapArmed;              // the selected message was tapped: another tap opens it                // EIKON's busy message is up
 	TInt iEntropyPos;
 	// the calendar
