@@ -3,8 +3,8 @@
 // (where you are, how many messages, the connection), column headings you
 // can tap to sort, a folder tree with pictures, a message list with status
 // pictures, a read-only rich text viewer, the standard toolbar on the right
-// and the sidebar's zoom buttons. (Writing, the calendar and event screens
-// are still PsiMail's own drawn screens - see psimail.cpp's Render().)
+// and zoom. (The calendar's pane, drawn beside the same folder tree, is
+// pmcalview.cpp; writing a message and making an event are dialogs.)
 #include "pmapp.h"
 #include "pmicons.h"
 #include <eiktxlbx.h>
@@ -23,16 +23,12 @@
 #include <frmtlay.h>
 #include <frmtview.h>
 
-// the Psion's four greys
-#define KPmDarkGrey  TRgb(85, 85, 85)
-#define KPmLightGrey TRgb(170, 170, 170)
-
 static const TInt KIndent = 12;          // the folder tree: one level
 static const TInt KIconCol = 28;         // the message list: status + attachment pictures
 static const TInt KScrollBarW = 23;      // room beside the reader for its scroll bar (EIKON's width)
 
 // a picture from PsiMail.mbm, drawn through its mask (black = drawn)
-static void DrawIcon(CWindowGc& aGc, CArrayPtr<CFbsBitmap>* aIcons, TInt aId, const TPoint& aPos)
+void PmDrawIcon(CWindowGc& aGc, CArrayPtr<CFbsBitmap>* aIcons, TInt aId, const TPoint& aPos)
 	{
 	if (!aIcons || aId < 0 || aId + 1 >= aIcons->Count())
 		return;
@@ -92,7 +88,7 @@ void CPmTreeDrawer::DrawActualItem(TInt aItemIndex, const TRect& aRect, TBool aC
 	if (iIcons && icon + 1 < iIcons->Count())
 		{
 		TSize s = iIcons->At(icon)->SizeInPixels();
-		DrawIcon(gc, iIcons, icon, TPoint(ix, mid - s.iHeight / 2));
+		PmDrawIcon(gc, iIcons, icon, TPoint(ix, mid - s.iHeight / 2));
 		}
 	// the name: highlighted on its own, as the built-in programs do
 	TPtrC text = iModel->ItemText(aItemIndex);
@@ -172,9 +168,9 @@ public:
 			iGc->DrawRect(TRect(aRect.iTl.iX, aRect.iTl.iY, aRect.iTl.iX + KIconCol - 2, aRect.iBr.iY));
 			}
 		if (icon != 0xff)
-			DrawIcon(*iGc, iIcons, icon, TPoint(aRect.iTl.iX + 1, y));
+			PmDrawIcon(*iGc, iIcons, icon, TPoint(aRect.iTl.iX + 1, y));
 		if (v & 0x100)
-			DrawIcon(*iGc, iIcons, EMbmMsgAttach, TPoint(aRect.iTl.iX + 11, y));
+			PmDrawIcon(*iGc, iIcons, EMbmMsgAttach, TPoint(aRect.iTl.iX + 11, y));
 		}
 private:
 	CArrayPtr<CFbsBitmap>* iIcons;
@@ -221,7 +217,14 @@ static TInt ZoomLevel(const TPmSettings& aSettings)
 
 TBool CPmView::NativeMode() const
 	{
-	return iMode == EList || iMode == EOutbox || iMode == EMessage || iMode == ENoAccount;
+	return iMode == EList || iMode == EOutbox || iMode == EMessage || iMode == ENoAccount || iMode == ECalendar;
+	}
+
+TInt CPmView::RowHeight() const
+	{
+	TInt z = ZoomLevel(*iSettings);
+	TInt h = iListFont ? iListFont->HeightInPixels() + 4 : 0;
+	return h < KRowHeight[z] ? KRowHeight[z] : h;
 	}
 
 void CPmView::LoadIconsL()
@@ -473,7 +476,7 @@ void CPmView::ShowNative(TBool aShow)
 		iSidebar = EFalse;                       // (no folder list to be in)
 	TBool list = aShow && (iMode == EList || iMode == EOutbox);
 	TBool reader = aShow && iMode == EMessage;
-	TBool folders = (list || (aShow && iMode == ENoAccount)) && !(iSettings->iView & 4);
+	TBool folders = (list || (aShow && (iMode == ENoAccount || iMode == ECalendar))) && !(iSettings->iView & 4);
 	TBool msgs = list && iRows->Count() > 0;
 	iFolderList->MakeVisible(folders);
 	iMsgList->MakeVisible(msgs);
@@ -1095,33 +1098,37 @@ void CPmView::ReaderBarModel(TInt& aTotal, TInt& aShown, TInt& aAbove) const
 	}
 
 // the parts: the shaft, the thumb within it, the two buttons
-void CPmView::ReaderBarParts(TRect& aShaft, TRect& aThumb, TRect& aUp, TRect& aDown) const
+void PmScrollBarParts(const TRect& aRect, TInt aTotal, TInt aShown, TInt aAbove, TRect& aShaft, TRect& aThumb, TRect& aUp, TRect& aDown)
 	{
-	TRect r = iBarRect;
+	const TRect& r = aRect;
 	TInt bh = 20;
 	aDown = TRect(r.iTl.iX, r.iBr.iY - bh, r.iBr.iX, r.iBr.iY);
 	aUp = TRect(r.iTl.iX, r.iBr.iY - 2 * bh, r.iBr.iX, r.iBr.iY - bh);
 	aShaft = TRect(r.iTl.iX, r.iTl.iY, r.iBr.iX, aUp.iTl.iY);
-	TInt total, shown, above;
-	ReaderBarModel(total, shown, above);
 	TInt sh = aShaft.Height();
-	TInt th = total > 0 ? sh * shown / total : sh;
+	TInt th = aTotal > 0 ? sh * aShown / aTotal : sh;
 	if (th < 16) th = 16;
 	if (th > sh) th = sh;
-	TInt room = total - shown;
-	TInt ty = aShaft.iTl.iY + (room > 0 ? (sh - th) * above / room : 0);
+	TInt room = aTotal - aShown;
+	TInt ty = aShaft.iTl.iY + (room > 0 ? (sh - th) * aAbove / room : 0);
 	aThumb = TRect(aShaft.iTl.iX, ty, aShaft.iBr.iX, ty + th);
 	}
 
-static void DrawBarButton(CWindowGc& aGc, const TRect& aRect, TBool aUp, TBool aDown);
-static void DrawButtonFace(CWindowGc& aGc, const TRect& aRect, TBool aDown);
-
-void CPmView::DrawReaderBar(CWindowGc& gc) const
+void CPmView::ReaderBarParts(TRect& aShaft, TRect& aThumb, TRect& aUp, TRect& aDown) const
 	{
-	if (iMode != EMessage || iBarRect.Width() <= 0)
+	TInt total, shown, above;
+	ReaderBarModel(total, shown, above);
+	PmScrollBarParts(iBarRect, total, shown, above, aShaft, aThumb, aUp, aDown);
+	}
+
+static void DrawBarButton(CWindowGc& aGc, const TRect& aRect, TBool aUp, TBool aDown);
+
+void PmDrawScrollBar(CWindowGc& gc, const TRect& aRect, TInt aTotal, TInt aShown, TInt aAbove, TInt aPress)
+	{
+	if (aRect.Width() <= 0)
 		return;
 	TRect shaft, thumb, up, down;
-	ReaderBarParts(shaft, thumb, up, down);
+	PmScrollBarParts(aRect, aTotal, aShown, aAbove, shaft, thumb, up, down);
 	gc.SetPenStyle(CGraphicsContext::ESolidPen);
 	gc.SetPenColor(KRgbBlack);
 	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
@@ -1129,14 +1136,23 @@ void CPmView::DrawReaderBar(CWindowGc& gc) const
 	gc.DrawRect(shaft);
 	// the thumb: a raised button with grip lines
 	TRect t(thumb.iTl.iX + 1, thumb.iTl.iY, thumb.iBr.iX - 1, thumb.iBr.iY);
-	DrawButtonFace(gc, t, EFalse);
+	PmDrawButtonFace(gc, t, EFalse);
 	gc.SetPenColor(KRgbBlack);
 	TInt cy = t.iTl.iY + t.Height() / 2;
 	for (TInt k = -4; k <= 4; k += 2)
 		if (cy + k > t.iTl.iY + 2 && cy + k < t.iBr.iY - 2)
 			gc.DrawLine(TPoint(t.iTl.iX + 5, cy + k), TPoint(t.iBr.iX - 5, cy + k));
-	DrawBarButton(gc, up, ETrue, iBarPress == 1);
-	DrawBarButton(gc, down, EFalse, iBarPress == 2);
+	DrawBarButton(gc, up, ETrue, aPress == 1);
+	DrawBarButton(gc, down, EFalse, aPress == 2);
+	}
+
+void CPmView::DrawReaderBar(CWindowGc& gc) const
+	{
+	if (iMode != EMessage || iBarRect.Width() <= 0)
+		return;
+	TInt total, shown, above;
+	ReaderBarModel(total, shown, above);
+	PmDrawScrollBar(gc, iBarRect, total, shown, above, iBarPress);
 	}
 
 void CPmView::UpdateReaderBar()
@@ -1289,7 +1305,7 @@ void CPmView::NativeActivateLinkL()
 // ----- the title band and the column headings (drawn here, around the controls) ----
 
 // an EIKON button face: light grey, lit from the top left
-static void DrawButtonFace(CWindowGc& aGc, const TRect& aRect, TBool aDown)
+void PmDrawButtonFace(CWindowGc& aGc, const TRect& aRect, TBool aDown)
 	{
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
@@ -1314,7 +1330,7 @@ static void DrawButtonFace(CWindowGc& aGc, const TRect& aRect, TBool aDown)
 // the scroll bar's buttons: a face with a solid triangle
 static void DrawBarButton(CWindowGc& aGc, const TRect& aRect, TBool aUp, TBool aDown)
 	{
-	DrawButtonFace(aGc, aRect, aDown);
+	PmDrawButtonFace(aGc, aRect, aDown);
 	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
 	aGc.SetPenColor(KRgbBlack);
 	TInt cx = aRect.iTl.iX + aRect.Width() / 2, cy = aRect.iTl.iY + aRect.Height() / 2;
@@ -1372,8 +1388,8 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 	gc.DrawRect(band);
 	// the folder-list button (it shows or hides the folders)
 	TRect btn(band.iTl.iX + 1, band.iTl.iY + 1, band.iTl.iX + iTitleH + 3, band.iBr.iY - 1);
-	DrawButtonFace(gc, btn, iPenHead == 10);
-	DrawIcon(gc, iIcons, (iSettings->iView & 4) ? EMbmFolder : EMbmFolderOpen,
+	PmDrawButtonFace(gc, btn, iPenHead == 10);
+	PmDrawIcon(gc, iIcons, (iSettings->iView & 4) ? EMbmFolder : EMbmFolderOpen,
 		TPoint(btn.iTl.iX + (btn.Width() - 16) / 2, btn.iTl.iY + (btn.Height() - 13) / 2));
 	gc.UseFont(iTitleFont);
 	gc.SetBrushStyle(CGraphicsContext::ENullBrush);
@@ -1398,6 +1414,8 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 	TBuf<120> where;
 	if (iMode == EOutbox)
 		where = _L("Outbox");
+	else if (iMode == ECalendar)
+		where = _L("Calendar");
 	else if (iMode == ENoAccount)
 		where = _L("PsiMail");
 	else if (iSearch)
@@ -1427,6 +1445,8 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 		if (iRows->Count())
 			mid.Format(_L("Message %d of %d"), iSel + 1, iRows->Count());
 		}
+	else if (iMode == ECalendar)
+		CalendarText(mid);
 	else if (iMode == EOutbox)
 		{
 		if (iRows->Count() == 1) mid = _L("1 message");
@@ -1463,7 +1483,7 @@ static TBool ListMode(TInt aMode)
 
 void CPmView::DrawHeaders(CWindowGc& gc) const
 	{
-	if (!ListMode(iMode))
+	if (!ListMode(iMode) && iMode != ECalendar)
 		return;
 	TRect r = Rect();
 	TInt y = r.iTl.iY + iTitleH;
@@ -1474,13 +1494,14 @@ void CPmView::DrawHeaders(CWindowGc& gc) const
 		sentLike = ETrue;
 	const TText* KNames[5] = { _S("Folders"), _S("?"), sentLike ? _S("To") : _S("From"), _S("Subject"), _S("Date") };
 	gc.UseFont(iBoldFont);
-	for (TInt i = (iSettings->iView & 4) ? 1 : 0; i < 5; i++)
+	TInt last = iMode == ECalendar ? 1 : 5;          // (the calendar's own buttons follow)
+	for (TInt i = (iSettings->iView & 4) ? 1 : 0; i < last; i++)
 		{
 		TInt x0 = iHeadX[i];
 		TInt x1 = i < 4 ? iHeadX[i + 1] : r.iBr.iX;
 		if (i == 0) x1 = iHeadX[1];
 		TRect b(x0, y, x1, y + iHeadH);
-		DrawButtonFace(gc, b, iPenHead == i);
+		PmDrawButtonFace(gc, b, iPenHead == i);
 		gc.SetBrushStyle(CGraphicsContext::ENullBrush);
 		gc.SetPenColor(KRgbBlack);
 		TPtrC name(KNames[i]);
@@ -1522,11 +1543,15 @@ TInt CPmView::HeaderHit(const TPoint& aPos) const
 		return -1;
 		}
 	TInt y = r.iTl.iY + iTitleH;
-	if (!ListMode(iMode) || aPos.iY < y || aPos.iY >= y + iHeadH)
+	if (!(ListMode(iMode) || iMode == ECalendar) || aPos.iY < y || aPos.iY >= y + iHeadH)
 		return -1;
 	for (TInt i = 4; i >= 0; i--)
 		if (aPos.iX >= iHeadX[i])
-			return (i == 0 && (iSettings->iView & 4)) ? -1 : i;
+			{
+			if (i == 0 && (iSettings->iView & 4)) return -1;
+			if (i > 0 && iMode == ECalendar) return -1;   // (the pane's buttons: CalendarPointerL)
+			return i;
+			}
 	return -1;
 	}
 
@@ -1541,7 +1566,7 @@ void CPmView::HeaderActionL(TInt aHit)
 		else ToggleViewL(4);
 		break;
 	case 11: StatusInfoL(); break;
-	case 0: if (iMode == EList || iMode == EOutbox) FocusFoldersL(); break;
+	case 0: if (iMode == EList || iMode == EOutbox || iMode == ECalendar) FocusFoldersL(); break;
 	case 1: if (iMode == EList) SortL(s == 6 ? 0 : 6); break;
 	case 2: if (iMode == EList) SortL(s == 2 ? 3 : 2); break;
 	case 3: if (iMode == EList) SortL(s == 4 ? 5 : 4); break;
@@ -1561,10 +1586,12 @@ void CPmView::DrawNative(const TRect& /*aRect*/) const
 	DrawTitle(gc);
 	DrawHeaders(gc);
 	DrawReaderBar(gc);
+	if (iMode == ECalendar)
+		DrawCalendar(gc);
 	gc.SetPenStyle(CGraphicsContext::ESolidPen);
 	gc.SetPenColor(KRgbBlack);
 	TInt top = r.iTl.iY + iTitleH + iHeadH;
-	if (ListMode(iMode) && iSplitX)
+	if ((ListMode(iMode) || iMode == ECalendar) && iSplitX)
 		gc.DrawLine(TPoint(r.iTl.iX + iSplitX, top), TPoint(r.iTl.iX + iSplitX, r.iBr.iY));
 	// an empty folder, or no account yet: say so where the list would be
 	TBool emptyList = (iMode == EList || iMode == EOutbox) && iRows->Count() == 0;
@@ -1606,7 +1633,7 @@ void CPmView::UpdateNativeL()
 		}
 	else if (iMode == EMessage)
 		UpdateReaderL();
-	else if (iMode == ENoAccount)
+	else if (iMode == ENoAccount || iMode == ECalendar)
 		UpdateFolderListL();
 	TBool wantMsgList = (iMode == EList || iMode == EOutbox) && iRows->Count() > 0;
 	if (modeChanged)
@@ -1615,11 +1642,19 @@ void CPmView::UpdateNativeL()
 		(void)e;
 		}
 	if (modeChanged || wantMsgList != iMsgList->IsVisible() ||
-		iFolderList->IsFocused() != ((iMode == EList || iMode == EOutbox) && iSidebar))
+		iFolderList->IsFocused() != ((iMode == EList || iMode == EOutbox || iMode == ECalendar) && iSidebar))
 		{
 		ShowNative(ETrue);
 		iNativeMode = iMode;
 		DrawNow();
+		}
+	else if (iMode == ECalendar && IsReadyToDraw())
+		{
+		// the pane and the title band (the folder tree redraws itself)
+		ActivateGc();
+		DrawTitle(SystemGc());
+		DrawCalendar(SystemGc());
+		DeactivateGc();
 		}
 	else
 		UpdateStatusLine();                     // (the lists redraw themselves when they change)
@@ -1627,7 +1662,7 @@ void CPmView::UpdateNativeL()
 
 void CPmView::SyncSelectionFromLists()
 	{
-	if (iMode == EList || iMode == EOutbox)
+	if (iMode == EList || iMode == EOutbox || iMode == ECalendar)
 		{
 		if (iSidebar)
 			{
@@ -1635,7 +1670,7 @@ void CPmView::SyncSelectionFromLists()
 			if (i >= 0)
 				iFolderSel = i;
 			}
-		else if (iRows->Count())
+		else if (iRows->Count() && iMode != ECalendar)
 			iSel = iMsgList->CurrentItemIndex();
 		}
 	}
@@ -1762,6 +1797,40 @@ TKeyResponse CPmView::NativeKeyL(const TKeyEvent& aKeyEvent, TEventCode aType)
 	{
 	TUint code = aKeyEvent.iCode;
 	TBool canFolders = !(iSettings->iView & 4);
+	if (iMode == ECalendar)
+		{
+		if (iSidebar && canFolders)
+			{
+			// the folder tree works as it does beside the mail
+			if (IsListKey(code))
+				{
+				iFolderList->OfferKeyEventL(aKeyEvent, aType);
+				SyncSelectionFromLists();
+				return EKeyWasConsumed;
+				}
+			switch (code)
+				{
+			case EKeyEnter:
+			case EKeyRightArrow:
+			case EKeyTab:
+				if (iFolderList->CurrentItemIndex() == 0)
+					AccountRowL(*this, *iSettings);
+				else
+					{
+					SyncSelectionFromLists();
+					OpenCurrentL();
+					}
+				return EKeyWasConsumed;
+			case EKeyEscape:
+				iSidebar = EFalse;
+				Render();
+				return EKeyWasConsumed;
+			default:
+				return EKeyWasNotConsumed;
+				}
+			}
+		return CalendarKeyL(code);
+		}
 	if (iMode == EList || iMode == EOutbox)
 		{
 		if (IsListKey(code))

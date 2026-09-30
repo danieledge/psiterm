@@ -20,12 +20,15 @@ enum TPmIconId
 	EMbmMsgAttach = 28, EMbmMsgAttachMask = 29,
 	EMbmMsgDraft = 30, EMbmMsgDraftMask = 31,
 	EMbmMsgError = 32, EMbmMsgErrorMask = 33,
-	EMbmMsgOutbox = 34, EMbmMsgOutboxMask = 35,
-	EMbmToolNew = 36, EMbmToolNewMask = 37,
-	EMbmToolReply = 38, EMbmToolReplyMask = 39,
-	EMbmToolCheck = 40, EMbmToolCheckMask = 41,
-	EMbmToolDelete = 42, EMbmToolDeleteMask = 43,
-	EMbmToolBack = 44, EMbmToolBackMask = 45,
-	EMbmCount = 46
+	EMbmEvAlarm = 34, EMbmEvAlarmMask = 35,
+	EMbmEvRepeat = 36, EMbmEvRepeatMask = 37,
+	EMbmEvPending = 38, EMbmEvPendingMask = 39,
+	EMbmMsgOutbox = 40, EMbmMsgOutboxMask = 41,
+	EMbmToolNew = 42, EMbmToolNewMask = 43,
+	EMbmToolReply = 44, EMbmToolReplyMask = 45,
+	EMbmToolCheck = 46, EMbmToolCheckMask = 47,
+	EMbmToolDelete = 48, EMbmToolDeleteMask = 49,
+	EMbmToolBack = 50, EMbmToolBackMask = 51,
+	EMbmCount = 52
 	};
 #endif

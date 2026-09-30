@@ -235,11 +235,6 @@ CPmView::~CPmView()
 	delete iAttNames;
 	delete iAttSizes;
 	delete iAttParts;
-	delete iCmpNames;
-	delete iCmpSizes;
-	delete iDraft;
-	if (iEdOpen) for (TInt i = 0; i < 4; i++) ed_free(&iEd[i]);
-	if (iEvOpen) { ed_free(&iEd[4]); ed_free(&iEd[5]); }
 	delete iBitmap;
 	User::Free(iBits);
 	if (iChunkOpen)
@@ -255,8 +250,8 @@ void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSetti
 	iSettings = &aSettings;
 	iCal = &aCal;
 	iCalSync = CPmCalSync::NewL(*this);
-	// the mailbox and the reader are EIKON controls (pmnative.cpp); writing
-	// and the calendar are drawn by PsiMail itself, in 16 greys (see ui/)
+	// the mailbox, the reader and the calendar are EIKON controls and drawing
+	// (pmnative.cpp, pmcalview.cpp)
 	CreateWindowL();
 	SetRectL(aRect);
 	EnableDragEvents();
@@ -265,10 +260,9 @@ void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSetti
 	iAttNames = new(ELeave) CDesCArrayFlat(4);
 	iAttSizes = new(ELeave) CDesCArrayFlat(4);
 	iAttParts = new(ELeave) CDesC8ArrayFlat(4);
-	iCmpNames = new(ELeave) CDesCArrayFlat(4);
-	iCmpSizes = new(ELeave) CDesCArrayFlat(4);
 
-	// the drawn screens use the whole screen (the toolbar is hidden then)
+	// the 16-grey canvas of PsiMail's earlier drawn screens: no longer shown,
+	// but pmdoc's layout of a message (for quoting) still measures with it
 	TSize size = iCoeEnv->ScreenDevice()->SizeInPixels();
 	if (size.iWidth > 640) size.iWidth = 640;
 	if (size.iHeight > 240) size.iHeight = 240;
@@ -884,7 +878,6 @@ void CPmView::ReloadL()
 		LoadOutboxL();
 		break;
 	case ECalendar:
-	case ECalEvent:
 		LoadFoldersL();
 		LoadCalendarL();
 		break;
@@ -915,8 +908,6 @@ void CPmView::FocusFoldersL()
 	{
 	if (iMode == EMessage)
 		BackL();
-	if (iMode == ECalEvent)
-		iMode = ECalendar;
 	if (iMode == ECalendar)
 		{
 		iSidebar = ETrue;
@@ -1025,12 +1016,6 @@ void CPmView::OpenCurrentL()
 
 void CPmView::BackL()
 	{
-	if (iMode == ECalEvent)
-		{
-		iMode = ECalendar;
-		Render();
-		return;
-		}
 	if (iMode == EMessage)
 		{
 		iMode = iListMode;
@@ -1213,6 +1198,12 @@ void CPmView::CalProgress(const TDesC& aText)
 	{
 	SafeCopy(iStatus, aText);
 	iStatusUntil = User::TickCount() + 64 * 30;
+	if (iNativeShown && aText.Length())
+		{
+		TRAPD(err, iEikonEnv->BusyMsgL(aText, EHLeftVBottom, TTimeIntervalMicroSeconds32(300000)));
+		(void)err;
+		iBusyShown = ETrue;
+		}
 	Render();
 	}
 
@@ -1220,6 +1211,11 @@ void CPmView::CalSyncDone(TInt aError, const TDesC& aSummary, TBool aPushed)
 	{
 	iStatus.Zero();
 	iStatusUntil = 0;
+	if (iBusyShown && !Busy())
+		{
+		iEikonEnv->BusyMsgCancel();
+		iBusyShown = EFalse;
+		}
 	if (aError == KErrNone && aPushed && !iCalSecond)
 		{
 		// send what changed in the Agenda (the engine then fetches again)
@@ -1862,7 +1858,7 @@ void CPmView::SetStatus(const TDesC& aText)
 	}
 
 // ============================================================================
-// Drawing - everything through ui/ (pmscreens.cpp), into a 16-grey bitmap
+// Drawing - the EIKON screens (pmnative.cpp, pmcalview.cpp)
 // ============================================================================
 
 TInt CPmView::Rows() const
@@ -1872,14 +1868,7 @@ TInt CPmView::Rows() const
 
 void CPmView::Toast(const TDesC& aText)
 	{
-	if (iNativeShown && NativeMode())
-		{
-		iEikonEnv->InfoMsg(aText);           // EIKON's own message, as the style guide has it
-		return;
-		}
-	SafeCopy(iToast, aText);
-	iToastUntil = User::TickCount() + 64 * 3;      // 3 s (1/64 s ticks)
-	Render();
+	iEikonEnv->InfoMsg(aText);               // EIKON's own message, as the style guide has it
 	}
 
 void CPmView::FormatDate(TInt aDate, TDes& aOut) const
@@ -2077,83 +2066,27 @@ void CPmView::RenderReader()
 	ui_reader(&iCanvas, &r);
 	}
 
-// draws the screen into iBits, then onto the window
+// brings the screen up to date: the EIKON controls, the title band and the
+// calendar's pane (pmnative.cpp, pmcalview.cpp)
 void CPmView::Render()
 	{
-	CPmAppUi* ui = (CPmAppUi*)iEikonEnv->EikAppUi();
-	if (NativeMode() && iFolderList)
-		{
-		if (!iNativeShown)
-			{
-			iNativeShown = ETrue;
-			iNativeMode = (TMode)-1;
-			ui->ShowToolBar(ETrue);            // (sets our rect: SizeChanged lays out)
-			}
-		TRAPD(err, UpdateNativeL());
-		(void)err;
+	UseMenus(iMode == ECalendar);
+	if (!iFolderList)
 		return;
-		}
-	if (iNativeShown && iFolderList)
+	if (!iNativeShown)
 		{
-		ShowNative(EFalse);
+		iNativeShown = ETrue;
 		iNativeMode = (TMode)-1;
-		ui->ShowToolBar(EFalse);
+		((CPmAppUi*)iEikonEnv->EikAppUi())->ShowToolBar(ETrue);   // (sets our rect: SizeChanged lays out)
 		}
-	iCanvas.mono = iSettings->iMono;
-	TBool splash = !iSplashDone && iRunning && iShared && iShared->state == PM_STATE_STARTING;
-	if (splash)
-		{
-		const TDesC& t = _L("Starting the mail engine...");
-		ui_splash(&iCanvas, CStr(t), t.Length());
-		}
-	else switch (iMode)
-		{
-	case EMessage:
-		RenderReader();
-		break;
-	case ECalendar:
-		RenderCalendar();
-		break;
-	case ECalEvent:
-		RenderEvent();
-		break;
-	case ECompose:
-		RenderCompose();
-		break;
-	case EEventEdit:
-		RenderEventEdit();
-		break;
-	case ENoAccount:
-		{
-		const TDesC& a = _L("Set up your mail with Tools > New account (Ctrl+K).");
-		const TDesC& b = _L("Most providers want an app password for this.");
-		ui_welcome(&iCanvas, CStr(a), a.Length(), CStr(b), b.Length());
-		break;
-		}
-	default:
-		RenderMailbox();
-		break;
-		}
-	if (iToast.Length())
-		ui_toast(&iCanvas, CStr(iToast), iToast.Length());
-	// the buffer has an EGray16 scan line's layout
-	for (TInt y = 0; y < iCanvas.h; y++)
-		{
-		TPtr8 row(iBits + y * iCanvas.stride, iCanvas.stride, iCanvas.stride);
-		iBitmap->SetScanLine(row, y);
-		}
-	DrawNow();
+	TRAPD(err, UpdateNativeL());
+	(void)err;
 	}
 
 void CPmView::Draw(const TRect& aRect) const
 	{
-	if (iNativeShown)
-		{
-		DrawNative(aRect);
-		DrawStatus(SystemGc());
-		return;
-		}
-	SystemGc().BitBlt(aRect.iTl, iBitmap, aRect);
+	DrawNative(aRect);
+	DrawStatus(SystemGc());
 	}
 
 // ============================================================================
@@ -2192,7 +2125,7 @@ void CPmView::MoveSel(TInt aDelta)
 // the entry in the folder column for what's showing
 TInt CPmView::CurrentSidebarItem() const
 	{
-	if (iMode == ECalendar || iMode == ECalEvent)
+	if (iMode == ECalendar)
 		return iFolders->Count() + 1;
 	if (iMode == EOutbox)
 		return iFolders->Count();
@@ -2210,7 +2143,7 @@ void CPmView::SidebarPage(TInt aDir)
 	Render();                              // (FillSidebar keeps it in range)
 	}
 
-// Folder > Go to folder...: one of the column's entries
+// View > Go to: one of the folder tree's entries
 void CPmView::OpenSidebarItemL(TInt aIndex)
 	{
 	if (iMode == EMessage)
@@ -2271,17 +2204,13 @@ TKeyResponse CPmView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 	AddEntropy(code);
 	if (aKeyEvent.iModifiers & EModifierCtrl)
 		return EKeyWasNotConsumed;         // the menu's hotkeys
-	if (iMode == ECompose)
-		return ComposeKeyL(code, aKeyEvent.iModifiers);
-	if (iMode == EEventEdit)
-		return EventEditKeyL(code, aKeyEvent.iModifiers);
 	// Esc stops the engine when there is nothing to go back from (or the
 	// message being waited for is the thing it's fetching); otherwise it goes
 	// back, even while mail downloads ahead in the background
 	TBool escStops = ETrue;
 	if (iNativeShown && NativeMode())
 		escStops = (iMode == EMessage && iWaitingBody) ||
-			((iMode == EList || iMode == EOutbox) && iSidebar) || iMode == ENoAccount ||
+			((iMode == EList || iMode == EOutbox || iMode == ECalendar) && iSidebar) || iMode == ENoAccount ||
 			(iShared->busy && !iShared->online);   // still connecting: nothing to go back from
 	if (code == EKeyEscape && Busy() && escStops && !DownloadingAhead())
 		{
@@ -2294,10 +2223,6 @@ TKeyResponse CPmView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 		return ReaderKeyL(code, aKeyEvent.iModifiers);
 	if (iMode == EList || iMode == EOutbox)
 		return MailboxKeyL(code);
-	if (iMode == ECalendar)
-		return CalendarKeyL(code);
-	if (iMode == ECalEvent)
-		return EventKeyL(code);
 	return EKeyWasNotConsumed;
 	}
 
@@ -2423,9 +2348,11 @@ void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
 	AddEntropy(p.iX * 1000 + p.iY);
 	if (iNativeShown && NativeMode())
 		{
-		// the title band and the headings are ours; the list boxes and the
-		// reader take the pen themselves
+		// the title band, the headings and the calendar's pane are ours; the
+		// list boxes and the reader take the pen themselves
 		if (NativePointerL(aEvent))
+			return;
+		if (iMode == ECalendar && CalendarPointerL(aEvent))
 			return;
 		CCoeControl::HandlePointerEventL(aEvent);
 		if (iMode == EMessage && aEvent.iType == TPointerEvent::EButton1Up && iLinks)
@@ -2444,7 +2371,7 @@ void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
 		}
 	// the folder column: the pen drags it up and down; a tap (no drag)
 	// opens the folder when the pen lifts
-	TBool side = (iMode == EList || iMode == EOutbox || iMode == ECalendar) && p.iX < UI_SIDE_W;
+	TBool side = (iMode == EList || iMode == EOutbox) && p.iX < UI_SIDE_W;
 	if (aEvent.iType == TPointerEvent::EButton1Down && side)
 		{
 		iPenSide = ETrue;
@@ -2479,21 +2406,6 @@ void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
 	else if (aEvent.iType != TPointerEvent::EButton1Down)
 		return;
 	TInt index = -1;
-	if (iMode == ECompose)
-		{
-		ComposePointerL(p);
-		return;
-		}
-	if (iMode == EEventEdit)
-		{
-		EventEditPointerL(p);
-		return;
-		}
-	if (iMode == ECalendar || iMode == ECalEvent)
-		{
-		CalendarPointerL(p);
-		return;
-		}
 	if (iMode == EList || iMode == EOutbox)
 		{
 		PmUiMailbox m;
@@ -2956,7 +2868,6 @@ void CPmPrefsDialog::PreLayoutDynInitL()
 	SetChoiceListCurrentItem(EPmDlgSort, iSettings.iSort >= 0 && iSettings.iSort <= 6 ? iSettings.iSort : 0);
 	SetNumberEditorValue(EPmDlgPrefetch, PrefetchCount(iSettings));
 	SetChoiceListCurrentItem(EPmDlgStore, iSettings.iStore ? 1 : 0);
-	SetChoiceListCurrentItem(EPmDlgSmooth, iSettings.iMono ? 0 : 1);
 	}
 
 TBool CPmPrefsDialog::OkToExitL(TInt /*aButtonId*/)
@@ -2965,7 +2876,6 @@ TBool CPmPrefsDialog::OkToExitL(TInt /*aButtonId*/)
 	TInt ahead = NumberEditorValue(EPmDlgPrefetch);
 	iSettings.iPrefetch = ahead > 0 ? ahead : -1;
 	iSettings.iStore = ChoiceListCurrentItem(EPmDlgStore);
-	iSettings.iMono = ChoiceListCurrentItem(EPmDlgSmooth) ? 0 : 1;
 	return ETrue;
 	}
 
@@ -3162,8 +3072,7 @@ CCoeControl* CPmAppUi::ToolBarButton(TInt aId)
 	return iToolBar ? iToolBar->ControlById(aId) : NULL;
 	}
 
-// the mailbox and the reader have the standard toolbar; writing and the
-// calendar are drawn screens that use all of it
+// the standard toolbar (View > Show toolbar hides it: the view takes its room)
 void CPmAppUi::ShowToolBar(TBool aShow)
 	{
 	if (iSettings.iView & 1)
@@ -3899,7 +3808,7 @@ TBool CPmUpdateDialog::OkToExitL(TInt /*aButtonId*/)
 	return ETrue;
 	}
 
-// Folder > Go to folder: every folder, however many the column can show
+// View > Go to > Folder: every folder, however many the tree can show
 void CPmAppUi::FoldersL()
 	{
 	TInt n = iView->FolderCount();
@@ -4011,22 +3920,28 @@ void CPmAboutDialog::PreLayoutDynInitL()
 	SetLabelL(EPmDlgInfo3, iStatus);
 	}
 
+// Each pane is dimmed and ticked on its own: EIKON panics (EIKON 8) when
+// asked about an item the pane doesn't hold, so every SetItemDimmed and
+// SetItemButtonState here names an item of that one pane.
 void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 	{
 	CPmView::TMode m = iView->Mode();
 	TBool msg = (m == CPmView::EList || m == CPmView::EMessage) && iView->CurrentRow() != NULL;
-	TBool native = m == CPmView::EList || m == CPmView::EOutbox || m == CPmView::EMessage || m == CPmView::ENoAccount;
+	TBool list = m == CPmView::EList && !iView->CurrentIsSearch();
 	if (aMenuId == R_PM_FILE_MENU)
 		{
 		aMenuPane->SetItemButtonState(EPmCmdOffline, iSettings.iOffline ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemDimmed(EPmCmdHangup, !iView->Shared()->online);
 		aMenuPane->SetItemDimmed(EPmCmdStop, !iView->Busy());
+		aMenuPane->SetItemDimmed(EPmCmdRefresh, m != CPmView::EList);
+		aMenuPane->SetItemDimmed(EPmCmdOlder, !list);
 		}
 	else if (aMenuId == R_PM_EDIT_MENU)
 		{
 		aMenuPane->SetItemDimmed(EPmCmdDelete, !msg && !(m == CPmView::EOutbox && iView->CurrentRow()));
 		aMenuPane->SetItemDimmed(EPmCmdMove, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdArchive, !msg);
+		aMenuPane->SetItemDimmed(EPmCmdSearch, m == CPmView::ECalendar || m == CPmView::ENoAccount);
 		}
 	else if (aMenuId == R_PM_MESSAGE_MENU)
 		{
@@ -4042,30 +3957,32 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemDimmed(EPmCmdWeb, m != CPmView::EMessage || !iView->HasHtml());
 		aMenuPane->SetItemDimmed(EPmCmdNew, m == CPmView::ENoAccount);
 		}
-	else if (aMenuId == R_PM_VIEW_MENU)
+	else if (aMenuId == R_PM_EVENT_MENU)
+		{
+		aMenuPane->SetItemDimmed(EPmCmdEventDetails, !iView->EventSelected());
+		}
+	else if (aMenuId == R_PM_VIEW_MENU || aMenuId == R_PM_CAL_VIEW_MENU)
 		{
 		aMenuPane->SetItemButtonState(EPmCmdToggleToolbar, (iSettings.iView & 1) ? 0 : EEikMenuItemSymbolOn);
 		aMenuPane->SetItemButtonState(EPmCmdToggleTitle, (iSettings.iView & 2) ? 0 : EEikMenuItemSymbolOn);
 		aMenuPane->SetItemButtonState(EPmCmdToggleFolders, (iSettings.iView & 4) ? 0 : EEikMenuItemSymbolOn);
-		aMenuPane->SetItemDimmed(EPmCmdToggleToolbar, !native);
-		aMenuPane->SetItemDimmed(EPmCmdToggleTitle, !native);
-		aMenuPane->SetItemDimmed(EPmCmdToggleFolders, !native);
-		aMenuPane->SetItemDimmed(EPmCmdSort, m != CPmView::EList);
+		// (only the mail's View has Sort)
+		if (aMenuId == R_PM_VIEW_MENU)
+			aMenuPane->SetItemDimmed(EPmCmdSort, m != CPmView::EList);
 		}
-	else if (aMenuId == R_PM_FOLDER_MENU)
+	else if (aMenuId == R_PM_GOTO_MENU)
 		{
-		aMenuPane->SetItemDimmed(EPmCmdOlder, m != CPmView::EList || iView->CurrentIsSearch());
+		aMenuPane->SetItemDimmed(EPmCmdInbox, iView->FolderCount() == 0);
+		aMenuPane->SetItemDimmed(EPmCmdFolders, iView->FolderCount() == 0);
 		}
 	else if (aMenuId == R_PM_REPLY_MENU || aMenuId == R_PM_REPLY_POPUP)
 		{
 		aMenuPane->SetItemDimmed(EPmCmdReply, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdReplyAll, !msg);
-		// (only the toolbar's pop-up has Forward: EIKON panics if asked to
-		// dim an item a menu doesn't have)
+		// (only the toolbar's pop-up has Forward)
 		if (aMenuId == R_PM_REPLY_POPUP)
 			aMenuPane->SetItemDimmed(EPmCmdForward, !msg);
 		}
-
 	}
 
 void CPmAppUi::HandleCommandL(TInt aCommand)
@@ -4081,15 +3998,15 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		iView->ToolbarPopupL(aCommand);
 		return;
 		}
-	if (iView->ModalCommandL(aCommand))
-		return;
 	CPmView::TMode m = iView->Mode();
 	if (m == CPmView::ENoAccount && aCommand == EPmCmdEditAccount)
 		aCommand = EPmCmdNewAccount;
 	if (m == CPmView::ENoAccount && aCommand != EEikCmdExit && aCommand != EPmCmdNewAccount &&
 		aCommand != EPmCmdConnSettings && aCommand != EPmCmdAbout && aCommand != EPmCmdUpdate &&
 		aCommand != EPmCmdToggleToolbar && aCommand != EPmCmdToggleTitle && aCommand != EPmCmdToggleFolders &&
-		aCommand != EPmCmdStatusInfo && aCommand != EPmCmdStop && aCommand != EPmCmdPrefs)
+		aCommand != EPmCmdStatusInfo && aCommand != EPmCmdStop && aCommand != EPmCmdPrefs &&
+		aCommand != EPmCmdZoomIn && aCommand != EPmCmdZoomOut && aCommand != EPmCmdCalSettings &&
+		aCommand != EPmCmdRestart)
 		{
 		iView->Toast(_L("No account - add one with Tools > Accounts"));
 		return;
@@ -4138,7 +4055,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdNew:
 		// in the calendar, Ctrl+N makes an event
-		if (iView->Mode() == CPmView::ECalendar || iView->Mode() == CPmView::ECalEvent)
+		if (m == CPmView::ECalendar)
 			iView->NewEventL();
 		else
 			NewMessageL();
@@ -4155,6 +4072,8 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 	case EPmCmdDelete:
 		if (m == CPmView::EList || m == CPmView::EOutbox || m == CPmView::EMessage)
 			iView->DeleteCurrentL();
+		else
+			iView->Toast(m == CPmView::ECalendar ? _L("Events are changed in the Agenda") : _L("Nothing to delete"));
 		break;
 	case EPmCmdPrefs:
 		{
@@ -4175,6 +4094,8 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 			iView->BackL();
 		else if (m == CPmView::EList || m == CPmView::EOutbox)
 			iView->DeleteCurrentL();
+		else
+			iView->Toast(m == CPmView::ECalendar ? _L("Events are changed in the Agenda") : _L("Nothing to delete"));
 		break;
 	case EPmCmdStop:
 		if (iView->Busy())
@@ -4194,6 +4115,11 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdSort:
 		{
+		if (m != CPmView::EList)
+			{
+			iView->Toast(_L("Not available here - open a folder to sort its messages"));
+			break;
+			}
 		CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(8);
 		CleanupStack::PushL(names);
 		names->AppendL(_L("Date, newest first"));
@@ -4261,16 +4187,17 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 	case EPmCmdMonth:
 		iView->ToggleMonthL();
 		break;
+	case EPmCmdToday:
+		iView->CalendarTodayL();
+		break;
+	case EPmCmdEventDetails:
+		iView->EventDetailsL();
+		break;
 	case EPmCmdNewEvent:
 		iView->NewEventL();
 		break;
 	case EPmCmdCalSettings:
 		EditCalendarL();
-		break;
-	case EPmCmdSmooth:
-		iSettings.iMono = !iSettings.iMono;
-		SaveSettings();
-		iView->Render();
 		break;
 	case EPmCmdFolders:
 		FoldersL();
@@ -4279,13 +4206,16 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		UpdateL();
 		break;
 	case EPmCmdRefresh:
-		iView->RefreshL();
+		if (m == CPmView::EList) iView->RefreshL();
+		else iView->Toast(_L("Not available here - open a folder to check it"));
 		break;
 	case EPmCmdOlder:
-		iView->OlderL();
+		if (m == CPmView::EList && !iView->CurrentIsSearch()) iView->OlderL();
+		else iView->Toast(_L("Not available here - open a folder to get more of it"));
 		break;
 	case EPmCmdSearch:
-		SearchL();
+		if (m == CPmView::ECalendar) iView->Toast(_L("Not available in the calendar"));
+		else SearchL();
 		break;
 	case EPmCmdOutbox:
 		iView->ShowOutboxL();
