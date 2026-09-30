@@ -7,8 +7,12 @@
 #include <eikedwin.h>
 #include <eiklabel.h>
 #include <eikmfne.h>
+#include <eikcmbut.h>
+#include <eiktbar.h>
+#include <eikimage.h>
 #include <apgcli.h>
 #include "pwapp.h"
+#include "pwicons.h"
 #include "psilink.h"
 
 // The link settings are shared with PsiTerm and PsiMail (psilink.h)
@@ -226,8 +230,8 @@ void CPwView::StartEngineL()
 	if (r != KErrNone)
 		{
 		TBuf<80> e;
-		e.Format(_L("Could not start psiweb.exe (error %d)"), r);
-		ShowMessage(_L("PsiWeb"), e);
+		e.Format(_L("Could not start psiweb.exe (%d) - reinstall PsiWeb from its .sis file"), r);
+		ShowMessage(_L("The browser engine did not start"), e);
 		return;
 		}
 	iRunning = ETrue;
@@ -259,6 +263,52 @@ void CPwView::StopEngine()
 	iRunning = EFalse;
 	}
 
+// Stops the engine and starts it again, on the page it was showing if asked
+// (settings that the engine reads at start, and the toolbar's room)
+void CPwView::RestartL(TBool aSamePage)
+	{
+	TBuf<PW_URL_MAX> url;
+	if (aSamePage && iRunning)
+		{
+		FromUtf8(url, iShared->url);
+		if (url.Compare(_L("about:blank")) == 0)
+			url.Zero();
+		}
+	StopEngine();
+	if (url.Length())
+		iStartUrl = url;
+	StartEngineL();
+	}
+
+// The page area changed (the toolbar was shown or hidden): the engine draws
+// at the size it was started with, so it starts again, on the same page
+void CPwView::SetPageRectL(const TRect& aRect)
+	{
+	TBool running = iRunning;
+	TBuf<PW_URL_MAX> url;
+	if (running)
+		{
+		FromUtf8(url, iShared->url);
+		if (url.Compare(_L("about:blank")) == 0)
+			url.Zero();
+		StopEngine();
+		}
+	SetRectL(aRect);
+	TSize size = aRect.Size();
+	if (size.iWidth > PW_MAX_W) size.iWidth = PW_MAX_W;
+	if (size.iHeight > PW_MAX_H) size.iHeight = PW_MAX_H;
+	iShared->width = size.iWidth;
+	iShared->height = size.iHeight;
+	if (running)
+		{
+		if (url.Length())
+			iStartUrl = url;
+		StartEngineL();
+		}
+	else
+		DrawNow();
+	}
+
 void CPwView::EngineEnded()
 	{
 	TExitType type = iProcess.ExitType();
@@ -272,13 +322,13 @@ void CPwView::EngineEnded()
 	if (type == EExitPanic)
 		PsiLinkTimersBack();             // (0.54) the crash skipped the engine's own clean-up
 	if (type == EExitPanic)
-		why.Format(_L("It stopped: %S %d. Tools > Restart to try again."), &cat, reason);
+		why.Format(_L("%S %d - Tools > Restart browser engine starts it again"), &cat, reason);
 	else if (iShared->exit_msg[0])
 		{
 		FromUtf8(why, iShared->exit_msg);
 		}
 	else
-		why.Format(_L("It closed (%d). Tools > Restart to start it again."), reason);
+		why.Format(_L("It closed (%d) - Tools > Restart browser engine starts it again"), reason);
 	ShowMessage(_L("The browser engine has stopped"), why);
 	}
 
@@ -294,7 +344,7 @@ void CPwView::Command(TInt aCmd, const TDesC& aArg)
 	{
 	if (!iRunning)
 		{
-		iEikonEnv->InfoMsg(_L("The browser engine is not running"));
+		iEikonEnv->InfoMsg(_L("Not available - the browser engine has stopped"));
 		return;
 		}
 	CopyToC(iShared->cmd_arg, sizeof(iShared->cmd_arg), aArg);
@@ -318,12 +368,27 @@ void CPwView::Tick()
 	if (s && s->net.link_seq != iLinkSeq)
 		{
 		// what the connection is doing (dialling, looking up, connecting):
-		// the engine is busy then and can't draw its own status line
+		// the engine is busy then and can't draw its own status line. A
+		// note that ends in "..." is a busy message, bottom left, until the
+		// page has loaded; anything else is an infoprint, top right
 		iLinkSeq = s->net.link_seq;
 		TBuf<80> m;
 		FromUtf8(m, s->net.link_msg);
-		if (m.Length())
+		m.Trim();
+		if (m.Length() && m[m.Length() - 1] == '.' && m.Right(3).Compare(_L("...")) != 0)
+			m.SetLength(m.Length() - 1);     // no full stop at the end of a message
+		if (m.Length() && m.Right(3).Compare(_L("...")) == 0)
+			{
+			TRAPD(err, iEikonEnv->BusyMsgL(m, EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
+			iLinkBusy = err == KErrNone;
+			}
+		else if (m.Length())
 			iEikonEnv->InfoMsg(m);
+		}
+	if (s && iLinkBusy && !s->busy)
+		{
+		iEikonEnv->BusyMsgCancel();
+		iLinkBusy = EFalse;
 		}
 	if (s && (iUpdState == PW_UPD_RUNNING || s->update_state != iUpdState))
 		{
@@ -364,11 +429,14 @@ void CPwView::StartUpdateL()
 	{
 	if (!iRunning)
 		{
-		iEikonEnv->InfoMsg(_L("The browser engine is not running"));
+		iEikonEnv->InfoMsg(_L("Not available - the browser engine has stopped"));
 		return;
 		}
 	if (iUpdState == PW_UPD_RUNNING)
+		{
+		iEikonEnv->InfoMsg(_L("Not available while updating"));
 		return;
+		}
 	iShared->update_state = PW_UPD_RUNNING;
 	iUpdState = -1;                      // show the progress screen at once
 	Command(PW_CMD_UPDATE, KNullDesC);
@@ -403,7 +471,7 @@ void CPwView::UpdateTickL()
 		TBuf<16> v;
 		FromUtf8(v, s->update_version);
 		q.Format(_L("Install PsiWeb %S now?"), &v);
-		if (iEikonEnv->QueryWinL(q, _L("PsiWeb will close while it installs")))
+		if (iEikonEnv->QueryWinL(_L("PsiWeb will close while it installs"), q))
 			StartInstallerL();
 		else
 			iEikonEnv->InfoWinL(_L("Update saved"), iUpdateFile);
@@ -432,7 +500,7 @@ void CPwView::StartInstallerL()
 		return;
 		}
 	TBuf<160> m;
-	m.Format(_L("Could not start the installer (%d). Open %S from the System screen."), err, &iUpdateFile);
+	m.Format(_L("Could not start the installer (%d) - open %S from the System screen"), err, &iUpdateFile);
 	iEikonEnv->InfoWinL(_L("Update downloaded"), m);
 	}
 
@@ -506,11 +574,23 @@ TKeyResponse CPwView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 		// leave the menu's shortcuts to the menu (see psiweb.rss);
 		// Ctrl+letter arrives as 1..26
 		TUint letter = (code >= 1 && code <= 26) ? 'a' + code - 1 : (code | 0x20);
-		switch (letter)
+		if (mods & EModifierShift)
 			{
-			case 'e': case 'l': case 'o': case 'h': case 'r': case 'b':
-			case 'f': case 'm': case 'i': case 'g':
-				return EKeyWasNotConsumed;
+			// Shift+Ctrl+M zoom out, Q page information, A about
+			switch (letter)
+				{
+				case 'm': case 'q': case 'a':
+					return EKeyWasNotConsumed;
+				}
+			}
+		else
+			{
+			switch (letter)
+				{
+				case 'e': case 'l': case 'o': case 'h': case 'r': case 'b':
+				case 'f': case 'm': case 'i': case 't': case 'k': case 'u':
+					return EKeyWasNotConsumed;
+				}
 			}
 		}
 	if (code == EKeyEscape && iUpdState == PW_UPD_RUNNING)
@@ -555,7 +635,6 @@ void CPwView::HandlePointerEventL(const TPointerEvent& aEvent)
 
 void CPwInfoDialog::PreLayoutDynInitL()
 	{
-	SetTitleL(iTitle);
 	for (TInt i = 0; i < 5; i++)
 		{
 		if (i < iCount)
@@ -599,7 +678,37 @@ TBool CPwConnDialog::OkToExitL(TInt /*aButtonId*/)
 	return ETrue;
 	}
 
-void CPwBrowserDialog::PreLayoutDynInitL()
+void CPwAboutDialog::PreLayoutDynInitL()
+	{
+	TBuf<32> title(_L("PsiWeb "));
+	title.Append(KVersion);
+	SetLabelL(EPwDlgAbout1, title);
+	SetLabelL(EPwDlgAboutStatus, iStatus);
+	}
+
+void CPwUpdateDialog::PreLayoutDynInitL()
+	{
+	((CEikChoiceList*)Control(EPwDlgUpdSource))->SetCurrentItem(iSource >= 0 && iSource <= 2 ? iSource : 0);
+	SetEdwinTextL(EPwDlgUpdHost, &iHost);
+	SetNumberEditorValue(EPwDlgUpdPort, iPort > 0 ? iPort : 8686);
+	}
+
+TBool CPwUpdateDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	iSource = ((CEikChoiceList*)Control(EPwDlgUpdSource))->CurrentItem();
+	GetEdwinText(iHost, EPwDlgUpdHost);
+	iHost.Trim();
+	iPort = NumberEditorValue(EPwDlgUpdPort);
+	if (iSource == 2 && iHost.Length() == 0)
+		{
+		iEikonEnv->InfoMsg(_L("No local server entered"));
+		TryChangeFocusToL(EPwDlgUpdHost);
+		return EFalse;
+		}
+	return ETrue;
+	}
+
+void CPwPrefsDialog::PreLayoutDynInitL()
 	{
 	((CEikChoiceList*)Control(EPwDlgProxy))->SetCurrentItem(iSettings.iUseProxy ? 1 : 0);
 	SetEdwinTextL(EPwDlgProxyHost, &iSettings.iProxyHost);
@@ -607,7 +716,7 @@ void CPwBrowserDialog::PreLayoutDynInitL()
 	SetEdwinTextL(EPwDlgHome, &iSettings.iHome);
 	}
 
-TBool CPwBrowserDialog::OkToExitL(TInt /*aButtonId*/)
+TBool CPwPrefsDialog::OkToExitL(TInt /*aButtonId*/)
 	{
 	TInt proxy = ((CEikChoiceList*)Control(EPwDlgProxy))->CurrentItem() == 1;
 	TBuf<60> host;
@@ -615,7 +724,8 @@ TBool CPwBrowserDialog::OkToExitL(TInt /*aButtonId*/)
 	host.Trim();
 	if (proxy && host.Length() == 0)
 		{
-		CEikonEnv::Static()->InfoMsg(_L("Enter the proxy's name or IP address"));
+		iEikonEnv->InfoMsg(_L("No proxy host entered"));
+		TryChangeFocusToL(EPwDlgProxyHost);
 		return EFalse;
 		}
 	iSettings.iUseProxy = proxy;
@@ -635,8 +745,12 @@ void CPwAppUi::ConstructL()
 	BaseConstructL();
 	TPwSettings settings;
 	LoadSettings(settings);
+	TRAPD(pics, ToolbarPicturesL());
+	(void)pics;                              // (no PsiWeb.mbm: words only)
+	if (iToolBar && !settings.iToolbar)
+		iToolBar->MakeVisible(EFalse);       // remembered from last time
 	iView = new(ELeave) CPwView;
-	iView->ConstructL(ClientRect(), settings);
+	iView->ConstructL(PageRect(settings.iToolbar), settings);
 	AddToStackL(iView);
 	iCoeEnv->RootWin().EnableOnEvents(EEventControlAlways);   // (0.54) switch-on events even when in the background
 	}
@@ -648,6 +762,62 @@ void CPwAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
 	(void)aDestination;                  // (the CONE default does nothing, and is private)
 	if (iView && iView->Shared())
 		iView->Shared()->net.switch_on++;
+	}
+
+// a toolbar button's picture, from PsiWeb.mbm (made by web/tools/mkicons.py):
+// 24x20, in the middle of its side, the words beside it as the built-in
+// programs' buttons have them
+void CPwAppUi::ButtonPictureL(TInt aId, TInt aIcon)
+	{
+	CEikCommandButton* b = iToolBar ? (CEikCommandButton*)iToolBar->ControlById(aId) : NULL;
+	if (!b)
+		return;
+	TFileName mbm = Application()->BitmapStoreName();
+	CFbsBitmap* bmp = iEikonEnv->CreateBitmapL(mbm, aIcon);
+	CleanupStack::PushL(bmp);
+	CFbsBitmap* mask = iEikonEnv->CreateBitmapL(mbm, aIcon + 1);
+	CleanupStack::PushL(mask);
+	b->SetPictureL(bmp, mask);                // (the button owns them now)
+	CleanupStack::Pop(2);
+	if (b->Picture())
+		b->Picture()->SetAlignment(EHCenterVCenter);
+	if (b->Label())
+		b->Label()->SetAlignment(EHLeftVCenter);
+	b->LayoutComponentsL();
+	}
+
+void CPwAppUi::ToolbarPicturesL()
+	{
+	if (!iToolBar)
+		return;
+	ButtonPictureL(EPwCmdOpen, EMbmToolOpen);
+	ButtonPictureL(EPwCmdBack, EMbmToolBack);
+	ButtonPictureL(EPwCmdHome, EMbmToolHome);
+	ButtonPictureL(EPwCmdZoomIn, EMbmToolZoom);
+	}
+
+// the page's room: ClientRect() keeps the toolbar's width back even when
+// the toolbar is hidden, so give it to the page here
+TRect CPwAppUi::PageRect(TBool aToolbar) const
+	{
+	TRect r = ClientRect();
+	if (!aToolbar || !iToolBar)
+		r.iBr.iX = iEikonEnv->ScreenDevice()->SizeInPixels().iWidth;
+	return r;
+	}
+
+// View > Show toolbar (Ctrl+T): the page takes its room, or gives it back.
+// The engine draws at the width it started with, so it starts again on the
+// same page (a few seconds: say so, bottom left).
+void CPwAppUi::ShowToolBarL(TBool aShow)
+	{
+	if (!iToolBar)
+		return;
+	iEikonEnv->BusyMsgL(_L("Restarting the browser engine..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0));
+	iToolBar->MakeVisible(aShow);
+	TRAPD(err, iView->SetPageRectL(PageRect(aShow)));
+	iEikonEnv->BusyMsgCancel();
+	User::LeaveIfError(err);
 	}
 
 CPwAppUi::~CPwAppUi()
@@ -671,6 +841,7 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 	aSettings.iHome = KDefaultHome;
 	aSettings.iImages = 1;
 	aSettings.iZoom = 100;
+	aSettings.iToolbar = 1;
 	RFile file;
 	if (file.Open(iCoeEnv->FsSession(), KIniFile, EFileRead) != KErrNone)
 		{
@@ -698,7 +869,12 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 				{
 				len = d[pos++];
 				if (pos + len <= d.Length() && len <= 200)
+					{
 					aSettings.iHome.Copy(d.Mid(pos, len));
+					pos += len;
+					if (pos < d.Length())            // (0.55) after the home page
+						aSettings.iToolbar = d[pos++] != 0;
+					}
 				}
 			}
 		}
@@ -731,6 +907,7 @@ void CPwAppUi::SaveSettings(const TPwSettings& aSettings)
 	tmp.Copy(aSettings.iHome);
 	d.Append((TUint8)tmp.Length());
 	d.Append(tmp);
+	d.Append((TUint8)aSettings.iToolbar);
 	file.Write(d);
 	file.Close();
 	}
@@ -751,6 +928,8 @@ void CPwAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		{
 		aMenuPane->SetItemButtonState(EPwCmdImages,
 			iView->Settings().iImages ? EEikMenuItemSymbolOn : 0);
+		aMenuPane->SetItemButtonState(EPwCmdToggleToolbar,
+			iView->Settings().iToolbar ? EEikMenuItemSymbolOn : 0);
 		}
 	}
 
@@ -773,13 +952,97 @@ void CPwAppUi::PageInfoL()
 		}
 	else
 		lines[4] = _L("Direct connection");
-	CPwInfoDialog* dlg = new(ELeave) CPwInfoDialog(_L("Page info"), lines, 5);
+	TPtrC ptrs[5];
+	for (TInt i = 0; i < 5; i++)
+		ptrs[i].Set(lines[i]);
+	CPwInfoDialog* dlg = new(ELeave) CPwInfoDialog(ptrs, 5);
 	dlg->ExecuteLD(R_PW_INFO_DIALOG);
+	}
+
+void CPwAppUi::AboutL()
+	{
+	const TPwSettings& s = iView->Settings();
+	static const TInt KBaud[] = { 9600, 19200, 38400, 57600, 115200 };
+	TBuf<120> status;
+	if (s.iNetMode)
+		status.Copy(_L("Connects via Psion Internet (PPP)"));
+	else
+		status.Format(_L("Connects via modem at %d baud"), KBaud[s.iBaudIndex >= 0 && s.iBaudIndex < 5 ? s.iBaudIndex : 4]);
+	if (s.iUseProxy)
+		{
+		status.Append(_L(" - proxy "));
+		status.Append(Clip(s.iProxyHost, 40));
+		status.AppendFormat(_L(":%d"), s.iProxyPort);
+		}
+	else
+		status.Append(_L(" - no proxy"));
+	CPwAboutDialog* dlg = new(ELeave) CPwAboutDialog(status);
+	dlg->ExecuteLD(R_PW_ABOUT_DIALOG);
+	}
+
+_LIT(KUpdIniFile, "C:\\System\\Apps\\PsiWeb\\Update.ini");
+
+// Tools > Update PsiWeb: where from (Update.ini, in PsiMail's words:
+// "github", "github-dev" or "host:port" - the engine reads it), then the
+// engine fetches and checks the new version
+void CPwAppUi::UpdateL()
+	{
+	if (iView->Updating())
+		{
+		iEikonEnv->InfoMsg(_L("Not available while updating"));
+		return;
+		}
+	RFs& fs = iCoeEnv->FsSession();
+	TBuf<60> src;
+	RFile f;
+	if (f.Open(fs, KUpdIniFile, EFileRead) == KErrNone)
+		{
+		TBuf8<60> b;
+		f.Read(b);
+		f.Close();
+		src.Copy(b);
+		src.Trim();
+		}
+	TInt source = 0, port = 8686;
+	TBuf<50> host;
+	if (src.CompareF(_L("github-dev")) == 0)
+		source = 1;
+	else if (src.Length() && src.CompareF(_L("github")) != 0)
+		{
+		source = 2;
+		TInt c = src.Locate(':');
+		host.Copy(src.Left(c >= 0 ? (c < 50 ? c : 50) : (src.Length() < 50 ? src.Length() : 50)));
+		if (c >= 0)
+			{
+			TLex lex(src.Mid(c + 1));
+			if (lex.Val(port) != KErrNone || port <= 0) port = 8686;
+			}
+		}
+	CPwUpdateDialog* dlg = new(ELeave) CPwUpdateDialog(source, host, port);
+	if (!dlg->ExecuteLD(R_PW_UPDATE_DIALOG))
+		return;
+	if (source == 0) src = _L("github");
+	else if (source == 1) src = _L("github-dev");
+	else
+		{
+		src = host;
+		src.AppendFormat(_L(":%d"), port);
+		}
+	fs.MkDirAll(KUpdIniFile);
+	if (f.Replace(fs, KUpdIniFile, EFileWrite) == KErrNone)
+		{
+		TBuf8<60> b;
+		b.Copy(src);
+		f.Write(b);
+		f.Close();
+		}
+	iView->StartUpdateL();
 	}
 
 void CPwAppUi::HandleCommandL(TInt aCommand)
 	{
 	TPwSettings& st = iView->Settings();
+	PwShared* sh = iView->Shared();
 	switch (aCommand)
 		{
 	case EEikCmdExit:
@@ -789,7 +1052,7 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 	case EPwCmdOpen:
 		{
 		TBuf<500> url;
-		FromUtf8(url, iView->Shared()->url);
+		FromUtf8(url, sh->url);
 		if (url.Compare(_L("about:blank")) == 0)
 			url.Zero();
 		CPwOpenDialog* dlg = new(ELeave) CPwOpenDialog(url);
@@ -804,13 +1067,24 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 		iView->Command(PW_CMD_RELOAD, KNullDesC);
 		break;
 	case EPwCmdStop:
-		iView->Command(PW_CMD_STOP, KNullDesC);
+		// dimmed on the menu when nothing is loading, but the key still arrives
+		if (iView->EngineRunning() && !sh->busy)
+			iEikonEnv->InfoMsg(_L("Nothing to stop"));
+		else
+			iView->Command(PW_CMD_STOP, KNullDesC);
 		break;
 	case EPwCmdBack:
-		iView->Command(PW_CMD_BACK, KNullDesC);
+		// the toolbar button and the key arrive whatever the history holds
+		if (iView->EngineRunning() && !sh->can_back)
+			iEikonEnv->InfoMsg(_L("Nothing to go back to"));
+		else
+			iView->Command(PW_CMD_BACK, KNullDesC);
 		break;
 	case EPwCmdForward:
-		iView->Command(PW_CMD_FORWARD, KNullDesC);
+		if (iView->EngineRunning() && !sh->can_forward)
+			iEikonEnv->InfoMsg(_L("Nothing to go forward to"));
+		else
+			iView->Command(PW_CMD_FORWARD, KNullDesC);
 		break;
 	case EPwCmdTop:
 		iView->Command(PW_CMD_TOP, KNullDesC);
@@ -822,11 +1096,13 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 	case EPwCmdZoomOut:
 	case EPwCmdZoomNormal:
 		{
+		// Zoom in and out cycle round the sizes (style guide 7.3.7): past the
+		// largest comes the smallest, and the other way
 		TInt i = 0;
 		while (i < KZoomCount - 1 && KZoomSteps[i] < st.iZoom)
 			i++;
-		if (aCommand == EPwCmdZoomIn && i < KZoomCount - 1) i++;
-		if (aCommand == EPwCmdZoomOut && i > 0) i--;
+		if (aCommand == EPwCmdZoomIn) i = (i + 1) % KZoomCount;
+		if (aCommand == EPwCmdZoomOut) i = (i + KZoomCount - 1) % KZoomCount;
 		st.iZoom = aCommand == EPwCmdZoomNormal ? 100 : KZoomSteps[i];
 		TBuf<8> z;
 		z.Num(st.iZoom);
@@ -840,8 +1116,13 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 	case EPwCmdImages:
 		st.iImages = !st.iImages;
 		iView->Command(PW_CMD_IMAGES, st.iImages ? _L("1") : _L("0"));
-		iEikonEnv->InfoMsg(st.iImages ? _L("Images on (from the next page)") : _L("Images off"));
+		iEikonEnv->InfoMsg(st.iImages ? _L("Pictures shown from the next page on") : _L("Pictures not shown from the next page on"));
 		SaveSettings(st);
+		break;
+	case EPwCmdToggleToolbar:
+		st.iToolbar = !st.iToolbar;
+		SaveSettings(st);
+		ShowToolBarL(st.iToolbar);
 		break;
 	case EPwCmdPageInfo:
 		PageInfoL();
@@ -852,50 +1133,47 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 		if (dlg->ExecuteLD(R_PW_CONN_DIALOG))
 			{
 			SaveSettings(st);
-			iEikonEnv->InfoMsg(_L("Restarting the browser engine..."));
-			iView->StopEngine();
-			iView->StartEngineL();
+			RestartEngineL();
 			}
 		break;
 		}
-	case EPwCmdBrowserSettings:
+	case EPwCmdPrefs:
 		{
-		CPwBrowserDialog* dlg = new(ELeave) CPwBrowserDialog(st);
-		if (dlg->ExecuteLD(R_PW_BROWSER_DIALOG))
+		CPwPrefsDialog* dlg = new(ELeave) CPwPrefsDialog(st);
+		if (dlg->ExecuteLD(R_PW_PREFS_DIALOG))
 			{
 			SaveSettings(st);
-			iView->StopEngine();
-			iView->StartEngineL();
+			RestartEngineL();
 			}
 		break;
 		}
 	case EPwCmdHangup:
 		iView->Command(PW_CMD_HANGUP, KNullDesC);
-		iEikonEnv->InfoMsg(_L("Hanging up - the serial port will be free"));
+		if (iView->EngineRunning())
+			iEikonEnv->InfoMsg(_L("Disconnecting - the serial port will be free"));
 		break;
 	case EPwCmdUpdate:
-		iView->StartUpdateL();
+		UpdateL();
 		break;
 	case EPwCmdRestart:
-		iView->StopEngine();
-		iView->StartEngineL();
+		RestartEngineL();
 		break;
 	case EPwCmdAbout:
-		{
-		TBuf<120> lines[4];
-		lines[0] = _L("PsiWeb ");
-		lines[0].Append(KVersion);
-		lines[0].Append(_L(" - NetSurf for the Psion 5mx"));
-		lines[1] = _L("NetSurf: HTML, CSS 2.1, no JavaScript. GPL v2.");
-		lines[2] = _L("Networking and TLS 1.3 from PsiTerm (MIT).");
-		lines[3] = _L("Esc stops loading. Ctrl+L opens an address.");
-		CPwInfoDialog* dlg = new(ELeave) CPwInfoDialog(_L("About PsiWeb"), lines, 4);
-		dlg->ExecuteLD(R_PW_INFO_DIALOG);
+		AboutL();
 		break;
-		}
 	default:
 		break;
 		}
+	}
+
+// Tools > Restart browser engine, and after settings the engine reads when
+// it starts: it takes a few seconds, so say so, bottom left
+void CPwAppUi::RestartEngineL()
+	{
+	iEikonEnv->BusyMsgL(_L("Restarting the browser engine..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0));
+	TRAPD(err, iView->RestartL(ETrue));
+	iEikonEnv->BusyMsgCancel();
+	User::LeaveIfError(err);
 	}
 
 // PsiMail starts PsiWeb with a URL as the command line's tail ...

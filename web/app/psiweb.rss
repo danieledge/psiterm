@@ -14,6 +14,9 @@ NAME PSIW
 #include <eikcmbut.rh>
 #include <eiklabel.rh>
 #include <eikctrls.hrh>
+#include <eiktbar.rh>
+#include <eikclock.rh>
+#include <eikspace.rh>
 #include <eikon.rsg>
 
 #include "psiweb.hrh"
@@ -26,41 +29,99 @@ RESOURCE EIK_APP_INFO
 	{
 	menubar=r_pw_menubar;
 	hotkeys=r_pw_hotkeys;
+	toolbar=r_pw_toolbar;
 	}
 
-// Ctrl+A/C/V/X/Z/U stay with the page (select all, copy, paste...)
+// The standard toolbar: the program's name, four buttons for the pen (Open
+// an address, Back, the Home page, Zoom - which cycles the sizes), the
+// clock. The pictures come from PsiWeb.mbm (web/tools/mkicons.py):
+// CPwAppUi::ConstructL puts them on. View > Show toolbar (Ctrl+T) hides it
+// and the page takes its room.
+RESOURCE TOOLBAR r_pw_toolbar
+	{
+	breadth=KEikStdToolBarWidth;
+	controls=
+		{
+		TBAR_CTRL
+			{
+			type=EEikCtLabel;
+			flags=EEikToolBarCtrlHasSetMinLength;
+			length=KEikStdFileNameLabelHeight;
+			control=LABEL { txt="PsiWeb"; horiz_align=EEikLabelAlignHCenter; vert_align=EEikLabelAlignVCenter; };
+			},
+		TBAR_BUTTON { id=EPwCmdOpen; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Open"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPwCmdBack; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Back"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPwCmdHome; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Home"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPwCmdZoomIn; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Zoom"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_CTRL
+			{
+			type=EEikCtSpacer;
+			flags=EEikToolBarCtrlHasSetMinLength|EEikToolBarCtrlIsStretchable;
+			length=0;
+			control=SPACER;
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtClock;
+			control=CLOCK { digitalresourceid=R_EIK_DIGITAL_CLOCK; analogresourceid=R_EIK_ANALOG_CLOCK; };
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtSpacer;
+			flags=EEikToolBarCtrlHasSetMinLength;
+			length=KEikStdGapBelowClock;
+			control=SPACER;
+			}
+		};
+	}
+
+// Shortcuts: EIKON's standard letters for the standard commands (Ctrl+E
+// close, Ctrl+O open, Ctrl+M / Shift+Ctrl+M zoom, Ctrl+T toolbar, Ctrl+K
+// preferences, Shift+Ctrl+A about), the built-in Email program's Ctrl+U
+// (disconnect) and Shift+Ctrl+Q (status information = Page info), and the
+// browser's own: Ctrl+L also opens an address, Ctrl+H home, Ctrl+R reload,
+// Ctrl+B back, Ctrl+F forward, Ctrl+I images. Ctrl+A/C/V/X/Z stay with the
+// page (select all, copy, paste...); Esc stops a page loading.
 RESOURCE HOTKEYS r_pw_hotkeys
 	{
 	control=
 		{
 		HOTKEY { command=EEikCmdExit; key='e'; },
-		HOTKEY { command=EPwCmdOpen; key='l'; },
 		HOTKEY { command=EPwCmdOpen; key='o'; },
+		HOTKEY { command=EPwCmdOpen; key='l'; },
 		HOTKEY { command=EPwCmdHome; key='h'; },
 		HOTKEY { command=EPwCmdReload; key='r'; },
 		HOTKEY { command=EPwCmdBack; key='b'; },
 		HOTKEY { command=EPwCmdForward; key='f'; },
 		HOTKEY { command=EPwCmdZoomIn; key='m'; },
 		HOTKEY { command=EPwCmdImages; key='i'; },
-		HOTKEY { command=EPwCmdPageInfo; key='g'; }
+		HOTKEY { command=EPwCmdToggleToolbar; key='t'; },
+		HOTKEY { command=EPwCmdPrefs; key='k'; },
+		HOTKEY { command=EPwCmdHangup; key='u'; }
 		};
 	shift_control=
 		{
-		HOTKEY { command=EPwCmdZoomOut; key='m'; }
+		HOTKEY { command=EPwCmdZoomOut; key='m'; },
+		HOTKEY { command=EPwCmdPageInfo; key='q'; },
+		HOTKEY { command=EPwCmdAbout; key='a'; }
 		};
 	}
 
+// Menus in EIKON's order: File, View, the program's own (Go), then Tools
+// ending with About
 RESOURCE MENU_BAR r_pw_menubar
 	{
 	titles=
 		{
 		MENU_TITLE { menu_pane=r_pw_file_menu; txt="File"; },
-		MENU_TITLE { menu_pane=r_pw_go_menu; txt="Go"; },
 		MENU_TITLE { menu_pane=r_pw_view_menu; txt="View"; },
+		MENU_TITLE { menu_pane=r_pw_go_menu; txt="Go"; },
 		MENU_TITLE { menu_pane=r_pw_tools_menu; txt="Tools"; }
 		};
 	}
 
+// File: the page, the connection, Close. Stop has no letter shortcut: Esc
+// stops a page loading, as in the built-in programs
 RESOURCE MENU_PANE r_pw_file_menu
 	{
 	items=
@@ -68,10 +129,24 @@ RESOURCE MENU_PANE r_pw_file_menu
 		MENU_ITEM { command=EPwCmdOpen; txt="Open address..."; },
 		MENU_ITEM { command=EPwCmdHome; txt="Home page"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPwCmdReload; txt="Reload"; },
-		MENU_ITEM { command=EPwCmdStop; txt="Stop (Esc)"; },
-		MENU_ITEM { command=EPwCmdHangup; txt="Hang up (free the serial port)"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPwCmdAbout; txt="About PsiWeb"; },
+		MENU_ITEM { command=EPwCmdStop; txt="Stop"; extratxt="Esc"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdHangup; txt="Disconnect"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
+		};
+	}
+
+// View: zoom (in and out cycle round the sizes), the tick boxes, then
+// Page info (the Email program's Status information, on its key)
+RESOURCE MENU_PANE r_pw_view_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPwCmdZoomIn; txt="Zoom in"; },
+		MENU_ITEM { command=EPwCmdZoomOut; txt="Zoom out"; },
+		MENU_ITEM { command=EPwCmdZoomNormal; txt="Normal size"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdToggleToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPwCmdImages; txt="Show pictures"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdPageInfo; txt="Page information..."; }
 		};
 	}
 
@@ -86,26 +161,16 @@ RESOURCE MENU_PANE r_pw_go_menu
 		};
 	}
 
-RESOURCE MENU_PANE r_pw_view_menu
-	{
-	items=
-		{
-		MENU_ITEM { command=EPwCmdZoomIn; txt="Zoom in"; },
-		MENU_ITEM { command=EPwCmdZoomOut; txt="Zoom out"; },
-		MENU_ITEM { command=EPwCmdZoomNormal; txt="Normal size"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPwCmdImages; txt="Load images"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPwCmdPageInfo; txt="Page info"; }
-		};
-	}
-
+// Tools: preferences and settings, the engine, updates, About last
 RESOURCE MENU_PANE r_pw_tools_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPwCmdConnSettings; txt="Connection settings..."; },
-		MENU_ITEM { command=EPwCmdBrowserSettings; txt="Proxy and home page..."; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPwCmdUpdate; txt="Update PsiWeb"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPwCmdRestart; txt="Restart browser engine"; }
+		MENU_ITEM { command=EPwCmdPrefs; txt="Preferences..."; },
+		MENU_ITEM { command=EPwCmdConnSettings; txt="Connection settings..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdRestart; txt="Restart browser engine"; },
+		MENU_ITEM { command=EPwCmdUpdate; txt="Update PsiWeb..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdAbout; txt="About PsiWeb"; }
 		};
 	}
 
@@ -116,8 +181,10 @@ RESOURCE DIALOG r_pw_open_dialog
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
 		{
-		DLG_LINE { type=EEikCtEdwin; prompt="Address or search"; id=EPwDlgUrl;
-			control=EDWIN { width=40; maxlength=500; }; }
+		DLG_LINE { type=EEikCtEdwin; prompt="Address"; id=EPwDlgUrl;
+			control=EDWIN { width=30; maxlength=500; }; },
+		DLG_LINE { type=EEikCtLabel; control=LABEL { standard_font=EEikLabelFontAnnotation;
+			txt="Or words to search for"; }; }
 		};
 	}
 
@@ -135,23 +202,28 @@ RESOURCE DIALOG r_pw_conn_dialog
 		};
 	}
 
-RESOURCE DIALOG r_pw_browser_dialog
+// Preferences (Ctrl+K): the home page and the proxy. The connection itself
+// is in Connection settings (shared with PsiTerm and PsiMail).
+RESOURCE DIALOG r_pw_prefs_dialog
 	{
-	title="Proxy and home page";
+	title="Preferences";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
 		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Home page"; id=EPwDlgHome; control=EDWIN { width=24; maxlength=200; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Use a proxy"; id=EPwDlgProxy; control=CHOICELIST { array_id=r_pw_proxy_array; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Proxy host"; id=EPwDlgProxyHost; control=EDWIN { width=24; maxlength=60; }; },
 		DLG_LINE { type=EEikCtNumberEditor; prompt="Proxy port"; id=EPwDlgProxyPort; control=NUMBER_EDITOR { min=1; max=65535; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Home page"; id=EPwDlgHome; control=EDWIN { width=24; maxlength=200; }; }
+		DLG_LINE { type=EEikCtLabel; control=LABEL { standard_font=EEikLabelFontAnnotation;
+			txt="A proxy such as WebOne fetches https pages for the Psion & keeps one connection open"; }; }
 		};
 	}
 
+// Page information: title, address, what the engine says, memory, the route
 RESOURCE DIALOG r_pw_info_dialog
 	{
-	title="PsiWeb";
+	title="Page information";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CONTINUE;
 	items=
@@ -181,5 +253,43 @@ RESOURCE ARRAY r_pw_link_array
 
 RESOURCE ARRAY r_pw_proxy_array
 	{
-	items={ LBUF { txt="No - fetch directly"; }, LBUF { txt="Yes (e.g. WebOne)"; } };
+	items={ LBUF { txt="No - fetch directly"; }, LBUF { txt="Yes"; } };
+	}
+
+// Update: where to fetch PsiWeb-version.txt and PsiWeb.sis from - the same
+// dialog and Update.ini words as PsiMail's ("github", "github-dev", "host:port")
+RESOURCE DIALOG r_pw_update_dialog
+	{
+	title="Update PsiWeb";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Updates from"; id=EPwDlgUpdSource; control=CHOICELIST { array_id=r_pw_source_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Local server"; id=EPwDlgUpdHost; control=EDWIN { width=22; maxlength=50; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Port"; id=EPwDlgUpdPort; control=NUMBER_EDITOR { min=1; max=65535; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pw_source_array
+	{
+	items={ LBUF { txt="GitHub"; }, LBUF { txt="GitHub - test builds (dev)"; }, LBUF { txt="Local server"; } };
+	}
+
+// About: as PsiTerm's and PsiMail's (name and version, what it is and whose,
+// the link in use, then the credits in the small font)
+RESOURCE DIALOG r_pw_about_dialog
+	{
+	title="About PsiWeb";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CONTINUE;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgAbout1; control=LABEL { standard_font=EEikLabelFontLegend; reserve_length=24; txt="PsiWeb"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgAbout2; control=LABEL { txt="Web browser for the Psion Series 5mx - (c) Dan Edge"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgAboutStatus; control=LABEL { standard_font=EEikLabelFontAnnotation; reserve_length=70; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgAbout4; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="NetSurf browser engine (c) the NetSurf developers - GPL v2 (no JavaScript)"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgAbout5; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Networking & TLS 1.3 from PsiTerm; LibTomCrypt, LibTomMath - public domain"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgAbout6; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="github.com/danieledge/psiterm - MIT licence (PsiWeb's own code)"; }; }
+		};
 	}
