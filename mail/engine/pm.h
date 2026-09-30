@@ -18,6 +18,10 @@ void pm_idle(int ms);                      /* sleep, keeping an eye on quit */
 void pm_rmtree(const char *dir);           /* delete a folder and all in it */
 int  pm_replace(const char *tmp, const char *path); /* tmp takes path's place (path may exist), in one step; 0 ok */
 long pm_free_kb(const char *path);         /* free space on the drive path is on; -1 unknown */
+/* a whole file in one go (RFile::Write on the Psion: one file-server call
+   rather than stdio's 512-byte pieces, which the emulator's card does not
+   like); path is made afresh. 0 ok */
+int  pm_write_whole(const char *path, const void *data, long n);
 
 /* ---- files (pmmain.c) */
 int  pm_fclose(FILE *f);                   /* fclose that also checks the error flag: 0 = all written */
@@ -112,6 +116,7 @@ typedef struct
 	char type[24];           /* "text/plain" */
 	char charset[24];
 	char name[80];           /* attachment file name (cp1252) */
+	char cid[80];            /* Content-ID without the <>: what "cid:" in the HTML points at */
 	int enc;
 	long size;
 	int attachment;          /* 1 = offer as an attachment */
@@ -165,6 +170,15 @@ int  imap_search(int acct, const char *folder, const char *words, char *why, int
 int  imap_expunge(int acct, const char *folder, char *why, int whymax);
 int  imap_append(int acct, const char *folder, const char *path, const char *flags, char *why, int whymax);
 int  imap_special_folder(int acct, char kind, char *out, int max); /* from folders.txt */
+/* a part, decoded from its transfer encoding, into a file (pictures.c uses it) */
+int  imap_part_to_file(int acct, const char *folder, unsigned int uid, const char *part, int enc, long size,
+                       const char *path, const char *label, char *why, int whymax);
+
+/* ---- pictures in a message (pictures.c): <uid>.pic lists the image parts,
+   <uid>_<part>.pmi is one decoded to 16 greys (img/pmimg.h) */
+void pic_write_index(int acct, const char *folder, unsigned int uid, const PmStructure *st);
+void pic_remove(int acct, const char *folder, unsigned int uid);   /* all of a message's picture files */
+int  pic_fetch(int acct, const char *folder, unsigned int uid, const char *parts, char *why, int whymax);
 
 /* ---- SMTP (smtp.c) */
 int  smtp_send(int acct, const char *mime_path, const char *from, const char *rcpts, char *why, int whymax);

@@ -642,7 +642,15 @@ int doc_plain(const char* t, int len, char* out, int max, int quote)
 				}
 			else if (kd == 'u') skip = 1;
 			else if (kd == 'r') { marker = "----"; ml = 4; }
-			else if (kd == 'i') { if (k < max - 2) out[k++] = '['; }
+			else if (kd == 'i')
+				{
+				/* "\x01i" alt "\x02" src: the words only */
+				int a = q;
+				while (a < e && t[a] != 0x02) a++;
+				if (a == q) { marker = "picture"; ml = 7; }
+				e = a;
+				if (k < max - 2) out[k++] = '[';
+				}
 			while (q < e && t[q] == ' ' && kd != 'c') q++;
 			}
 		if (!skip)
@@ -668,6 +676,7 @@ int doc_plain(const char* t, int len, char* out, int max, int quote)
 			if ((unsigned char)t[p] == 0x01 && p + 1 < e && t[p + 1] == 'i' && k < max - 2) out[k++] = ']';
 			out[k++] = '\n';
 			}
+		while (e < len && t[e] != '\n') e++;       /* (an 'i' line was cut at its address) */
 		p = e + 1;
 		}
 	(void)fmt_int;

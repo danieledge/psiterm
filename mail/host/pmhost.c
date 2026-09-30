@@ -5,7 +5,7 @@
  *   psimail-host [-s STOREDIR] COMMAND [ARGS] [, COMMAND [ARGS]] ...
  *
  * commands: folders | sync F | older F | body F UID | full F UID |
- *   attach F UID PART | flag F UID +S | move F UID [DEST] | search F WORDS |
+ *   attach F UID PART | pictures F UID PARTS | flag F UID +S | move F UID [DEST] | search F WORDS |
  *   send | sendrecv [F] | trust HOST:PORT | trustlast | hangup
  * The account comes from the environment: PM_HOST PM_PORT PM_TLS (0 none,
  * 1 TLS, 2 STARTTLS) PM_SMTP PM_SMTP_PORT PM_SMTP_TLS PM_USER PM_PASS
@@ -77,6 +77,17 @@ int pm_replace(const char *tmp, const char *path)
 {
 	if (getenv("PM_FAIL_REPLACE")) return -1;      /* tests */
 	return rename(tmp, path) == 0 ? 0 : -1;
+}
+
+int pm_write_whole(const char *path, const void *data, long n)
+{
+	FILE *f = fopen(path, "wb");
+	int ok;
+	if (!f) return -1;
+	ok = (long)fwrite(data, 1, n, f) == n;
+	if (fclose(f) != 0) ok = 0;
+	if (!ok) remove(path);
+	return ok ? 0 : -1;
 }
 
 long pm_free_kb(const char *path)
@@ -197,6 +208,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(op, "body")) c.op = PM_CMD_BODY;
 		else if (!strcmp(op, "full")) c.op = PM_CMD_FULLBODY;
 		else if (!strcmp(op, "attach")) { c.op = PM_CMD_ATTACH; pm_copy(c.arg, args[2], sizeof(c.arg)); }
+		else if (!strcmp(op, "pictures")) { c.op = PM_CMD_PICTURES; pm_copy(c.arg, args[2], sizeof(c.arg)); }
 		else if (!strcmp(op, "flag")) { c.op = PM_CMD_FLAG; pm_copy(c.arg, args[2], sizeof(c.arg)); }
 		else if (!strcmp(op, "move")) { c.op = PM_CMD_MOVE; pm_copy(c.arg, args[2], sizeof(c.arg)); }
 		else if (!strcmp(op, "search")) { c.op = PM_CMD_SEARCH; pm_copy(c.arg, args[1], sizeof(c.arg)); c.uid = 0; }

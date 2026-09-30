@@ -88,8 +88,19 @@ enum
 	PM_CMD_EXPUNGE,          /* folder: remove messages marked deleted */
 	PM_CMD_CALSYNC,          /* calendar: send push.txt, fetch changes (arg "list": calendars only) */
 	PM_CMD_UPDATE,           /* arg = "host:port" or "github", folder = where to save PsiMail.sis */
+	PM_CMD_PICTURES,         /* folder, uid, arg = part ids to fetch and decode ("1.2 1.3"; "!2" = however big): see engine/pictures.c */
 	PM_CMD_QUIT
 	};
+
+/* pictures in a message (engine/pictures.c, app/pmpict.cpp): a part this
+   big (its size in the message, base64 and all) or smaller is fetched
+   without asking when the message is read; bigger ones wait for a tap */
+#define PM_PIC_AUTO_KB     300
+#define PM_PIC_AUTO_TOTAL_KB 1024    /* all of a message's automatic pictures together */
+#define PM_PIC_MAX_KB      4096      /* never fetched: too big for the line */
+#define PM_PIC_MAX_W       544       /* a decoded picture is at most this wide (the reader beside the toolbar) */
+#define PM_PIC_MAX_H       960
+#define PM_PIC_BUDGET_KB   600       /* decoded pictures kept for one message, all together */
 
 typedef struct
 	{

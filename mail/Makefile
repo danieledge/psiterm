@@ -9,7 +9,9 @@ LTC     := $(TOP)/ssh/db/libtomcrypt/src
 LTM     := $(TOP)/ssh/db/libtommath
 
 ENGINE  := pmmain imap imapparse smtp compose mime charset html store pmnet certcheck pmrsa \
-           caldav caltz ics http xmlscan pmupdate
+           caldav caltz ics http xmlscan pmupdate pictures
+IMG_SRCS := pmimg pmjpeg pmpng pmgif picojpeg
+Z_SRCS  := adler32 crc32 inflate inftrees inffast zutil
 LTC_SRCS := stream/chacha/chacha_crypt stream/chacha/chacha_ivctr32 stream/chacha/chacha_keystream \
 	stream/chacha/chacha_setup stream/chacha/chacha_done mac/poly1305/poly1305 hashes/sha2/sha256 \
 	hashes/sha2/sha384 hashes/sha2/sha512 misc/zeromem misc/burn_stack misc/crypt/crypt_argchk misc/compare_testvector
@@ -46,7 +48,7 @@ LIBGCC  := $(SDK)/gcc-3.0-psion-98r2-9/lib/gcc-lib/arm-epoc-pe/3.0-psion-98r2/li
 SYSLIBS := $(REL)/estlib.lib $(REL)/euser.lib $(REL)/c32.lib $(REL)/efsrv.lib $(REL)/esock.lib $(REL)/insock.lib $(LIBGCC)
 endif
 
-ENG_OBJS := $(addprefix $(O)/,$(ENGINE:=.o))
+ENG_OBJS := $(addprefix $(O)/,$(ENGINE:=.o)) $(addprefix $(O)/img/,$(IMG_SRCS:=.o)) $(addprefix $(O)/zlib/,$(Z_SRCS:=.o))
 TLS_OBJS := $(O)/tls13.o $(O)/x25519.o $(O)/pmrandom.o
 LTC_OBJS := $(addprefix $(O)/ltc/,$(subst /,__,$(LTC_SRCS:=.o)))
 LTM_OBJS := $(addprefix $(O)/ltm/,$(LTM_SRCS:=.o))
@@ -57,6 +59,16 @@ all: $(OUT)
 $(O)/%.o: engine/%.c $(HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) -c $(TFLAGS) -I$(TOP)/ssh $< -o $@
+$(O)/pictures.o: engine/pictures.c engine/img/pmimg.h $(HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) -c $(TFLAGS) -I$(TOP)/ssh $< -o $@
+# the picture decoders (engine/img, shared with PsiWeb) and zlib's inflate for PNG
+$(O)/img/%.o: engine/img/%.c engine/img/pmimg.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $(TFLAGS) -I$(TOP)/ssh/zlib $(if $(filter host,$(TARGET)),,-I$(TOP)/web/compat) $< -o $@
+$(O)/zlib/%.o: $(TOP)/ssh/zlib/%.c
+	@mkdir -p $(dir $@)
+	$(CC) -c $(ARCH) $(if $(filter host,$(TARGET)),,$(DEFS) -fno-builtin $(LIBC)) -w $< -o $@
 $(O)/certcheck.o: engine/certcheck.c engine/roots.h $(HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) -c $(LTCFLAGS) -I$(TOP)/ssh $< -o $@

@@ -121,6 +121,7 @@ static void local_update(int acct, const char *folder, unsigned int uid, const c
 		st_msg_path(acct, folder, uid, "txt", p, sizeof(p)); remove(p);
 		st_msg_path(acct, folder, uid, "att", p, sizeof(p)); remove(p);
 		st_msg_path(acct, folder, uid, "htm", p, sizeof(p)); remove(p);
+		pic_remove(acct, folder, uid);
 	}
 }
 
@@ -400,6 +401,9 @@ static int run(PmCmd *c, char *why, int whymax)
 		break;
 	case PM_CMD_ATTACH:
 		r = imap_attach(a, c->folder, c->uid, c->arg, why, whymax);
+		break;
+	case PM_CMD_PICTURES:
+		r = pic_fetch(a, c->folder, c->uid, c->arg, why, whymax);
 		break;
 	case PM_CMD_FLAG:
 		local_update(a, c->folder, c->uid, c->arg, 0);

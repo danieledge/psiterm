@@ -134,3 +134,21 @@ picks the time zone (1 = London, 2 = Paris...). The Agenda side
 Against Fastmail: `caldav.fastmail.com`'s chain (`../tools/fastmail-caldav-chain.pem`,
 Let's Encrypt YR2 via ISRG Root YR, cross-signed by ISRG Root X1) passes
 `certtest`.
+
+## The picture decoders (no server needed)
+
+`imgtest.py [OUTDIR] [--rounds N] [--pictures DIR]` builds `imgtest.c` with
+the decoders in `mail/engine/img` under AddressSanitizer and UBSan, makes
+sample pictures with Pillow (baseline JPEG in every subsampling and a
+progressive one that must be refused, PNG in every colour type and
+interlaced, GIF plain, interlaced and transparent, a 3000-pixel banner and a
+5-megapixel photo for the 1/8 path), decodes each to `OUTDIR/*.pgm` to look
+at, then fuzzes each one (truncated, bit-flipped, overwritten) for N rounds.
+Any crash, sanitizer report or leak fails it. `imgtest decode|fuzz|time|pmi`
+can also be run by hand; `time` says how long a decode takes on the PC.
+
+The same decoders as ARM code: `psimail-host` and `run_psimail.py` take
+`pictures F UID PARTS` (the parts of `<uid>.pic` to fetch and decode, as
+the app asks with PM_CMD_PICTURES); with `--count` the runner says how many
+instructions a decode took - roughly 46 million for an 800x600 baseline
+JPEG shown at half size, 12 million for a 320x120 PNG.

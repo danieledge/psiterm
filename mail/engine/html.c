@@ -330,19 +330,27 @@ static void handle_tag(HtmlConv *h, OutFn out, void *ctx)
 		return;
 	}
 	if (is(name, "img") && !close) {
-		char alt[100], w[12], hgt[12];
+		/* "\x01i" alt "\x02" src: the app shows the picture itself when it
+		   is a "cid:" part of the message (or an "http:" one it has), else
+		   the alt text */
+		char alt[100], src[160], w[12], hgt[12];
+		int k;
 		attr(h->tag, "width", w, sizeof(w));
 		attr(h->tag, "height", hgt, sizeof(hgt));
 		if ((w[0] && atoi(w) <= 2) || (hgt[0] && atoi(hgt) <= 2)) return;     /* tracking pixels */
-		if (!attr(h->tag, "alt", alt, sizeof(alt)) || !alt[0]) return;
+		attr(h->tag, "alt", alt, sizeof(alt));
+		attr(h->tag, "src", src, sizeof(src));
+		if (!src[0] && !alt[0]) return;
+		if (!pm_strncasecmp(src, "data:", 5)) src[0] = 0;               /* (not decoded) */
+		if (!src[0] && !alt[0]) return;
+		/* the text is HTML too: keep it simple */
+		for (k = 0; alt[k]; k++) if ((unsigned char)alt[k] < 0x20) alt[k] = ' ';
+		for (k = 0; src[k]; k++) if ((unsigned char)src[k] < 0x20) src[k] = ' ';
 		newline(h, 1, out, ctx);
-		out_s(out, ctx, "\x01i ");
-		{
-			/* alt text is HTML too: keep it simple */
-			int k;
-			for (k = 0; alt[k]; k++) if ((unsigned char)alt[k] < 0x20) alt[k] = ' ';
-		}
+		out_s(out, ctx, "\x01i");
 		out_s(out, ctx, alt);
+		out_s(out, ctx, "\x02");
+		out_s(out, ctx, src);
 		out_s(out, ctx, "\n");
 		h->at_line_start = 1;
 		h->blank = 0;

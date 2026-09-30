@@ -33,6 +33,7 @@ class CEikScrollBar;
 class CEikLabel;
 class CPmFolderListBox;
 class CPmMsgListBox;
+class CPmPictures;
 
 extern "C" {
 #include <psimail.h>
@@ -61,6 +62,7 @@ struct TPmSettings
 	TInt iSort;            // the message list's order: 0 newest first (see pmnative.cpp)
 	TInt iView;            // what's hidden: 1 toolbar, 2 title bar, 4 folder list
 	TInt iSpare[2];        // (TPmSettings is saved whole: keep its size)
+	                       // iSpare[0]: pictures in messages - 0 shown, 1 only attached files, 2 none (pmnative.cpp)
 	PmAccount iAccounts[PM_MAX_ACCOUNTS];
 	};
 
@@ -192,6 +194,8 @@ public:
 	void Render();                           // draw the screen again
 	void ZoomL(TInt aStep);                  // the sidebar's zoom buttons
 	TBool NativeMode() const;                // shown with EIKON controls (every mode now)
+	void RefreshPicturesL();                 // pictures the engine has decoded since: into the reader (pmnative.cpp)
+	TInt PicturesPref() const { return iSettings->iSpare[0]; }   // 0 shown, 1 only attached files, 2 none
 	// MEikListBoxObserver
 	void HandleListBoxEventL(CEikListBox* aListBox, TListBoxEvent aEventType);
 private:
@@ -230,6 +234,9 @@ private:
 	void ReaderScrollL(TInt aMovement);
 	void ReaderToL(TBool aEnd);
 	void FormatNativeDate(TInt aDate, TDes& aOut) const;
+	void AskForPicturesL();                  // PM_CMD_PICTURES for the ones not decoded yet
+	void PlacePictureL(TInt aPlace);         // a CPmPicture into the rich text where it goes
+	void RelayoutReaderL();                  // the text again, with what was at the top kept there
 	void SortRows();
 	TInt RowHeight() const;                  // a list row at this zoom
 	// the calendar, drawn with EIKON's fonts and colours beside the folder
@@ -415,6 +422,8 @@ private:
 	TBuf<160> iReaderError;
 	CArrayFixFlat<TPmLinkRange>* iLinks;
 	TInt iLinkSel;                   // index in iLinks, -1 none
+	CPmPictures* iPictures;          // the message's pictures (pmpict.h)
+	TUint iPicChangedSeen;           // changed_seq when the pictures were last looked for
 	TInt iSplitX;                    // where the folder list ends
 	TInt iStatusH;
 	TUint iMsgListSum;               // what the message list shows (to skip rebuilds)

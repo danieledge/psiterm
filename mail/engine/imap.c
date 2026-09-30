@@ -635,6 +635,7 @@ static void remove_cached(int acct, const char *folder, unsigned int uid)
 	st_msg_path(acct, folder, uid, "txt", p, sizeof(p)); remove(p);
 	st_msg_path(acct, folder, uid, "att", p, sizeof(p)); remove(p);
 	st_msg_path(acct, folder, uid, "htm", p, sizeof(p)); remove(p);
+	pic_remove(acct, folder, uid);
 }
 
 int imap_sync(int acct, const char *folder, int older, char *why, int whymax)
@@ -1157,6 +1158,7 @@ static int imap_body_1(int acct, const char *folder, unsigned int uid, int full,
 			if (pm_fclose(f) != 0) remove(apath);          /* (no list rather than a broken one) */
 		}
 	} else remove(apath);
+	pic_write_index(acct, folder, uid, &b.st);        /* the pictures in it, for the app to ask for */
 
 	if (!(b.f = fopen(tmp, "w"))) { pm_write_why(why, whymax, "the message", path); return PM_RES_FAILED; }
 	{
@@ -1258,6 +1260,7 @@ typedef struct
 	long got, total;
 	int percent;
 	int err;
+	const char *label;       /* "the attachment", or a picture's */
 	} AttCtx;
 
 static void att_stream(const char *data, int n, void *ctx)
@@ -1269,7 +1272,7 @@ static void att_stream(const char *data, int n, void *ctx)
 	if (c->total > 0) {
 		int pc = (int)(c->got * 100 / c->total);
 		pc -= pc % 5;
-		if (pc != c->percent) { c->percent = pc; pm_progress("Downloading the attachment... %d%%", pc); }
+		if (pc != c->percent) { c->percent = pc; pm_progress("Downloading %s... %d%%", c->label ? c->label : "the attachment", pc); }
 	}
 	dn = dec_feed(&c->dec, data, n, dec);
 	if (c->err) return;
@@ -1333,6 +1336,27 @@ int imap_attach(int acct, const char *folder, unsigned int uid, const char *part
 	pm_copy(s->last_file, path, sizeof(s->last_file));
 	set_why(why, whymax, "Saved %s", path);
 	return PM_RES_OK;
+}
+
+/* a part into a file, decoded (pictures.c: the picture parts of a message) */
+int imap_part_to_file(int acct, const char *folder, unsigned int uid, const char *part, int enc, long size,
+                      const char *path, const char *label, char *why, int whymax)
+{
+	static AttCtx c;
+	int r;
+	if ((r = open_folder(acct, folder, why, whymax)) != PM_RES_OK) return r;
+	memset(&c, 0, sizeof(c));
+	if (!(c.f = fopen(path, "wb"))) { pm_write_why(why, whymax, label, path); return PM_RES_FAILED; }
+	dec_init(&c.dec, enc);
+	c.total = size;
+	c.percent = -1;
+	c.label = label;
+	r = fetch_part(acct, folder, uid, part, 0, att_stream, &c, why, whymax);
+	if (pm_fclose(c.f) != 0) c.err = 1;
+	if (r == PM_RES_OK && c.err) { pm_write_why(why, whymax, label, path); r = PM_RES_FAILED; }
+	if (r == PM_RES_OK && c.got == 0 && size > STREAM_MIN) { set_why(why, whymax, "The server sent nothing"); r = PM_RES_FAILED; }
+	if (r != PM_RES_OK) remove(path);
+	return r;
 }
 
 /* --------------------------------------------------------- flags, moves */

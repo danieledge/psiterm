@@ -166,6 +166,16 @@ static void add_part(PmStructure *st, ImapNode *b, const char *id)
 	}
 	ip_str(ip_nth(b, 5), enc, sizeof(enc));
 	p->enc = mime_enc_from_name(enc);
+	{
+		/* Content-ID, as "cid:" in the HTML has it (no angle brackets) */
+		char cid[96];
+		int k = 0, n;
+		ip_str(ip_nth(b, 3), cid, sizeof(cid));
+		if (cid[0] == '<') k = 1;
+		n = (int)strlen(cid);
+		if (n > 0 && cid[n - 1] == '>') cid[n - 1] = 0;
+		pm_copy(p->cid, cid + k, sizeof(p->cid));
+	}
 	p->size = ip_num(ip_nth(b, 6));
 	is_text = !strcmp(type, "text");
 	is_msg = !strcmp(p->type, "message/rfc822");
