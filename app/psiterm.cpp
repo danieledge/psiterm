@@ -465,11 +465,11 @@ void CTermView::ApplySerialSettings()
 		}
 	}
 
+// Zoom in / out cycle round the sizes rather than stopping at the ends
+// (EIKON style guide 7.3.7), so one key reaches every size
 void CTermView::ZoomBy(TInt aStep)
 	{
-	TInt z = iSettings.iZoom + aStep;
-	if (z < 0) z = 0;
-	if (z >= KZoomLevels) z = KZoomLevels - 1;
+	TInt z = (iSettings.iZoom + aStep + KZoomLevels) % KZoomLevels;
 	if (z != iSettings.iZoom)
 		SetFontL(z);
 	}
@@ -740,7 +740,7 @@ void CTermView::StartInstallerL()
 		return;
 		}
 	TBuf<160> m;
-	m.Format(_L("Could not start the installer (%d). Open %S from the System screen."), err, &iUpdateFile);
+	m.Format(_L("The installer did not start (%d) - open %S from the System screen"), err, &iUpdateFile);
 	iEikonEnv->InfoWinL(_L("Update downloaded"), m);
 	}
 
@@ -937,7 +937,7 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 		}
 	if (iSettings.iNetMode)
 		{
-		iEikonEnv->InfoMsg(_L("Psion Internet mode: pick a server to connect"));
+		iEikonEnv->InfoMsg(_L("Nothing to type to - SSH to a server first"));
 		return;
 		}
 	if (!iSerial)
@@ -1096,7 +1096,7 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 		else aText.Append(_L("Starting SSH..."));
 		}
 	else if (ModemOnline())
-		aText.Format(_L("Modem connected   %d baud   Shift+Ctrl+H: hang up"), BaudValue(iSettings.iBaudIndex));
+		aText.Format(_L("Modem connected   %d baud   Shift+Ctrl+U: hang up"), BaudValue(iSettings.iBaudIndex));
 	else if (iSettings.iNetMode)
 		aText.Copy(_L("Not connected   link: Psion Internet (PPP)"));
 	else
@@ -2484,7 +2484,7 @@ void CTermView::ShowCharInfoL()
 	{
 	if (!iSelActive)
 		{
-		iEikonEnv->InfoMsg(_L("Drag the pen over the character first"));
+		iEikonEnv->InfoMsg(_L("Nothing selected - drag the pen over the character first"));
 		return;
 		}
 	TInt l0 = iSelLine0, c0 = iSelCol0, l1 = iSelLine1, c1 = iSelCol1;
@@ -2726,7 +2726,7 @@ void CTermView::CopySelectionL()
 	{
 	if (!iSelActive)
 		{
-		iEikonEnv->InfoMsg(_L("Drag the pen over some text first"));
+		iEikonEnv->InfoMsg(_L("Nothing to copy - drag the pen over some text first"));
 		return;
 		}
 	HBufC8* buf = HBufC8::NewLC(KClipMax);
@@ -2743,7 +2743,10 @@ void CTermView::CopySelectionL()
 	cb->CommitL();
 	CleanupStack::PopAndDestroy(3);         // text, cb, buf
 	TBuf<40> msg;
-	msg.Format(_L("Copied %d characters"), n);
+	if (n == 1)
+		msg.Copy(_L("Copied 1 character"));
+	else
+		msg.Format(_L("Copied %d characters"), n);
 	iEikonEnv->InfoMsg(msg);
 	}
 
@@ -2828,7 +2831,7 @@ void CTermView::StartSshL()
 		{
 		// first ever SSH: gather randomness from the user's typing
 		LocalMessage(_L8("\r\nSSH needs some randomness for its keys the first time.\r\n"
-			"Please type random keys until it says done (Esc cancels): "));
+			"Type random keys until it says done (Esc cancels): "));
 		iGatheringEntropy = ETrue;
 		iEntropyMode = 0;
 		return;
@@ -2926,7 +2929,7 @@ TBool CTermView::KeyToolL(TInt aMode, const TDesC& aBase, const TDesC& aName, co
 	if (aMode == 4 && !SeedFileExists() && iKeyCount < KEntropyKeysNeeded)
 		{
 		LocalMessage(_L8("\r\nMaking a key needs some randomness.\r\n"
-			"Please type random keys until it says done (Esc cancels): "));
+			"Type random keys until it says done (Esc cancels): "));
 		iGatheringEntropy = ETrue;
 		iEntropyMode = 4;
 		return EFalse;
@@ -2985,7 +2988,7 @@ void CTermView::StartUpdateL()
 		}
 	if (iSettings.iUpdSource == 1 && iSettings.iUpdHost.Length() == 0)
 		{
-		LocalMessage(_L8("No local update server set: Settings > Update source.\r\n"));
+		LocalMessage(_L8("No local update server set: Tools > Update source.\r\n"));
 		return;
 		}
 	LaunchSshL(2);
@@ -3021,7 +3024,7 @@ TInt CTermView::ShotCallback(TAny* aSelf)
 	if (err != KErrNone)
 		{
 		TBuf<48> m;
-		m.Format(_L("Screenshot failed (%d)"), err);
+		m.Format(_L("Screenshot not saved (%d)"), err);
 		CEikonEnv::Static()->InfoMsg(m);
 		}
 	return 0;
@@ -3098,7 +3101,7 @@ void CTermView::TakeScreenshotL()
 	User::LeaveIfError(file.Write(cells));
 	CleanupStack::PopAndDestroy(2);         // file, bmp
 	TBuf<64> m;
-	m.Format(_L("Screenshot %d saved - Terminal > Send screenshots"), n);
+	m.Format(_L("Screenshot %d saved - Tools > Debug > Send screenshots"), n);
 	iEikonEnv->InfoMsg(m);
 	}
 
@@ -3138,7 +3141,7 @@ void CTermView::SendScreenshotsL()
 	if (fs.GetDir(spec, KEntryAttNormal, ESortByName, list) != KErrNone || !list || list->Count() == 0)
 		{
 		delete list;
-		iEikonEnv->InfoMsg(_L("No screenshots to send (Shift+Ctrl+P takes one)"));
+		iEikonEnv->InfoMsg(_L("No screenshots to send - Shift+Ctrl+P takes one"));
 		return;
 		}
 	CleanupStack::PushL(list);
@@ -3346,7 +3349,7 @@ void CTermView::LaunchSshL(TInt aMode)
 		TBuf8<200> msg;
 		if (r == KErrNotFound)
 			msg.Format(_L8("\r\n[PsiTerm's SSH program (psissh.exe) is missing or cannot load.\r\n"
-				" Please reinstall PsiTerm from its .sis file.]\r\n"));
+				" Reinstall PsiTerm from its .sis file.]\r\n"));
 		else
 			msg.Format(_L8("\r\n[SSH: could not start psissh.exe, error %d]\r\n"), r);
 		LocalMessage(msg);
@@ -4090,8 +4093,10 @@ TInt CSnippetList::Save()
 	return r;
 	}
 
-// Hotkeys: Shift+Ctrl + 1..9, 0, then the letters the menus leave free
-static const char KSnippetKeys[] = "1234567890ABDFGIJKLMNOQRUWXYZ";
+// Shortcut keys: Shift+Ctrl + 1..9, 0, then the letters the menus leave
+// free (H is EIKON's "Help on program" key, so it stays free too). A saved
+// snippet on a letter the menu has since taken loses its key when loaded.
+static const char KSnippetKeys[] = "1234567890BFGIJLNOQRWXYZ";
 
 TInt SnippetKeyCount()
 	{
@@ -4204,7 +4209,7 @@ TBool CSnippetEditDialog::OkToExitL(TInt /*aButtonId*/)
 	name.Trim();
 	if (text.Length() == 0)
 		{
-		CEikonEnv::Static()->InfoMsg(_L("Enter the text to send"));
+		CEikonEnv::Static()->InfoMsg(_L("No text entered"));
 		TryChangeFocusToL(EPtDlgSnipText);
 		return EFalse;
 		}
@@ -4212,8 +4217,9 @@ TBool CSnippetEditDialog::OkToExitL(TInt /*aButtonId*/)
 	TInt other = iList.FindKey(key);
 	if (key && other >= 0 && other != iSelf)
 		{
-		TBuf<60> m(_L("That key is used by "));
+		TBuf<60> m(_L("Shortcut already used by \""));
 		m.Append(iList.At(other).iName);
+		m.Append('"');
 		CEikonEnv::Static()->InfoMsg(m);
 		TryChangeFocusToL(EPtDlgSnipKey);
 		return EFalse;
@@ -4371,13 +4377,13 @@ TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
 		host.SetLength(100);
 	if (host.Length() == 0)
 		{
-		CEikonEnv::Static()->InfoMsg(_L("Enter a host name or IP address"));
+		CEikonEnv::Static()->InfoMsg(_L("No host name entered"));
 		TryChangeFocusToL(EPtDlgHost);
 		return EFalse;
 		}
 	if (user.Length() == 0)
 		{
-		CEikonEnv::Static()->InfoMsg(_L("Enter a user name"));
+		CEikonEnv::Static()->InfoMsg(_L("No user name entered"));
 		TryChangeFocusToL(EPtDlgUser);
 		return EFalse;
 		}
@@ -4404,7 +4410,7 @@ TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
 		if (iEntry.iPassword.Length() == 0)
 			{
 			typed.FillZ();
-			CEikonEnv::Static()->InfoMsg(_L("Type the password to save"));
+			CEikonEnv::Static()->InfoMsg(_L("No password entered"));
 			TryChangeFocusToL(EPtDlgPassword);
 			return EFalse;
 			}
@@ -4476,7 +4482,6 @@ void CAppearanceDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPtDlgTheme))->SetCurrentItem(iSettings.iTheme);
 	((CEikChoiceList*)Control(EPtDlgCursor))->SetCurrentItem(iSettings.iCursor);
 	((CEikChoiceList*)Control(EPtDlgBlink))->SetCurrentItem(iSettings.iBlink ? 1 : 0);
-	((CEikChoiceList*)Control(EPtDlgStatus))->SetCurrentItem(iSettings.iStatus ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgBell))->SetCurrentItem(iSettings.iBell ? 0 : 1);
 	((CEikChoiceList*)Control(EPtDlgStartScreen))->SetCurrentItem(iSettings.iStartScreen ? 1 : 0);
 	}
@@ -4486,7 +4491,6 @@ TBool CAppearanceDialog::OkToExitL(TInt /*aButtonId*/)
 	iSettings.iTheme = ((CEikChoiceList*)Control(EPtDlgTheme))->CurrentItem();
 	iSettings.iCursor = ((CEikChoiceList*)Control(EPtDlgCursor))->CurrentItem();
 	iSettings.iBlink = ((CEikChoiceList*)Control(EPtDlgBlink))->CurrentItem() == 1;
-	iSettings.iStatus = ((CEikChoiceList*)Control(EPtDlgStatus))->CurrentItem() == 1;
 	iSettings.iBell = ((CEikChoiceList*)Control(EPtDlgBell))->CurrentItem() == 1 ? 0 : 1;
 	iSettings.iStartScreen = ((CEikChoiceList*)Control(EPtDlgStartScreen))->CurrentItem() == 1;
 	return ETrue;
@@ -4587,7 +4591,8 @@ TBool CUpdateDialog::OkToExitL(TInt /*aButtonId*/)
 	iPort = NumberEditorValue(EPtDlgPort);
 	if (iHost.Length() == 0 && (iSource == 1 || iNeedHost))
 		{
-		CEikonEnv::Static()->InfoMsg(_L("Enter the local server's name or IP address"));
+		CEikonEnv::Static()->InfoMsg(_L("No local server entered"));
+		TryChangeFocusToL(EPtDlgHost);
 		return EFalse;
 		}
 	return ETrue;
@@ -4664,7 +4669,7 @@ void CPsiTermAppUi::SshToL()
 	{
 	if (iView->SshActive())
 		{
-		iEikonEnv->InfoMsg(_L("Already connected - Disconnect SSH first"));
+		iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
 		return;
 		}
 	for (;;)
@@ -4728,8 +4733,10 @@ void CPsiTermAppUi::SshToL()
 			}
 		case EPtBidDelete:
 			{
-			TBuf<60> what(iHosts->At(index).iName);
-			if (CEikonEnv::QueryWinL(_L("Delete this saved host?"), what))
+			TBuf<60> what;                       // the user's own name, in double quotes
+			TPtrC name(LeftSafe(iHosts->At(index).iName, 40));
+			what.Format(_L("\"%S\""), &name);
+			if (CEikonEnv::QueryWinL(what, _L("Delete this saved host?")))
 				{
 				iHosts->Delete(index);
 				iHosts->Save();
@@ -4938,6 +4945,7 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	}
 
 // The Debug tools need the serial port: offer to end the SSH session first.
+// (Statement, then the question, as the style guide has confirmations.)
 // Returns ETrue if the tool can run now; if the user agrees to disconnect,
 // the command is run again by itself once the session has ended.
 TBool CPsiTermAppUi::ConfirmDisconnectL(TInt aCommand)
@@ -5040,8 +5048,10 @@ void CPsiTermAppUi::ManageSnippetsL()
 			}
 		case EPtBidDelete:
 			{
-			TBuf<30> what(iSnippets->At(index).iName);
-			if (CEikonEnv::QueryWinL(_L("Delete this snippet?"), what))
+			TBuf<30> what;
+			TPtrC name(LeftSafe(iSnippets->At(index).iName, 26));
+			what.Format(_L("\"%S\""), &name);
+			if (CEikonEnv::QueryWinL(what, _L("Delete this snippet?")))
 				{
 				iSnippets->Delete(index);
 				iSnippets->Save();
@@ -5133,8 +5143,11 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 	TPsiSettings& s = iView->Settings();
 	if (aMenuId == R_PT_FONT_MENU)
 		aMenuPane->SetItemButtonState(EPtCmdZoom0 + s.iZoom, EEikMenuItemSymbolOn);
-	else if (aMenuId == R_PT_SETTINGS_MENU)
+	else if (aMenuId == R_PT_VIEW_MENU)
+		{
 		aMenuPane->SetItemButtonState(EPtCmdBold, s.iBold ? EEikMenuItemSymbolOn : 0);
+		aMenuPane->SetItemButtonState(EPtCmdStatusLine, s.iStatus ? EEikMenuItemSymbolOn : 0);
+		}
 	}
 
 void CPsiTermAppUi::HandleCommandL(TInt aCommand)
@@ -5157,7 +5170,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		|| (aCommand >= EPtCmdClaudeEsc && aCommand <= EPtCmdClaudeHelp))
 		&& !iView->SshLoggedIn())
 		{
-		iEikonEnv->InfoMsg(_L("Not connected - connect with SSH first"));
+		iEikonEnv->InfoMsg(_L("Not available - SSH is not connected"));
 		return;
 		}
 	switch (aCommand)
@@ -5166,7 +5179,12 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		Exit();
 		return;
 	case EPtCmdSsh:     SshToL(); break;
-	case EPtCmdSshDisconnect: iView->DisconnectSsh(); break;
+	case EPtCmdSshDisconnect:
+		if (!iView->SshActive())
+			iEikonEnv->InfoMsg(_L("Nothing to disconnect"));
+		else
+			iView->DisconnectSsh();
+		break;
 	case EPtCmdSpeedTest:
 		if (!ConfirmDisconnectL(aCommand))
 			break;
@@ -5174,14 +5192,25 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		iView->StartSpeedTestL();
 		iView->RunToolDialogL();
 		break;
-	case EPtCmdHangup:   iView->HangUp(); break;
+	case EPtCmdHangup:
+		// dimmed on the menu while SSH is up, but the shortcut still arrives
+		if (iView->SshActive())
+			{
+			iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
+			break;
+			}
+		// the Hayes escape takes a couple of seconds: say so, bottom left
+		iEikonEnv->BusyMsgL(_L("Hanging up..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0));
+		iView->HangUp();
+		iEikonEnv->BusyMsgCancel();
+		break;
 	case EPtCmdSendSize: iView->SendScreenSize(); break;
 	case EPtCmdLoginKey:
 		ManageKeysL();
 		break;
 	case EPtCmdInstallKey:
 		InstallKeyCmdL();
-		iEikonEnv->InfoMsg(_L("To use it: SSH to... > Edit > Log in with"));
+		iEikonEnv->InfoMsg(_L("To log in with it: File > SSH to > Edit > Log in with"));
 		break;
 	case EPtCmdSerialInfo:
 		if (ConfirmDisconnectL(aCommand))
@@ -5371,13 +5400,20 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		SaveSettings(s);
 		iView->DrawNow();
 		break;
-	case EEikCmdZoomIn:                       // sidebar zoom buttons
+	case EPtCmdZoomIn:
+	case EEikCmdZoomIn:                       // View menu, and the sidebar zoom buttons
 		iView->ZoomBy(1);
 		SaveSettings(s);
 		break;
+	case EPtCmdZoomOut:
 	case EEikCmdZoomOut:
 		iView->ZoomBy(-1);
 		SaveSettings(s);
+		break;
+	case EPtCmdStatusLine:                    // View > Show status line (tick box)
+		s.iStatus = !s.iStatus;
+		SaveSettings(s);
+		iView->ApplyAppearanceL();
 		break;
 	case EEikCmdEditCopy:                     // sidebar clipboard menu
 	case EEikCmdEditCut:
@@ -5481,7 +5517,7 @@ TBool CKeyEditDialog::OkToExitL(TInt /*aButtonId*/)
 	iName.Trim();
 	if (iName.Length() == 0)
 		{
-		CEikonEnv::Static()->InfoMsg(_L("Give the key a name"));
+		CEikonEnv::Static()->InfoMsg(_L("No key name entered"));
 		TryChangeFocusToL(EPtDlgKeyName);
 		return EFalse;
 		}
@@ -5492,7 +5528,7 @@ TBool CKeyEditDialog::OkToExitL(TInt /*aButtonId*/)
 		TEntry e;
 		if (iFile->Length() == 0 || CEikonEnv::Static()->FsSession().Entry(*iFile, e) != KErrNone)
 			{
-			CEikonEnv::Static()->InfoMsg(_L("No such file"));
+			CEikonEnv::Static()->InfoMsg(_L("File not found"));
 			TryChangeFocusToL(EPtDlgKeyFile);
 			return EFalse;
 			}
@@ -5523,7 +5559,7 @@ TBool CKeyPickDialog::OkToExitL(TInt /*aButtonId*/)
 	return ETrue;
 	}
 
-// Settings > SSH keys: the key list (New / Import / Show / Edit / Delete)
+// Tools > SSH keys: the key list (New / Import / Show / Edit / Delete)
 void CPsiTermAppUi::ManageKeysL()
 	{
 	for (;;)
@@ -5543,7 +5579,7 @@ void CPsiTermAppUi::ManageKeysL()
 		TBool have = (index >= 0 && index < iKeys->Count());
 		if ((action == EPtBidNew || action == EPtBidImport) && iView->SshActive())
 			{
-			iEikonEnv->InfoMsg(_L("Disconnect SSH first"));
+			iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
 			continue;
 			}
 		if ((action == EPtBidNew || action == EPtBidImport) && iKeys->Count() >= KMaxKeys)
@@ -5591,11 +5627,11 @@ void CPsiTermAppUi::ManageKeysL()
 				{
 				if (iView->SshActive())
 					{
-					iEikonEnv->InfoMsg(_L("Disconnect SSH first"));
+					iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
 					break;
 					}
-				if (!iEikonEnv->QueryWinL(_L("Replace this key?"),
-					_L("Servers set up with the old key will stop accepting it")))
+				if (!iEikonEnv->QueryWinL(_L("Servers set up with the old key will stop accepting it"),
+					_L("Replace this key?")))
 					break;
 				CKeyList::Base(iKeys->At(index).iId, base);
 				if (!iView->KeyToolL(4, base, name, KNullDesC))
@@ -5605,8 +5641,10 @@ void CPsiTermAppUi::ManageKeysL()
 			}
 		case EPtBidDelete:
 			{
-			TBuf<30> what(iKeys->At(index).iName);
-			if (iEikonEnv->QueryWinL(_L("Delete this key?"), what))
+			TBuf<30> what;
+			TPtrC name(LeftSafe(iKeys->At(index).iName, 26));
+			what.Format(_L("\"%S\""), &name);
+			if (iEikonEnv->QueryWinL(what, _L("Delete this key?")))
 				{
 				iKeys->Delete(index);
 				iKeys->Save();
@@ -5619,7 +5657,7 @@ void CPsiTermAppUi::ManageKeysL()
 		}
 	}
 
-// Terminal > Install login key on server: the host's own key, or the only
+// File > Install login key on server: the host's own key, or the only
 // one, or ask which
 void CPsiTermAppUi::InstallKeyCmdL()
 	{
@@ -5627,7 +5665,7 @@ void CPsiTermAppUi::InstallKeyCmdL()
 		return;
 	if (iKeys->Count() == 0)
 		{
-		iEikonEnv->InfoMsg(_L("Make a key first: Settings > SSH keys"));
+		iEikonEnv->InfoMsg(_L("No keys yet - make one with Tools > SSH keys"));
 		return;
 		}
 	TFileName base;
@@ -5650,5 +5688,5 @@ void CPsiTermAppUi::InstallKeyCmdL()
 		}
 	CKeyList::Base(iKeys->At(pick).iId, base);
 	iView->InstallLoginKeyL(base);
-	iEikonEnv->InfoMsg(_L("To use it: SSH to... > Edit > Log in with"));
+	iEikonEnv->InfoMsg(_L("To log in with it: File > SSH to > Edit > Log in with"));
 	}

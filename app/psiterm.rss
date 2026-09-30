@@ -29,47 +29,74 @@ RESOURCE EIK_APP_INFO
 	hotkeys=r_pt_hotkeys;
 	}
 
-// Plain Ctrl+letter combinations all go to the remote system (Ctrl+C etc.),
-// so PsiTerm's own shortcuts use Shift+Ctrl.
+// Shortcuts. In a terminal every plain Ctrl+letter must reach the remote
+// system (Ctrl+C, Ctrl+D, Ctrl+Z...), so PsiTerm cannot use EIKON's Ctrl+
+// shortcuts at all: its own are all Shift+Ctrl+letter, choosing the standard
+// letter where one exists (E close, S SSH to = "save as", C copy, V paste,
+// M zoom, K preferences, A about) and the built-in Email program's for the
+// connection (D = close mailbox, U = disconnect). Snippets take the letters
+// left over (see KSnippetKeys in psiterm.cpp).
 RESOURCE HOTKEYS r_pt_hotkeys
 	{
 	shift_control=
 		{
 		HOTKEY { command=EEikCmdExit; key='e'; },
-		HOTKEY { command=EPtCmdHangup; key='h'; },
 		HOTKEY { command=EPtCmdSsh; key='s'; },
-		HOTKEY { command=EPtCmdKeyShiftTab; key='t'; },
+		HOTKEY { command=EPtCmdSshDisconnect; key='d'; },
+		HOTKEY { command=EPtCmdHangup; key='u'; },
 		HOTKEY { command=EPtCmdCopy; key='c'; },
 		HOTKEY { command=EPtCmdPaste; key='v'; },
-		HOTKEY { command=EPtCmdScreenshot; key='p'; }
+		HOTKEY { command=EPtCmdZoomOut; key='m'; },
+		HOTKEY { command=EPtCmdAppearance; key='k'; },
+		HOTKEY { command=EPtCmdKeyShiftTab; key='t'; },
+		HOTKEY { command=EPtCmdScreenshot; key='p'; },
+		HOTKEY { command=EPtCmdAbout; key='a'; }
 		};
 	}
 
+// Menus in EIKON's standard order: File, Edit, View, the program's own
+// (Keys, Snippets, tmux), then Tools ending with About
 RESOURCE MENU_BAR r_pt_menubar
 	{
 	titles=
 		{
-		MENU_TITLE { menu_pane=r_pt_term_menu; txt="Terminal"; },
+		MENU_TITLE { menu_pane=r_pt_term_menu; txt="File"; },
 		MENU_TITLE { menu_pane=r_pt_edit_menu; txt="Edit"; },
+		MENU_TITLE { menu_pane=r_pt_view_menu; txt="View"; },
 		MENU_TITLE { menu_pane=r_pt_keys_menu; txt="Keys"; },
 		MENU_TITLE { menu_pane=r_pt_snippets_menu; txt="Snippets"; },
 		MENU_TITLE { menu_pane=r_pt_tmux_menu; txt="tmux"; },
-		MENU_TITLE { menu_pane=r_pt_settings_menu; txt="Settings"; },
-		MENU_TITLE { menu_pane=r_pt_debug_menu; txt="Debug"; }
+		MENU_TITLE { menu_pane=r_pt_tools_menu; txt="Tools"; }
 		};
 	}
 
+// File: the connection. Update PsiTerm starts at once and then shows its
+// progress, so no "..." (style guide 7.3.6)
 RESOURCE MENU_PANE r_pt_term_menu
 	{
 	items=
 		{
 		MENU_ITEM { command=EPtCmdSsh; txt="SSH to..."; },
 		MENU_ITEM { command=EPtCmdSshDisconnect; txt="Disconnect SSH"; },
-		MENU_ITEM { command=EPtCmdInstallKey; txt="Install login key on server"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdHangup; txt="Hang up modem"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdInstallKey; txt="Install login key on server"; },
 		MENU_ITEM { command=EPtCmdUpdate; txt="Update PsiTerm"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdAbout; txt="About PsiTerm"; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
+		};
+	}
+
+// Tools: settings, then the rarely used Debug tools in a cascade, then About
+RESOURCE MENU_PANE r_pt_tools_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdAppearance; txt="Preferences..."; },
+		MENU_ITEM { command=EPtCmdLoginKey; txt="SSH keys..."; },
+		MENU_ITEM { command=EPtCmdConnSettings; txt="Connection settings..."; },
+		MENU_ITEM { command=EPtCmdUpdateServer; txt="Update source..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdReset; txt="Reset terminal"; },
+		MENU_ITEM { cascade=r_pt_debug_menu; txt="Debug"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdAbout; txt="About PsiTerm"; }
 		};
 	}
 
@@ -80,11 +107,10 @@ RESOURCE MENU_PANE r_pt_debug_menu
 		MENU_ITEM { command=EPtCmdSpeedTest; txt="SSH speed test"; },
 		MENU_ITEM { command=EPtCmdSerialInfo; txt="Serial port info"; },
 		MENU_ITEM { command=EPtCmdCharInfo; txt="Character codes of selection"; },
-		MENU_ITEM { command=EPtCmdCheckTabs; txt="Check tmux tabs"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdCheckTabs; txt="Check tmux tabs"; },
 		MENU_ITEM { command=EPtCmdScreenshot; txt="Screenshot"; },
-		MENU_ITEM { command=EPtCmdSendShots; txt="Send screenshots"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdSendSize; txt="Type stty screen size (no SSH)"; },
-		MENU_ITEM { command=EPtCmdReset; txt="Reset terminal"; }
+		MENU_ITEM { command=EPtCmdSendShots; txt="Send screenshots"; },
+		MENU_ITEM { command=EPtCmdSendSize; txt="Type stty screen size (no SSH)"; }
 		};
 	}
 
@@ -115,12 +141,26 @@ RESOURCE MENU_PANE r_pt_edit_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPtCmdCopy; txt="Copy selection"; },
+		MENU_ITEM { command=EPtCmdCopy; txt="Copy"; },
 		MENU_ITEM { command=EPtCmdPaste; txt="Paste"; },
-		MENU_ITEM { command=EPtCmdSelectScreen; txt="Select screen"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdScrollUp; txt="Scroll back (Shift+PgUp)"; },
-		MENU_ITEM { command=EPtCmdScrollDown; txt="Scroll forward (Shift+PgDn)"; },
-		MENU_ITEM { command=EPtCmdScrollEnd; txt="Back to live screen"; }
+		MENU_ITEM { command=EPtCmdSelectScreen; txt="Select screen"; }
+		};
+	}
+
+// View: zoom (Shift+Ctrl+M cycles the sizes; the Font cascade picks one
+// directly), the scrollback, and the tick-box toggles
+RESOURCE MENU_PANE r_pt_view_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdZoomIn; txt="Zoom in"; },
+		MENU_ITEM { command=EPtCmdZoomOut; txt="Zoom out"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdScrollUp; txt="Scroll back"; extratxt="Shift+PgUp"; },
+		MENU_ITEM { command=EPtCmdScrollDown; txt="Scroll forward"; extratxt="Shift+PgDn"; },
+		MENU_ITEM { command=EPtCmdScrollEnd; txt="Go to live screen"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdBold; txt="Bold text"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdStatusLine; txt="Show status line"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { cascade=r_pt_font_menu; txt="Font"; }
 		};
 	}
 
@@ -132,7 +172,8 @@ RESOURCE MENU_PANE r_pt_keys_menu
 		MENU_ITEM { command=EPtCmdKeyInsert; txt="Insert"; },
 		MENU_ITEM { command=EPtCmdKeyCtrlBackslash; txt="Ctrl+\\"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { cascade=r_pt_claude_menu; txt="Claude Code"; },
-		MENU_ITEM { cascade=r_pt_fkeys_menu; txt="Function keys"; }
+		MENU_ITEM { cascade=r_pt_fkeys_menu; txt="F1 to F6"; },
+		MENU_ITEM { cascade=r_pt_fkeys2_menu; txt="F7 to F12"; }
 		};
 	}
 
@@ -160,18 +201,20 @@ RESOURCE MENU_PANE r_pt_snippets_menu
 		};
 	}
 
-// tmux: sends the prefix (Ctrl+B or Ctrl+A) and the command key
+// tmux: sends the prefix (Ctrl+B or Ctrl+A) and the command key. The
+// right-hand column shows tmux's own key for each command (it teaches
+// tmux); Ctrl+Tab and Shift+Ctrl+Tab are PsiTerm's
 RESOURCE MENU_PANE r_pt_tmux_menu
 	{
 	items=
 		{
-		MENU_ITEM { cascade=r_pt_tmux_win_menu; txt="Windows"; },
-		MENU_ITEM { cascade=r_pt_tmux_pane_menu; txt="Panes"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdTmuxCopy; txt="Scroll / copy mode"; extratxt="["; },
 		MENU_ITEM { command=EPtCmdTmuxDetach; txt="Detach"; extratxt="d"; },
-		MENU_ITEM { command=EPtCmdTmuxMouse; txt="Stylus (mouse) on/off"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdTmuxTabs; txt="Windows as tabs"; extratxt="Ctrl+Tab"; flags=EEikMenuItemCheckBox; },
-		MENU_ITEM { command=EPtCmdTabsSetup; txt="Set up tabs on this server"; },
+		MENU_ITEM { command=EPtCmdTmuxMouse; txt="Switch mouse mode"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxTabs; txt="Windows as tabs"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdTabsSetup; txt="Set up tabs on this server"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { cascade=r_pt_tmux_win_menu; txt="Windows"; },
+		MENU_ITEM { cascade=r_pt_tmux_pane_menu; txt="Panes"; },
 		MENU_ITEM { cascade=r_pt_tmux_prefix_menu; txt="Prefix key"; }
 		};
 	}
@@ -181,8 +224,8 @@ RESOURCE MENU_PANE r_pt_tmux_win_menu
 	items=
 		{
 		MENU_ITEM { command=EPtCmdTmuxNew; txt="New window"; extratxt="c"; },
-		MENU_ITEM { command=EPtCmdTmuxNext; txt="Next window"; extratxt="n"; },
-		MENU_ITEM { command=EPtCmdTmuxPrev; txt="Previous window"; extratxt="p"; },
+		MENU_ITEM { command=EPtCmdTmuxNext; txt="Next window"; extratxt="Ctrl+Tab"; },
+		MENU_ITEM { command=EPtCmdTmuxPrev; txt="Previous window"; extratxt="Shift+Ctrl+Tab"; },
 		MENU_ITEM { command=EPtCmdTmuxChoose; txt="Choose window"; extratxt="w"; },
 		MENU_ITEM { command=EPtCmdTmuxRename; txt="Rename window"; extratxt=","; }
 		};
@@ -203,11 +246,12 @@ RESOURCE MENU_PANE r_pt_tmux_prefix_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPtCmdTmuxPrefixB; txt="Ctrl+B (default)"; flags=EEikMenuItemRadioStart; },
+		MENU_ITEM { command=EPtCmdTmuxPrefixB; txt="Ctrl+B (standard)"; flags=EEikMenuItemRadioStart; },
 		MENU_ITEM { command=EPtCmdTmuxPrefixA; txt="Ctrl+A"; flags=EEikMenuItemRadioEnd; }
 		};
 	}
 
+// Two cascades of six: twelve in one would scroll on the 240-pixel screen
 RESOURCE MENU_PANE r_pt_fkeys_menu
 	{
 	items=
@@ -217,26 +261,20 @@ RESOURCE MENU_PANE r_pt_fkeys_menu
 		MENU_ITEM { command=EPtCmdF3; txt="F3"; },
 		MENU_ITEM { command=EPtCmdF4; txt="F4"; },
 		MENU_ITEM { command=EPtCmdF5; txt="F5"; },
-		MENU_ITEM { command=EPtCmdF6; txt="F6"; },
+		MENU_ITEM { command=EPtCmdF6; txt="F6"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_fkeys2_menu
+	{
+	items=
+		{
 		MENU_ITEM { command=EPtCmdF7; txt="F7"; },
 		MENU_ITEM { command=EPtCmdF8; txt="F8"; },
 		MENU_ITEM { command=EPtCmdF9; txt="F9"; },
 		MENU_ITEM { command=EPtCmdF10; txt="F10"; },
 		MENU_ITEM { command=EPtCmdF11; txt="F11"; },
 		MENU_ITEM { command=EPtCmdF12; txt="F12"; }
-		};
-	}
-
-RESOURCE MENU_PANE r_pt_settings_menu
-	{
-	items=
-		{
-		MENU_ITEM { cascade=r_pt_font_menu; txt="Font size"; },
-		MENU_ITEM { command=EPtCmdBold; txt="Bold text"; flags=EEikMenuItemCheckBox; },
-		MENU_ITEM { command=EPtCmdAppearance; txt="Appearance..."; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdLoginKey; txt="SSH keys..."; },
-		MENU_ITEM { command=EPtCmdConnSettings; txt="Connection settings..."; },
-		MENU_ITEM { command=EPtCmdUpdateServer; txt="Update source..."; }
 		};
 	}
 
@@ -252,7 +290,8 @@ RESOURCE MENU_PANE r_pt_font_menu
 		};
 	}
 
-// Baud rate, flow control and link type: set once, so kept off the menu
+// Baud rate, flow control and link type: set once, so kept off the menu.
+// Shared with PsiMail, which copies this dialog line for line - keep them identical.
 RESOURCE DIALOG r_pt_conn_dialog
 	{
 	title="Connection settings";
@@ -294,11 +333,12 @@ RESOURCE ARRAY r_pt_link_array
 	items={ LBUF { txt="Modem (ATDT host:port)"; }, LBUF { txt="Psion Internet (PPP)"; } };
 	}
 
-// Saved hosts: pick one and Connect, or manage the list
+// Saved hosts: pick one and Connect, or manage the list. The dialog title
+// matches the command ("SSH to...").
 RESOURCE DIALOG r_pt_hosts_dialog
 	{
 	title="SSH to";
-	flags=EEikDialogFlagWait;
+	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight;
 	buttons=r_pt_hosts_buttons;
 	items=
 		{
@@ -318,9 +358,9 @@ RESOURCE DLG_BUTTONS r_pt_hosts_buttons
 		};
 	}
 
-// Add or edit one saved host
-// Snippets: pick one and Send, or manage the list
-// SSH keys (0.50): the key list and its small dialogs
+// SSH keys (0.50): the key list and its small dialogs. Six buttons with their
+// key legends are too tall for the right-hand column on a 240-pixel screen,
+// so this one keeps them in a row along the bottom.
 RESOURCE DIALOG r_pt_keys_dialog
 	{
 	title="SSH keys";
@@ -384,7 +424,7 @@ RESOURCE DIALOG r_pt_key_edit_dialog
 
 RESOURCE DIALOG r_pt_key_pick_dialog
 	{
-	title="Install which key?";
+	title="Install login key";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
@@ -396,7 +436,7 @@ RESOURCE DIALOG r_pt_key_pick_dialog
 RESOURCE DIALOG r_pt_snippets_dialog
 	{
 	title="Snippets";
-	flags=EEikDialogFlagWait;
+	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight;
 	buttons=r_pt_snippets_buttons;
 	items=
 		{
@@ -426,15 +466,16 @@ RESOURCE DIALOG r_pt_snippet_edit_dialog
 		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgSnipName; control=EDWIN { width=22; maxlength=24; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Text"; id=EPtDlgSnipText; control=EDWIN { width=22; maxlength=120; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Then press Enter"; id=EPtDlgSnipEnter; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Hotkey"; id=EPtDlgSnipKey; control=CHOICELIST { maxdisplaychar=14; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Shortcut key"; id=EPtDlgSnipKey; control=CHOICELIST { maxdisplaychar=14; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgSnipHint; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="In Text: \\n Enter  ^C Ctrl+C  \\e Esc  \\t Tab"; }; }
 		};
 	}
 
-// Theme, cursor, status line
+// Preferences (Shift+Ctrl+K): theme, cursor, bell, start screen. The status
+// line is a tick box on the View menu.
 RESOURCE DIALOG r_pt_appearance_dialog
 	{
-	title="Appearance";
+	title="Preferences";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
@@ -442,7 +483,6 @@ RESOURCE DIALOG r_pt_appearance_dialog
 		DLG_LINE { type=EEikCtChoiceList; prompt="Theme"; id=EPtDlgTheme; control=CHOICELIST { array_id=r_pt_theme_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Cursor"; id=EPtDlgCursor; control=CHOICELIST { array_id=r_pt_cursor_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Blinking cursor"; id=EPtDlgBlink; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Status line"; id=EPtDlgStatus; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Beep on bell"; id=EPtDlgBell; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Start screen"; id=EPtDlgStartScreen; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
 		};
@@ -483,7 +523,7 @@ RESOURCE DIALOG r_pt_about_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout1; control=LABEL { standard_font=EEikLabelFontLegend; txt="PsiTerm 0.13"; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout2; control=LABEL { txt="SSH terminal for the Psion Series 5mx - (c) Dan Edge"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout2; control=LABEL { txt="SSH terminal for the Psion Series 5mx - (c) 2026 Dan Edge"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAboutStatus; control=LABEL { standard_font=EEikLabelFontAnnotation; reserve_length=48; txt="-"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout4; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Dropbear SSH (c) Matt Johnston, libvterm (c) Paul Evans - MIT"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout6; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="LibTomCrypt, LibTomMath, TweetNaCl - public domain"; }; },

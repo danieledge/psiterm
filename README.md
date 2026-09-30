@@ -10,7 +10,7 @@
 
 **Download:** [PsiTerm.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis)
 (always the latest version - see [`dist/version.txt`](dist/version.txt)).
-Once installed, PsiTerm updates itself: Terminal > Update PsiTerm.
+Once installed, PsiTerm updates itself: File > Update PsiTerm.
 
 An SSH terminal for the **Psion Series 5mx** (EPOC R5, 36 MHz ARM710T).
 
@@ -28,9 +28,9 @@ and Claude Code - on a 1999 palmtop.
 
 - SSH with saved hosts and (optionally) saved passwords; a start screen to
   connect with one key (1-9)
-- SSH keys (Settings > SSH keys): make Ed25519 keys on the Psion or import
+- SSH keys (Tools > SSH keys): make Ed25519 keys on the Psion or import
   your own (OpenSSH or Dropbear, Ed25519 or RSA), each named, with its
-  fingerprint; show, rename, regenerate or delete them. Terminal > Install
+  fingerprint; show, rename, regenerate or delete them. File > Install
   login key on server adds one to a server, and each saved host chooses its
   key, a saved password, or to ask
 - Snippets: your own commands and prompts on a menu and on Shift+Ctrl
@@ -104,7 +104,7 @@ PsiTerm app, and packages `dist/PsiTerm.sis`.
 
 ## Updates
 
-**Terminal > Update PsiTerm** fetches `dist/version.txt` and `dist/PsiTerm.sis`
+**File > Update PsiTerm** fetches `dist/version.txt` and `dist/PsiTerm.sis`
 from this repository over HTTPS. The Psion speaks a minimal TLS 1.3 client
 (`ssh/tls13.c`: X25519, ChaCha20-Poly1305) over the same modem or dial-up link
 SSH uses.
@@ -123,7 +123,7 @@ commit `v<version>`** and push the tag. PsiTerm reads `version.txt` from
 (`.../v0.31/dist/`), so GitHub's 5-minute cache can never mix old and new
 files.
 
-Settings > Update source can point PsiTerm at a local server instead
+Tools > Update source can point PsiTerm at a local server instead
 (`server/psion-update.sh`, plain HTTP). The same server receives the Debug
 screenshots, a developer feature.
 
