@@ -36,6 +36,10 @@ static int g_bpos, g_blen;
 
 static int g_connid;
 
+static char g_err[48];
+
+const char *pmn_error(void) { return g_err; }
+
 static void used(void) { g_last_use = pm_ms(); }
 
 /* changes with every new connection, so IMAP can tell whether the open
@@ -55,6 +59,7 @@ int pmn_connect(const char *host, int port, int tls, char *why, int whymax)
 	if (pg_dial(why, whymax) != 0)
 		return -1;
 	g_bpos = g_blen = 0;
+	g_err[0] = 0;
 	g_open = 1;
 	g_connid++;
 	g_dead = 0;
@@ -128,10 +133,14 @@ static int raw_read(void *buf, int max, int timeout_ms)
 		if (!tls_pending() && pg_net_avail() == 0) {
 			int m = pg_wait(timeout_ms, 1, 0);
 			if (m & 8) return PMN_CANCEL;
-			if (pg_net_avail() == 0) return (m & 1) ? 0 : PMN_TIMEOUT;
+			if (pg_net_avail() == 0) {
+				pm_copy(g_err, (m & 1) ? "line closed" : "timeout", sizeof(g_err));
+				return (m & 1) ? 0 : PMN_TIMEOUT;
+			}
 		}
 		n = tls_read(buf, max, 30000);
 		if (n == -2) return PMN_CANCEL;
+		if (n <= 0) snprintf(g_err, sizeof(g_err), "tls: %s", n == 0 ? "closed" : tls_error());
 		if (n < 0 && modem() && pg_net_avail() == 0) return 0;
 		return n;
 	}

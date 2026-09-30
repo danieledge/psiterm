@@ -62,6 +62,28 @@ void pg_hangup(void)
 	g_fd = -1; g_closed = 1;
 }
 
+/* tests: PM_OVERRUN=bytes[,bytes...] loses 200 bytes of what arrives at
+   each of those points (counted over the whole run), as a serial overrun
+   without flow control would */
+static long g_rxtotal;
+static int overrun(int n)
+{
+	const char *o = getenv("PM_OVERRUN");
+	while (o && *o) {
+		long at = atol(o);
+		if (at >= g_rxtotal && at < g_rxtotal + n) {
+			int k = (int)(at - g_rxtotal), cut = n - k < 200 ? n - k : 200;
+			memmove(g_rx + k, g_rx + k + cut, n - k - cut);
+			fprintf(stderr, "[net] overrun at %ld\n", at);
+			g_rxtotal += cut;
+			return n - cut;
+		}
+		o = strchr(o, ',');
+		if (o) o++;
+	}
+	return n;
+}
+
 static void fill(int ms)
 {
 	struct pollfd p;
@@ -78,6 +100,8 @@ static void fill(int ms)
 		}
 		return;
 	}
+	n = overrun(n);
+	g_rxtotal += n;
 	g_pos = 0; g_len = n;
 }
 

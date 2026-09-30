@@ -60,7 +60,10 @@ static int lost(char *why, int whymax, int r)
 {
 	if (r == PMN_CANCEL) { set_why(why, whymax, "Stopped"); pmn_close(1); g_acct = -1; return PM_RES_CANCELLED; }
 	if (r == PMN_TIMEOUT) set_why(why, whymax, "The server stopped answering");
+	else if (strstr(pmn_error(), "damaged"))
+		set_why(why, whymax, "The line garbled the data (RTS/CTS flow control would stop that)");
 	else set_why(why, whymax, "The connection was lost");
+	pm_log("imap: %s (%d) %s", why, r, pmn_error());
 	pmn_close(1);
 	g_acct = -1;
 	g_sel[0] = 0;
@@ -699,6 +702,91 @@ int imap_sync(int acct, const char *folder, int older, char *why, int whymax)
 	return r;
 }
 
+/* ------------------------------------------------ fetching a part in pieces
+ *
+ * Without RTS/CTS the serial port has only its 16 KB buffer between the
+ * modem and us: a long body sent in one go overruns it while the Psion is
+ * busy, a TLS record is lost and the connection with it. So a part comes
+ * a piece at a time (<offset.length>), each small enough to sit in that
+ * buffer, and if the line still drops we log in again and carry on from
+ * the byte we had got to. */
+
+extern PsiShared *pg_shared(void);
+
+typedef struct { StreamFn fn; void *ctx; long got; } Piece;
+
+static void piece_stream(const char *d, int n, void *ctx)
+{
+	Piece *p = (Piece *)ctx;
+	p->got += n;
+	p->fn(d, n, p->ctx);
+}
+
+static ImapNode *body_item(ImapNode *r);
+
+static void on_piece_quoted(ImapNode *r, void *ctx)
+{
+	ImapNode *v = body_item(r);
+	if (v) piece_stream(v->s, v->len, ctx);
+}
+
+static long piece_size(void)
+{
+	PsiShared *s = pg_shared();
+	if (s && !s->net_mode && !s->rtscts) return 8192;
+	return 65536;
+}
+
+/* select the folder, logging in again once if the old connection had gone */
+static int open_folder(int acct, const char *folder, char *why, int whymax)
+{
+	int was = g_acct == acct && pmn_is_open();
+	int r = imap_open(acct, why, whymax);
+	if (r == PM_RES_OK) r = select_folder(folder, 0, 0, why, whymax);
+	if (r == PM_RES_OFFLINE && was && !pm_cancelled() && !pm_shared()->offline) {
+		pm_log("imap: connection had gone; logging in again");
+		r = imap_open(acct, why, whymax);
+		if (r == PM_RES_OK) r = select_folder(folder, 0, 0, why, whymax);
+	}
+	return r;
+}
+
+/* the first 'total' bytes of a part (all of it if total <= 0) to fn */
+static int fetch_part(int acct, const char *folder, unsigned int uid, const char *part,
+	long total, StreamFn fn, void *ctx, char *why, int whymax)
+{
+	static Piece p;
+	long step = piece_size();
+	int again = 0, drops = 0, r;
+	p.fn = fn; p.ctx = ctx; p.got = 0;
+	for (;;) {
+		long before = p.got, want;
+		if (total > 0 && p.got >= total) {
+			if (drops) why[0] = 0;
+			return PM_RES_OK;
+		}
+		want = total > 0 && total - p.got < step ? total - p.got : step;
+		g_stream = piece_stream;
+		g_stream_ctx = &p;
+		r = cmd(on_piece_quoted, &p, why, whymax, "UID FETCH %u (BODY.PEEK[%s]<%ld.%ld>)", uid, part, p.got, want);
+		g_stream = 0;
+		if (r == PM_RES_OFFLINE && !pm_cancelled() && again < 3 && drops < 12) {
+			pm_log("imap: %u [%s] dropped at %ld of %ld; again", uid, part, p.got, total);
+			again++;
+			drops++;
+			pm_progress("Reconnecting...");
+			if ((r = open_folder(acct, folder, why, whymax)) != PM_RES_OK) return r;
+			continue;
+		}
+		if (r != PM_RES_OK) return r;
+		if (p.got > before) again = 0;
+		if (p.got - before < want) {                      /* the end of the part */
+			if (drops) why[0] = 0;                        /* (not "lost": it came back) */
+			return PM_RES_OK;
+		}
+	}
+}
+
 /* ----------------------------------------------------------- message text */
 
 typedef struct
@@ -845,6 +933,21 @@ static void out_text(const char *s, int n, void *ctx)
 	}
 }
 
+/* the raw text, on its way to a file */
+typedef struct { FILE *f; long got, total; int percent, err; } Spool;
+
+static void spool_stream(const char *data, int n, void *ctx)
+{
+	Spool *s = (Spool *)ctx;
+	s->got += n;
+	if (s->total > 0) {
+		int pc = (int)(s->got * 100 / s->total);
+		if (pc > 100) pc = 100;
+		if (pc != s->percent) { s->percent = pc; pm_progress("Downloading the message... %d%%", pc); }
+	}
+	if (fwrite(data, 1, n, s->f) != (size_t)n) s->err = 1;
+}
+
 static void body_stream(const char *data, int n, void *ctx)
 {
 	BodyCtx *b = (BodyCtx *)ctx;
@@ -886,13 +989,6 @@ static ImapNode *body_item(ImapNode *r)
 	return 0;
 }
 
-static void on_body_quoted(ImapNode *r, void *ctx)
-{
-	ImapNode *v = body_item(r);
-	if (v) body_stream(v->s, v->len, ctx);
-}
-
-static void on_att_quoted(ImapNode *r, void *ctx);
 
 static void on_fetch_struct(ImapNode *r, void *ctx)
 {
@@ -934,8 +1030,7 @@ int imap_body(int acct, const char *folder, unsigned int uid, int full, char *wh
 	long limit = (a->max_body_kb > 0 ? a->max_body_kb : 64) * 1024L;
 	FILE *f;
 
-	if ((r = imap_open(acct, why, whymax)) != PM_RES_OK) return r;
-	if ((r = select_folder(folder, 0, 0, why, whymax)) != PM_RES_OK) return r;
+	if ((r = open_folder(acct, folder, why, whymax)) != PM_RES_OK) return r;
 	memset(&b, 0, sizeof(b));
 	pm_progress("Opening the message...");
 	r = cmd(on_fetch_struct, &b, why, whymax, "UID FETCH %u (ENVELOPE BODYSTRUCTURE)", uid);
@@ -985,13 +1080,31 @@ int imap_body(int acct, const char *folder, unsigned int uid, int full, char *wh
 				if ((b.hf = fopen(hp, "wb")) != 0)
 					fprintf(b.hf, "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=%s\">\n", b.charset);
 			}
-			g_stream = body_stream;
-			g_stream_ctx = &b;
-			if (full || tp->size <= limit)
-				r = cmd(on_body_quoted, &b, why, whymax, "UID FETCH %u (BODY.PEEK[%s])", uid, tp->id);
-			else
-				r = cmd(on_body_quoted, &b, why, whymax, "UID FETCH %u (BODY.PEEK[%s]<0.%ld>)", uid, tp->id, limit);
-			g_stream = 0;
+			/* first the text as it comes, into a file (quick, so the
+			   serial port keeps up); then turned into PsiMail's text */
+			{
+				static Spool sp;
+				char raw[196];
+				snprintf(raw, sizeof(raw), "%s.raw", path);
+				memset(&sp, 0, sizeof(sp));
+				sp.total = b.total;
+				sp.percent = -1;
+				if (!(sp.f = fopen(raw, "wb"))) { set_why(why, whymax, "Could not write the message file"); r = PM_RES_FAILED; }
+				else {
+					r = fetch_part(acct, folder, uid, tp->id, (full || tp->size <= limit) ? 0 : limit, spool_stream, &sp, why, whymax);
+					if (fclose(sp.f) != 0) sp.err = 1;
+					if (r == PM_RES_OK && sp.err) { set_why(why, whymax, "Could not save the message (disk full?)"); r = PM_RES_FAILED; }
+					if (r == PM_RES_OK && (sp.f = fopen(raw, "rb")) != 0) {
+						static char buf[1024];
+						size_t n;
+						pm_progress("Setting out the message...");
+						b.total = 0;
+						while ((n = fread(buf, 1, sizeof(buf), sp.f)) > 0) body_stream(buf, (int)n, &b);
+						fclose(sp.f);
+					}
+				}
+				remove(raw);
+			}
 			if (b.html) { html_end(b.html, out_rich, &b); html_free(b.html); b.html = 0; }
 			else {
 				int k;
@@ -1052,12 +1165,6 @@ static void att_stream(const char *data, int n, void *ctx)
 	if (dn && fwrite(dec, 1, dn, c->f) != (size_t)dn) c->err = 1;
 }
 
-static void on_att_quoted(ImapNode *r, void *ctx)
-{
-	ImapNode *v = body_item(r);
-	if (v) att_stream(v->s, v->len, ctx);
-}
-
 static void safe_name(const char *in, char *out, int max)
 {
 	int k = 0;
@@ -1082,8 +1189,7 @@ int imap_attach(int acct, const char *folder, unsigned int uid, const char *part
 	int r, i;
 	FILE *t;
 
-	if ((r = imap_open(acct, why, whymax)) != PM_RES_OK) return r;
-	if ((r = select_folder(folder, 0, 0, why, whymax)) != PM_RES_OK) return r;
+	if ((r = open_folder(acct, folder, why, whymax)) != PM_RES_OK) return r;
 	memset(&b, 0, sizeof(b));
 	r = cmd(on_fetch_struct, &b, why, whymax, "UID FETCH %u (BODYSTRUCTURE)", uid);
 	if (r != PM_RES_OK) return r;
@@ -1108,10 +1214,7 @@ int imap_attach(int acct, const char *folder, unsigned int uid, const char *part
 	dec_init(&c.dec, p->enc);
 	c.total = p->size;
 	c.percent = -1;
-	g_stream = att_stream;
-	g_stream_ctx = &c;
-	r = cmd(on_att_quoted, &c, why, whymax, "UID FETCH %u (BODY.PEEK[%s])", uid, part);
-	g_stream = 0;
+	r = fetch_part(acct, folder, uid, part, 0, att_stream, &c, why, whymax);
 	if (fclose(c.f) != 0) c.err = 1;
 	if (r == PM_RES_OK && c.err) { set_why(why, whymax, "Could not write the file (disk full?)"); r = PM_RES_FAILED; }
 	if (r == PM_RES_OK && c.got == 0 && p->size > STREAM_MIN) { set_why(why, whymax, "The server sent nothing"); r = PM_RES_FAILED; }

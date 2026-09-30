@@ -26,6 +26,11 @@ Then, for example:
     psimail-host folders , trustlast , sync INBOX , body INBOX 61 , attach INBOX 64 2
     mail/emu/run_psimail.py --align --stack --count sendrecv , body INBOX 67
 
+`PM_OVERRUN=60000,120000` (host build) throws away 200 bytes of what
+arrives at those points, as a serial overrun without RTS/CTS does: the
+body and attachment fetches should log in again and carry on from where
+they were, and the result should match a clean run.
+
 (`trustlast` accepts the self-signed test certificate, as the app's
 "Trust this server's key?" does.)
 
