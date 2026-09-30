@@ -8,8 +8,7 @@ PsiTerm's TLS 1.3 client, here with the server's certificate checked.
 
 **Status: 0.2, untested on a real Psion.** The engine has been run against
 Dovecot, Radicale and Fastmail both as PC code and as the exact ARM code in
-an emulator; the screens have been drawn on a PC from real mail
-(`ui/uishot.cpp`); the EIKON app itself has only been compiled.
+an emulator; the EIKON app has been driven in an emulator.
 
 ## What it does
 
@@ -26,8 +25,15 @@ an emulator; the screens have been drawn on a PC from real mail
   menus are laid out as the built-in Email program's: File, Edit, Message
   (Event in the calendar), View, Tools. The pictures are original pixel
   art, made by `tools/mkicons.py` into PsiMail.mbm.
-* Folders with unread counts; the newest 50 messages per folder (more with
-  File > Get older messages), kept on the CF card to read offline.
+* Folders with unread counts (bold while there is unread mail, as are the
+  unread messages themselves); the newest 50 messages per folder (more with
+  File > Folder > Get older messages), kept on the CF card to read offline.
+* File > Folder > New folder / Rename folder / Delete folder (IMAP CREATE,
+  RENAME and DELETE, with SUBSCRIBE; names go as modified UTF-7, the local
+  files follow a rename). The Inbox and the standard folders stay as they
+  are. These need the server, so offline they ask to go online.
+* Tools > Help on PsiMail (Shift+Ctrl+H): the help topics in a dialog (see
+  `app/pmhelp.cpp` for why not a .hlp file).
 * Message text downloaded when opened, up to 64 KB (the rest on request).
   HTML mail is shown as rich text - headings, bold and italic, lists,
   quotes, links you can move to with Tab and open with Enter - and
@@ -134,12 +140,12 @@ without the `cryptography` package too). The version must go up each time.
 | Shift+Ctrl+U / Shift+Ctrl+F | unread / flagged |
 | Ctrl+S | save an attachment |
 | Ctrl+I / Ctrl+G / Ctrl+B / Ctrl+F | inbox / go to folder / outbox / find |
-| Ctrl+Y / Shift+Ctrl+G | check this folder / get older messages |
+| Ctrl+Y / Shift+Ctrl+G | check this folder / get older messages (File > Folder, with New / Rename / Delete folder) |
 | Ctrl+M / Shift+Ctrl+M | zoom in / out (three sizes, going round) |
 | Ctrl+T / Shift+Ctrl+T / Shift+Ctrl+L | show the toolbar / title bar / folder list |
 | Shift+Ctrl+Q / Shift+Ctrl+B | status information / sort |
 | Ctrl+K / Shift+Ctrl+W | preferences / work offline |
-| Shift+Ctrl+A / Ctrl+E | about PsiMail / close |
+| Shift+Ctrl+H / Shift+Ctrl+A / Ctrl+E | help / about PsiMail / close |
 | Tab / Shift+Tab in a message | next / previous link or attachment (Enter opens it) |
 | Ctrl+P | view the message as a web page (PsiWeb) |
 | Shift+Ctrl+N / Ctrl+Q | the calendar / switch its view (week or month) |
@@ -174,12 +180,10 @@ Like PsiWeb, two programs share a chunk of memory (`psimail.h`):
   side of the calendar (`pmcal.cpp`). It reads the store's text files
   directly and sends the engine commands.
 * `ui/` (C++ without EIKON, so it also builds on a PC): `pmcalmodel.cpp`
-  (the calendar's events by day, from the engine's files), and the drawing
-  of PsiMail's earlier screens, which the app no longer shows (the message
-  layout in `pmdoc.cpp` still makes the plain text quoted in a reply) -
-  `pmgfx.cpp` (anti-aliased text and shapes into a 4-bit bitmap),
-  `pmdoc.cpp` (lays out a message), `pmscreens.cpp` (the screens) and
-  `pmfonts.cpp`, made by `tools/mkfonts.py` from the fonts in `fonts/`.
+  (the calendar's events by day, from the engine's files) and `pmquote.cpp`
+  (a message's plain text, for quoting in a reply). PsiMail's earlier
+  hand-drawn screens and their built-in fonts are gone; everything is
+  drawn with EIKON's own controls and fonts.
 
 Everything the engine downloads is decoded as it arrives and written to a
 file, so no message is held whole in memory (peak heap in the emulator:
@@ -215,13 +219,6 @@ account: `folders.txt`, a folder per mail folder with `index.txt` (one line
 per message), `<uid>.txt` for each downloaded message (and `<uid>.htm`, the
 HTML original), and `outbox\`. The calendar's files are in
 `D:\PsiMail\cal\` (see `engine/caldav.c` and `app/pmcal.h`).
-
-## Licences
-
-The fonts built into PsiMail: Inter (SIL Open Font License,
-`fonts/Inter-LICENSE.txt`), DejaVu Sans Mono (Bitstream Vera licence,
-`fonts/DejaVu-LICENSE.txt`) and Lucide's icons (ISC,
-`fonts/lucide-LICENSE.txt`).
 
 ## Not yet
 

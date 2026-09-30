@@ -203,6 +203,12 @@ int main(int argc, char **argv)
 		else if (!strcmp(op, "send")) c.op = PM_CMD_SEND;
 		else if (!strcmp(op, "sendrecv")) c.op = PM_CMD_SENDRECV;
 		else if (!strcmp(op, "expunge")) c.op = PM_CMD_EXPUNGE;
+		else if (!strcmp(op, "mkfolder")) {           /* mkfolder PARENT NAME (PARENT "-" = the top level) */
+			c.op = PM_CMD_MKFOLDER; pm_copy(c.arg, args[1], sizeof(c.arg)); c.uid = 0;
+			if (!strcmp(c.folder, "-")) c.folder[0] = 0;
+		}
+		else if (!strcmp(op, "renfolder")) { c.op = PM_CMD_RENFOLDER; pm_copy(c.arg, args[1], sizeof(c.arg)); c.uid = 0; }
+		else if (!strcmp(op, "delfolder")) c.op = PM_CMD_DELFOLDER;
 		else if (!strcmp(op, "cal")) { c.op = PM_CMD_CALSYNC; c.folder[0] = 0; }
 		else if (!strcmp(op, "calendars")) { c.op = PM_CMD_CALSYNC; pm_copy(c.arg, "list", sizeof(c.arg)); c.folder[0] = 0; }
 		else if (!strcmp(op, "update")) { c.op = PM_CMD_UPDATE; pm_copy(c.arg, args[0], sizeof(c.arg)); pm_copy(c.folder, args[1], sizeof(c.folder)); c.uid = 0; }

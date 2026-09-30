@@ -67,7 +67,12 @@ enum TPmCommands
 	EPmCmdEventDetails,      // Event > Details
 	EPmCmdAttachMenu,        // Message > Attachments (a cascade)
 	EPmCmdOpenAttach,        // Message > Attachments > Open: in its own program
-	EPmCmdAddSender          // Edit > Add sender to Contacts
+	EPmCmdAddSender,          // Edit > Add sender to Contacts
+	EPmCmdFolderMenu,        // File > Folder (a cascade)
+	EPmCmdNewFolder,         // File > Folder > New folder...
+	EPmCmdRenameFolder,      // File > Folder > Rename folder...
+	EPmCmdDeleteFolder,      // File > Folder > Delete folder
+	EPmCmdHelp               // Tools > Help on PsiMail
 	};
 
 enum TPmDialogControls
@@ -130,7 +135,11 @@ enum TPmDialogControls
 	EPmDlgUpdHost,
 	EPmDlgUpdPort,
 	EPmDlgFind,              // the Contacts picker's Find line
-	EPmDlgContactList
+	EPmDlgContactList,
+	EPmDlgFolderName,        // New folder / Rename folder
+	EPmDlgFolderParent,
+	EPmDlgHelpTopic,         // Help on PsiMail
+	EPmDlgHelpText
 	};
 
 enum TPmButtons

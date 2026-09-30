@@ -26,6 +26,87 @@
 static const TInt KIndent = 12;          // the folder tree: one level
 static const TInt KIconCol = 28;         // the message list: status + attachment pictures
 static const TInt KScrollBarW = 23;      // room beside the reader for its scroll bar (EIKON's width)
+// the folder tree's per-row value: depth (3 bits), KTreeBold, icon << 4, lines << 16
+static const TInt KTreeBold = 8;
+// the message list's per-row value: icon, KMsgAttach, KMsgUnread
+static const TInt KMsgAttach = 0x100;
+static const TInt KMsgUnread = 0x200;
+
+// ----- PsiMail.mbm, read once -------------------------------------------------------
+
+// the multi-bitmap file: two UIDs, a checksum, the trailer's offset; the
+// trailer is a count and the bitmaps' offsets; each bitmap has a 40-byte
+// header (size, header length, width, height, twips, twips, bits a pixel,
+// colour, palette, compression) before its rows, 4-byte aligned
+CPmMbm* CPmMbm::NewL(RFs& aFs, const TDesC& aFile)
+	{
+	CPmMbm* m = new(ELeave) CPmMbm;
+	CleanupStack::PushL(m);
+	m->iFile = aFile;
+	RFile f;
+	User::LeaveIfError(f.Open(aFs, aFile, EFileRead | EFileShareReadersOnly));
+	CleanupClosePushL(f);
+	TInt size = 0;
+	User::LeaveIfError(f.Size(size));
+	if (size < 24 || size > 256 * 1024)
+		User::Leave(KErrCorrupt);
+	m->iData = HBufC8::NewL(size);
+	TPtr8 p = m->iData->Des();
+	User::LeaveIfError(f.Read(p, size));
+	CleanupStack::PopAndDestroy();          // f
+	const TUint32* w = (const TUint32*)p.Ptr();
+	TUint32 trailer = w[4];
+	if (w[0] != 0x10000037 || w[1] != 0x10000042 || trailer + 4 > (TUint32)size || (trailer & 3))
+		User::Leave(KErrCorrupt);
+	m->iCount = (TInt)w[trailer / 4];
+	if (m->iCount < 0 || m->iCount > 1000 || trailer + 4 + m->iCount * 4 > (TUint32)size)
+		User::Leave(KErrCorrupt);
+	m->iOffsets = w + trailer / 4 + 1;
+	CleanupStack::Pop();
+	return m;
+	}
+
+CPmMbm::~CPmMbm()
+	{
+	delete iData;
+	}
+
+CFbsBitmap* CPmMbm::CreateBitmapL(TInt aId)
+	{
+	CFbsBitmap* b = new(ELeave) CFbsBitmap;
+	CleanupStack::PushL(b);
+	TBool done = EFalse;
+	if (aId >= 0 && aId < iCount)
+		{
+		TInt size = iData->Length();
+		TInt off = (TInt)iOffsets[aId];
+		if (off >= 0 && (off & 3) == 0 && off + 40 <= size)
+			{
+			const TUint32* h = (const TUint32*)(iData->Ptr() + off);
+			TInt hdr = (TInt)h[1], wd = (TInt)h[2], ht = (TInt)h[3], bpp = (TInt)h[6], colour = (TInt)h[7], comp = (TInt)h[9];
+			TDisplayMode mode = bpp == 1 ? EGray2 : bpp == 2 ? EGray4 : bpp == 4 ? EGray16 : bpp == 8 ? EGray256 : ENone;
+			TInt stride = ((wd * bpp + 31) / 32) * 4;
+			if (mode != ENone && !colour && !comp && hdr >= 40 && wd > 0 && ht > 0 && wd <= 640 && ht <= 240 &&
+				off + hdr + stride * ht <= size)
+				{
+				User::LeaveIfError(b->Create(TSize(wd, ht), mode));
+				TInt dst = CFbsBitmap::ScanLineLength(wd, mode);
+				const TUint8* src = iData->Ptr() + off + hdr;
+				for (TInt y = 0; y < ht; y++)
+					{
+					TPtrC8 row(src + y * stride, dst < stride ? dst : stride);
+					TBuf8<640> line(row);          // (a row is at most 640 bytes: 640 pixels at 8 bits)
+					b->SetScanLine(line, y);
+					}
+				done = ETrue;
+				}
+			}
+		}
+	if (!done)
+		User::LeaveIfError(b->Load(iFile, aId));
+	CleanupStack::Pop();
+	return b;
+	}
 
 // a picture from PsiMail.mbm, drawn through its mask (black = drawn)
 void PmDrawIcon(CWindowGc& aGc, CArrayPtr<CFbsBitmap>* aIcons, TInt aId, const TPoint& aPos)
@@ -44,13 +125,14 @@ class CPmTreeDrawer : public CTextListItemDrawer
 public:
 	CPmTreeDrawer(MTextListBoxModel* aModel, const CFont* aFont)
 		: CTextListItemDrawer(aModel, aFont) {}
-	void SetFont(const CFont* aFont) { iFont = aFont; }
+	void SetFonts(const CFont* aFont, const CFont* aBold) { iFont = aFont; iBold = aBold; }
 	void SetData(CArrayPtr<CFbsBitmap>* aIcons, CArrayFixFlat<TInt>* aTree) { iIcons = aIcons; iTree = aTree; }
 protected:
 	void DrawActualItem(TInt aItemIndex, const TRect& aRect, TBool aCurrent, TBool aEmphasized, TBool aDimmed) const;
 private:
 	CArrayPtr<CFbsBitmap>* iIcons;
 	CArrayFixFlat<TInt>* iTree;
+	const CFont* iBold;                    // folders with unread mail, as the built-in Email has them
 	};
 
 void CPmTreeDrawer::DrawActualItem(TInt aItemIndex, const TRect& aRect, TBool aCurrent, TBool aEmphasized, TBool /*aDimmed*/) const
@@ -61,7 +143,8 @@ void CPmTreeDrawer::DrawActualItem(TInt aItemIndex, const TRect& aRect, TBool aC
 	gc.SetBrushColor(KRgbWhite);
 	gc.DrawRect(aRect);
 	TInt v = (iTree && aItemIndex < iTree->Count()) ? (*iTree)[aItemIndex] : 0;
-	TInt depth = v & 15;
+	TInt depth = v & 7;
+	const CFont* font = (v & KTreeBold) && iBold ? iBold : iFont;
 	TInt icon = (v >> 4) & 0xfff;
 	TInt lines = v >> 16;
 	TInt x0 = aRect.iTl.iX + 3;
@@ -93,11 +176,11 @@ void CPmTreeDrawer::DrawActualItem(TInt aItemIndex, const TRect& aRect, TBool aC
 	// the name: highlighted on its own, as the built-in programs do
 	TPtrC text = iModel->ItemText(aItemIndex);
 	TInt tx = ix + 16 + 3;
-	TInt tw = iFont->TextWidthInPixels(text) + 5;
+	TInt tw = font->TextWidthInPixels(text) + 5;
 	if (tx + tw > aRect.iBr.iX) tw = aRect.iBr.iX - tx;
 	TRect tr(tx, top + 1, tx + tw, bottom - 1);
-	gc.UseFont(iFont);
-	TInt base = (tr.Height() - iFont->HeightInPixels()) / 2 + iFont->AscentInPixels();
+	gc.UseFont(font);
+	TInt base = (tr.Height() - font->HeightInPixels()) / 2 + font->AscentInPixels();
 	if (aCurrent && aEmphasized)
 		{
 		gc.SetPenStyle(CGraphicsContext::ENullPen);
@@ -125,9 +208,9 @@ void CPmTreeDrawer::DrawActualItem(TInt aItemIndex, const TRect& aRect, TBool aC
 class CPmFolderListBox : public CEikTextListBox
 	{
 public:
-	void SetFontL(const CFont* aFont, TInt aRowHeight)
+	void SetFontL(const CFont* aFont, const CFont* aBold, TInt aRowHeight)
 		{
-		((CPmTreeDrawer*)iItemDrawer)->SetFont(aFont);
+		((CPmTreeDrawer*)iItemDrawer)->SetFonts(aFont, aBold);
 		TInt h = aFont->HeightInPixels() + 4;
 		if (h < aRowHeight) h = aRowHeight;
 		SetItemHeightL(h);
@@ -151,12 +234,31 @@ public:
 	CPmMsgItemDrawer(MTextListBoxModel* aModel, const CFont* aFont)
 		: CColumnListBoxItemDrawer(aModel, aFont) {}
 	void SetData(CArrayPtr<CFbsBitmap>* aIcons, CArrayFixFlat<TInt>* aMsgIcons) { iIcons = aIcons; iMsgIcons = aMsgIcons; }
+	void SetFonts(CColumnListBoxData* aColumns, const CFont* aFont, const CFont* aBold)
+		{ iColumns = aColumns; iNormal = aFont; iBoldFont = aBold; }
+	// the columns' font is set per row: unread messages are in bold, as
+	// the built-in Email program shows them
+	void SetRowFont(const CFont* aFont) const
+		{
+		if (!iColumns)
+			return;
+		for (TInt c = 2; c <= 6; c++)
+			{
+			TRAPD(err, iColumns->SetColumnFontL(c, aFont));   // (the columns exist: no allocation)
+			(void)err;
+			}
+		}
 	void DrawItemText(TInt aItemIndex, const TRect& aRect, TBool aCurrent, TBool aEmphasized) const
 		{
+		TInt v = (iMsgIcons && aItemIndex < iMsgIcons->Count()) ? (*iMsgIcons)[aItemIndex] : 0xff;
+		TBool bold = (v & KMsgUnread) && iBoldFont && iNormal;
+		if (bold)
+			SetRowFont(iBoldFont);
 		CColumnListBoxItemDrawer::DrawItemText(aItemIndex, aRect, aCurrent, aEmphasized);
+		if (bold)
+			SetRowFont(iNormal);
 		if (!iMsgIcons || aItemIndex >= iMsgIcons->Count())
 			return;
-		TInt v = (*iMsgIcons)[aItemIndex];
 		TInt icon = v & 0xff;
 		TInt y = aRect.iTl.iY + (aRect.Height() - 11) / 2;
 		// a white tile under the pictures, so they read on the highlight too
@@ -169,12 +271,15 @@ public:
 			}
 		if (icon != 0xff)
 			PmDrawIcon(*iGc, iIcons, icon, TPoint(aRect.iTl.iX + 1, y));
-		if (v & 0x100)
+		if (v & KMsgAttach)
 			PmDrawIcon(*iGc, iIcons, EMbmMsgAttach, TPoint(aRect.iTl.iX + 11, y));
 		}
 private:
 	CArrayPtr<CFbsBitmap>* iIcons;
 	CArrayFixFlat<TInt>* iMsgIcons;
+	CColumnListBoxData* iColumns;
+	const CFont* iNormal;
+	const CFont* iBoldFont;
 	};
 
 class CPmMsgListBox : public CEikTextListBox
@@ -194,6 +299,10 @@ public:
 	void SetData(CArrayPtr<CFbsBitmap>* aIcons, CArrayFixFlat<TInt>* aMsgIcons)
 		{
 		((CPmMsgItemDrawer*)iItemDrawer)->SetData(aIcons, aMsgIcons);
+		}
+	void SetFonts(const CFont* aFont, const CFont* aBold)
+		{
+		((CPmMsgItemDrawer*)iItemDrawer)->SetFonts(Model()->ColumnData(), aFont, aBold);
 		}
 	};
 
@@ -230,11 +339,20 @@ TInt CPmView::RowHeight() const
 void CPmView::LoadIconsL()
 	{
 	iIcons = new(ELeave) CArrayPtrFlat<CFbsBitmap>(EMbmCount);
-	TFileName mbm = ((CEikAppUi*)iEikonEnv->EikAppUi())->Application()->BitmapStoreName();
+	CPmAppUi* ui = (CPmAppUi*)iEikonEnv->EikAppUi();
+	TFileName mbm = ui->Application()->BitmapStoreName();
 	for (TInt i = 0; i < EMbmCount; i++)
 		{
 		CFbsBitmap* b = NULL;
-		TRAPD(err, b = iEikonEnv->CreateBitmapL(mbm, i));
+		TInt err;
+		if (ui->Mbm())
+			{
+			TRAP(err, b = ui->Mbm()->CreateBitmapL(i));
+			}
+		else
+			{
+			TRAP(err, b = iEikonEnv->CreateBitmapL(mbm, i));
+			}
 		if (err != KErrNone)
 			{
 			iIcons->ResetAndDestroy();           // no PsiMail.mbm: no pictures
@@ -357,10 +475,11 @@ void CPmView::ApplyZoomL()
 	GetFontL(dev, 160, ETrue, iTitleFont);     // (the title band doesn't zoom)
 	iStatusH = 0;                              // (the title band says it all now)
 
-	iFolderList->SetFontL(iListFont, KRowHeight[z]);
+	iFolderList->SetFontL(iListFont, iBoldFont, KRowHeight[z]);
 	CColumnListBoxData* cd = iMsgList->Model()->ColumnData();
 	for (TInt c = 0; c < 7; c++)
 		cd->SetColumnFontL(c, iListFont);
+	iMsgList->SetFonts(iListFont, iBoldFont);
 	cd->SetColumnAlignmentL(6, CGraphicsContext::ERight);
 	TInt h = iListFont->HeightInPixels() + 4;
 	if (h < KRowHeight[z]) h = KRowHeight[z];
@@ -556,7 +675,7 @@ void CPmView::UpdateFolderListL()
 		if (counts && f.iUnread > 0)
 			line.AppendFormat(_L(" (%d)"), f.iUnread);
 		fresh->AppendL(line);
-		depth->AppendL(1 + (d < 5 ? d : 5));
+		depth->AppendL(1 + (d < 5 ? d : 5) + (counts && f.iUnread > 0 ? KTreeBold : 0));
 		icon->AppendL(FolderIcon(f.iKind));
 		}
 	TInt ob = OutboxCount();
@@ -574,20 +693,21 @@ void CPmView::UpdateFolderListL()
 	TInt n = depth->Count();
 	for (TInt r = 0; r < n; r++)
 		{
-		TInt dr = (*depth)[r];
+		TInt dr = (*depth)[r] & 7;
 		TInt mask = 0;
 		for (TInt l = 1; l <= dr; l++)
 			for (TInt k = r + 1; k < n; k++)
 				{
-				if ((*depth)[k] < l) break;
-				if ((*depth)[k] == l) { mask |= 1 << l; break; }
+				if (((*depth)[k] & 7) < l) break;
+				if (((*depth)[k] & 7) == l) { mask |= 1 << l; break; }
 				}
-		iTree->AppendL(dr | ((*icon)[r] << 4) | (mask << 16));
+		iTree->AppendL((*depth)[r] | ((*icon)[r] << 4) | (mask << 16));
 		}
 	CleanupStack::PopAndDestroy(2);         // icon, depth
 	TBool same = items->Count() == fresh->Count();
 	for (TInt k = 0; same && k < fresh->Count(); k++)
 		same = (*items)[k] == (*fresh)[k];
+	// (a changed count changes the text too, so bold follows the text)
 	if (!same)
 		{
 		items->Reset();
@@ -640,7 +760,9 @@ static TInt MsgIcon(const TPmRow& aRow, TBool aOutbox)
 	else
 		v = EMbmMsgRead;
 	if (aRow.iFlags.Locate('T') >= 0)
-		v |= 0x100;
+		v |= KMsgAttach;
+	if (!aOutbox && aRow.iFlags.Locate('S') < 0)
+		v |= KMsgUnread;
 	return v;
 	}
 
@@ -667,7 +789,6 @@ void CPmView::UpdateMessageListL()
 		for (TInt i = 0; i < iRows->Count(); i++)
 			{
 			const TPmRow& r = (*iRows)[i];
-			TBool unread = iMode != EOutbox && r.iFlags.Locate('S') < 0;
 			if (iMode == EOutbox)
 				date = r.iFlags.Locate('E') >= 0 ? _L("not sent") : r.iFlags.Locate('D') >= 0 ? _L("draft") : _L("to send");
 			else
@@ -679,7 +800,6 @@ void CPmView::UpdateMessageListL()
 			line.Append(r.iSubject.Length() ? Clip(r.iSubject, 150) : TPtrC(_L("(no subject)")));
 			line.Append(_L("\t\t"));
 			line.Append(date);
-			(void)unread;
 			items->AppendL(line);
 			}
 		iMsgList->HandleItemAdditionL();

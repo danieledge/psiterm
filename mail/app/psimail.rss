@@ -137,7 +137,8 @@ RESOURCE HOTKEYS r_pm_hotkeys
 		HOTKEY { command=EPmCmdCalendar; key='y'; },
 		HOTKEY { command=EPmCmdUnread; key='u'; },
 		HOTKEY { command=EPmCmdFlag; key='f'; },
-		HOTKEY { command=EPmCmdToday; key='d'; }
+		HOTKEY { command=EPmCmdToday; key='d'; },
+		HOTKEY { command=EPmCmdHelp; key='h'; }
 		};
 	}
 
@@ -168,15 +169,14 @@ RESOURCE MENU_BAR r_pm_cal_menubar
 		};
 	}
 
-// File: fetching (the whole account, this folder, more of it, the calendar),
-// the connection, Close
+// File: fetching (the whole account, the folders, the calendar), the
+// connection, Close
 RESOURCE MENU_PANE r_pm_file_menu
 	{
 	items=
 		{
 		MENU_ITEM { command=EPmCmdSendRecv; txt="Check mail (send & receive)"; },
-		MENU_ITEM { command=EPmCmdRefresh; txt="Check this folder"; },
-		MENU_ITEM { command=EPmCmdOlder; txt="Get older messages"; },
+		MENU_ITEM { command=EPmCmdFolderMenu; cascade=r_pm_folder_menu; txt="Folder"; },
 		MENU_ITEM { command=EPmCmdCalendar; txt="Sync calendar"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdHangup; txt="Disconnect"; },
 		MENU_ITEM { command=EPmCmdStop; txt="Stop"; },
@@ -185,6 +185,21 @@ RESOURCE MENU_PANE r_pm_file_menu
 		};
 	}
 
+// File > Folder: this folder's mail, and the folders themselves (as the
+// built-in Email program's New folder, Rename folder and Delete folder)
+RESOURCE MENU_PANE r_pm_folder_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdRefresh; txt="Check this folder"; },
+		MENU_ITEM { command=EPmCmdOlder; txt="Get older messages"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdNewFolder; txt="New folder..."; },
+		MENU_ITEM { command=EPmCmdRenameFolder; txt="Rename folder..."; },
+		MENU_ITEM { command=EPmCmdDeleteFolder; txt="Delete folder"; }
+		};
+	}
+
+// Edit: what happens to the selected message
 RESOURCE MENU_PANE r_pm_edit_menu
 	{
 	items=
@@ -294,6 +309,7 @@ RESOURCE MENU_PANE r_pm_tools_menu
 		MENU_ITEM { command=EPmCmdAccountsMenu; cascade=r_pm_accounts_menu; txt="Accounts"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdRestart; txt="Restart mail engine"; },
 		MENU_ITEM { command=EPmCmdUpdate; txt="Update PsiMail..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdHelp; txt="Help on PsiMail"; },
 		MENU_ITEM { command=EPmCmdAbout; txt="About PsiMail"; }
 		};
 	}
@@ -422,6 +438,50 @@ RESOURCE DIALOG r_pm_contacts_dialog
 			control=EDWIN { width=20; maxlength=40; }; },
 		DLG_LINE { type=EEikCtColListBox; id=EPmDlgContactList;
 			control=LISTBOX { flags=EEikListBoxMultipleSelection|EEikListBoxNoExtendedSelection; height=6; width=34; }; }
+		};
+	}
+
+// File > Folder > New folder / Rename folder: the name, and (for a new one)
+// where it goes
+RESOURCE DIALOG r_pm_folder_dialog
+	{
+	title="New folder";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPmDlgFolderName;
+			control=EDWIN { width=24; maxlength=60; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="In"; id=EPmDlgFolderParent;
+			control=CHOICELIST { array_id=r_pm_empty_array; }; }
+		};
+	}
+
+// File > Folder > Rename folder: the new name
+RESOURCE DIALOG r_pm_rename_dialog
+	{
+	title="Rename folder";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPmDlgFolderName;
+			control=EDWIN { width=24; maxlength=60; }; }
+		};
+	}
+
+// Tools > Help on PsiMail: a topic list and its text
+RESOURCE DIALOG r_pm_help_dialog
+	{
+	title="Help on PsiMail";
+	flags=EEikDialogFlagWait|EEikDialogFlagNotifyEsc;
+	buttons=R_EIK_BUTTONS_CONTINUE;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Topic"; id=EPmDlgHelpTopic;
+			control=CHOICELIST { array_id=r_pm_empty_array; }; },
+		DLG_LINE { type=EEikCtRichTextEditor; prompt=""; id=EPmDlgHelpText;
+			control=RTXTED { width=520; height=118; numlines=7; textlimit=8000; flags=EEikEdwinNoAutoSelection|EEikEdwinReadOnly; }; }
 		};
 	}
 
@@ -606,7 +666,7 @@ RESOURCE DIALOG r_pm_about_dialog
 		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo2; control=LABEL { txt="Email & calendar for the Psion Series 5mx - (c) Dan Edge"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo3; control=LABEL { standard_font=EEikLabelFontAnnotation; reserve_length=60; txt="-"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo4; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="IMAP, SMTP & CalDAV over TLS 1.3 - networking from PsiTerm"; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo5; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="LibTomCrypt, LibTomMath - public domain; Inter, DejaVu, Lucide - see README"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo5; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="LibTomCrypt, LibTomMath - public domain"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo6; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="github.com/danieledge/psiterm - MIT licence"; }; }
 		};
 	}

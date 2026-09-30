@@ -121,6 +121,23 @@ private:
 // a link in the reader (native screens): where it is, and what it is
 struct TPmLinkRange { TInt iPos; TInt iLen; TInt iLink; };
 
+// PsiMail.mbm read once (pmnative.cpp): its pictures are made from the
+// file's bytes, which is far quicker on start-up than loading each of the
+// 52 through the font and bitmap server. Anything unexpected in the file
+// falls back to the ordinary load.
+class CPmMbm : public CBase
+	{
+public:
+	static CPmMbm* NewL(RFs& aFs, const TDesC& aFile);
+	~CPmMbm();
+	CFbsBitmap* CreateBitmapL(TInt aId);
+private:
+	TFileName iFile;
+	HBufC8* iData;
+	TInt iCount;
+	const TUint32* iOffsets;
+	};
+
 class CPmView : public CCoeControl, public MPmCalObserver, public MEikListBoxObserver
 	{
 public:
@@ -139,6 +156,7 @@ public:
 	// MPmCalObserver
 	void CalProgress(const TDesC& aText);
 	void CalSyncDone(TInt aError, const TDesC& aSummary, TBool aPushed);
+	void FinishStartL();                     // after the first draw: the engine, the lists, the calendar
 	TMode Mode() const { return iMode; }
 	PmShared* Shared() { return iShared; }
 	TBool EngineRunning() const { return iRunning; }
@@ -155,17 +173,19 @@ public:
 	const TPmRow* CurrentRow() const;
 	TBool CurrentIsSearch() const { return iSearch; }
 	const TPmFolder* CurrentFolder() const;
+	const TPmFolder* CommandFolder() const;  // the folder File > Folder acts on (highlighted, or open)
+	void FolderChangedL(const PmCmd& aCmd);  // a folder was made, renamed or deleted
 	const TDesC8& FolderImap() const { return iFolder; }
 	TInt FolderCount() const;
 	const TPmFolder& FolderAt(TInt aIndex) const;
 	void FocusFoldersL();
-	void SidebarPage(TInt aDir);
 	void StartInstallerL(const TDesC& aFile);
 	void SetStatus(const TDesC& aText);
 	void OpenSidebarItemL(TInt aIndex);
 	TInt CurrentSidebarItem() const;
 	void OpenFolderL(const TDesC8& aImap);
 	void ShowOutboxL();
+	void Render();                           // bring the screen up to date
 	void OpenCurrentL();
 	void BackL();
 	void StepMessageL(TInt aDir);
@@ -194,7 +214,6 @@ public:
 	void DeleteOutboxL();
 	TInt OutboxCount();
 	void Toast(const TDesC& aText);
-	void Render();                           // draw the screen again
 	void ZoomL(TInt aStep);                  // the sidebar's zoom buttons
 	TBool NativeMode() const;                // shown with EIKON controls (every mode now)
 	// MEikListBoxObserver
@@ -265,10 +284,7 @@ public:
 private:
 	void Draw(const TRect& aRect) const;
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
-	TKeyResponse MailboxKeyL(TUint aCode);
-	TKeyResponse ReaderKeyL(TUint aCode, TUint aMods);
 	void HandlePointerEventL(const TPointerEvent& aEvent);
-	void ActivateLinkL(TInt aLink);
 	void AddEntropy(TUint aValue);
 	static TInt TickCallback(TAny* aSelf);
 	void Tick();
@@ -281,22 +297,15 @@ private:
 	void LoadListL();
 	void LoadOutboxL();
 	void LoadMessageL();
-	void BuildDoc();
 	void ReadFileL(const TDesC& aName, HBufC*& aBuf, TInt aMax);
 	void StoreDir(TDes& aDir) const;
 	void FolderDir(const TDesC8& aImap, TDes& aDir) const;
 	void MsgPath(TUint aUid, const TDesC& aExt, TDes& aPath) const;
 	void OutboxDir(TDes& aDir) const;
-	TInt Rows() const;
-	void MoveSel(TInt aDelta);
-	void Scroll(TInt aDelta);
-	void EnsureVisible();
+	void EnsureVisible();                    // keeps iSel within the list
 	void FormatDate(TInt aDate, TDes& aOut) const;
 	void CopySettingsToShared();
-	void RenderMailbox();
-	void RenderReader();
 	TInt SidebarCount() const { return iFolders->Count() + 2; }   // + the outbox and the calendar
-	void FillSidebar(PmUiMailbox& m);
 	// the calendar (pmcalview.cpp)
 	void LoadCalendarL();
 	void CalendarToday();
@@ -324,26 +333,16 @@ private:
 	TMode iListMode;                 // EList or EOutbox: where Esc returns from a message
 	TBool iSidebar;                  // keys move in the folder column
 	TInt iFolderSel;
-	TInt iFolderTop;
-	TBool iFolderFollow;
-	TBool iPenSide, iPenDragged;           // the pen went down in the folder column
-	TPoint iPenStart;
-	TInt iPenTop;                 // bring the highlighted folder into view
 	TBool iSearch;                   // the list shows search results
 	TBuf<60> iSearchWords;
 	TBuf8<128> iFolder;              // IMAP name of the open folder
 	CArrayFixFlat<TPmFolder>* iFolders;
 	CArrayFixFlat<TPmRow>* iRows;    // newest first
 	TInt iSel;
-	TInt iTop;
 	// message view
 	TUint iMsgUid;
 	HBufC* iText;                    // the message file (cp1252)
 	TInt iBodyOff;                   // after the file's first line
-	PmDoc iDoc;
-	TBool iDocValid;
-	TInt iScroll;
-	TInt iFocusLink;
 	TBool iWaitingBody;
 	TBuf<160> iBodyError;            // why the last download of it failed
 	TBool iHtml;                     // an HTML original is on the card
@@ -366,17 +365,13 @@ private:
 	TBool iBusyShown;
 	TBool iMsgTapArmed;              // the selected message was tapped: another tap opens it                // EIKON's busy message is up
 	TInt iEntropyPos;
-	TBuf<100> iToast;
-	TUint iToastUntil;
-	// drawing
-	CFbsBitmap* iBitmap;
-	TUint8* iBits;                   // 640x240, 4 bits a pixel
-	PmCanvas iCanvas;
-	PmUiFolder iUiFolders[84];
 	// the calendar
 	PmCalModel iCalModel;
 	TBool iCalLoaded;
 	TBool iSplashDone;               // the start-up screen has gone
+	TBool iStartPending;             // FinishStartL is still to run (from the first tick)
+	TBool iFirstFetch;               // a new account's first fetch waits for the engine
+	TBool iEngineLow;                // the engine is still starting, below the app's priority
 	TInt iCalToday;                  // days since 1970
 	TInt iCalNow;                    // minutes since midnight
 	TInt iCalDay;                    // the day shown
@@ -388,9 +383,6 @@ private:
 	PmUiEvent iCalEvents[40];
 	PmCalText iCalText;
 	PmCalText iCalText2;
-	PmUiRow iUiRows[12];
-	TBuf<16> iDates[12];
-	PmUiAttachment iUiAtt[8];
 	// native screens
 	CPmFolderListBox* iFolderList;
 	CPmMsgListBox* iMsgList;
@@ -480,6 +472,37 @@ private:
 	TPtrC iPrompt;
 	CDesCArray* iItems;              // the dialog's choice list takes it
 	TInt& iChoice;
+	};
+
+// File > Folder > New folder / Rename folder: the name, and where a new one goes
+class CPmFolderDialog : public CEikDialog
+	{
+public:
+	// aParents (NULL when renaming): the dialog's choice list takes it
+	CPmFolderDialog(const TDesC& aTitle, TDes& aName, CDesCArray* aParents, TInt& aParent)
+		: iTitle(aTitle), iName(aName), iParents(aParents), iParent(aParent) {}
+private:
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	TPtrC iTitle;
+	TDes& iName;
+	CDesCArray* iParents;
+	TInt& iParent;
+	TBool iHasParents;
+	};
+
+// Tools > Help on PsiMail: the topics (pmhelp.cpp) in a dialog
+class CPmHelpDialog : public CEikDialog
+	{
+public:
+	CPmHelpDialog(TInt aTopic) : iTopic(aTopic) {}
+private:
+	void PreLayoutDynInitL();
+	void PostLayoutDynInitL();
+	void HandleControlStateChangeL(TInt aControlId);
+	TBool OkToExitL(TInt aButtonId);
+	void ShowTopicL(TInt aTopic);
+	TInt iTopic;
 	};
 
 class CPmUpdateDialog : public CEikDialog
@@ -623,6 +646,7 @@ public:
 	CPmContacts* Contacts();                       // the Psion's Contacts (pmcontacts.cpp), made when first asked for
 	void MailtoL(const TDesC& aUrl);               // a mailto: link: compose, filled in
 	void ForwardReadyL(TUint aUid, CDesCArray& aFiles);   // the attachments are here: compose the forward
+	CPmMbm* Mbm() { return iMbm; }                 // PsiMail.mbm (NULL if it couldn't be read)
 private:
 	void HandleCommandL(TInt aCommand);
 	void ProcessMessageL(TUid aUid, const TDesC8& aParams);           // PsiWeb's mailto: links
@@ -642,6 +666,11 @@ private:
 	void MoveL();
 	void SearchL();
 	void FoldersL();
+	void NewFolderL();
+	void RenameFolderL();
+	void DeleteFolderL();
+	TBool GoOnlineL(const TDesC& aQuestion);   // offline: asks, and goes online for the command
+	void HelpL(TInt aTopic = 0);
 	void UpdateL();
 	void SwitchAccountL();
 	void DeleteAccountL();
@@ -651,6 +680,7 @@ private:
 	void EditCalendarL();
 	CPmView* iView;
 	CPmContacts* iContacts;
+	CPmMbm* iMbm;
 	TBool iTool4Close;                 // the last toolbar button says Close
 	TPmSettings iSettings;
 	TPmCalSettings iCalSettings;

@@ -86,6 +86,15 @@ stand-in. What can be checked here:
   Expected: "the connection idle for 31 s had gone (2): connecting again"
   about 15 s after the sleep, then `body: OK` on a second connection.
 
+## Folders (no server needed)
+
+`foldertest.sh` runs the folder commands against `fakeimap.py` (which keeps
+a folder list: INBOX, Trash, Work and a child with a non-ASCII name):
+`mkfolder PARENT NAME` (PARENT `-` is the top level), `renfolder FOLDER
+NAME`, `delfolder FOLDER`. It checks the names go as modified UTF-7 under
+the right parent, that folders.txt and the store directories follow, and
+that the Inbox, a standard folder and a folder with children are refused.
+
 ## Certificates
 
 `certtest.c` + `certtest.py` check the chain code on a saved chain, e.g.

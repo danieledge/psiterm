@@ -232,18 +232,14 @@ CPmView::~CPmView()
 	delete iFolders;
 	delete iRows;
 	delete iText;
-	if (iDocValid)
-		doc_free(&iDoc);
 	delete iAttNames;
 	delete iAttSizes;
 	delete iAttParts;
-	delete iBitmap;
-	User::Free(iBits);
 	if (iChunkOpen)
 		iChunk.Close();
 	}
 
-// the drawing code's memory (see ui/pmui.h)
+// the calendar model's memory (see ui/pmui.h)
 void* ui_alloc(int aSize) { return User::Alloc(aSize); }
 void ui_free(void* aPtr) { User::Free(aPtr); }
 
@@ -263,18 +259,6 @@ void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSetti
 	iAttSizes = new(ELeave) CDesCArrayFlat(4);
 	iAttParts = new(ELeave) CDesC8ArrayFlat(4);
 
-	// the 16-grey canvas of PsiMail's earlier drawn screens: no longer shown,
-	// but pmdoc's layout of a message (for quoting) still measures with it
-	TSize size = iCoeEnv->ScreenDevice()->SizeInPixels();
-	if (size.iWidth > 640) size.iWidth = 640;
-	if (size.iHeight > 240) size.iHeight = 240;
-	iBitmap = new(ELeave) CFbsBitmap;
-	User::LeaveIfError(iBitmap->Create(size, EGray16));
-	TInt stride = (size.iWidth + 1) / 2;
-	iBits = (TUint8*)User::AllocL(stride * size.iHeight);
-	Mem::Fill(iBits, stride * size.iHeight, 0xff);
-	gfx_init(&iCanvas, iBits, size.iWidth, size.iHeight, stride);
-
 	TInt r = iChunk.CreateGlobal(_L(PSI_SHARED_NAME), sizeof(PmShared), sizeof(PmShared));
 	if (r == KErrAlreadyExists)
 		r = iChunk.OpenGlobal(_L(PSI_SHARED_NAME), EFalse);
@@ -285,13 +269,31 @@ void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSetti
 
 	CreateNativeL();
 	iNativeMode = (TMode)-1;
-	iTimer = CPeriodic::NewL(CActive::EPriorityStandard);
-	iTimer->Start(KTick, KTick, TCallBack(TickCallback, this));
-	ActivateL();
-	StartEngineL();
 	calm_init(&iCalModel);
+	iFolder = _L8("INBOX");
+	if (!iSettings->iAccounts[iSettings->iAcct].used)
+		iMode = ENoAccount;
+	// the frame, toolbar and headings go up first; the engine, the lists
+	// and the calendar follow from the first tick (FinishStartL), so the
+	// window is on the screen while they load
+	iStartPending = ETrue;
+	iTimer = CPeriodic::NewL(CActive::EPriorityStandard);
+	iTimer->Start(KTick / 5, KTick, TCallBack(TickCallback, this));
+	ActivateL();
+	}
+
+// The rest of starting up, once the window is drawn: the engine (started
+// at the app's own priority, and raised once it is up - see TickL), the
+// folders and the Inbox, and the calendar.
+void CPmView::FinishStartL()
+	{
+	iStartPending = EFalse;
+	AccountChangedL();                        // the folders and the list, from the card
+	DrawNow();
+	StartEngineL();
 	TRAPD(err, LoadCalendarL());
-	AccountChangedL();
+	(void)err;
+	Render();
 	}
 
 void CPmView::StoreDir(TDes& aDir) const
@@ -382,10 +384,20 @@ void CPmView::StartEngineL()
 	if (!iWatcher)
 		iWatcher = new(ELeave) CPmWatcher(*this);
 	iWatcher->Watch(iProcess);
-	// above this (foreground) app: the engine must drain the serial port
-	// while the screen is being drawn, or bytes are lost without RTS/CTS
-	iProcess.SetPriority(EPriorityHigh);
+	// It runs above this (foreground) app once it is up: it must drain the
+	// serial port while the screen is being drawn, or bytes are lost without
+	// RTS/CTS. While it starts (loading, its own set-up) it stays below the
+	// app, so the screen gets drawn first; TickL raises it when it is ready.
+	iProcess.SetPriority(EPriorityBackground);
+	iEngineLow = ETrue;
 	iProcess.Resume();
+	if (iFirstFetch)
+		{
+		// the account's first time (see AccountChangedL): the folders and the Inbox
+		iFirstFetch = EFalse;
+		Cmd(PM_CMD_FOLDERS, KNullDesC8, 0, KNullDesC8);
+		Cmd(PM_CMD_SYNC, _L8("INBOX"), 0, KNullDesC8);
+		}
 	}
 
 void CPmView::StopEngine()
@@ -581,13 +593,19 @@ void CPmView::AccountChangedL()
 	LoadFoldersL();
 	iMode = EList;
 	iListMode = EList;
-	iSel = iTop = 0;
+	iSel = 0;
 	LoadListL();
-	// first time for this account: fetch the folders and the Inbox
+	// first time for this account: fetch the folders and the Inbox (once the
+	// engine is up, if it isn't yet: StartEngineL)
 	if (iFolders->Count() == 0 && !iSettings->iOffline)
 		{
-		Cmd(PM_CMD_FOLDERS, KNullDesC8, 0, KNullDesC8);
-		Cmd(PM_CMD_SYNC, _L8("INBOX"), 0, KNullDesC8);
+		if (iRunning)
+			{
+			Cmd(PM_CMD_FOLDERS, KNullDesC8, 0, KNullDesC8);
+			Cmd(PM_CMD_SYNC, _L8("INBOX"), 0, KNullDesC8);
+			}
+		else
+			iFirstFetch = ETrue;
 		}
 	Render();
 	}
@@ -636,6 +654,56 @@ const TPmFolder* CPmView::CurrentFolder() const
 		if ((*iFolders)[i].iImap == iFolder)
 			return &(*iFolders)[i];
 	return NULL;
+	}
+
+// The folder File > Folder acts on: the highlighted one while the keys are
+// in the folder tree (none for the Outbox and the Calendar), otherwise the
+// open folder.
+const TPmFolder* CPmView::CommandFolder() const
+	{
+	if (iSidebar && (iMode == EList || iMode == EOutbox || iMode == ECalendar))
+		return iFolderSel >= 0 && iFolderSel < iFolders->Count() ? &(*iFolders)[iFolderSel] : NULL;
+	if (iMode == EList || iMode == EMessage)
+		return CurrentFolder();
+	return NULL;
+	}
+
+// The engine made, renamed or deleted a folder (and rewrote folders.txt):
+// the tree follows, and so does the open folder if it was the one
+void CPmView::FolderChangedL(const PmCmd& aCmd)
+	{
+	TBuf8<128> was;
+	was.Copy(TPtrC8((const TUint8*)aCmd.folder));
+	TBuf8<128> now;
+	now.Copy(TPtrC8((const TUint8*)iShared->last_file));
+	LoadFoldersL();
+	if (aCmd.op == PM_CMD_MKFOLDER)
+		{
+		// straight into the new folder (empty, and checked with the server)
+		if (now.Length())
+			OpenFolderL(now);
+		return;
+		}
+	TBool open = (iMode == EList || iMode == EMessage) && iFolder == was;
+	if (aCmd.op == PM_CMD_RENFOLDER)
+		{
+		if (open && now.Length())
+			{
+			iFolder = now;                        // the same files, under their new name
+			if (iMode == EMessage) { iMode = EList; iSidebar = EFalse; }
+			}
+		}
+	else if (aCmd.op == PM_CMD_DELFOLDER && open)
+		{
+		iFolder = _L8("INBOX");
+		iSearch = EFalse;
+		iMode = EList;
+		iListMode = EList;
+		iSel = 0;
+		}
+	if (iSidebar)
+		FocusFoldersL();                          // (the highlight, now the tree has changed)
+	ReloadL();
 	}
 
 void CPmView::LoadListL()
@@ -791,17 +859,11 @@ void CPmView::LoadMessageL()
 	{
 	delete iText;
 	iText = NULL;
-	if (iDocValid)
-		{
-		doc_free(&iDoc);
-		iDocValid = EFalse;
-		}
 	iAttNames->Reset();
 	iAttSizes->Reset();
 	iAttParts->Reset();
 	iTruncated = 0;
 	iBodyOff = 0;
-	iFocusLink = 0;
 	TBuf<150> path;
 	MsgPath(iMsgUid, _L("htm"), path);
 	TEntry he;
@@ -855,30 +917,6 @@ void CPmView::LoadMessageL()
 			}
 		CleanupStack::PopAndDestroy();
 		}
-	BuildDoc();
-	}
-
-// lays the message out (ui/pmdoc.cpp)
-void CPmView::BuildDoc()
-	{
-	if (iDocValid)
-		{
-		doc_free(&iDoc);
-		iDocValid = EFalse;
-		}
-	if (!iText)
-		return;
-	TInt n = iAttNames->Count();
-	for (TInt i = 0; i < n; i++)
-		{
-		iUiAtt[i].name = (const char*)(*iAttNames)[i].Ptr();
-		iUiAtt[i].len = (*iAttNames)[i].Length();
-		iUiAtt[i].size = (const char*)(*iAttSizes)[i].Ptr();
-		iUiAtt[i].slen = (*iAttSizes)[i].Length();
-		}
-	TPtrC body = iText->Mid(iBodyOff);
-	doc_build(&iDoc, (const char*)body.Ptr(), body.Length(), iCanvas.w, iUiAtt, n, (iTruncated + 1023) / 1024);
-	iDocValid = ETrue;
 	}
 
 void CPmView::ReloadL()
@@ -926,7 +964,6 @@ void CPmView::FocusFoldersL()
 	if (iMode == ECalendar)
 		{
 		iSidebar = ETrue;
-		iFolderFollow = ETrue;
 		iFolderSel = iFolders->Count() + 1;
 		Render();
 		return;
@@ -934,7 +971,6 @@ void CPmView::FocusFoldersL()
 	if (iMode != EList && iMode != EOutbox)
 		return;
 	iSidebar = ETrue;
-	iFolderFollow = ETrue;
 	// the open folder is the highlighted one
 	iFolderSel = iFolders->Count();                // (the outbox)
 	if (iMode == EList)
@@ -950,11 +986,10 @@ void CPmView::OpenFolderL(const TDesC8& aImap)
 	iMode = EList;
 	iListMode = EList;
 	iSidebar = EFalse;
-	iSel = iTop = 0;
+	iSel = 0;
 	iRows->Reset();
 	LoadListL();
 	iSel = 0;
-	iTop = 0;
 	for (TInt i = 0; i < iFolders->Count(); i++)
 		if ((*iFolders)[i].iImap == iFolder) iFolderSel = i;
 	Render();
@@ -970,7 +1005,7 @@ void CPmView::ShowOutboxL()
 	iSidebar = EFalse;
 	iSearch = EFalse;
 	iFolderSel = iFolders->Count();
-	iSel = iTop = 0;
+	iSel = 0;
 	LoadOutboxL();
 	Render();
 	}
@@ -1008,8 +1043,6 @@ void CPmView::OpenCurrentL()
 	TBool wasUnread = row.iFlags.Locate('S') < 0;
 	iMsgUid = row.iUid;
 	iMode = EMessage;
-	iScroll = 0;
-	iFocusLink = 0;
 	if (wasUnread)
 		row.iFlags.Append('S');                  // the engine marks it read
 	iBodyError.Zero();
@@ -1470,7 +1503,7 @@ void CPmView::PlainBodyL(TDes& aOut, TBool aQuote) const
 	if (room <= 8)
 		return;
 	TUint8* out = (TUint8*)aOut.Ptr() + aOut.Length();
-	TInt n = doc_plain((const char*)body.Ptr(), body.Length(), (char*)out, room, aQuote);
+	TInt n = pm_plain_text((const char*)body.Ptr(), body.Length(), (char*)out, room, aQuote);
 	aOut.SetLength(aOut.Length() + n);
 	}
 
@@ -1710,6 +1743,11 @@ void CPmView::TickL()
 	PmShared* s = iShared;
 	if (!s)
 		return;
+	if (iStartPending)
+		{
+		FinishStartL();
+		return;
+		}
 	s->app_beat++;                       // "still here": see pmepoc.cpp
 	TBool redraw = EFalse;
 	if (s->done_seq != iDoneSeen)
@@ -1772,18 +1810,19 @@ void CPmView::TickL()
 		}
 	// messages that have had their time
 	TUint now = User::TickCount();
-	if (iToast.Length() && now - iToastUntil < 0x80000000u)
-		{
-		iToast.Zero();
-		redraw = ETrue;
-		}
 	if (iStatus.Length() && iStatusUntil && now - iStatusUntil < 0x80000000u && !s->busy)
 		{
 		iStatus.Zero();
 		iStatusUntil = 0;
 		redraw = ETrue;
 		}
-	// the engine is up: from the start-up screen to the mail
+	// the engine is up: its working priority (see StartEngineL), and from
+	// the start-up screen to the mail
+	if (iEngineLow && iRunning && s->state != PM_STATE_STARTING)
+		{
+		iEngineLow = EFalse;
+		iProcess.SetPriority(EPriorityHigh);
+		}
 	if (!iSplashDone && s->state != PM_STATE_STARTING)
 		{
 		iSplashDone = ETrue;
@@ -1850,10 +1889,9 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 			iMode = EList;
 			iListMode = EList;
 			iFolder.Copy(TPtrC8((const TUint8*)aCmd.folder));
-			iSel = iTop = 0;
+			iSel = 0;
 			LoadListL();
 			iSel = 0;
-			iTop = 0;
 			}
 		else if (aCmd.op == PM_CMD_ATTACH)
 			{
@@ -1879,11 +1917,12 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		if (aCmd.op == PM_CMD_BODY || aCmd.op == PM_CMD_FULLBODY)
 			{
 			if (iMode == EMessage && aCmd.uid == iMsgUid)
-				{
-				TInt top = iScroll;
 				LoadMessageL();
-				if (aCmd.op == PM_CMD_FULLBODY) iScroll = top;
-				}
+			}
+		if (aCmd.op == PM_CMD_MKFOLDER || aCmd.op == PM_CMD_RENFOLDER || aCmd.op == PM_CMD_DELFOLDER)
+			{
+			FolderChangedL(aCmd);
+			break;
 			}
 		ReloadL();
 		break;
@@ -2040,11 +2079,6 @@ void CPmView::SetStatus(const TDesC& aText)
 // Drawing - the EIKON screens (pmnative.cpp, pmcalview.cpp)
 // ============================================================================
 
-TInt CPmView::Rows() const
-	{
-	return ui_mailbox_rows(iCanvas.h);
-	}
-
 void CPmView::Toast(const TDesC& aText)
 	{
 	iEikonEnv->InfoMsg(aText);               // EIKON's own message, as the style guide has it
@@ -2081,170 +2115,6 @@ void CPmView::FormatDate(TInt aDate, TDes& aOut) const
 		aOut.Format(_L("%d %s %02d"), d.Day() + 1, KMonths[d.Month()], d.Year() % 100);
 	}
 
-static const char* CStr(const TDesC& aDes) { return (const char*)aDes.Ptr(); }
-
-// the folder column: folders, the outbox, the calendar
-void CPmView::FillSidebar(PmUiMailbox& m)
-	{
-	PmAccount& a = iSettings->iAccounts[iSettings->iAcct];
-	m.account = a.name;
-	m.alen = User::StringLength((const TUint8*)a.name);
-	TInt nf = iFolders->Count();
-	if (nf > 80) nf = 80;
-	TInt k = 0;
-	for (TInt i = 0; i < nf; i++)
-		{
-		const TPmFolder& f = (*iFolders)[i];
-		PmUiFolder& u = iUiFolders[k++];
-		// "Work/Projects": show "Projects", indented
-		TInt depth = 0, last = -1;
-		if (f.iKind == '-' || f.iKind == 'N')
-			for (TInt j = 0; j < f.iName.Length(); j++)
-				if (f.iName[j] == '/' || f.iName[j] == '.') { depth++; last = j; }
-		u.name = CStr(f.iName) + last + 1;
-		u.len = f.iName.Length() - last - 1;
-		u.kind = f.iKind;
-		u.unread = f.iKind == 'S' || f.iKind == 'D' || f.iKind == 'T' || f.iKind == 'J' ? 0 : f.iUnread;
-		u.depth = depth > 3 ? 3 : depth;
-		}
-	PmUiFolder& ob = iUiFolders[k++];
-	ob.name = "Outbox"; ob.len = 6; ob.kind = 'O'; ob.depth = 0;
-	ob.unread = OutboxCount();
-	PmUiFolder& cal = iUiFolders[k++];
-	cal.name = "Calendar"; cal.len = 8; cal.kind = 'C'; cal.depth = 0;
-	cal.unread = iCalLoaded ? calm_count(&iCalModel, iCalToday) : 0;
-	m.folders = iUiFolders;
-	m.nfolders = k;
-	m.folderSel = iFolderSel < k ? iFolderSel : k - 1;
-	TInt srows = ui_sidebar_rows(iCanvas.h);
-	if (iFolderFollow)
-		{
-		// (the keyboard moves the highlight: keep it in view; the pen
-		// scrolls the column by itself)
-		if (iFolderSel < iFolderTop) iFolderTop = iFolderSel;
-		if (iFolderSel >= iFolderTop + srows) iFolderTop = iFolderSel - srows + 1;
-		iFolderFollow = EFalse;
-		}
-	if (iFolderTop > k - srows) iFolderTop = k - srows;
-	if (iFolderTop < 0) iFolderTop = 0;
-	m.folderTop = iFolderTop;
-	m.sidebarFocus = iSidebar;
-	m.online = iShared->online;
-	m.offline = iSettings->iOffline;
-	}
-
-void CPmView::RenderMailbox()
-	{
-	PmUiMailbox m;
-	Mem::FillZ(&m, sizeof(m));
-	FillSidebar(m);
-
-	TBuf<80> title;
-	TBuf<80> sub;
-	if (iMode == EOutbox)
-		{
-		title = _L("Outbox");
-		if (iRows->Count()) sub.Format(_L("%d waiting to go"), iRows->Count());
-		}
-	else
-		{
-		const TPmFolder* f = CurrentFolder();
-		if (iSearch)
-			{
-			title = _L("Search");
-			sub = _L("\x93");
-			sub.Append(Clip(iSearchWords, 40));
-			sub.Append(_L("\x94 in "));
-			sub.Append(f ? Clip(f->iName, 30) : TPtrC(_L("Inbox")));
-			}
-		else
-			{
-			if (f) title = Clip(f->iName, 60); else title.Copy(Clip(iFolder, 60));
-			TInt unread = 0;
-			for (TInt i = 0; i < iRows->Count(); i++)
-				if ((*iRows)[i].iFlags.Locate('S') < 0) unread++;
-			if (unread) sub.Format(_L("%d unread"), unread);
-			else if (iRows->Count()) sub.Format(_L("%d messages"), iRows->Count());
-			}
-		}
-	m.title = CStr(title); m.tlen = title.Length();
-	m.subtitle = CStr(sub); m.sublen = sub.Length();
-
-	TInt rows = Rows();
-	TInt n = 0;
-	for (TInt i = iTop; i < iRows->Count() && n < rows + 1 && n < 12; i++, n++)
-		{
-		const TPmRow& r = (*iRows)[i];
-		PmUiRow& u = iUiRows[n];
-		u.from = CStr(r.iFrom); u.flen = r.iFrom.Length();
-		u.subj = r.iSubject.Length() ? CStr(r.iSubject) : "(no subject)";
-		u.slen = r.iSubject.Length() ? r.iSubject.Length() : 12;
-		if (iMode == EOutbox)
-			{
-			if (r.iFlags.Locate('E') >= 0) iDates[n] = _L("not sent");
-			else if (r.iFlags.Locate('D') >= 0) iDates[n] = _L("draft");
-			else iDates[n] = _L("to send");
-			u.flags = (r.iFlags.Locate('E') >= 0 ? KRowError : 0) | (r.iFlags.Locate('D') >= 0 ? KRowDraft : 0);
-			}
-		else
-			{
-			FormatDate(r.iDate, iDates[n]);
-			u.flags = 0;
-			if (r.iFlags.Locate('S') < 0) u.flags |= KRowUnread;
-			if (r.iFlags.Locate('F') >= 0) u.flags |= KRowFlagged;
-			if (r.iFlags.Locate('T') >= 0) u.flags |= KRowAttach;
-			if (r.iFlags.Locate('A') >= 0) u.flags |= KRowAnswered;
-			}
-		u.date = CStr(iDates[n]); u.dlen = iDates[n].Length();
-		}
-	m.rows = iUiRows;
-	m.nrows = n;
-	m.total = iRows->Count();
-	m.top = iTop;
-	m.sel = iSel;
-	const TDesC& empty = iMode == EOutbox ? _L("Nothing waiting to be sent")
-		: iSearch ? _L("Nothing found")
-		: (Busy() ? _L("Looking for messages...") : _L("No messages here"));
-	m.empty = CStr(empty); m.elen = empty.Length();
-	m.busy = Busy() || CalendarBusy();
-	if (Busy() && iLastProgress.Length()) { m.status = CStr(iLastProgress); m.statlen = iLastProgress.Length(); }
-	else if (Busy()) { m.status = "Working"; m.statlen = 7; }
-	else if (iStatus.Length()) { m.status = CStr(iStatus); m.statlen = iStatus.Length(); }
-	m.online = iShared->online;
-	m.offline = iSettings->iOffline;
-	ui_mailbox(&iCanvas, &m);
-	}
-
-void CPmView::RenderReader()
-	{
-	PmUiReader r;
-	Mem::FillZ(&r, sizeof(r));
-	const TPmRow* row = CurrentRow();
-	if (iText && iDocValid)
-		{
-		r.text = CStr(*iText) + iBodyOff;
-		r.len = iText->Length() - iBodyOff;
-		r.doc = &iDoc;
-		}
-	r.scroll = iScroll;
-	r.position = iSel + 1;
-	r.count = iRows->Count();
-	const TPmFolder* f = CurrentFolder();
-	if (iListMode == EOutbox) { r.folder = "Outbox"; r.flen = 6; }
-	else if (iSearch) { r.folder = "Search"; r.flen = 6; }
-	else if (f) { r.folder = CStr(f->iName); r.flen = f->iName.Length(); }
-	r.focusLink = iFocusLink;
-	r.busy = Busy() || CalendarBusy();
-	if (Busy() && iLastProgress.Length()) { r.status = CStr(iLastProgress); r.statlen = iLastProgress.Length(); }
-	else if (iStatus.Length()) { r.status = CStr(iStatus); r.statlen = iStatus.Length(); }
-	r.loading = iWaitingBody || !iDocValid;
-	if (row) { r.subject = CStr(row->iSubject); r.sublen = row->iSubject.Length(); r.flagged = row->iFlags.Locate('F') >= 0; }
-	r.html = iHtml;
-	r.att = iUiAtt;
-	r.natt = iAttNames->Count();
-	ui_reader(&iCanvas, &r);
-	}
-
 // brings the screen up to date: the EIKON controls, the title band and the
 // calendar's pane (pmnative.cpp, pmcalview.cpp)
 void CPmView::Render()
@@ -2272,33 +2142,12 @@ void CPmView::Draw(const TRect& aRect) const
 // Keys and pen
 // ============================================================================
 
+// keeps the selection within the list (the list box scrolls to it itself)
 void CPmView::EnsureVisible()
 	{
-	TInt rows = Rows();
 	TInt count = iRows->Count();
 	if (iSel >= count) iSel = count - 1;
 	if (iSel < 0) iSel = 0;
-	if (iSel < iTop) iTop = iSel;
-	if (iSel >= iTop + rows) iTop = iSel - rows + 1;
-	if (iTop > count - rows) iTop = count - rows;
-	if (iTop < 0) iTop = 0;
-	}
-
-void CPmView::MoveSel(TInt aDelta)
-	{
-	if (iSidebar)
-		{
-		iFolderFollow = ETrue;
-		iFolderSel += aDelta;
-		if (iFolderSel >= SidebarCount()) iFolderSel = SidebarCount() - 1;
-		if (iFolderSel < 0) iFolderSel = 0;
-		}
-	else
-		{
-		iSel += aDelta;
-		EnsureVisible();
-		}
-	Render();
 	}
 
 // the entry in the folder column for what's showing
@@ -2314,14 +2163,6 @@ TInt CPmView::CurrentSidebarItem() const
 	return 0;
 	}
 
-// the pen on the folder column's scroll bar: a page of folders
-void CPmView::SidebarPage(TInt aDir)
-	{
-	TInt rows = ui_sidebar_rows(iCanvas.h);
-	iFolderTop += aDir * (rows > 1 ? rows - 1 : 1);
-	Render();                              // (FillSidebar keeps it in range)
-	}
-
 // View > Go to: one of the folder tree's entries
 void CPmView::OpenSidebarItemL(TInt aIndex)
 	{
@@ -2329,35 +2170,7 @@ void CPmView::OpenSidebarItemL(TInt aIndex)
 		BackL();
 	iSidebar = ETrue;
 	iFolderSel = aIndex;
-	iFolderFollow = ETrue;
 	OpenCurrentL();
-	iFolderFollow = ETrue;
-	Render();
-	}
-
-void CPmView::Scroll(TInt aDelta)
-	{
-	if (!iDocValid)
-		return;
-	TInt maxs = iDoc.height - ui_reader_body_height(iCanvas.h);
-	if (maxs < 0) maxs = 0;
-	iScroll += aDelta;
-	if (iScroll > maxs) iScroll = maxs;
-	if (iScroll < 0) iScroll = 0;
-	// a highlighted link that has gone off screen is let go
-	if (iFocusLink)
-		{
-		PmUiReader r;
-		Mem::FillZ(&r, sizeof(r));
-		r.doc = &iDoc;
-		r.scroll = iScroll;
-		r.text = CStr(*iText) + iBodyOff;
-		TBool seen = EFalse;
-		for (TInt i = 0; i < iDoc.nops && !seen; i++)
-			if (iDoc.ops[i].link == iFocusLink && iDoc.ops[i].y > iScroll && iDoc.ops[i].y < iScroll + ui_reader_body_height(iCanvas.h))
-				seen = ETrue;
-		if (!seen) iFocusLink = 0;
-		}
 	Render();
 	}
 
@@ -2386,254 +2199,39 @@ TKeyResponse CPmView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 	// Esc stops the engine when there is nothing to go back from (or the
 	// message being waited for is the thing it's fetching); otherwise it goes
 	// back, even while mail downloads ahead in the background
-	TBool escStops = ETrue;
-	if (iNativeShown && NativeMode())
-		escStops = (iMode == EMessage && iWaitingBody) ||
-			((iMode == EList || iMode == EOutbox || iMode == ECalendar) && iSidebar) || iMode == ENoAccount ||
-			(iShared->busy && !iShared->online);   // still connecting: nothing to go back from
+	TBool escStops = (iMode == EMessage && iWaitingBody) ||
+		((iMode == EList || iMode == EOutbox || iMode == ECalendar) && iSidebar) || iMode == ENoAccount ||
+		(iShared->busy && !iShared->online);   // still connecting: nothing to go back from
 	if (code == EKeyEscape && Busy() && escStops && !DownloadingAhead())
 		{
 		StopEngineWork(_L("Stopping..."));  // stop what the engine is doing
 		return EKeyWasConsumed;
 		}
-	if (iNativeShown && NativeMode())
-		return NativeKeyL(aKeyEvent, aType);
-	if (iMode == EMessage)
-		return ReaderKeyL(code, aKeyEvent.iModifiers);
-	if (iMode == EList || iMode == EOutbox)
-		return MailboxKeyL(code);
-	return EKeyWasNotConsumed;
-	}
-
-TKeyResponse CPmView::MailboxKeyL(TUint aCode)
-	{
-	TInt page = Rows() - 1;
-	if (page < 1) page = 1;
-	switch (aCode)
-		{
-	case EKeyEscape:
-		BackL();
-		break;
-	case EKeyUpArrow: MoveSel(-1); break;
-	case EKeyDownArrow: MoveSel(1); break;
-	case EKeyPageUp: MoveSel(-page); break;
-	case EKeyPageDown: MoveSel(page); break;
-	case EKeyHome: MoveSel(-100000); break;
-	case EKeyEnd: MoveSel(100000); break;
-	case EKeyEnter:
-	case EKeyRightArrow:
-		OpenCurrentL();
-		break;
-	case EKeyLeftArrow:
-		if (!iSidebar) FocusFoldersL();
-		break;
-	case EKeyTab:
-		if (iSidebar) OpenCurrentL(); else FocusFoldersL();
-		break;
-	case EKeyDelete:
-	case EKeyBackspace:
-		if (!iSidebar) DeleteCurrentL();
-		break;
-	default:
-		return EKeyWasNotConsumed;
-		}
-	return EKeyWasConsumed;
-	}
-
-TKeyResponse CPmView::ReaderKeyL(TUint aCode, TUint aMods)
-	{
-	TInt page = ui_reader_body_height(iCanvas.h) - 34;
-	PmUiReader r;
-	Mem::FillZ(&r, sizeof(r));
-	if (iDocValid)
-		{
-		r.doc = &iDoc;
-		r.text = CStr(*iText) + iBodyOff;
-		}
-	r.scroll = iScroll;
-	switch (aCode)
-		{
-	case EKeyEscape:
-		if (iFocusLink) { iFocusLink = 0; Render(); }
-		else BackL();
-		break;
-	case EKeyUpArrow: Scroll(-17); break;
-	case EKeyDownArrow: Scroll(17); break;
-	case EKeyPageUp: Scroll(-page); break;
-	case EKeyPageDown:
-	case ' ':
-		Scroll(page);
-		break;
-	case EKeyHome: Scroll(-10000000); break;
-	case EKeyEnd: Scroll(10000000); break;
-	case EKeyLeftArrow: StepMessageL(-1); break;
-	case EKeyRightArrow: StepMessageL(1); break;
-	case EKeyTab:
-		{
-		// the next link or attachment on screen (Shift+Tab: the one before)
-		TInt next = ui_reader_next_link(&r, iCanvas.h, iFocusLink, (aMods & EModifierShift) ? -1 : 1);
-		iFocusLink = next;
-		if (!next && iDocValid)
-			Toast(_L("No more links on this page"));
-		Render();
-		break;
-		}
-	case EKeyEnter:
-		if (iFocusLink) ActivateLinkL(iFocusLink);
-		break;
-	case EKeyDelete:
-		DeleteCurrentL();
-		break;
-	default:
-		return EKeyWasNotConsumed;
-		}
-	return EKeyWasConsumed;
-	}
-
-// a link: open it in PsiWeb; an attachment: save it
-void CPmView::ActivateLinkL(TInt aLink)
-	{
-	if (aLink <= -1000)
-		{
-		OpenAttachmentL(-aLink - 1000);
-		return;
-		}
-	const char* url = 0;
-	TInt n = iDocValid ? doc_link_url(&iDoc, CStr(*iText) + iBodyOff, aLink, &url) : 0;
-	if (!n)
-		return;
-	TPtrC8 u((const TUint8*)url, n);
-	TBuf<256> link;
-	SafeCopy(link, u);
-	if (Clip(link, 7).CompareF(_L("mailto:")) == 0)
-		{
-		((CPmAppUi*)iEikonEnv->EikAppUi())->MailtoL(link);   // write to them
-		return;
-		}
-	OpenWebL(link);
+	return NativeKeyL(aKeyEvent, aType);
 	}
 
 void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
 	{
 	TPoint p = aEvent.iPosition;
 	AddEntropy(p.iX * 1000 + p.iY);
-	if (iNativeShown && NativeMode())
-		{
-		// the title band, the headings and the calendar's pane are ours; the
-		// list boxes and the reader take the pen themselves
-		if (NativePointerL(aEvent))
-			return;
-		if (iMode == ECalendar && CalendarPointerL(aEvent))
-			return;
-		CCoeControl::HandlePointerEventL(aEvent);
-		if (iMode == EMessage && aEvent.iType == TPointerEvent::EButton1Up && iLinks)
-			{
-			// a tap on a link or an attachment opens it
-			TInt pos = iReader->CursorPos();
-			for (TInt i = 0; i < iLinks->Count(); i++)
-				if (pos >= (*iLinks)[i].iPos && pos < (*iLinks)[i].iPos + (*iLinks)[i].iLen)
-					{
-					iLinkSel = i;
-					NativeActivateLinkL();
-					break;
-					}
-			}
+	// the title band, the headings and the calendar's pane are ours; the
+	// list boxes and the reader take the pen themselves
+	if (NativePointerL(aEvent))
 		return;
-		}
-	// the folder column: the pen drags it up and down; a tap (no drag)
-	// opens the folder when the pen lifts
-	TBool side = (iMode == EList || iMode == EOutbox) && p.iX < UI_SIDE_W;
-	if (aEvent.iType == TPointerEvent::EButton1Down && side)
-		{
-		iPenSide = ETrue;
-		iPenDragged = EFalse;
-		iPenStart = p;
-		iPenTop = iFolderTop;
+	if (iMode == ECalendar && CalendarPointerL(aEvent))
 		return;
-		}
-	if (iPenSide && aEvent.iType == TPointerEvent::EDrag)
+	CCoeControl::HandlePointerEventL(aEvent);
+	if (iMode == EMessage && aEvent.iType == TPointerEvent::EButton1Up && iLinks)
 		{
-		TInt dy = p.iY - iPenStart.iY;
-		if (dy > 6 || dy < -6)
-			iPenDragged = ETrue;
-		if (iPenDragged)
-			{
-			TInt top = iPenTop - dy / UI_FOLDER_ROW;
-			if (top != iFolderTop)
+		// a tap on a link or an attachment opens it
+		TInt pos = iReader->CursorPos();
+		for (TInt i = 0; i < iLinks->Count(); i++)
+			if (pos >= (*iLinks)[i].iPos && pos < (*iLinks)[i].iPos + (*iLinks)[i].iLen)
 				{
-				iFolderTop = top;             // (FillSidebar keeps it in range)
-				Render();
+				iLinkSel = i;
+				NativeActivateLinkL();
+				break;
 				}
-			}
-		return;
-		}
-	if (iPenSide && aEvent.iType == TPointerEvent::EButton1Up)
-		{
-		iPenSide = EFalse;
-		if (iPenDragged)
-			return;
-		p = iPenStart;                        // a tap: handled as before
-		}
-	else if (aEvent.iType != TPointerEvent::EButton1Down)
-		return;
-	TInt index = -1;
-	if (iMode == EList || iMode == EOutbox)
-		{
-		PmUiMailbox m;
-		Mem::FillZ(&m, sizeof(m));
-		m.nfolders = SidebarCount();
-		m.folderTop = iFolderTop;
-		m.total = iRows->Count();
-		m.top = iTop;
-		switch (ui_mailbox_hit(iCanvas.w, iCanvas.h, &m, p.iX, p.iY, &index))
-			{
-		case EHitFolder:
-			iSidebar = ETrue;
-			iFolderSel = index;
-			OpenCurrentL();
-			break;
-		case EHitRow:
-			if (index == iSel && !iSidebar) OpenCurrentL();
-			else { iSidebar = EFalse; iSel = index; EnsureVisible(); Render(); }
-			break;
-		case EHitTop: SidebarPage(-1); break;
-		case EHitBottom: SidebarPage(1); break;
-		case EHitRefresh: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdSendRecv); break;
-		case EHitSearch: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdSearch); break;
-		case EHitNew: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdNew); break;
-		default: break;
-			}
-		return;
-		}
-	if (iMode == EMessage)
-		{
-		PmUiReader r;
-		Mem::FillZ(&r, sizeof(r));
-		if (iDocValid) { r.doc = &iDoc; r.text = CStr(*iText) + iBodyOff; }
-		r.scroll = iScroll;
-		r.html = iHtml;
-		TInt link = 0;
-		TInt page = ui_reader_body_height(iCanvas.h) - 34;
-		switch (ui_reader_hit(iCanvas.w, iCanvas.h, &r, p.iX, p.iY, &link))
-			{
-		case EHitBack: BackL(); break;
-		case EHitReply: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdReply); break;
-		case EHitReplyAll: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdReplyAll); break;
-		case EHitForward: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdForward); break;
-		case EHitDelete: DeleteCurrentL(); break;
-		case EHitArchive: iEikonEnv->EikAppUi()->HandleCommandL(EPmCmdArchive); break;
-		case EHitFlag: ToggleFlagL('F'); break;
-		case EHitWeb: ViewAsWebPageL(); break;
-		case EHitLink:
-		case EHitAttach:
-			iFocusLink = link;
-			Render();
-			ActivateLinkL(link);
-			break;
-		case EHitTop: Scroll(-page); break;
-		case EHitBottom: Scroll(page); break;
-		default: break;
-			}
 		}
 	}
 
@@ -3216,6 +2814,8 @@ void CPmAppUi::ConstructL()
 	BaseConstructL();
 	LoadSettings();
 	LoadCalSettings();
+	TRAPD(mbm, iMbm = CPmMbm::NewL(iCoeEnv->FsSession(), Application()->BitmapStoreName()));
+	(void)mbm;                               // (NULL: the pictures load one by one)
 	TRAPD(pics, ToolbarPicturesL());
 	(void)pics;                              // (no PsiMail.mbm: words only)
 	iView = new(ELeave) CPmView;
@@ -3238,9 +2838,9 @@ void CPmAppUi::ButtonPictureL(TInt aId, TInt aIcon, const TDesC* aText)
 	if (aText)
 		b->SetTextL(*aText);
 	TFileName mbm = Application()->BitmapStoreName();
-	CFbsBitmap* bmp = iEikonEnv->CreateBitmapL(mbm, aIcon);
+	CFbsBitmap* bmp = iMbm ? iMbm->CreateBitmapL(aIcon) : iEikonEnv->CreateBitmapL(mbm, aIcon);
 	CleanupStack::PushL(bmp);
-	CFbsBitmap* mask = iEikonEnv->CreateBitmapL(mbm, aIcon + 1);
+	CFbsBitmap* mask = iMbm ? iMbm->CreateBitmapL(aIcon + 1) : iEikonEnv->CreateBitmapL(mbm, aIcon + 1);
 	CleanupStack::PushL(mask);
 	b->SetPictureL(bmp, mask);                // (the button owns them now)
 	CleanupStack::Pop(2);
@@ -3317,6 +2917,7 @@ CPmAppUi::~CPmAppUi()
 		delete iView;
 		}
 	delete iContacts;
+	delete iMbm;
 	}
 
 CPmContacts* CPmAppUi::Contacts()
@@ -4226,6 +3827,172 @@ void CPmAppUi::FoldersL()
 		iView->OpenSidebarItemL(choice);
 	}
 
+// ----- File > Folder ----------------------------------------------------------
+
+// Offline: the folder commands need the server, so ask before going online
+// (as Check mail does)
+TBool CPmAppUi::GoOnlineL(const TDesC& aQuestion)
+	{
+	if (!iSettings.iOffline)
+		return ETrue;
+	if (!iEikonEnv->QueryWinL(_L("You are working offline"), aQuestion))
+		return EFalse;
+	iSettings.iOffline = 0;
+	SaveSettings();
+	iView->SettingsChanged();
+	return ETrue;
+	}
+
+// the folder's name in quotes, for a dialog title or a query
+static void QuotedName(TDes& aOut, const TDesC& aName, TInt aMax)
+	{
+	aOut.Zero();
+	aOut.Append('"');
+	aOut.Append(Clip(aName, aMax));
+	aOut.Append('"');
+	}
+
+void CPmAppUi::NewFolderL()
+	{
+	if (iView->FolderCount() == 0)
+		{
+		iView->Toast(_L("No folders yet - check mail first"));
+		return;
+		}
+	// where it goes: the top level, or inside one of the folders (the one
+	// highlighted or open to begin with)
+	CDesCArrayFlat* places = new(ELeave) CDesCArrayFlat(8);
+	CleanupStack::PushL(places);
+	places->AppendL(_L("Top level"));
+	const TPmFolder* at = iView->CommandFolder();
+	TInt parent = 0;
+	for (TInt i = 0; i < iView->FolderCount(); i++)
+		{
+		const TPmFolder& f = iView->FolderAt(i);
+		places->AppendL(Clip(f.iName, 60));
+		if (at == &f)
+			parent = i + 1;
+		}
+	TBuf<60> name;
+	CleanupStack::Pop();                    // the dialog's choice list takes places
+	CPmFolderDialog* dlg = new(ELeave) CPmFolderDialog(_L("New folder"), name, places, parent);
+	if (!dlg->ExecuteLD(R_PM_FOLDER_DIALOG))
+		return;
+	if (!GoOnlineL(_L("Go online and create the folder?")))
+		return;
+	TBuf8<128> in;
+	if (parent > 0 && parent <= iView->FolderCount())
+		in = iView->FolderAt(parent - 1).iImap;
+	TBuf8<PM_ARG_MAX> n;
+	SafeCopy(n, name);
+	iView->SetStatus(_L("Creating the folder..."));
+	iView->Cmd(PM_CMD_MKFOLDER, in, 0, n);
+	}
+
+// Rename and Delete keep away from the Inbox and the standard folders
+// (Sent, Drafts, Trash, Junk, Archive), as the built-in Email program does
+static TBool StandardFolder(const TPmFolder& aFolder)
+	{
+	return aFolder.iKind != '-' && aFolder.iKind != 'N';
+	}
+
+void CPmAppUi::RenameFolderL()
+	{
+	const TPmFolder* f = iView->CommandFolder();
+	if (!f)
+		{
+		iView->Toast(_L("No folder selected"));
+		return;
+		}
+	if (StandardFolder(*f))
+		{
+		iView->Toast(f->iKind == 'I' ? _L("The Inbox can't be renamed") : _L("Standard folders can't be renamed"));
+		return;
+		}
+	// "Work/Projects": only the last part is renamed
+	TBuf<60> name;
+	TInt last = -1;
+	for (TInt j = 0; j < f->iName.Length(); j++)
+		if (f->iName[j] == '/' || f->iName[j] == '.') last = j;
+	name = Clip(f->iName.Mid(last + 1), 60);
+	TBuf<80> title;
+	title = _L("Rename folder ");
+	TBuf<64> q;
+	QuotedName(q, f->iName.Mid(last + 1), 40);
+	title.Append(q);
+	TBuf8<128> imap(f->iImap);              // (the list may reload during the dialog)
+	TInt none = 0;
+	CPmFolderDialog* dlg = new(ELeave) CPmFolderDialog(title, name, NULL, none);
+	if (!dlg->ExecuteLD(R_PM_RENAME_DIALOG))
+		return;
+	if (!GoOnlineL(_L("Go online and rename the folder?")))
+		return;
+	TBuf8<PM_ARG_MAX> n;
+	SafeCopy(n, name);
+	iView->SetStatus(_L("Renaming the folder..."));
+	iView->Cmd(PM_CMD_RENFOLDER, imap, 0, n);
+	}
+
+void CPmAppUi::DeleteFolderL()
+	{
+	const TPmFolder* f = iView->CommandFolder();
+	if (!f)
+		{
+		iView->Toast(_L("No folder selected"));
+		return;
+		}
+	if (StandardFolder(*f))
+		{
+		iView->Toast(f->iKind == 'I' ? _L("The Inbox can't be deleted") : _L("Standard folders can't be deleted"));
+		return;
+		}
+	TBuf<64> q;
+	QuotedName(q, f->iName, 60);
+	TBuf8<128> imap(f->iImap);
+	if (!iEikonEnv->QueryWinL(q, f->iTotal > 0 ? _L("Delete this folder and its messages?") : _L("Delete this folder?")))
+		return;
+	if (!GoOnlineL(_L("Go online and delete the folder?")))
+		return;
+	iView->SetStatus(_L("Deleting the folder..."));
+	iView->Cmd(PM_CMD_DELFOLDER, imap, 0, KNullDesC8);
+	}
+
+void CPmFolderDialog::PreLayoutDynInitL()
+	{
+	SetTitleL(iTitle);
+	SetEdwinTextL(EPmDlgFolderName, &iName);
+	iHasParents = iParents != NULL;
+	if (iParents)
+		{
+		CEikChoiceList* cl = (CEikChoiceList*)Control(EPmDlgFolderParent);
+		cl->SetArrayL(iParents);            // it owns the array now
+		cl->SetCurrentItem(iParent >= 0 && iParent < iParents->Count() ? iParent : 0);
+		iParents = NULL;
+		}
+	}
+
+TBool CPmFolderDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	GetEdwinText(iName, EPmDlgFolderName);
+	iName.Trim();
+	if (iName.Length() == 0)
+		{
+		iEikonEnv->InfoMsg(_L("No folder name entered"));
+		TryChangeFocusToL(EPmDlgFolderName);
+		return EFalse;
+		}
+	// the server would read these as a path
+	if (iName.Locate('/') >= 0 || iName.Locate('\\') >= 0)
+		{
+		iEikonEnv->InfoMsg(_L("A folder name can't contain / or \\"));
+		TryChangeFocusToL(EPmDlgFolderName);
+		return EFalse;
+		}
+	if (iHasParents)
+		iParent = ((CEikChoiceList*)Control(EPmDlgFolderParent))->CurrentItem();
+	return ETrue;
+	}
+
 void CPmAppUi::SearchL()
 	{
 	TBuf<60> words;
@@ -4327,8 +4094,16 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPmCmdOffline, iSettings.iOffline ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemDimmed(EPmCmdHangup, !iView->Shared()->online);
 		aMenuPane->SetItemDimmed(EPmCmdStop, !iView->Busy());
+		}
+	else if (aMenuId == R_PM_FOLDER_MENU)
+		{
 		aMenuPane->SetItemDimmed(EPmCmdRefresh, m != CPmView::EList);
 		aMenuPane->SetItemDimmed(EPmCmdOlder, !list);
+		const TPmFolder* f = iView->CommandFolder();
+		TBool own = f && f->iKind != 'I' && (f->iKind == '-' || f->iKind == 'N');
+		aMenuPane->SetItemDimmed(EPmCmdNewFolder, iView->FolderCount() == 0);
+		aMenuPane->SetItemDimmed(EPmCmdRenameFolder, !own);
+		aMenuPane->SetItemDimmed(EPmCmdDeleteFolder, !own);
 		}
 	else if (aMenuId == R_PM_EDIT_MENU)
 		{
@@ -4406,7 +4181,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		aCommand != EPmCmdToggleToolbar && aCommand != EPmCmdToggleTitle && aCommand != EPmCmdToggleFolders &&
 		aCommand != EPmCmdStatusInfo && aCommand != EPmCmdStop && aCommand != EPmCmdPrefs &&
 		aCommand != EPmCmdZoomIn && aCommand != EPmCmdZoomOut && aCommand != EPmCmdCalSettings &&
-		aCommand != EPmCmdRestart)
+		aCommand != EPmCmdRestart && aCommand != EPmCmdHelp)
 		{
 		iView->Toast(_L("No account - add one with Tools > Accounts"));
 		return;
@@ -4607,6 +4382,18 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdFolders:
 		FoldersL();
+		break;
+	case EPmCmdNewFolder:
+		NewFolderL();
+		break;
+	case EPmCmdRenameFolder:
+		RenameFolderL();
+		break;
+	case EPmCmdDeleteFolder:
+		DeleteFolderL();
+		break;
+	case EPmCmdHelp:
+		HelpL();
 		break;
 	case EPmCmdUpdate:
 		UpdateL();

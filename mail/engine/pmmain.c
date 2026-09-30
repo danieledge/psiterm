@@ -429,6 +429,15 @@ static int run(PmCmd *c, char *why, int whymax)
 	case PM_CMD_EXPUNGE:
 		r = imap_expunge(a, c->folder, why, whymax);
 		break;
+	case PM_CMD_MKFOLDER:
+		r = imap_create_folder(a, c->folder, c->arg, why, whymax);
+		break;
+	case PM_CMD_RENFOLDER:
+		r = imap_rename_folder(a, c->folder, c->arg, why, whymax);
+		break;
+	case PM_CMD_DELFOLDER:
+		r = imap_delete_folder(a, c->folder, why, whymax);
+		break;
 	case PM_CMD_SEARCH:
 		r = imap_search(a, c->folder, c->arg, why, whymax);
 		break;
