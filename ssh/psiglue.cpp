@@ -113,8 +113,29 @@ static int WaitFor(TRequestStatus& aStat, TInt aTimeoutUs, int aQuitAware)
 		}
 	}
 
+// Closes the TCP connection but keeps the socket server session, and with it
+// the Psion's dial-up. An update fetches several files and pieces, one TCP
+// connection each: closing the session every time made EPOC take the dial-up
+// down and bring it back between pieces, and that churn crashed the socket
+// server (KERN-EXEC 3).
+static void NetCloseSocket()
+	{
+	if (gSockOpen)
+		{
+		if (gRecvPending)
+			{
+			gSock->CancelRecv();
+			User::WaitForRequest(gRecvStat);
+			gRecvPending = 0;
+			}
+		gSock->Close();
+		gSockOpen = 0;
+		}
+	}
+
 static void NetClose()
 	{
+	NetCloseSocket();
 	if (gSockOpen)
 		{
 		if (gRecvPending)
@@ -170,13 +191,17 @@ static int NetConnect(char* aResult, int aMax)
 		}
 	if (!gTimerOpen && gTimer->CreateLocal() == KErrNone)
 		gTimerOpen = 1;
-	TInt r = gSs->Connect();
-	if (r != KErrNone)
+	TInt r;
+	if (!gSsOpen)
 		{
-		SetMsgErr(aResult, aMax, "Psion networking is not available", r);
-		return -1;
+		r = gSs->Connect();
+		if (r != KErrNone)
+			{
+			SetMsgErr(aResult, aMax, "Psion networking is not available", r);
+			return -1;
+			}
+		gSsOpen = 1;
 		}
-	gSsOpen = 1;
 
 	TBuf<128> host;
 	host.Copy(TPtrC8((const TUint8*)gShared->host));
@@ -805,7 +830,7 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 	gRxPos = gRxLen = 0;
 	if (gNet)
 		{
-		if (gShared->ppp_start[0] && StartPpp(aResult, aResultMax) != 0)
+		if (gShared->ppp_start[0] && !gSsOpen && StartPpp(aResult, aResultMax) != 0)
 			return -1;
 		return NetConnect(aResult, aResultMax);
 		}
@@ -905,7 +930,7 @@ extern "C" void pg_hangup()
 	{
 	if (gNet)
 		{
-		NetClose();
+		NetCloseSocket();                // the dial-up stays up until pg_close
 		return;
 		}
 	if (!gCommOpen)
