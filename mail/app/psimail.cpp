@@ -49,7 +49,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 	link.iBaudIndex = aSettings.iBaudIndex;
 	link.iRtsCts = aSettings.iRtsCts ? 1 : 0;
 	link.iNetMode = aSettings.iNetMode ? 1 : 0;
-	link.iPppStart = aPppStart.Left(40);
+	link.iPppStart = aPppStart.Left(aPppStart.Length() < 40 ? aPppStart.Length() : 40);   // Left(n) panics if n > length
 	if (old.Load(aFs) && old.iBaudIndex == link.iBaudIndex && old.iRtsCts == link.iRtsCts
 		&& old.iNetMode == link.iNetMode && old.iPppStart == link.iPppStart)
 		return;
@@ -58,7 +58,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.4");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.4.1");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
