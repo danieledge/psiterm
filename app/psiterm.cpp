@@ -64,7 +64,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.55");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.56");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -1343,40 +1343,94 @@ void CTermView::ParseTmuxTabs()
 		RepaintRows(row, row);
 	}
 
+// Tabs in the modern style: the current tab is the colour of the terminal
+// and joins onto it, with rounded corners and bold text; the others sit
+// back in a darker strip with a separator between them. At the bottom of the
+// screen (where tmux's status line usually is) the tabs hang down from the
+// terminal; at the top they stand up from it.
 void CTermView::DrawTabs(CWindowGc& aGc) const
 	{
 	TInt y0 = iOriginY + iTabRow * iCellH;
-	TRect bar(Rect().iTl.iX, y0, Rect().iBr.iX, y0 + iCellH);
+	TInt h = iCellH;
+	TBool bottom = (iTabRow > 0);
+	TRect bar(Rect().iTl.iX, y0, Rect().iBr.iX, y0 + h);
+	TInt edgeY = bottom ? y0 : y0 + h - 1;         // the line along the terminal side
+	TInt farY = bottom ? y0 + h - 1 : y0;          // the tabs' free edge
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	aGc.SetBrushColor(Grey(11));
+	aGc.SetBrushColor(Grey(10));
 	aGc.DrawRect(bar);
 	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-	TInt x = bar.iTl.iX + 2;
+	aGc.SetPenColor(Grey(4));
+	aGc.DrawLine(TPoint(bar.iTl.iX, edgeY), TPoint(bar.iBr.iX, edgeY));
+
+	TInt x = bar.iTl.iX + 4;
 	CTermView* self = CONST_CAST(CTermView*, this);
+	TInt base = y0 + iAscent - (h - iAscent > 3 ? 0 : 1);
 	for (TInt i = 0; i < iTabCount; i++)
 		{
-		TBuf<28> label;
-		label.AppendNum(iTabs[i].iIndex);
-		label.Append(' ');
-		label.Append(iTabs[i].iName);
-		TInt w = iFont->TextWidthInPixels(label) + 12;
-		if (x + w > bar.iBr.iX - 2)
-			w = bar.iBr.iX - 2 - x;
-		if (w < 16)
+		TBuf<6> num;
+		num.AppendNum(iTabs[i].iIndex);
+		TPtrC name(iTabs[i].iName);
+		TInt numW = iFont->TextWidthInPixels(num);
+		TInt w = numW + 5 + iFont->TextWidthInPixels(name) + 14;
+		if (x + w > bar.iBr.iX - 4)
+			w = bar.iBr.iX - 4 - x;
+		if (w < 20)
 			break;
-		TRect t(x, y0 + 1, x + w, y0 + iCellH);
-		if (iTabs[i].iCurrent)
+		TBool cur = iTabs[i].iCurrent;
+		// the current tab spans the whole row; the others are inset from
+		// the terminal edge so the current one stands in front
+		TInt top = bottom ? y0 : y0 + 1;
+		TInt bot = bottom ? y0 + h - 1 : y0 + h;
+		if (!cur)
 			{
-			aGc.SetBrushColor(Grey(0));
+			if (bottom) top++; else bot--;
+			}
+		TRect t(x, top, x + w, bot);
+		aGc.SetPenStyle(CGraphicsContext::ENullPen);
+		aGc.SetBrushColor(cur ? Grey(15) : Grey(12));
+		aGc.DrawRect(t);
+		aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+		if (cur)
+			{
+			// outline on the three free sides, rounded corners on the free edge
+			aGc.SetPenColor(Grey(3));
+			TInt yIn = bottom ? top : bot - 1;      // terminal side: open
+			TInt yOut = farY;
+			aGc.DrawLine(TPoint(x, yIn), TPoint(x, yOut + (bottom ? -1 : 1)));
+			aGc.DrawLine(TPoint(x + w - 1, yIn), TPoint(x + w - 1, yOut + (bottom ? -1 : 1)));
+			aGc.DrawLine(TPoint(x + 2, yOut), TPoint(x + w - 2, yOut));
+			aGc.Plot(TPoint(x + 1, yOut + (bottom ? -1 : 1)));
+			aGc.Plot(TPoint(x + w - 2, yOut + (bottom ? -1 : 1)));
+			aGc.SetPenColor(Grey(10));             // clear the outer corner pixels
+			aGc.Plot(TPoint(x, yOut));
+			aGc.Plot(TPoint(x + w - 1, yOut));
+			// joins the terminal: no line along that side
 			aGc.SetPenColor(Grey(15));
+			aGc.DrawLine(TPoint(x + 1, edgeY), TPoint(x + w - 1, edgeY));
 			}
-		else
+		else if (i + 1 < iTabCount && !iTabs[i + 1].iCurrent)
 			{
-			aGc.SetBrushColor(Grey(14));
-			aGc.SetPenColor(Grey(0));
+			// a thin separator between two tabs at the back
+			aGc.SetPenColor(Grey(7));
+			aGc.DrawLine(TPoint(x + w + 1, top + 2), TPoint(x + w + 1, bot - 2));
 			}
-		aGc.DrawText(label, t, iAscent - 1, CGraphicsContext::ELeft, 6);
+		// "3 VirtualTeam": the number quiet, the name bold on the current tab
+		aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+		TInt tx = x + 7;
+		aGc.SetPenColor(cur ? Grey(6) : Grey(7));
+		aGc.DrawText(num, TPoint(tx, base));
+		tx += numW + 5;
+		TInt room = x + w - 5 - tx;
+		TPtrC shown(name);
+		while (shown.Length() > 1 && iFont->TextWidthInPixels(shown) > room)
+			shown.Set(shown.Left(shown.Length() - 1));
+		aGc.SetPenColor(cur ? Grey(0) : Grey(4));
+		aGc.DrawText(shown, TPoint(tx, base));
+		if (cur)
+			aGc.DrawText(shown, TPoint(tx + 1, base));   // bold
+		aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 		self->iTabs[i].iX0 = x;
 		self->iTabs[i].iX1 = x + w;
 		x += w + 3;
