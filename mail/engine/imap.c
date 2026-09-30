@@ -375,7 +375,7 @@ int imap_list_folders(int acct, char *why, int whymax)
 	st_acct_dir(acct, dir, sizeof(dir));
 	snprintf(path, sizeof(path), "%sfolders.txt", dir);
 	snprintf(tmp, sizeof(tmp), "%sfolders.new", dir);
-	if (!(f = fopen(tmp, "w"))) { set_why(why, whymax, "Could not write %s", path); return PM_RES_FAILED; }
+	if (!(f = fopen(tmp, "w"))) { pm_write_why(why, whymax, "the folder list", path); return PM_RES_FAILED; }
 	fprintf(f, "#PSIMAIL1\n");
 	/* INBOX and the special folders first, then the rest as the server lists them */
 	for (o = 0; order[o]; o++)
@@ -386,9 +386,11 @@ int imap_list_folders(int acct, char *why, int whymax)
 			fprintf(f, "%c\t%ld\t%ld\t%s\t%s\t%c\n", fl.f[i].kind, fl.f[i].unseen, fl.f[i].total,
 				fl.f[i].name, disp, fl.f[i].delim);
 		}
-	fclose(f);
-	remove(path);
-	rename(tmp, path);
+	if (pm_fclose(f) != 0 || pm_replace(tmp, path) != 0) {
+		remove(tmp);                          /* the old list stays */
+		pm_write_why(why, whymax, "the folder list", path);
+		return PM_RES_FAILED;
+	}
 	st_changed();
 	return PM_RES_OK;
 }
@@ -691,7 +693,9 @@ int imap_sync(int acct, const char *folder, int older, char *why, int whymax)
 	}
 	if (!strcmp(folder, "INBOX") && !older) pm_shared()->new_mail = sc.newunseen;
 	if (st_index_save(acct, folder, "index.txt", &ix) != 0 && r == PM_RES_OK) {
-		set_why(why, whymax, "Could not save the message list (disk full?)");
+		char d[160];
+		st_folder_dir(acct, folder, d, sizeof(d));
+		pm_write_why(why, whymax, "the message list", d);
 		r = PM_RES_FAILED;
 	}
 	if (r == PM_RES_OK) {
@@ -819,7 +823,16 @@ typedef struct
 	PmStructure st;
 	char hdr[1400];
 	int have;
+	char label[48];           /* "'Re: hello'" - what the progress messages call it */
 	} BodyCtx;
+
+/* "Downloading 'Re: hello'... 40%" (pm_progress adds "Ahead (3 of 10): "
+   while downloading ahead) */
+static void body_progress(const char *label, const char *doing, int percent)
+{
+	if (percent >= 0) pm_progress("%s %s... %d%%", doing, label, percent);
+	else pm_progress("%s %s...", doing, label);
+}
 
 /* ---- plain text to PsiMail's rich text (see ui/pmui.h): quotes ("> ")
    become quote blocks, the signature is marked, web addresses become links */
@@ -938,7 +951,7 @@ static void out_text(const char *s, int n, void *ctx)
 }
 
 /* the raw text, on its way to a file */
-typedef struct { FILE *f; long got, total; int percent, err; } Spool;
+typedef struct { FILE *f; long got, total; int percent, err; const char *label; } Spool;
 
 static void spool_stream(const char *data, int n, void *ctx)
 {
@@ -948,8 +961,9 @@ static void spool_stream(const char *data, int n, void *ctx)
 		int pc = (int)(s->got * 100 / s->total);
 		if (pc > 100) pc = 100;
 		pc -= pc % 5;                     /* (each update redraws the screen) */
-		if (pc != s->percent) { s->percent = pc; pm_progress("Downloading the message... %d%%", pc); }
+		if (pc != s->percent) { s->percent = pc; body_progress(s->label, "Downloading", pc); }
 	}
+	if (s->err) return;                       /* (the rest goes by; the failure is reported once) */
 	if (fwrite(data, 1, n, s->f) != (size_t)n) s->err = 1;
 }
 
@@ -961,7 +975,7 @@ static void body_stream(const char *data, int n, void *ctx)
 	b->got += n;
 	if (b->total > 0) {
 		int pc = (int)(b->got * 100 / b->total);
-		if (pc != b->percent) { b->percent = pc; pm_progress("Downloading the message... %d%%", pc); }
+		if (pc != b->percent) { b->percent = pc; body_progress(b->label, "Downloading", pc); }
 	}
 	dn = dec_feed(&b->dec, data, n, dec + b->ncarry);
 	if (b->ncarry) { memcpy(dec, b->carry, b->ncarry); dn += b->ncarry; b->ncarry = 0; }
@@ -1019,6 +1033,7 @@ static void on_fetch_struct(ImapNode *r, void *ctx)
 		ip_str(ip_nth(env, 1), raw, sizeof(raw));
 		cs_decode_header(raw, tmp, sizeof(tmp));
 		k += snprintf(b->hdr + k, sizeof(b->hdr) - k, "Subject: %s\n", tmp);
+		snprintf(b->label, sizeof(b->label), "'%.36s%s'", tmp[0] ? tmp : "(no subject)", strlen(tmp) > 36 ? ".." : "");
 		if (k >= (int)sizeof(b->hdr)) k = sizeof(b->hdr) - 1;
 		ip_str(ip_nth(env, 9), raw, sizeof(raw));
 		if (raw[0]) k += snprintf(b->hdr + k, sizeof(b->hdr) - k, "Message-ID: %s\n", raw);
@@ -1031,7 +1046,7 @@ int imap_body(int acct, const char *folder, unsigned int uid, int full, char *wh
 	int keep_unread = (full & 2) != 0;     /* 2: downloaded ahead - not read yet */
 	PmAccount *a = &pm_shared()->acct[acct];
 	static BodyCtx b;
-	char path[190], tmp[190], dir[160];
+	char path[190], tmp[196], raw[196], hp[190], apath[190], dir[160];
 	int r, i;
 	long limit = (a->max_body_kb > 0 ? a->max_body_kb : 64) * 1024L;
 	FILE *f;
@@ -1040,29 +1055,45 @@ int imap_body(int acct, const char *folder, unsigned int uid, int full, char *wh
 
 	if ((r = open_folder(acct, folder, why, whymax)) != PM_RES_OK) return r;
 	memset(&b, 0, sizeof(b));
-	pm_progress("Opening the message...");
+	pm_copy(b.label, "the message", sizeof(b.label));
+	body_progress(b.label, "Opening", -1);
 	r = cmd(on_fetch_struct, &b, why, whymax, "UID FETCH %u (ENVELOPE BODYSTRUCTURE)", uid);
 	if (r != PM_RES_OK) return r;
 	if (!b.have) { set_why(why, whymax, "The message has gone from the server"); return PM_RES_FAILED; }
 
 	st_folder_dir(acct, folder, dir, sizeof(dir));
 	pm_mkdir(dir);
+	st_msg_path(acct, folder, uid, "txt", path, sizeof(path));
+	st_msg_path(acct, folder, uid, "htm", hp, sizeof(hp));
+	snprintf(tmp, sizeof(tmp), "%s.new", path);
+	snprintf(raw, sizeof(raw), "%s.raw", path);
+	{
+		/* room for what is coming? (the raw text and PsiMail's text, plus the
+		   HTML original) - better to know now than after the download */
+		PmPart *tp = b.st.text >= 0 ? &b.st.part[b.st.text] : 0;
+		long need = tp ? ((full || tp->size <= limit) ? tp->size : limit) : 0, freekb;
+		need = need * (b.st.html ? 3 : 2) / 1024 + 8;
+		if ((freekb = pm_free_kb(dir)) >= 0 && freekb < need) {
+			set_why(why, whymax, "No room left on %.*s for the message (%ld KB needed, %ld KB free)",
+				dir[1] == ':' ? 2 : 8, dir[1] == ':' ? dir : "the disk", need, freekb);
+			return PM_RES_FAILED;
+		}
+	}
+
 	/* attachments list */
-	st_msg_path(acct, folder, uid, "att", path, sizeof(path));
+	st_msg_path(acct, folder, uid, "att", apath, sizeof(apath));
 	if (b.st.nattach) {
-		if ((f = fopen(path, "w")) != 0) {
+		if ((f = fopen(apath, "w")) != 0) {
 			for (i = 0; i < b.st.n; i++) {
 				PmPart *p = &b.st.part[i];
 				if (i == b.st.text || !p->attachment) continue;
 				fprintf(f, "%s\t%ld\t%s\t%s\t%d\n", p->id, p->size, p->name[0] ? p->name : "(no name)", p->type, p->enc);
 			}
-			fclose(f);
+			if (pm_fclose(f) != 0) remove(apath);          /* (no list rather than a broken one) */
 		}
-	} else remove(path);
+	} else remove(apath);
 
-	st_msg_path(acct, folder, uid, "txt", path, sizeof(path));
-	snprintf(tmp, sizeof(tmp), "%s.new", path);
-	if (!(b.f = fopen(tmp, "w"))) { set_why(why, whymax, "Could not write the message file"); return PM_RES_FAILED; }
+	if (!(b.f = fopen(tmp, "w"))) { pm_write_why(why, whymax, "the message", path); return PM_RES_FAILED; }
 	{
 		long rest = 0;
 		PmPart *tp = b.st.text >= 0 ? &b.st.part[b.st.text] : 0;
@@ -1083,8 +1114,6 @@ int imap_body(int acct, const char *folder, unsigned int uid, int full, char *wh
 			b.percent = -1;
 			if (b.html) {
 				/* keep the HTML as it came, for "View as web page" */
-				char hp[190];
-				st_msg_path(acct, folder, uid, "htm", hp, sizeof(hp));
 				if ((b.hf = fopen(hp, "wb")) != 0)
 					fprintf(b.hf, "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=%s\">\n", b.charset);
 			}
@@ -1092,20 +1121,19 @@ int imap_body(int acct, const char *folder, unsigned int uid, int full, char *wh
 			   serial port keeps up); then turned into PsiMail's text */
 			{
 				static Spool sp;
-				char raw[196];
-				snprintf(raw, sizeof(raw), "%s.raw", path);
 				memset(&sp, 0, sizeof(sp));
 				sp.total = b.total;
 				sp.percent = -1;
-				if (!(sp.f = fopen(raw, "wb"))) { set_why(why, whymax, "Could not write the message file"); r = PM_RES_FAILED; }
+				sp.label = b.label;
+				if (!(sp.f = fopen(raw, "wb"))) { pm_write_why(why, whymax, "the message", path); r = PM_RES_FAILED; }
 				else {
 					r = fetch_part(acct, folder, uid, tp->id, (full || tp->size <= limit) ? 0 : limit, spool_stream, &sp, why, whymax);
-					if (fclose(sp.f) != 0) sp.err = 1;
-					if (r == PM_RES_OK && sp.err) { set_why(why, whymax, "Could not save the message (disk full?)"); r = PM_RES_FAILED; }
+					if (pm_fclose(sp.f) != 0) sp.err = 1;
+					if (r == PM_RES_OK && sp.err) { pm_write_why(why, whymax, "the message", path); r = PM_RES_FAILED; }
 					if (r == PM_RES_OK && (sp.f = fopen(raw, "rb")) != 0) {
 						static char buf[1024];
 						size_t n;
-						pm_progress("Setting out the message...");
+						body_progress(b.label, "Setting out", -1);
 						b.total = 0;
 						while ((n = fread(buf, 1, sizeof(buf), sp.f)) > 0) body_stream(buf, (int)n, &b);
 						fclose(sp.f);
@@ -1121,13 +1149,20 @@ int imap_body(int acct, const char *folder, unsigned int uid, int full, char *wh
 				for (k = 0; k < b.nurls; k++) { fprintf(b.f, "\x01u%d %s\n", k + 1, b.urls[k]); free(b.urls[k]); }
 				b.nurls = 0;
 			}
-			if (b.hf) { fclose(b.hf); b.hf = 0; }
+			if (b.hf) {
+				/* a web page that did not all arrive is worse than none */
+				if (pm_fclose(b.hf) != 0 || r != PM_RES_OK) remove(hp);
+				b.hf = 0;
+			}
 		}
 	}
-	if (fclose(b.f) != 0 && r == PM_RES_OK) { set_why(why, whymax, "Could not save the message (disk full?)"); r = PM_RES_FAILED; }
+	if (pm_fclose(b.f) != 0 && r == PM_RES_OK) { pm_write_why(why, whymax, "the message", path); r = PM_RES_FAILED; }
+	if (r == PM_RES_OK && pm_replace(tmp, path) != 0) {
+		pm_log("imap: could not put %s in place", path);
+		pm_write_why(why, whymax, "the message", path);
+		r = PM_RES_FAILED;
+	}
 	if (r != PM_RES_OK) { remove(tmp); return r; }
-	remove(path);
-	rename(tmp, path);
 
 	/* mark it read, here and on the server */
 	{
@@ -1172,6 +1207,7 @@ static void att_stream(const char *data, int n, void *ctx)
 		if (pc != c->percent) { c->percent = pc; pm_progress("Downloading the attachment... %d%%", pc); }
 	}
 	dn = dec_feed(&c->dec, data, n, dec);
+	if (c->err) return;
 	if (dn && fwrite(dec, 1, dn, c->f) != (size_t)dn) c->err = 1;
 }
 
@@ -1220,13 +1256,13 @@ int imap_attach(int acct, const char *folder, unsigned int uid, const char *part
 		}
 	}
 	memset(&c, 0, sizeof(c));
-	if (!(c.f = fopen(path, "wb"))) { set_why(why, whymax, "Could not create %s", path); return PM_RES_FAILED; }
+	if (!(c.f = fopen(path, "wb"))) { pm_write_why(why, whymax, "the attachment", path); return PM_RES_FAILED; }
 	dec_init(&c.dec, p->enc);
 	c.total = p->size;
 	c.percent = -1;
 	r = fetch_part(acct, folder, uid, part, 0, att_stream, &c, why, whymax);
-	if (fclose(c.f) != 0) c.err = 1;
-	if (r == PM_RES_OK && c.err) { set_why(why, whymax, "Could not write the file (disk full?)"); r = PM_RES_FAILED; }
+	if (pm_fclose(c.f) != 0) c.err = 1;
+	if (r == PM_RES_OK && c.err) { pm_write_why(why, whymax, "the attachment", path); r = PM_RES_FAILED; }
 	if (r == PM_RES_OK && c.got == 0 && p->size > STREAM_MIN) { set_why(why, whymax, "The server sent nothing"); r = PM_RES_FAILED; }
 	if (r != PM_RES_OK) { remove(path); return r; }
 	pm_copy(s->last_file, path, sizeof(s->last_file));
@@ -1355,8 +1391,12 @@ int imap_search(int acct, const char *folder, const char *words, char *why, int 
 			}
 			st_index_free(&fx);
 		}
-		st_index_save(acct, folder, "search.txt", &ix);
-		if (l.n > 50) set_why(why, whymax, "%d found - showing the newest 50", l.n);
+		if (st_index_save(acct, folder, "search.txt", &ix) != 0) {
+			char d[160];
+			st_folder_dir(acct, folder, d, sizeof(d));
+			pm_write_why(why, whymax, "the search results", d);
+			r = PM_RES_FAILED;
+		} else if (l.n > 50) set_why(why, whymax, "%d found - showing the newest 50", l.n);
 		else set_why(why, whymax, "%d found", l.n);
 	}
 	st_index_free(&ix);

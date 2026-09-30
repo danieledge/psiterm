@@ -197,9 +197,11 @@ int st_index_save(int acct, const char *folder, const char *file, PmIndex *ix)
 		fprintf(f, "%u\t%s\t%ld\t%ld\t%s\t%s\t%s\t%s\t%s\n", m->uid, m->flags, m->date, m->size,
 			m->from, m->subject, m->to, m->msgid, m->inreplyto);
 	}
-	if (fclose(f) != 0) { remove(tmp); return -1; }
-	remove(path);
-	if (rename(tmp, path) != 0) return -1;
+	if (pm_fclose(f) != 0 || pm_replace(tmp, path) != 0) {
+		pm_log("store: could not save %s", path);
+		remove(tmp);                          /* the old list is still there */
+		return -1;
+	}
 	st_changed();
 	return 0;
 }
@@ -228,9 +230,9 @@ int st_pending_add(int acct, const char *line)
 	FILE *f;
 	st_acct_dir(acct, dir, sizeof(dir));
 	snprintf(path, sizeof(path), "%spending.txt", dir);
-	if (!(f = fopen(path, "a"))) return -1;
+	if (!(f = fopen(path, "a"))) { pm_log("store: could not note '%s' in pending.txt", line); return -1; }
 	fprintf(f, "%s\n", line);
-	fclose(f);
+	if (pm_fclose(f) != 0) { pm_log("store: could not note '%s' in pending.txt (disk full?)", line); return -1; }
 	return 0;
 }
 
@@ -269,8 +271,13 @@ int st_pending_replay(int acct, char *why, int whymax)
 		}
 	}
 	fclose(f);
-	remove(path);
-	if (out) { fclose(out); rename(tmp, path); }
+	if (out) {
+		/* the ones still to do take the file's place; if that fails the
+		   whole file stays (doing a change twice is harmless, losing it is not) */
+		if (pm_fclose(out) != 0 || pm_replace(tmp, path) != 0) { remove(tmp); return -1; }
+	} else if (lost) {
+		return -1;                            /* could not write the rest down: keep them all */
+	} else remove(path);
 	return lost ? -1 : 0;
 }
 

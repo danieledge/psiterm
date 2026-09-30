@@ -3,6 +3,7 @@
 #define PM_H
 
 #include <stddef.h>
+#include <stdio.h>
 #include "../psimail.h"
 
 /* ---- platform (pmepoc.cpp on the Psion, host/pmhost.c on a PC) */
@@ -15,6 +16,14 @@ int pm_list_dir(const char *dir, const char *suffix,
 void pm_log(const char *fmt, ...);
 void pm_idle(int ms);                      /* sleep, keeping an eye on quit */
 void pm_rmtree(const char *dir);           /* delete a folder and all in it */
+int  pm_replace(const char *tmp, const char *path); /* tmp takes path's place (path may exist), in one step; 0 ok */
+long pm_free_kb(const char *path);         /* free space on the drive path is on; -1 unknown */
+
+/* ---- files (pmmain.c) */
+int  pm_fclose(FILE *f);                   /* fclose that also checks the error flag: 0 = all written */
+/* "Could not save <what>: no room left on D:" (or "...: is the card there?") */
+void pm_write_why(char *why, int whymax, const char *what, const char *path);
+void pm_ahead_label(const char *label);    /* "3 of 10": pm_progress says "Ahead (3 of 10): ..."; 0 = not ahead */
 #ifdef __EPOC32__
 #define PM_SEP "\\"
 #else
@@ -141,6 +150,7 @@ int  imap_open(int acct, char *why, int whymax);        /* connect + login (reus
 void imap_logout(void);
 int  imap_list_folders(int acct, char *why, int whymax);
 int  imap_sync(int acct, const char *folder, int older, char *why, int whymax);
+/* full: bit 0 = past max_body_kb, bit 1 = downloaded ahead (stays unread) */
 int  imap_body(int acct, const char *folder, unsigned int uid, int full, char *why, int whymax);
 int  imap_attach(int acct, const char *folder, unsigned int uid, const char *part, char *why, int whymax);
 int  imap_flag(int acct, const char *folder, unsigned int uid, const char *op, char *why, int whymax);

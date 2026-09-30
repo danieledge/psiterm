@@ -21,6 +21,7 @@ NAME PSMA
 #include <eikclock.rh>
 #include <eikspace.rh>
 #include <eikmnbut.rh>
+#include <eikrted.rh>
 
 #include "psimail.hrh"
 
@@ -376,8 +377,8 @@ RESOURCE DIALOG r_pm_compose_dialog
 			control=LABEL { horiz_align=EEikLabelAlignHLeft; txt="none"; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Subject:"; id=EPmDlgSubject;
 			control=EDWIN { width=26; maxlength=200; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt=""; id=EPmDlgBody; itemflags=EEikDlgItemTakesEnterKey;
-			control=EDWIN { flags=EEikEdwinNoAutoSelection; width=44; lines=4; maxlength=60000; }; }
+		DLG_LINE { type=EEikCtRichTextEditor; prompt=""; id=EPmDlgBody; itemflags=EEikDlgItemTakesEnterKey;
+			control=RTXTED { width=546; height=84; numlines=4; textlimit=30000; flags=EEikEdwinNoAutoSelection; }; }
 		};
 	}
 
@@ -509,10 +510,28 @@ RESOURCE DIALOG r_pm_conn_dialog
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="Connect via"; id=EPmDlgLink; control=CHOICELIST { array_id=r_pm_link_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Baud rate"; id=EPmDlgBaud; control=CHOICELIST { array_id=r_pm_baud_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Flow control"; id=EPmDlgFlow; control=CHOICELIST { array_id=r_pm_flow_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Mail connects via"; id=EPmDlgLink; control=CHOICELIST { array_id=r_pm_link_array; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Psion Internet: first send"; id=EPmDlgPppStart; control=EDWIN { width=14; maxlength=40; }; }
+		};
+	}
+
+// About: as PsiTerm's (name and version, what it is and whose, the link
+// in use, then the credits in the small font)
+RESOURCE DIALOG r_pm_about_dialog
+	{
+	title="About PsiMail";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CONTINUE;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1; control=LABEL { standard_font=EEikLabelFontLegend; reserve_length=24; txt="PsiMail"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo2; control=LABEL { txt="Email & calendar for the Psion Series 5mx - (c) Dan Edge"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo3; control=LABEL { standard_font=EEikLabelFontAnnotation; reserve_length=60; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo4; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="IMAP, SMTP & CalDAV over TLS 1.3 - networking from PsiTerm"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo5; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="LibTomCrypt, LibTomMath - public domain; Inter, DejaVu, Lucide - see README"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo6; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="github.com/danieledge/psiterm - MIT licence"; }; }
 		};
 	}
 
@@ -528,7 +547,7 @@ RESOURCE ARRAY r_pm_flow_array
 
 RESOURCE ARRAY r_pm_link_array
 	{
-	items={ LBUF { txt="Modem (ATDT host:port)"; }, LBUF { txt="Psion TCP/IP (dial-up)"; } };
+	items={ LBUF { txt="Modem (ATDT host:port)"; }, LBUF { txt="Psion Internet (PPP)"; } };
 	}
 
 // ----------------------------------------------------------------- calendar

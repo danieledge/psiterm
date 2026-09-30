@@ -46,13 +46,24 @@ const char *pm_stristr(const char *hay, const char *needle)
 	return 0;
 }
 
+/* while a message is downloaded ahead, everything the engine says starts
+   "Ahead (3 of 10): " so it can't be taken for the message being opened */
+static char g_ahead[24];
+
+void pm_ahead_label(const char *label)
+{
+	pm_copy(g_ahead, label ? label : "", sizeof(g_ahead));
+}
+
 void pm_progress(const char *fmt, ...)
 {
 	PmShared *s = pm_shared();
 	char b[128];
+	int k = 0;
 	va_list ap;
+	if (g_ahead[0]) k = snprintf(b, sizeof(b), "Ahead (%s): ", g_ahead);
 	va_start(ap, fmt);
-	vsnprintf(b, sizeof(b), fmt, ap);
+	vsnprintf(b + k, sizeof(b) - k, fmt, ap);
 	va_end(ap);
 	pm_copy(s->progress, b, sizeof(s->progress));
 }
@@ -61,6 +72,30 @@ int pm_cancelled(void)
 {
 	PmShared *s = pm_shared();
 	return s->net.quit || s->quitting;
+}
+
+/* ------------------------------------------------------------------ files */
+
+/* fclose() alone can say 0 after a write failed earlier (the failed flush
+   set the error flag; the final one had nothing left to write) */
+int pm_fclose(FILE *f)
+{
+	int bad = ferror(f) != 0;
+	if (fclose(f) != 0) bad = 1;
+	return bad ? -1 : 0;
+}
+
+void pm_write_why(char *why, int whymax, const char *what, const char *path)
+{
+	long kb = pm_free_kb(path);
+	char drive[3];
+	drive[0] = 0;
+	if (path && path[0] && path[1] == ':') { drive[0] = path[0]; drive[1] = ':'; drive[2] = 0; }
+	if (kb >= 0 && kb < 8)
+		snprintf(why, whymax, "Could not save %s: no room left on %s", what, drive[0] ? drive : "the disk");
+	else
+		snprintf(why, whymax, "Could not save %s on %s - is the card in, and not full or write-protected?",
+			what, drive[0] ? drive : "the disk");
 }
 
 /* ------------------------------------------------------------ local edits */
@@ -207,11 +242,35 @@ static int have_text(int acct, const char *folder, unsigned int uid)
 {
 	char path[190];
 	FILE *f;
-	st_msg_path(acct, folder, uid, ".txt", path, sizeof(path));
+	st_msg_path(acct, folder, uid, "txt", path, sizeof(path));   /* (st_msg_path adds the dot) */
 	f = fopen(path, "rb");
 	if (!f) return 0;
 	fclose(f);
 	return 1;
+}
+
+/* Messages a download ahead failed on are not tried again this session:
+ * a message the server won't give us, or one too big for the line, must
+ * not be dialled for at every sync. Writes failing (the card full) stop
+ * downloading ahead altogether until the engine is restarted. */
+#define PF_SKIP 24
+static struct { int acct; unsigned int uid; char folder[128]; } g_pf_skip[PF_SKIP];
+static int g_pf_nskip, g_pf_fails, g_pf_dead;
+
+static int pf_skipped(int acct, const char *folder, unsigned int uid)
+{
+	int i;
+	for (i = 0; i < g_pf_nskip; i++)
+		if (g_pf_skip[i].uid == uid && g_pf_skip[i].acct == acct && !strcmp(g_pf_skip[i].folder, folder)) return 1;
+	return 0;
+}
+
+static void pf_skip(int acct, const char *folder, unsigned int uid)
+{
+	int i = g_pf_nskip < PF_SKIP ? g_pf_nskip++ : (PF_SKIP - 1);   /* full: the last slot is reused */
+	g_pf_skip[i].acct = acct;
+	g_pf_skip[i].uid = uid;
+	pm_copy(g_pf_skip[i].folder, folder, sizeof(g_pf_skip[i].folder));
 }
 
 /* 1 = downloaded one (or tried), 0 = nothing left to do */
@@ -219,25 +278,43 @@ static int pf_step(void)
 {
 	PmShared *s = pm_shared();
 	static PmIndex ix;
-	int k, i, n, want = s->prefetch;
+	int k, i, n, r, want = s->prefetch;
 	unsigned int uid = 0;
-	char why[160];
+	char why[160], label[24];
 	for (k = 0; k < 2 && !g_pf[k].on; k++) ;
 	if (k == 2) return 0;
-	if (want <= 0 || s->offline || !s->acct[g_pf[k].acct].used) { g_pf[0].on = g_pf[1].on = 0; return 0; }
+	if (want <= 0 || g_pf_dead || s->offline || !s->acct[g_pf[k].acct].used) { g_pf[0].on = g_pf[1].on = 0; return 0; }
 	if (want > 50) want = 50;
 	if (st_index_load(g_pf[k].acct, g_pf[k].folder, "index.txt", &ix) != 0) { g_pf[k].on = 0; return 0; }
 	for (i = ix.n - 1, n = 0; i >= 0 && n < want; i--, n++)
-		if (!have_text(g_pf[k].acct, g_pf[k].folder, ix.m[i].uid)) { uid = ix.m[i].uid; break; }
+		if (!have_text(g_pf[k].acct, g_pf[k].folder, ix.m[i].uid) &&
+		    !pf_skipped(g_pf[k].acct, g_pf[k].folder, ix.m[i].uid)) { uid = ix.m[i].uid; break; }
 	st_index_free(&ix);
 	if (!uid) { g_pf[k].on = 0; return 0; }
 	s->busy = 1;
-	pm_progress("Downloading ahead (%d of %d)", n + 1, want);
-	if (imap_body(g_pf[k].acct, g_pf[k].folder, uid, 2, why, sizeof(why)) != PM_RES_OK) {
-		pm_log("download ahead stopped: %s", why);
-		g_pf[0].on = g_pf[1].on = 0;          /* stopped (Esc) or failed: leave it */
-		s->net.quit = 0;
+	snprintf(label, sizeof(label), "%d of %d", n + 1, want);
+	pm_ahead_label(label);
+	pm_progress("Downloading...");
+	r = imap_body(g_pf[k].acct, g_pf[k].folder, uid, 2, why, sizeof(why));
+	pm_ahead_label(0);
+	if (r == PM_RES_OK && !have_text(g_pf[k].acct, g_pf[k].folder, uid)) {
+		/* must not happen; if it did, without this we would download it for ever */
+		pm_copy(why, "the text was not saved", sizeof(why));
+		r = PM_RES_FAILED;
 	}
+	if (r != PM_RES_OK) {
+		pm_log("download ahead of %s %u stopped: %s", g_pf[k].folder, uid, why);
+		g_pf[0].on = g_pf[1].on = 0;          /* stopped (Esc), offline or failed: leave it */
+		if (r == PM_RES_FAILED) pf_skip(g_pf[k].acct, g_pf[k].folder, uid);   /* not this one again */
+		if (r == PM_RES_FAILED || r == PM_RES_OFFLINE) {
+			/* the card full, or three in a row lost: stop, rather than dial and dial */
+			if (strstr(why, "Could not save") || strstr(why, "No room") || ++g_pf_fails >= 3) {
+				pm_log("download ahead is off until PsiMail is restarted");
+				g_pf_dead = 1;
+			}
+		}
+		s->net.quit = 0;
+	} else g_pf_fails = 0;
 	s->progress[0] = 0;
 	s->busy = 0;
 	return 1;

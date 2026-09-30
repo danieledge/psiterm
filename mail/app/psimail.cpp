@@ -21,6 +21,8 @@
 #include <apgtask.h>
 #include <eikdll.h>
 #include <eikrted.h>
+#include <eikgted.h>
+#include <txtrich.h>
 #include <eiktbar.h>
 #include <eikcmbut.h>
 #include "pmicons.h"
@@ -73,7 +75,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.6.1");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.6.2");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -434,6 +436,30 @@ void CPmView::SettingsChanged()
 TBool CPmView::Busy() const
 	{
 	return iShared->busy || iShared->cmd_head != iShared->cmd_tail;
+	}
+
+// Is a command of this kind running, or waiting in the queue?
+TBool CPmView::OpInFlight(TInt aOp) const
+	{
+	PmShared* s = iShared;
+	if (s->busy && s->cur_op == aOp)
+		return ETrue;
+	for (TUint i = s->cmd_tail; i != s->cmd_head; i++)
+		if (iSent[i % PM_CMDQ].op == aOp)
+			return ETrue;
+	return EFalse;
+	}
+
+// Asks the engine to stop what it is doing (a dial-up that will not come up,
+// a download). The engine notices within a quarter of a second, even while
+// it waits for the Psion's Internet connection, and the command ends with
+// "Stopped". (The engine clears net.quit after each command, so a command
+// already queued behind it still runs.)
+void CPmView::StopEngineWork(const TDesC& aToast)
+	{
+	iShared->net.quit = 1;
+	if (aToast.Length())
+		Toast(aToast);
 	}
 
 void CPmView::Cmd(TInt aOp, const TDesC8& aFolder, TUint aUid, const TDesC8& aArg)
@@ -971,6 +997,7 @@ void CPmView::OpenCurrentL()
 	iFocusLink = 0;
 	if (wasUnread)
 		row.iFlags.Append('S');                  // the engine marks it read
+	iBodyError.Zero();
 	LoadMessageL();
 	if (iWaitingBody)
 		{
@@ -1145,8 +1172,10 @@ void CPmView::SearchL(const TDesC& aWords)
 void CPmView::SendRecvL()
 	{
 	Cmd(PM_CMD_SENDRECV, iMode == EList || iMode == EMessage ? TPtrC8(iFolder) : TPtrC8(_L8("INBOX")), 0, KNullDesC8);
-	if (iCal->iCal.enabled && !iSettings->iOffline)
-		CalendarSyncL();
+	// the calendar sync follows once the mail part is done (HandleResultL):
+	// queued alongside, it would dial again after a failed connection and
+	// bring the Psion's own connection dialogs straight back
+	iCalAfterMail = iCal->iCal.enabled && !iSettings->iOffline;
 	}
 
 // ----- calendar: the engine talks to the server, CPmCalSync to the Agenda
@@ -1217,6 +1246,7 @@ void CPmView::WholeMessageL()
 		return;
 		}
 	iWaitingBody = ETrue;
+	iBodyError.Zero();
 	Cmd(PM_CMD_FULLBODY, iFolder, iMsgUid, KNullDesC8);
 	}
 
@@ -1288,13 +1318,23 @@ void CPmView::DraftFromOutboxL(CPmDraft& aDraft)
 		return;
 	TBuf<120> dir;
 	OutboxDir(dir);
+	// outbox files are 0001.txt (older ones may be 1.txt)
 	TFileName path(dir);
-	path.AppendNum(row->iUid);
-	path.Append(_L(".txt"));
+	path.AppendFormat(_L("%04d.txt"), row->iUid);
 	HBufC* buf = NULL;
 	ReadFileL(path, buf, 56 * 1024);
 	if (!buf)
-		return;
+		{
+		path = dir;
+		path.AppendNum(row->iUid);
+		path.Append(_L(".txt"));
+		ReadFileL(path, buf, 56 * 1024);
+		}
+	if (!buf)
+		{
+		iEikonEnv->InfoMsg(_L("Could not open that message"));
+		User::Leave(KErrNotFound);
+		}
 	CleanupStack::PushL(buf);
 	aDraft.iFileNo = row->iUid;
 	TPtrC rest = *buf;
@@ -1375,38 +1415,66 @@ void CPmView::SaveDraftL(CPmDraft& aDraft, TBool aSend)
 	RFile f;
 	User::LeaveIfError(f.Replace(fs, tmp, EFileWrite));
 	CleanupClosePushL(f);
+	// every write is checked: on a full card the first one to fail is
+	// remembered and reported, and the half-written file thrown away
+	TInt r = KErrNone;
+#define PMW(d) do { TInt e_ = f.Write(d); if (r == KErrNone) r = e_; } while (0)
 	TBuf<600> h;
 	h = _L("#PSIMAIL1\n");
-	f.Write(h);
-	h = _L("To: "); h.Append(aDraft.iTo); h.Append('\n'); f.Write(h);
-	if (aDraft.iCc.Length()) { h = _L("Cc: "); h.Append(aDraft.iCc); h.Append('\n'); f.Write(h); }
-	if (aDraft.iBcc.Length()) { h = _L("Bcc: "); h.Append(aDraft.iBcc); h.Append('\n'); f.Write(h); }
-	h = _L("Subject: "); h.Append(aDraft.iSubject); h.Append('\n'); f.Write(h);
-	if (aDraft.iInReplyTo.Length()) { h = _L("In-Reply-To: "); h.Append(aDraft.iInReplyTo); h.Append('\n'); f.Write(h); }
-	if (aDraft.iReferences.Length()) { h = _L("References: "); h.Append(aDraft.iReferences); h.Append('\n'); f.Write(h); }
+	PMW(h);
+	h = _L("To: "); h.Append(aDraft.iTo); h.Append('\n'); PMW(h);
+	if (aDraft.iCc.Length()) { h = _L("Cc: "); h.Append(aDraft.iCc); h.Append('\n'); PMW(h); }
+	if (aDraft.iBcc.Length()) { h = _L("Bcc: "); h.Append(aDraft.iBcc); h.Append('\n'); PMW(h); }
+	h = _L("Subject: "); h.Append(aDraft.iSubject); h.Append('\n'); PMW(h);
+	if (aDraft.iInReplyTo.Length()) { h = _L("In-Reply-To: "); h.Append(aDraft.iInReplyTo); h.Append('\n'); PMW(h); }
+	if (aDraft.iReferences.Length()) { h = _L("References: "); h.Append(aDraft.iReferences); h.Append('\n'); PMW(h); }
 	for (TInt i = 0; i < aDraft.iAttach->Count(); i++)
 		{
 		h = _L("Attach: ");
 		h.Append(Clip((*aDraft.iAttach)[i], 500));
 		h.Append('\n');
-		f.Write(h);
+		PMW(h);
 		}
 	if (aDraft.iReplyFolder.Length())
 		{
-		h = _L("Reply-Folder: "); h.Append(aDraft.iReplyFolder); h.Append('\n'); f.Write(h);
-		h = _L("Reply-Uid: "); h.AppendNum(aDraft.iReplyUid); h.Append('\n'); f.Write(h);
+		h = _L("Reply-Folder: "); h.Append(aDraft.iReplyFolder); h.Append('\n'); PMW(h);
+		h = _L("Reply-Uid: "); h.AppendNum(aDraft.iReplyUid); h.Append('\n'); PMW(h);
 		}
 	if (!aSend)
-		f.Write(_L("Draft: 1\n"));
-	f.Write(_L("\n"));
+		PMW(_L("Draft: 1\n"));
 	if (aDraft.iBody)
-		f.Write(*aDraft.iBody);
-	TInt r = f.Flush();
+		{
+		// bold / italic / underline in the text: the engine sends HTML too
+		const TDesC& t = *aDraft.iBody;
+		for (TInt i = 0; i < t.Length(); i++)
+			if (t[i] == 0x11 || t[i] == 0x13 || t[i] == 0x18)
+				{
+				PMW(_L("Format: rich\n"));
+				break;
+				}
+		}
+	PMW(_L("\n"));
+	if (aDraft.iBody)
+		PMW(*aDraft.iBody);
+	TInt e = f.Flush();
+	if (r == KErrNone) r = e;
+#undef PMW
 	CleanupStack::PopAndDestroy();      // f
-	User::LeaveIfError(r);
-	fs.Delete(path);
+	if (r != KErrNone)
+		{
+		fs.Delete(tmp);
+		User::Leave(r);
+		}
+	// the new file takes the old one's place in one step (RFs::Replace): a
+	// crash or a full card between a Delete and a Rename could lose the only
+	// copy of the message
+	r = fs.Replace(tmp, path);
+	if (r != KErrNone)
+		{
+		fs.Delete(tmp);
+		User::Leave(r);
+		}
 	fs.Delete(err);
-	User::LeaveIfError(fs.Rename(tmp, path));
 	aDraft.iFileNo = no;
 	if (aSend)
 		{
@@ -1597,6 +1665,15 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		HandleCalResultL(aCmd, res, msg);
 		return;
 		}
+	if (aCmd.op == PM_CMD_SENDRECV && iCalAfterMail &&
+		res != PM_RES_UNTRUSTED && res != PM_RES_NEED_PASS && res != PM_RES_LOGIN_FAILED)   // (those retry below)
+		{
+		iCalAfterMail = EFalse;
+		// the link came up (the server may still have said no): the calendar's
+		// turn. Not after OFFLINE - the connection failed - or Stopped.
+		if (res != PM_RES_OFFLINE && res != PM_RES_CANCELLED && !iSettings->iOffline)
+			CalendarSyncL();
+		}
 	switch (res)
 		{
 	case PM_RES_OK:
@@ -1698,6 +1775,8 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		Toast(_L("Stopped"));
 		break;
 	default:
+		if ((aCmd.op == PM_CMD_BODY || aCmd.op == PM_CMD_FULLBODY) && aCmd.uid == iMsgUid)
+			iBodyError = msg;                    // shown in place of "Downloading..."
 		if (aCmd.op == PM_CMD_BODY || aCmd.op == PM_CMD_ATTACH || aCmd.op == PM_CMD_SEND ||
 			aCmd.op == PM_CMD_SENDRECV || aCmd.op == PM_CMD_SEARCH)
 			iEikonEnv->InfoWinL(_L("PsiMail"), Clip(msg, 120));
@@ -2193,11 +2272,11 @@ TKeyResponse CPmView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 	TBool escStops = ETrue;
 	if (iNativeShown && NativeMode())
 		escStops = (iMode == EMessage && iWaitingBody) ||
-			((iMode == EList || iMode == EOutbox) && iSidebar) || iMode == ENoAccount;
+			((iMode == EList || iMode == EOutbox) && iSidebar) || iMode == ENoAccount ||
+			(iShared->busy && !iShared->online);   // still connecting: nothing to go back from
 	if (code == EKeyEscape && Busy() && escStops)
 		{
-		iShared->net.quit = 1;             // stop what the engine is doing
-		Toast(_L("Stopping..."));
+		StopEngineWork(_L("Stopping..."));  // stop what the engine is doing
 		return EKeyWasConsumed;
 		}
 	if (iNativeShown && NativeMode())
@@ -2596,14 +2675,106 @@ void CPmComposeDialog::PreLayoutDynInitL()
 	SetEdwinTextL(EPmDlgCc, &iDraft.iCc);
 	SetEdwinTextL(EPmDlgBcc, &iDraft.iBcc);
 	SetEdwinTextL(EPmDlgSubject, &iDraft.iSubject);
-	// the edwin wants its own paragraph ends (0x06), not '\n'
-	HBufC* b = iDraft.iBody->AllocLC();
+	// the text, with its bold / italic / underline marks (see the engine's
+	// compose.c) turned back into the editor's formatting
+	HBufC* b = HBufC::NewLC(iDraft.iBody->Length() + 1);
 	TPtr p = b->Des();
-	for (TInt i = 0; i < p.Length(); i++)
-		if (p[i] == '\n') p[i] = CEditableText::EParagraphDelimiter;
+	CArrayFixFlat<TInt>* spans = new(ELeave) CArrayFixFlat<TInt>(16);   // start, length, style
+	CleanupStack::PushL(spans);
+	TInt start[3] = { -1, -1, -1 };
+	const TPtrC src = *iDraft.iBody;
+	for (TInt i = 0; i < src.Length(); i++)
+		{
+		TText c = src[i];
+		TInt style = -1, on = 0;
+		switch (c)
+			{
+		case 0x11: style = 0; on = 1; break;
+		case 0x12: style = 0; break;
+		case 0x13: style = 1; on = 1; break;
+		case 0x14: style = 1; break;
+		case 0x18: style = 2; on = 1; break;
+		case 0x19: style = 2; break;
+		default: break;
+			}
+		if (style >= 0)
+			{
+			if (on && start[style] < 0)
+				start[style] = p.Length();
+			else if (!on && start[style] >= 0)
+				{
+				spans->AppendL(start[style]);
+				spans->AppendL(p.Length() - start[style]);
+				spans->AppendL(style);
+				start[style] = -1;
+				}
+			continue;
+			}
+		p.Append(c == '\n' ? (TText)CEditableText::EParagraphDelimiter : c);
+		}
+	for (TInt st = 0; st < 3; st++)
+		if (start[st] >= 0)
+			{
+			spans->AppendL(start[st]);
+			spans->AppendL(p.Length() - start[st]);
+			spans->AppendL(st);
+			}
 	SetEdwinTextL(EPmDlgBody, b);
-	CleanupStack::PopAndDestroy();
+	CEikRichTextEditor* ed = (CEikRichTextEditor*)Control(EPmDlgBody);
+	for (TInt k = 0; k + 2 < spans->Count(); k += 3)
+		{
+		TCharFormat cf;
+		TCharFormatMask cm;
+		switch ((*spans)[k + 2])
+			{
+		case 0:
+			cf.iFontSpec.iFontStyle.SetStrokeWeight(EStrokeWeightBold);
+			cm.SetAttrib(EAttFontStrokeWeight);
+			break;
+		case 1:
+			cf.iFontSpec.iFontStyle.SetPosture(EPostureItalic);
+			cm.SetAttrib(EAttFontPosture);
+			break;
+		default:
+			cf.iFontPresentation.iUnderline = EUnderlineOn;
+			cm.SetAttrib(EAttFontUnderline);
+			break;
+			}
+		if ((*spans)[k + 1] > 0)
+			ed->RichText()->ApplyCharFormatL(cf, cm, (*spans)[k], (*spans)[k + 1]);
+		}
+	if (spans->Count())
+		ed->HandleTextChangedL();
+	CleanupStack::PopAndDestroy(2);           // spans, b
 	ShowAttachments();
+	}
+
+// Ctrl+B, Ctrl+I, Ctrl+U: bold, italic, underline in the text (EIKON's
+// standard shortcuts for them)
+TKeyResponse CPmComposeDialog::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType)
+	{
+	if (aType == EEventKey && (aKeyEvent.iModifiers & EModifierCtrl))
+		{
+		// the buttons' keys first: the editors would take them otherwise
+		TUint k = aKeyEvent.iCode;
+		if (k == 19 || k == 's' || k == 'S') { TryExitL(EPmBidSend); return EKeyWasConsumed; }
+		if (k == 4 || k == 'd' || k == 'D') { TryExitL(EPmBidSave); return EKeyWasConsumed; }
+		if (k == 1 || k == 'a' || k == 'A') { TryExitL(EPmBidAttach); return EKeyWasConsumed; }
+		}
+	if (aType == EEventKey && (aKeyEvent.iModifiers & EModifierCtrl) && IdOfFocusControl() == EPmDlgBody)
+		{
+		TUint c = aKeyEvent.iCode;
+		TInt flag = 0;
+		if (c == 2 || c == 'b' || c == 'B') flag = CEikGlobalTextEditor::EBold;
+		else if (c == 9 || c == 'i' || c == 'I') flag = CEikGlobalTextEditor::EItalic;
+		else if (c == 21 || c == 'u' || c == 'U') flag = CEikGlobalTextEditor::EUnderline;
+		if (flag)
+			{
+			((CEikRichTextEditor*)Control(EPmDlgBody))->BoldItalicUnderlineEventL(flag);
+			return EKeyWasConsumed;
+			}
+		}
+	return CEikDialog::OfferKeyEventL(aKeyEvent, aType);
 	}
 
 void CPmComposeDialog::PostLayoutDynInitL()
@@ -2644,17 +2815,66 @@ void CPmComposeDialog::Collect()
 	GetEdwinText(iDraft.iCc, EPmDlgCc);
 	GetEdwinText(iDraft.iBcc, EPmDlgBcc);
 	GetEdwinText(iDraft.iSubject, EPmDlgSubject);
-	HBufC* body = NULL;
-	TRAPD(err, body = ((CEikEdwin*)Control(EPmDlgBody))->GetTextInHBufL());
-	if (err == KErrNone)
+	// the text, with marks where bold / italic / underline change (the
+	// engine sends it as HTML as well as plain text)
+	CRichText* rt = ((CEikRichTextEditor*)Control(EPmDlgBody))->RichText();
+	TInt len = rt->DocumentLength();
+	for (TInt pass = 0; pass < 2; pass++)
 		{
-		delete iDraft.iBody;
-		iDraft.iBody = body ? body : HBufC::New(1);
-		if (iDraft.iBody)
+		// pass 0 counts the runs, pass 1 writes the text
+		TInt runs = 0;
+		TPtr out(NULL, 0);
+		HBufC* body = NULL;
+		if (pass == 1)
 			{
-			TPtr p = iDraft.iBody->Des();
-			for (TInt i = 0; i < p.Length(); i++)
-				if (p[i] == CEditableText::EParagraphDelimiter || p[i] == CEditableText::ELineBreak) p[i] = '\n';
+			body = HBufC::New(len + iRuns * 6 + 8);
+			if (!body)
+				return;
+			out.Set((TText*)body->Ptr(), 0, len + iRuns * 6 + 8);
+			}
+		TBool b = EFalse, it = EFalse, u = EFalse;
+		TInt pos = 0;
+		while (pos < len)
+			{
+			TPtrC view;
+			TCharFormat cf;
+			rt->GetChars(view, cf, pos);
+			TInt n = view.Length();
+			if (pos + n > len) n = len - pos;
+			if (n <= 0)
+				break;
+			runs++;
+			TBool nb = cf.iFontSpec.iFontStyle.StrokeWeight() == EStrokeWeightBold;
+			TBool ni = cf.iFontSpec.iFontStyle.Posture() == EPostureItalic;
+			TBool nu = cf.iFontPresentation.iUnderline == EUnderlineOn;
+			if (pass == 1)
+				{
+				if (u && !nu) out.Append(0x19);
+				if (it && !ni) out.Append(0x14);
+				if (b && !nb) out.Append(0x12);
+				if (!b && nb) out.Append(0x11);
+				if (!it && ni) out.Append(0x13);
+				if (!u && nu) out.Append(0x18);
+				for (TInt i = 0; i < n; i++)
+					{
+					TText c = view[i];
+					if (c == CEditableText::EParagraphDelimiter || c == CEditableText::ELineBreak) out.Append('\n');
+					else if (c >= 0x20 || c == '\t') out.Append(c);
+					}
+				}
+			b = nb; it = ni; u = nu;
+			pos += n;
+			}
+		if (pass == 0)
+			iRuns = runs;
+		else
+			{
+			if (u) out.Append(0x19);
+			if (it) out.Append(0x14);
+			if (b) out.Append(0x12);
+			body->Des().SetLength(out.Length());   // (written through its own pointer)
+			delete iDraft.iBody;
+			iDraft.iBody = body;
 			}
 		}
 	}
@@ -3291,10 +3511,26 @@ void CPmAppUi::ComposeL(CPmDraft* aDraft, const TDesC& aTitle)
 	// the standard EIKON dialog: To, Cc, Subject, the attachments, the text,
 	// and Send / Save / Attach buttons on the right, like the built-in programs
 	CleanupStack::PushL(aDraft);
-	CPmComposeDialog* dlg = new(ELeave) CPmComposeDialog(*aDraft, aTitle);
-	TInt r = dlg->ExecuteLD(R_PM_COMPOSE_DIALOG);
-	if (r == EPmBidSend || r == EPmBidSave)
-		iView->SaveDraftL(*aDraft, r == EPmBidSend);
+	for (;;)
+		{
+		CPmComposeDialog* dlg = new(ELeave) CPmComposeDialog(*aDraft, aTitle);
+		TInt r = dlg->ExecuteLD(R_PM_COMPOSE_DIALOG);
+		if (r != EPmBidSend && r != EPmBidSave)
+			break;
+		TRAPD(err, iView->SaveDraftL(*aDraft, r == EPmBidSend));
+		if (err == KErrNone)
+			break;
+		// not saved (the card full, or out): the message is still here -
+		// say so and show it again, so nothing written is lost
+		TBuf<100> why;
+		if (err == KErrDiskFull)
+			why = _L("The disk is full. Make room, then try again.");
+		else if (err == KErrNotReady || err == KErrPathNotFound)
+			why = _L("The disk is not there. Is the card in?");
+		else
+			why.Format(_L("Not saved (error %d). Try again."), err);
+		iEikonEnv->InfoWinL(_L("Message not saved"), why);
+		}
 	CleanupStack::PopAndDestroy();          // the draft
 	}
 
@@ -3706,22 +3942,21 @@ void CPmAppUi::DeleteAccountL()
 
 void CPmAppUi::AboutL()
 	{
-	TBuf<120> lines[6];
-	lines[0] = _L("PsiMail ");
-	lines[0].Append(KVersion);
-	lines[0].Append(_L(" - email for the Psion Series 5mx"));
-	lines[1] = _L("IMAP and SMTP over TLS 1.3, CalDAV calendars.");
-	lines[2] = _L("Networking and TLS from PsiTerm (MIT).");
-	lines[3] = _L("Shift+Ctrl+C check mail, Ctrl+N new, Ctrl+R reply.");
-	lines[4] = _L("Esc goes back, or stops a download.");
-	TMemoryInfoV1Buf mem;
-	UserHal::MemoryInfo(mem);
-	lines[5].Format(_L("Free memory: %d KB. Engine: %d KB."), mem().iFreeRamInBytes / 1024,
-		iView->Shared()->heap_used / 1024);
-	TPtrC ptrs[6];
-	for (TInt k = 0; k < 6; k++) ptrs[k].Set(lines[k]);
-	CPmInfoDialog* dlg = new(ELeave) CPmInfoDialog(_L("About PsiMail"), ptrs, 6);
-	dlg->ExecuteLD(R_PM_INFO_DIALOG);
+	const TInt KBauds[5] = { 9600, 19200, 38400, 57600, 115200 };
+	TInt bi = iSettings.iBaudIndex >= 0 && iSettings.iBaudIndex <= 4 ? iSettings.iBaudIndex : 4;
+	TPtrC link(iSettings.iNetMode ? _L("Psion Internet") : _L("modem"));
+	TBuf<80> status;
+	status.Format(_L("%d baud, mail via %S"), KBauds[bi], &link);
+	CPmAboutDialog* dlg = new(ELeave) CPmAboutDialog(status);
+	dlg->ExecuteLD(R_PM_ABOUT_DIALOG);
+	}
+
+void CPmAboutDialog::PreLayoutDynInitL()
+	{
+	TBuf<32> title(_L("PsiMail "));
+	title.Append(KVersion);
+	SetLabelL(EPmDlgInfo1, title);
+	SetLabelL(EPmDlgInfo3, iStatus);
 	}
 
 void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
@@ -3812,6 +4047,14 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		Exit();
 		break;
 	case EPmCmdSendRecv:
+		if (iView->OpInFlight(PM_CMD_SENDRECV))
+			{
+			// pressed again while the last check is still connecting (or
+			// stuck): the way to try again is to stop it first
+			if (iEikonEnv->QueryWinL(_L("Still checking mail"), _L("Stop it, so you can try again?")))
+				iView->StopEngineWork(_L("Stopping..."));
+			break;
+			}
 		if (iSettings.iOffline)
 			{
 			if (!iEikonEnv->QueryWinL(_L("You are working offline"), _L("Go online and send & receive?")))
@@ -3880,10 +4123,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdStop:
 		if (iView->Busy())
-			{
-			iView->Shared()->net.quit = 1;     // stop what the engine is doing
-			iView->Toast(_L("Stopping..."));
-			}
+			iView->StopEngineWork(_L("Stopping..."));   // stop what the engine is doing
 		break;
 	case EPmCmdToggleToolbar:
 		iView->ToggleViewL(1);
@@ -4000,7 +4240,12 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 			{
 			CPmDraft* d = CPmDraft::NewL();
 			CleanupStack::PushL(d);
-			iView->DraftFromOutboxL(*d);
+			TRAPD(err, iView->DraftFromOutboxL(*d));
+			if (err != KErrNone)
+				{
+				CleanupStack::PopAndDestroy();   // (it said why)
+				break;
+				}
 			CleanupStack::Pop();
 			ComposeL(d, _L("Edit message"));
 			}

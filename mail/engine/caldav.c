@@ -143,9 +143,7 @@ static int save_cals(void)
 		Cal *c = &g_cal[i];
 		fprintf(f, "%s\t%d\t%s\t%s\t%s\t%s\n", c->id, c->sync, c->ctag, c->href, c->flags, c->name);
 	}
-	if (fclose(f) != 0) { remove(tmp); return -1; }
-	remove(path);
-	rename(tmp, path);
+	if (pm_fclose(f) != 0 || pm_replace(tmp, path) != 0) { remove(tmp); return -1; }
 	st_changed();
 	return 0;
 }
@@ -608,9 +606,9 @@ static int push_changes(int *n, char *why, int whymax)
 				if (k++ >= done) fputs(line, out);
 			}
 			fclose(in);
-			fclose(out);
-			remove(path);
-			rename(tmp, path);
+			/* (if the rest can't be written down, the whole file stays:
+			   sending a change twice is harmless, losing one is not) */
+			if (pm_fclose(out) != 0 || pm_replace(tmp, path) != 0) remove(tmp);
 		} else if (in) fclose(in);
 	}
 	*n = done;
@@ -692,7 +690,7 @@ static int sync_now(int list_only, char *why, int whymax)
 	window(a1, b1, day);
 	path_of("events.txt", path, sizeof(path));
 	path_of("events.tmp", tmp, sizeof(tmp));
-	if (!(out = fopen(tmp, "w"))) { snprintf(why, whymax, "Could not write %s", tmp); return PM_RES_FAILED; }
+	if (!(out = fopen(tmp, "w"))) { pm_write_why(why, whymax, "the calendar", tmp); return PM_RES_FAILED; }
 	fprintf(out, "#PSIEV1\t%s\t%d\n", day, k->zone);
 	if (!keep_old(out, day)) {
 		/* start again */
@@ -717,9 +715,11 @@ static int sync_now(int list_only, char *why, int whymax)
 		total += g_dav->count;
 		fetched++;
 	}
-	if (fclose(out) != 0) { remove(tmp); snprintf(why, whymax, "The disk is full?"); return PM_RES_FAILED; }
-	remove(path);
-	rename(tmp, path);
+	if (pm_fclose(out) != 0 || pm_replace(tmp, path) != 0) {
+		remove(tmp);
+		pm_write_why(why, whymax, "the calendar", path);
+		return PM_RES_FAILED;
+	}
 	save_cals();
 	st_changed();
 	if (fetched) snprintf(why, whymax, "%s%d event%s", sent ? "Sent changes; " : "", total, total == 1 ? "" : "s");

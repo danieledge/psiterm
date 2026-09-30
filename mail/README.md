@@ -144,7 +144,9 @@ without the `cryptography` package too). The version must go up each time.
 
 Writing a message fills the screen, as in the built-in Email program: To,
 CC, BCC, Attachments and Subject, then the text, with the buttons on the
-right. Ctrl+S sends, Ctrl+D saves it as a draft (in the outbox), Ctrl+A
+right. Ctrl+B, Ctrl+I and Ctrl+U make the text bold, italic or underlined
+(it then goes as HTML email, with a plain text copy for mail programs that
+want one). Ctrl+S sends, Ctrl+D saves it as a draft (in the outbox), Ctrl+A
 adds or removes attachments, Esc closes (asking before it throws anything
 away). A new event (N in the calendar) is a PsiMail screen: Up/Down between the lines, Left/Right (or +
 and -) to change the date, times and alarm, Enter to save.

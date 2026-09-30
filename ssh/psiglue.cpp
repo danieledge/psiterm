@@ -51,6 +51,30 @@ static TSockXfrLength gRecvLen;
 static TPtr8* gRecvDes = 0;
 static int gRecvPending = 0;
 
+// How long the Psion Internet steps may take (a 115200 WiFi modem PPP link).
+// The first name lookup is what makes EPOC's NetDial open the port, run the
+// modem init and bring PPP up, so it gets the longest wait; a TCP connect
+// normally finds the link already up.
+const TInt KLookupTimeoutUs   = 60000000;  // GetByName incl. the dial-up
+const TInt KConnectTimeoutUs  = 30000000;  // RSocket::Connect
+const TInt KCancelWaitUs      = 5000000;   // for a Cancel() to complete the request
+const TInt KStillWaitingUs    = 15000000;  // "still waiting" notes this often
+const int  KPppConnectWaitMs  = 25000;     // StartPpp: CONNECT after the first send
+const TInt64 KLinkFailHoldUs  = TInt64(8000000);   // after a failed start: fail fast
+
+// The lookup and connect requests keep their TRequestStatus here, not on the
+// stack: if a Cancel() does not complete one (NetDial busy with its own
+// dialogs), the request is abandoned and may complete later - into memory
+// that must still exist. gLookupOrphan/gConnOrphan say one is still out.
+static TRequestStatus gLookupStat;
+static TRequestStatus gConnStat;
+static int gLookupOrphan = 0, gConnOrphan = 0;
+static RHostResolver* gResolver = 0;
+static int gResolverOpen = 0;
+static TNameEntry* gNameEntry = 0;
+static TInt64 gLinkFailAt;                 // when a link start last failed (0 = never)
+static int gLinkSuspect = 0;               // a receive failed: PPP may be down
+
 static int LinkOpen()
 	{
 	return gNet ? gSockOpen : gCommOpen;
@@ -83,9 +107,20 @@ extern "C" int pg_quit_requested();
 // Returns 1 if aStat completed, 0 if not (aStat is then still outstanding).
 static int WaitFor(TRequestStatus& aStat, TInt aTimeoutUs, int aQuitAware)
 	{
+	if (aStat != KRequestPending)
+		{
+		User::WaitForRequest(aStat);     // completed already: take its signal
+		return 1;
+		}
 	if (!gTimerOpen)
 		{
-		User::WaitForRequest(aStat);
+		if (!gTimer) gTimer = new RTimer;
+		if (gTimer && gTimer->CreateLocal() == KErrNone)
+			gTimerOpen = 1;
+		}
+	if (!gTimerOpen)
+		{
+		User::WaitForRequest(aStat);     // no timer: nothing better to do
 		return 1;
 		}
 	TInt64 start = NowMicro();
@@ -102,16 +137,87 @@ static int WaitFor(TRequestStatus& aStat, TInt aTimeoutUs, int aQuitAware)
 			}
 		TRequestStatus timerStat;
 		gTimer->After(timerStat, slice);
-		User::WaitForRequest(aStat, timerStat);
-		if (aStat != KRequestPending)
+		for (;;)
 			{
-			gTimer->Cancel();
-			User::WaitForRequest(timerStat);
-			return 1;
+			User::WaitForRequest(aStat, timerStat);
+			if (aStat != KRequestPending)
+				{
+				gTimer->Cancel();
+				User::WaitForRequest(timerStat);
+				return 1;
+				}
+			if (timerStat != KRequestPending)
+				break;                   // the slice is over
+			// neither: a stray signal - an abandoned request completing (see
+			// gLookupOrphan). Its signal has now been taken, so it needs no
+			// WaitForRequest of its own. Keep waiting on the same timer: a
+			// second After() on a running RTimer would panic.
+			if (gLookupOrphan && gLookupStat != KRequestPending)
+				gLookupOrphan = 0;
+			else if (gConnOrphan && gConnStat != KRequestPending)
+				gConnOrphan = 0;
 			}
 		if (aQuitAware && pg_quit_requested())
 			return 0;
 		}
+	}
+
+// After Cancel(): waits a bounded time for the request to complete and takes
+// its signal. Returns 1 if it did, 0 if it is still outstanding (abandoned).
+static int TakeCancelled(TRequestStatus& aStat)
+	{
+	return WaitFor(aStat, KCancelWaitUs, 0);
+	}
+
+// Abandoned requests that have since completed: take their signals so the
+// thread's request semaphore stays in step with the statuses we wait on.
+static void ReapOrphans(TInt aWaitUs)
+	{
+	if (gLookupOrphan && WaitFor(gLookupStat, aWaitUs, 0))
+		gLookupOrphan = 0;
+	if (gConnOrphan && WaitFor(gConnStat, aWaitUs, 0))
+		gConnOrphan = 0;
+	}
+
+// A short name for the error codes people meet while the dial-up starts
+static const char* ErrName(TInt aErr)
+	{
+	switch (aErr)
+		{
+	case -3:    return "cancelled";                         // KErrCancel: the Psion's own dialog
+	case -33:   return "timed out";
+	case -34:   return "could not connect";
+	case -36:   return "disconnected";
+	case -2003: return "the modem reported NO CARRIER";     // KErrEtelNoCarrier
+	case -2004: return "the modem reported BUSY";
+	case -2008: return "the modem reported NO ANSWER";      // KErrEtelNoAnswer
+	case -2009: return "no dial tone";
+	case -2017: return "no modem found";                    // KErrEtelModemNotDetected
+	case -3001: return "no reply from the modem";           // KErrExitNoModem
+	case -3002: return "modem error";
+	case -3003: return "login failed";
+	case -3004: return "the dial-up script timed out";
+	case -3005: return "dial-up script error";
+	default:    return 0;
+		}
+	}
+
+static void SetMsgNet(char* aOut, int aMax, const char* aText, TInt aErr)
+	{
+	if (!aOut || aMax < 16)
+		return;
+	TPtr8 p((TUint8*)aOut, 0, aMax - 1);
+	p.Copy(TPtrC8((const TUint8*)aText));
+	const char* name = ErrName(aErr);
+	if (name)
+		{
+		p.Append(_L8(" ("));
+		p.Append(TPtrC8((const TUint8*)name));
+		p.AppendFormat(_L8(", error %d)"), aErr);
+		}
+	else
+		p.AppendFormat(_L8(" (error %d)"), aErr);
+	p.ZeroTerminate();
 	}
 
 // Closes the TCP connection but keeps the socket server session, and with it
@@ -134,25 +240,36 @@ static void NetCloseSocket()
 		}
 	}
 
+// Closes everything ESOCK: the socket, a resolver still open and the session
+// itself. With no client left NetDial stops (or, after a failed start, does
+// not try again by itself), and the next pg_dial starts from scratch: StartPpp
+// again, a fresh dial-up. Closing the session also completes any request a
+// Cancel() could not, so abandoned requests are collected here.
 static void NetClose()
 	{
 	NetCloseSocket();
-	if (gSockOpen)
+	if (gResolverOpen)
 		{
-		if (gRecvPending)
-			{
-			gSock->CancelRecv();
-			User::WaitForRequest(gRecvStat);
-			gRecvPending = 0;
-			}
-		gSock->Close();
-		gSockOpen = 0;
+		gResolver->Close();
+		gResolverOpen = 0;
 		}
 	if (gSsOpen)
 		{
 		gSs->Close();               // EPOC hangs the dial-up up after its idle time
 		gSsOpen = 0;
 		}
+	ReapOrphans(2000000);
+	gLinkSuspect = 0;
+	}
+
+// A link start (lookup or connect) failed: start afresh next time, and for
+// a few seconds fail at once instead of dialling again - PsiWeb's images and
+// PsiMail's calendar sync follow a failed connection straight away, and each
+// new dial-up brings the Psion's own connection dialogs back.
+static void NetFail()
+	{
+	NetClose();
+	gLinkFailAt = NowMicro();
 	}
 
 // SSH mode says what the link is doing (updates stay quiet)
@@ -202,13 +319,41 @@ static void NetHint(TInt aErr)
 			  "  (speed, flow control, a plain AT init string).\r\n");
 	}
 
+// Waits for a lookup/connect request with a hard timeout, noting every so
+// often that it is still waiting (the dial-up can take a while and the app
+// shows the last note). Returns 1 done, 0 timed out, -1 stopped by the user.
+static int WaitLink(TRequestStatus& aStat, TInt aTimeoutUs, const char* aWhat)
+	{
+	TInt waited = 0;
+	for (;;)
+		{
+		TInt slice = aTimeoutUs - waited;
+		if (slice > KStillWaitingUs)
+			slice = KStillWaitingUs;
+		if (slice <= 0)
+			return 0;
+		if (WaitFor(aStat, slice, 1))
+			return 1;
+		if (pg_quit_requested())
+			return -1;
+		waited += slice;
+		char m[120];
+		TPtr8 p((TUint8*)m, 0, sizeof(m) - 1);
+		p.Format(_L8("  Still %s (%d s)...\r\n"), aWhat, waited / 1000000);
+		p.ZeroTerminate();
+		Say(m);
+		}
+	}
+
 static int NetConnect(char* aResult, int aMax)
 	{
 	if (!gSs) gSs = new RSocketServ;
 	if (!gSock) gSock = new RSocket;
 	if (!gTimer) gTimer = new RTimer;
 	if (!gRecvDes) gRecvDes = new TPtr8(gRx, 0, sizeof(gRx));
-	if (!gSs || !gSock || !gTimer || !gRecvDes)
+	if (!gResolver) gResolver = new RHostResolver;
+	if (!gNameEntry) gNameEntry = new TNameEntry;
+	if (!gSs || !gSock || !gTimer || !gRecvDes || !gResolver || !gNameEntry)
 		{
 		SetMsg(aResult, aMax, "out of memory");
 		return -1;
@@ -230,47 +375,67 @@ static int NetConnect(char* aResult, int aMax)
 	TBuf<128> host;
 	host.Copy(TPtrC8((const TUint8*)gShared->host));
 	TInetAddr addr;
+	int lookedUp = 0;
 	if (addr.Input(host) != KErrNone)
 		{
 		// a name: look it up (this is usually what starts the dial-up)
-		RHostResolver resolver;
-		r = resolver.Open(*gSs, KAfInet, KProtocolInetUdp);
+		lookedUp = 1;
+		r = gResolver->Open(*gSs, KAfInet, KProtocolInetUdp);
 		if (r != KErrNone)
 			{
 			SetMsgErr(aResult, aMax, "no name resolver - is TCP/IP installed?", r);
+			NetFail();
 			return -1;
 			}
-		TNameEntry entry;
-		TRequestStatus stat;
+		gResolverOpen = 1;
 		{
 		char m[160];
 		int k = 0;
 		const char* a = "  Looking up ";
 		while (*a) m[k++] = *a++;
 		const char* h = (const char*)gShared->host;
-		while (*h && k < 140) m[k++] = *h++;
+		while (*h && k < 120) m[k++] = *h++;
 		a = " (this starts the Psion's Internet connection)...\r\n";
 		while (*a && k < 158) m[k++] = *a++;
 		m[k] = 0;
 		Say(m);
 		}
-		resolver.GetByName(host, entry, stat);
-		if (!WaitFor(stat, 120000000, 1))
+		gLookupStat = KRequestPending;
+		gResolver->GetByName(host, *gNameEntry, gLookupStat);
+		int w = WaitLink(gLookupStat, KLookupTimeoutUs, "waiting for the Psion's Internet connection");
+		if (w != 1)
 			{
-			resolver.Cancel();
-			User::WaitForRequest(stat);
-			resolver.Close();
-			SetMsg(aResult, aMax, "gave up looking up the host name");
+			gResolver->Cancel();
+			if (!TakeCancelled(gLookupStat))
+				gLookupOrphan = 1;       // NetClose (below) should complete it
+			if (w < 0)
+				SetMsg(aResult, aMax, "Stopped");
+			else
+				{
+				char m[160];
+				TPtr8 p((TUint8*)m, 0, sizeof(m) - 1);
+				p.Format(_L8("Timed out looking up %s: the Psion's Internet connection did not come up in %d s"),
+					gShared->host, KLookupTimeoutUs / 1000000);
+				p.ZeroTerminate();
+				SetMsg(aResult, aMax, m);
+				}
+			NetFail();
 			return -1;
 			}
-		resolver.Close();
-		if (stat.Int() != KErrNone)
+		gResolver->Close();
+		gResolverOpen = 0;
+		if (gLookupStat.Int() != KErrNone)
 			{
-			NetHint(stat.Int());
-			SetMsgErr(aResult, aMax, "could not look up the host name", stat.Int());
+			NetHint(gLookupStat.Int());
+			char m[160];
+			TPtr8 p((TUint8*)m, 0, sizeof(m) - 1);
+			p.Format(_L8("Could not connect: looking up %s failed"), gShared->host);
+			p.ZeroTerminate();
+			SetMsgNet(aResult, aMax, m, gLookupStat.Int());
+			NetFail();
 			return -1;
 			}
-		addr = TInetAddr(entry().iAddr);
+		addr = TInetAddr((*gNameEntry)().iAddr);
 		}
 	addr.SetPort(gShared->port > 0 ? gShared->port : 22);
 	{
@@ -297,30 +462,38 @@ static int NetConnect(char* aResult, int aMax)
 	if (r != KErrNone)
 		{
 		SetMsgErr(aResult, aMax, "could not open a TCP socket", r);
+		NetFail();
 		return -1;
 		}
-	TRequestStatus stat;
-	gSock->Connect(addr, stat);          // starts the dial-up if it isn't up
-	if (!WaitFor(stat, 120000000, 1))
+	gConnStat = KRequestPending;
+	gSock->Connect(addr, gConnStat);     // starts the dial-up if it isn't up
+	// a numeric host skips the lookup, so then this is the step that dials
+	int w = WaitLink(gConnStat, lookedUp ? KConnectTimeoutUs : KLookupTimeoutUs, "connecting");
+	if (w != 1)
 		{
 		gSock->CancelConnect();
-		User::WaitForRequest(stat);
+		if (!TakeCancelled(gConnStat))
+			gConnOrphan = 1;
 		gSock->Close();
-		SetMsg(aResult, aMax, "gave up connecting");
+		SetMsg(aResult, aMax, w < 0 ? "Stopped" : "Timed out connecting to the server");
+		NetFail();
 		return -1;
 		}
-	if (stat.Int() != KErrNone)
+	if (gConnStat.Int() != KErrNone)
 		{
 		gSock->Close();
-		NetHint(stat.Int());
-		SetMsgErr(aResult, aMax, "connection failed", stat.Int());
+		NetHint(gConnStat.Int());
+		SetMsgNet(aResult, aMax, "Could not connect to the server", gConnStat.Int());
+		NetFail();
 		return -1;
 		}
 	gSockOpen = 1;
+	gLinkFailAt = TInt64(0);
 	gNetSent = gNetGotData = 0;
 	Say("  TCP connection open.\r\n");
 	return 0;
 	}
+
 
 // Moves a completed receive into gRx. Keeps one receive outstanding at all
 // times instead of cancelling, so no data can be lost to a cancel race.
@@ -360,8 +533,15 @@ static void NetRxFill(int aTimeoutUs)
 		{
 		gRxLen = 0;
 		gNetClosed = 1;                  // KErrEof or a link error
-		LinkMsg(gRecvStat.Int() == KErrEof ? "  The server closed the connection.\r\n"
-			: "  The connection dropped.\r\n");
+		if (gRecvStat.Int() == KErrEof)
+			LinkMsg("  The server closed the connection.\r\n");
+		else
+			{
+			// not a clean close: PPP itself may have gone. The next
+			// pg_dial then starts the link afresh (StartPpp and all)
+			gLinkSuspect = 1;
+			LinkMsg("  The connection dropped.\r\n");
+			}
 		}
 	}
 
@@ -537,6 +717,7 @@ extern "C" int pg_init()
 extern "C" void pg_close()
 	{
 	pg_link_close();
+	ReapOrphans(2000000);
 	if (gTimerOpen)
 		{
 		gTimer->Close();
@@ -838,9 +1019,24 @@ static int StartPpp(char* aResult, int aResultMax)
 	gRxPos = gRxLen = 0;
 	gComm->ResetBuffers();
 	Say("  Checking the modem... ");
-	if (!ModemAnswersAt())
-		Say("no answer - it may already be in PPP; going on.\r\n");
-	else
+	int at = ModemAnswersAt();
+	if (!at)
+		{
+		// still in PPP from a start that the Psion never finished? Escape
+		// to the command prompt and hang up, as the modem mode does
+		Say("no answer - hanging up an old connection first\r\n");
+		pg_msleep(1100);
+		pg_serial_write("+++", 3);
+		pg_msleep(1100);
+		pg_serial_write("ATH\r", 4);
+		pg_msleep(500);
+		gRxPos = gRxLen = 0;
+		gComm->ResetBuffers();
+		at = ModemAnswersAt();
+		if (!at)
+			Say("  The modem does not answer AT - it may already be in PPP; going on.\r\n");
+		}
+	if (at)
 		{
 		Say("OK\r\n  Sending ");
 		Say(cmd);
@@ -853,13 +1049,23 @@ static int StartPpp(char* aResult, int aResultMax)
 		pg_serial_write(cmd, clen);
 		pg_serial_write("\r", 1);
 		rc = -1;
-		SetMsg(aResult, aResultMax, "no CONNECT from the modem");
-		for (int i = 0; i < 8; i++)
+		SetMsg(aResult, aResultMax, "Could not connect: no CONNECT from the modem after the Psion Internet start command");
+		TInt64 start = NowMicro();
+		for (;;)
 			{
-			int n = ReadLine(line, sizeof(line), 20000);
+			TInt64 leftUs = TInt64(KPppConnectWaitMs) * 1000 - (NowMicro() - start);
+			if (leftUs <= 0)
+				{
+				Say("  No CONNECT from the modem.\r\n");
+				break;
+				}
+			int n = ReadLine(line, sizeof(line), (leftUs / TInt64(1000)).Low());
 			if (n < 0)
 				{
-				Say("  No reply from the modem for 20 seconds.\r\n");
+				if (pg_quit_requested())
+					SetMsg(aResult, aResultMax, "Stopped");
+				else
+					Say("  No reply from the modem.\r\n");
 				break;
 				}
 			if (StartsWith(line, "AT") || StartsWith(line, "at"))
@@ -876,7 +1082,7 @@ static int StartPpp(char* aResult, int aResultMax)
 				|| StartsWith(line, "BUSY") || StartsWith(line, "NO ANSWER")
 				|| StartsWith(line, "NO DIAL"))
 				{
-				SetMsg(aResult, aResultMax, "the modem refused the Psion Internet start command (see Connection settings)");
+				SetMsg(aResult, aResultMax, "Could not connect: the modem refused the Psion Internet start command (see Connection settings)");
 				break;
 				}
 			}
@@ -901,8 +1107,34 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 	gRxPos = gRxLen = 0;
 	if (gNet)
 		{
-		if (gShared->ppp_start[0] && !gSsOpen && StartPpp(aResult, aResultMax) != 0)
+		if (pg_quit_requested())
+			{
+			SetMsg(aResult, aResultMax, "Stopped");
 			return -1;
+			}
+		// a link start failed a moment ago: say so at once rather than
+		// dial again (and bring the Psion's connection dialogs back)
+		if (gLinkFailAt != TInt64(0) && NowMicro() - gLinkFailAt < KLinkFailHoldUs)
+			{
+			SetMsg(aResult, aResultMax, "The Psion's Internet connection failed a moment ago - try again in a few seconds");
+			return -1;
+			}
+		ReapOrphans(0);
+		if (gLookupOrphan || gConnOrphan)
+			{
+			// the last attempt's request never completed, even after closing
+			// the session: leave ESOCK alone rather than pile a second one on
+			// (and no other waits happen while one is out - see WaitFor)
+			SetMsg(aResult, aResultMax, "The Psion's Internet connection is still busy with the last attempt - wait a moment and try again");
+			return -1;
+			}
+		if (gLinkSuspect)
+			NetClose();                  // the link dropped: start it afresh
+		if (gShared->ppp_start[0] && !gSsOpen && StartPpp(aResult, aResultMax) != 0)
+			{
+			gLinkFailAt = NowMicro();
+			return -1;
+			}
 		return NetConnect(aResult, aResultMax);
 		}
 	if (!gCommOpen)

@@ -778,8 +778,9 @@ void CPmView::UpdateReaderL()
 	{
 	const TPmRow* row = CurrentRow();
 	TBool waiting = iWaitingBody || !iText;
-	if (iReaderUid == iMsgUid && iReaderWaiting == waiting && iNativeMode == EMessage)
+	if (iReaderUid == iMsgUid && iReaderWaiting == waiting && iReaderError == iBodyError && iNativeMode == EMessage)
 		return;
+	iReaderError = iBodyError;
 	iReaderUid = iMsgUid;
 	iReaderWaiting = waiting;
 	iLinks->Reset();
@@ -846,8 +847,15 @@ void CPmView::UpdateReaderL()
 
 	if (waiting)
 		{
-		t.Append(iSettings->iOffline ? _L("Not downloaded - you are working offline.")
-			: _L("Downloading the message..."));
+		if (iBodyError.Length())
+			{
+			t.Append(iBodyError);
+			t.Append(KPara);
+			t.Append(_L("Press Enter on it in the list to try again."));
+			}
+		else
+			t.Append(iSettings->iOffline ? _L("Not downloaded - you are working offline.")
+				: _L("Downloading the message..."));
 		t.Append(KPara);
 		}
 	else
@@ -1686,6 +1694,9 @@ void CPmView::ToggleViewL(TInt aFlag)
 		}
 	}
 
+_LIT(KPsionInternet, "Psion Internet");
+_LIT(KModem, "modem");
+
 void CPmView::StatusInfoL()
 	{
 	TBuf<120> lines[6];
@@ -1707,10 +1718,7 @@ void CPmView::StatusInfoL()
 	const TInt KBauds[5] = { 9600, 19200, 38400, 57600, 115200 };
 	TInt bi = iSettings->iBaudIndex;
 	if (bi < 0 || bi > 4) bi = 4;
-	if (iSettings->iNetMode)
-		lines[1] = _L("Connection: Psion Internet (TCP/IP)");
-	else
-		lines[1].Format(_L("Connection: serial modem at %d baud"), KBauds[bi]);
+	lines[1].Format(_L("Connection: %S, %d baud"), iSettings->iNetMode ? &KPsionInternet() : &KModem(), KBauds[bi]);
 	TBuf<40> conn;
 	ConnectionText(*iSettings, iShared, conn);
 	lines[1].Append(_L(" - "));

@@ -148,6 +148,8 @@ public:
 	void AccountChangedL();                  // switched to another account
 	void Cmd(TInt aOp, const TDesC8& aFolder, TUint aUid, const TDesC8& aArg);
 	TBool Busy() const;
+	TBool OpInFlight(TInt aOp) const;        // running now, or queued
+	void StopEngineWork(const TDesC& aToast); // Esc / Stop: net.quit
 	const TPmRow* CurrentRow() const;
 	TBool CurrentIsSearch() const { return iSearch; }
 	const TPmFolder* CurrentFolder() const;
@@ -306,6 +308,7 @@ private:
 	TBool iCalSecond;                // sending what the Agenda sync found
 	TBuf<120> iCalMsg;
 	TBool iCalPending;               // a calendar sync is with the engine
+	TBool iCalAfterMail;             // Check mail: sync the calendar once the mail part has connected
 	RChunk iChunk;
 	TBool iChunkOpen;
 	PmShared* iShared;
@@ -338,6 +341,7 @@ private:
 	TInt iScroll;
 	TInt iFocusLink;
 	TBool iWaitingBody;
+	TBuf<160> iBodyError;            // why the last download of it failed
 	TBool iHtml;                     // an HTML original is on the card
 	TInt iTruncated;                 // bytes not downloaded
 	CDesCArrayFlat* iAttNames;
@@ -424,6 +428,7 @@ private:
 	TMode iNativeMode;               // what the controls last showed
 	TUint iReaderUid;                // what the reader last showed
 	TBool iReaderWaiting;
+	TBuf<160> iReaderError;
 	CArrayFixFlat<TPmLinkRange>* iLinks;
 	TInt iLinkSel;                   // index in iLinks, -1 none
 	TInt iSplitX;                    // where the folder list ends
@@ -484,6 +489,15 @@ private:
 	TInt& iChoice;
 	};
 
+class CPmAboutDialog : public CEikDialog
+	{
+public:
+	CPmAboutDialog(const TDesC& aStatus) : iStatus(aStatus) {}
+private:
+	void PreLayoutDynInitL();
+	TPtrC iStatus;
+	};
+
 class CPmPrefsDialog : public CEikDialog
 	{
 public:
@@ -506,8 +520,10 @@ private:
 	TBool OkToExitL(TInt aButtonId);
 	void Collect();
 	void ShowAttachments();
+	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
 	CPmDraft& iDraft;
 	TPtrC iTitle;
+	TInt iRuns;                  // formatting runs in the text (Collect)
 	};
 
 class CPmAccountDialog : public CEikDialog

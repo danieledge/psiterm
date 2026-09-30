@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/time.h>
 #include "../engine/pm.h"
 
@@ -70,6 +71,28 @@ void pm_rmtree(const char *dir)
 	char cmd[400];
 	snprintf(cmd, sizeof(cmd), "rm -rf '%s'", dir);
 	if (system(cmd)) {}
+}
+
+int pm_replace(const char *tmp, const char *path)
+{
+	if (getenv("PM_FAIL_REPLACE")) return -1;      /* tests */
+	return rename(tmp, path) == 0 ? 0 : -1;
+}
+
+long pm_free_kb(const char *path)
+{
+	struct statvfs v;
+	const char *fake = getenv("PM_FREE_KB");       /* tests: pretend */
+	char p[300];
+	if (fake) return atol(fake);
+	pm_copy(p, path, sizeof(p));
+	if (statvfs(p, &v) != 0) {
+		char *sl = strrchr(p, '/');
+		if (!sl) return -1;
+		*sl = 0;
+		if (statvfs(p[0] ? p : "/", &v) != 0) return -1;
+	}
+	return (long)((unsigned long long)v.f_bavail * v.f_frsize / 1024);
 }
 
 void pm_log(const char *fmt, ...)

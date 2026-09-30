@@ -11,9 +11,15 @@
  *     Attach: D:\Documents\notes.txt        (any number)
  *     Reply-Folder: INBOX                    (mark the original answered)
  *     Reply-Uid: 1234
+ *     Format: rich                           (the text has bold/italic/underline)
  *     <blank line>
  *     the text...
  * and this writes <id>.eml: UTF-8, quoted-printable, attachments in base64.
+ *
+ * Rich text marks where styles change, as the app's editor had them:
+ * \x11 bold on, \x12 bold off, \x13 italic on, \x14 italic off, \x18
+ * underline on, \x19 underline off. It goes out as multipart/alternative:
+ * the plain text (marks removed) and HTML.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -127,22 +133,19 @@ static const char *mime_type(const char *name)
 }
 
 /* quoted-printable UTF-8 body from cp1252 text; LF -> CRLF */
-static void write_qp(FILE *f, FILE *in)
+static void write_qp_buf(FILE *f, const char *s, int len)
 {
 	static const char hex[] = "0123456789ABCDEF";
-	int col = 0, c;
-	while ((c = fgetc(in)) != EOF) {
+	int col = 0, k;
+	for (k = 0; k < len; k++) {
 		char u[4];
-		unsigned char ch = (unsigned char)c;
+		unsigned char ch = (unsigned char)s[k];
 		int n, i, ws_at_end = 0;
-		if (c == '\r') continue;
-		if (c == '\n') { fputs("\r\n", f); col = 0; continue; }
-		if (c == ' ' || c == '\t') {
+		if (ch == '\r') continue;
+		if (ch == '\n') { fputs("\r\n", f); col = 0; continue; }
+		if (ch == ' ' || ch == '\t')
 			/* a space or tab just before a line break must be encoded */
-			int nx = fgetc(in);
-			ws_at_end = nx == '\n' || nx == '\r' || nx == EOF;
-			if (nx != EOF) ungetc(nx, in);
-		}
+			ws_at_end = k + 1 >= len || s[k + 1] == '\n' || s[k + 1] == '\r';
 		n = cs_cp1252_to_utf8((const char *)&ch, 1, u, sizeof(u));
 		for (i = 0; i < n; i++) {
 			unsigned char b = (unsigned char)u[i];
@@ -155,6 +158,83 @@ static void write_qp(FILE *f, FILE *in)
 		}
 	}
 	if (col) fputs("\r\n", f);
+}
+
+/* the style marks (see the top of this file) */
+static int is_mark(unsigned char c)
+{
+	return (c >= 0x11 && c <= 0x14) || c == 0x18 || c == 0x19;
+}
+
+/* the text without its marks, in place */
+static int strip_marks(char *s, int len)
+{
+	int i, j = 0;
+	for (i = 0; i < len; i++)
+		if (!is_mark((unsigned char)s[i])) s[j++] = s[i];
+	return j;
+}
+
+/* HTML from the marked text: styles as properly nested tags, lines as <br> */
+static char *to_html(const char *s, int len, int *outlen)
+{
+	int cap = len * 8 + 400, n = 0, i, b = 0, it = 0, u = 0, open = 0;
+	char *o = (char *)malloc(cap);
+	const char *head = "<html><head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"></head>\n<body><div style=\"font-family: Arial, sans-serif\">";
+	if (!o) return 0;
+#define PUT(str) do { const char *q_ = (str); while (*q_ && n < cap - 1) o[n++] = *q_++; } while (0)
+	PUT(head);
+	for (i = 0; i < len; i++) {
+		unsigned char c = (unsigned char)s[i];
+		if (is_mark(c)) {
+			int nb = b, ni = it, nu = u;
+			if (c == 0x11) nb = 1; else if (c == 0x12) nb = 0;
+			else if (c == 0x13) ni = 1; else if (c == 0x14) ni = 0;
+			else if (c == 0x18) nu = 1; else nu = 0;
+			/* close what's open (innermost first), then open the new set */
+			if (open) { if (u) PUT("</u>"); if (it) PUT("</i>"); if (b) PUT("</b>"); open = 0; }
+			b = nb; it = ni; u = nu;
+			continue;
+		}
+		if (!open && (b || it || u)) { if (b) PUT("<b>"); if (it) PUT("<i>"); if (u) PUT("<u>"); open = 1; }
+		if (c == '\r') continue;
+		if (c == '\n') {
+			if (open) { if (u) PUT("</u>"); if (it) PUT("</i>"); if (b) PUT("</b>"); open = 0; }
+			PUT("<br>\n");
+			continue;
+		}
+		if (c == '<') PUT("&lt;");
+		else if (c == '>') PUT("&gt;");
+		else if (c == '&') PUT("&amp;");
+		else if (c == '"') PUT("&quot;");
+		else if (c == ' ' && (i == 0 || s[i - 1] == ' ' || s[i - 1] == '\n')) PUT("&nbsp;");
+		else if (n < cap - 1) o[n++] = (char)c;
+	}
+	if (open) { if (u) PUT("</u>"); if (it) PUT("</i>"); if (b) PUT("</b>"); }
+	PUT("</div></body></html>\n");
+#undef PUT
+	o[n] = 0;
+	*outlen = n;
+	return o;
+}
+
+/* the rest of a file */
+static char *read_rest(FILE *in, int *len)
+{
+	int cap = 4096, n = 0, c;
+	char *b = (char *)malloc(cap);
+	if (!b) return 0;
+	while ((c = fgetc(in)) != EOF) {
+		if (n >= cap - 1) {
+			char *nb = (char *)realloc(b, cap * 2);
+			if (!nb) { free(b); return 0; }
+			b = nb; cap *= 2;
+		}
+		b[n++] = (char)c;
+	}
+	b[n] = 0;
+	*len = n;
+	return b;
 }
 
 static int write_b64_file(FILE *f, const char *path)
@@ -209,7 +289,8 @@ int compose_mime(int acct, const char *outbox_path, const char *mime_path,
 	PmAccount *a = &pm_shared()->acct[acct];
 	static char line[1100], to[1100], cc[1100], bcc[1100], subject[400], irt[200], refs[1000];
 	static char attach[8][150];
-	int natt = 0, i;
+	int natt = 0, i, rich = 0, blen = 0;
+	char *body;
 	FILE *in, *f;
 	char date[40], boundary[48], msgid[140], fromh[200];
 	const char *dom;
@@ -233,6 +314,7 @@ int compose_mime(int acct, const char *outbox_path, const char *mime_path,
 		else if (!pm_strcasecmp(line, "In-Reply-To")) pm_copy(irt, v, sizeof(irt));
 		else if (!pm_strcasecmp(line, "References")) pm_copy(refs, v, sizeof(refs));
 		else if (!pm_strcasecmp(line, "Attach") && natt < 8 && *v) pm_copy(attach[natt++], v, sizeof(attach[0]));
+		else if (!pm_strcasecmp(line, "Format")) rich = !pm_strcasecmp(v, "rich");
 	}
 	rcpts[0] = 0;
 	if (collect_addrs(to, rcpts, rmax) + collect_addrs(cc, rcpts, rmax) + collect_addrs(bcc, rcpts, rmax) == 0) {
@@ -245,7 +327,7 @@ int compose_mime(int acct, const char *outbox_path, const char *mime_path,
 		if (!t) { fclose(in); set_why(why, whymax, "Attachment missing: %s", attach[i]); return PM_RES_FAILED; }
 		fclose(t);
 	}
-	if (!(f = fopen(mime_path, "wb"))) { fclose(in); set_why(why, whymax, "Could not write the message"); return PM_RES_FAILED; }
+	if (!(f = fopen(mime_path, "wb"))) { fclose(in); pm_write_why(why, whymax, "the message to send", mime_path); return PM_RES_FAILED; }
 
 	pm_copy(from_addr, a->email, famax);
 	dom = strchr(a->email, '@');
@@ -270,9 +352,31 @@ int compose_mime(int acct, const char *outbox_path, const char *mime_path,
 		fprintf(f, "Content-Type: multipart/mixed; boundary=\"%s\"\r\n\r\n", boundary);
 		fprintf(f, "This is a message in MIME format.\r\n\r\n--%s\r\n", boundary);
 	}
-	fprintf(f, "Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n");
-	write_qp(f, in);
+	body = read_rest(in, &blen);
 	fclose(in);
+	if (!body) { fclose(f); remove(mime_path); set_why(why, whymax, "Not enough memory for the message"); return PM_RES_FAILED; }
+	if (rich) {
+		/* the plain text and HTML, as alternatives */
+		int hlen = 0;
+		char *html = to_html(body, blen, &hlen);
+		char alt[56];
+		sprintf(alt, "%s_alt", boundary);
+		if (!html) { free(body); fclose(f); remove(mime_path); set_why(why, whymax, "Not enough memory for the message"); return PM_RES_FAILED; }
+		blen = strip_marks(body, blen);
+		fprintf(f, "Content-Type: multipart/alternative; boundary=\"%s\"\r\n\r\n", alt);
+		if (!natt) fprintf(f, "This is a message in MIME format.\r\n\r\n");
+		fprintf(f, "--%s\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n", alt);
+		write_qp_buf(f, body, blen);
+		fprintf(f, "\r\n--%s\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n", alt);
+		write_qp_buf(f, html, hlen);
+		fprintf(f, "\r\n--%s--\r\n", alt);
+		free(html);
+	} else {
+		fprintf(f, "Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n");
+		blen = strip_marks(body, blen);
+		write_qp_buf(f, body, blen);
+	}
+	free(body);
 	for (i = 0; i < natt; i++) {
 		const char *base = attach[i], *s;
 		char encname[300];
@@ -303,6 +407,6 @@ int compose_mime(int acct, const char *outbox_path, const char *mime_path,
 		}
 	}
 	if (natt) fprintf(f, "\r\n--%s--\r\n", boundary);
-	if (fclose(f) != 0) { remove(mime_path); set_why(why, whymax, "Could not write the message (disk full?)"); return PM_RES_FAILED; }
+	if (pm_fclose(f) != 0) { remove(mime_path); pm_write_why(why, whymax, "the message to send", mime_path); return PM_RES_FAILED; }
 	return PM_RES_OK;
 }

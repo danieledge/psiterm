@@ -15,6 +15,7 @@ extern "C" {
 int snprintf(char* str, size_t size, const char* fmt, ...);
 int vsnprintf(char* str, size_t size, const char* fmt, va_list ap);
 void pmn_idle_tick(void);
+void pm_log(const char* aFmt, ...);
 extern PsiShared* pg_shared();
 extern int pg_attach();
 void pm_loop(int (*housekeeping)(void));
@@ -133,6 +134,45 @@ extern "C" void pm_rmtree(const char* aDir)
 		fm->RmDir(n);
 		delete fm;
 		}
+	}
+
+// tmp takes path's place in one file-server call (RFs::Replace), so there is
+// no moment when neither exists. The app may have the old file open to read
+// it (a message being shown, the list): then it is tried again after a moment.
+extern "C" int pm_replace(const char* aTmp, const char* aPath)
+	{
+	if (!gFs && (Fs(), !gFs))
+		return -1;
+	TFileName from, to;
+	ToName(from, aTmp);
+	ToName(to, aPath);
+	TInt r = KErrNone;
+	for (TInt i = 0; i < 5; i++)
+		{
+		r = Fs().Replace(from, to);
+		if (r == KErrNone)
+			return 0;
+		if (r != KErrInUse && r != KErrAccessDenied)
+			break;
+		User::After(60000);
+		}
+	pm_log("replace %s -> %s: %d", aTmp, aPath, r);
+	return -1;
+	}
+
+// free space (KB) on the drive the path is on: "D:\..." -> D
+extern "C" long pm_free_kb(const char* aPath)
+	{
+	if (!aPath || !aPath[0] || aPath[1] != ':' || (!gFs && (Fs(), !gFs)))
+		return -1;
+	TInt drive;
+	if (RFs::CharToDrive(TChar((TUint)(unsigned char)aPath[0]), drive) != KErrNone)
+		return -1;
+	TVolumeInfo v;
+	if (Fs().Volume(v, drive) != KErrNone)
+		return -1;
+	TInt64 kb = v.iFree / TInt64(1024);
+	return kb.High() ? 0x7fffffff : (long)kb.Low();
 	}
 
 // ----- log: psimail.log next to the app, at most 32 KB --------------------
