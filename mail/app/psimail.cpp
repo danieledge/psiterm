@@ -21,6 +21,8 @@
 #include <eikdll.h>
 #include <eikrted.h>
 #include <eiktbar.h>
+#include <eikcmbut.h>
+#include "pmicons.h"
 #include "pmapp.h"
 #include "psilink.h"
 
@@ -70,7 +72,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.5");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.6");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -637,6 +639,7 @@ void CPmView::LoadListL()
 			(*iRows)[i] = (*iRows)[n - 1 - i];
 			(*iRows)[n - 1 - i] = t;
 			}
+		SortRows();
 		}
 	iSel = 0;
 	for (TInt i = 0; i < iRows->Count(); i++)
@@ -1742,6 +1745,11 @@ TInt CPmView::Rows() const
 
 void CPmView::Toast(const TDesC& aText)
 	{
+	if (iNativeShown && NativeMode() && iTitleH == 0)
+		{
+		iEikonEnv->InfoMsg(aText);           // (no title band to show it in)
+		return;
+		}
 	SafeCopy(iToast, aText);
 	iToastUntil = User::TickCount() + 64 * 3;      // 3 s (1/64 s ticks)
 	Render();
@@ -2288,7 +2296,10 @@ void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
 	AddEntropy(p.iX * 1000 + p.iY);
 	if (iNativeShown && NativeMode())
 		{
-		// the list boxes and the reader take the pen themselves
+		// the title band and the headings are ours; the list boxes and the
+		// reader take the pen themselves
+		if (NativePointerL(aEvent))
+			return;
 		CCoeControl::HandlePointerEventL(aEvent);
 		if (iMode == EMessage && aEvent.iType == TPointerEvent::EButton1Up && iLinks)
 			{
@@ -2782,6 +2793,8 @@ void CPmAppUi::ConstructL()
 	BaseConstructL();
 	LoadSettings();
 	LoadCalSettings();
+	TRAPD(pics, ToolbarPicturesL());
+	(void)pics;                              // (no PsiMail.mbm: words only)
 	iView = new(ELeave) CPmView;
 	iView->ConstructL(ClientRect(), iSettings, iCalSettings);
 	AddToStackL(iView);
@@ -2792,10 +2805,42 @@ void CPmAppUi::ConstructL()
 		}
 	}
 
+// the toolbar buttons' pictures, from PsiMail.mbm (made by tools/mkicons.py)
+void CPmAppUi::ToolbarPicturesL()
+	{
+	if (!iToolBar)
+		return;
+	TFileName mbm = Application()->BitmapStoreName();
+	const TInt KButtons[4][2] = {
+		{ EPmCmdNewPopup, EMbmToolNew }, { EPmCmdReplyPopup, EMbmToolReply },
+		{ EPmCmdSendRecv, EMbmToolOpen }, { EPmCmdHangup, EMbmToolClose } };
+	for (TInt i = 0; i < 4; i++)
+		{
+		CEikCommandButton* b = (CEikCommandButton*)iToolBar->ControlById(KButtons[i][0]);
+		if (!b)
+			continue;
+		CFbsBitmap* bmp = iEikonEnv->CreateBitmapL(mbm, KButtons[i][1]);
+		CleanupStack::PushL(bmp);
+		CFbsBitmap* mask = iEikonEnv->CreateBitmapL(mbm, KButtons[i][1] + 1);
+		CleanupStack::PushL(mask);
+		b->SetPictureL(bmp, mask);            // (the button owns them now)
+		CleanupStack::Pop(2);
+		b->LayoutComponentsL();
+		}
+	iToolBar->DrawNow();
+	}
+
+CCoeControl* CPmAppUi::ToolBarButton(TInt aId)
+	{
+	return iToolBar ? iToolBar->ControlById(aId) : NULL;
+	}
+
 // the mailbox and the reader have the standard toolbar; writing and the
 // calendar are drawn screens that use all of it
 void CPmAppUi::ShowToolBar(TBool aShow)
 	{
+	if (iSettings.iView & 1)
+		aShow = EFalse;
 	if (iToolBar && iToolBar->IsVisible() != aShow)
 		iToolBar->MakeVisible(aShow);
 	if (iView)
@@ -3568,7 +3613,7 @@ void CPmAppUi::AboutL()
 	lines[0].Append(_L(" - email for the Psion Series 5mx"));
 	lines[1] = _L("IMAP and SMTP over TLS 1.3, made for Fastmail.");
 	lines[2] = _L("Networking and TLS from PsiTerm (MIT).");
-	lines[3] = _L("Ctrl+G send & receive, Ctrl+N new, Ctrl+R reply.");
+	lines[3] = _L("Shift+Ctrl+C open mailbox, Ctrl+N new, Ctrl+R reply.");
 	lines[4] = _L("Esc goes back, or stops a download.");
 	TMemoryInfoV1Buf mem;
 	UserHal::MemoryInfo(mem);
@@ -3584,19 +3629,23 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 	{
 	CPmView::TMode m = iView->Mode();
 	TBool msg = (m == CPmView::EList || m == CPmView::EMessage) && iView->CurrentRow() != NULL;
+	TBool native = m == CPmView::EList || m == CPmView::EOutbox || m == CPmView::EMessage || m == CPmView::ENoAccount;
 	if (aMenuId == R_PM_FILE_MENU)
 		{
 		aMenuPane->SetItemButtonState(EPmCmdOffline, iSettings.iOffline ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemDimmed(EPmCmdHangup, !iView->Shared()->online);
+		aMenuPane->SetItemDimmed(EPmCmdStop, !iView->Busy());
 		}
-	else if (aMenuId == R_PM_MESSAGE_MENU)
+	else if (aMenuId == R_PM_EDIT_MENU)
 		{
-		aMenuPane->SetItemDimmed(EPmCmdReply, !msg);
-		aMenuPane->SetItemDimmed(EPmCmdReplyAll, !msg);
-		aMenuPane->SetItemDimmed(EPmCmdForward, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdDelete, !msg && !(m == CPmView::EOutbox && iView->CurrentRow()));
 		aMenuPane->SetItemDimmed(EPmCmdMove, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdArchive, !msg);
+		}
+	else if (aMenuId == R_PM_MESSAGE_MENU)
+		{
+		aMenuPane->SetItemDimmed(EPmCmdReplyMenu, !msg);
+		aMenuPane->SetItemDimmed(EPmCmdForward, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdUnread, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdFlag, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdSaveAttach, iView->AttachmentCount() == 0);
@@ -3604,17 +3653,43 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemDimmed(EPmCmdWeb, m != CPmView::EMessage || !iView->HasHtml());
 		aMenuPane->SetItemDimmed(EPmCmdNew, m == CPmView::ENoAccount);
 		}
+	else if (aMenuId == R_PM_VIEW_MENU)
+		{
+		aMenuPane->SetItemButtonState(EPmCmdToggleToolbar, (iSettings.iView & 1) ? 0 : EEikMenuItemSymbolOn);
+		aMenuPane->SetItemButtonState(EPmCmdToggleTitle, (iSettings.iView & 2) ? 0 : EEikMenuItemSymbolOn);
+		aMenuPane->SetItemButtonState(EPmCmdToggleFolders, (iSettings.iView & 4) ? 0 : EEikMenuItemSymbolOn);
+		aMenuPane->SetItemButtonState(EPmCmdSmooth, iSettings.iMono ? 0 : EEikMenuItemSymbolOn);
+		aMenuPane->SetItemDimmed(EPmCmdToggleToolbar, !native);
+		aMenuPane->SetItemDimmed(EPmCmdToggleTitle, !native);
+		aMenuPane->SetItemDimmed(EPmCmdToggleFolders, !native);
+		}
 	else if (aMenuId == R_PM_FOLDER_MENU)
 		{
 		aMenuPane->SetItemDimmed(EPmCmdOlder, m != CPmView::EList || iView->CurrentIsSearch());
+		}
+	else if (aMenuId == R_PM_REPLY_POPUP)
+		{
+		aMenuPane->SetItemDimmed(EPmCmdReply, !msg);
+		aMenuPane->SetItemDimmed(EPmCmdReplyAll, !msg);
+		aMenuPane->SetItemDimmed(EPmCmdForward, !msg);
+		}
+	else if (aMenuId == R_PM_TOOLS_MENU)
+		{
+		aMenuPane->SetItemDimmed(EPmCmdSort, m != CPmView::EList);
 		}
 	}
 
 void CPmAppUi::HandleCommandL(TInt aCommand)
 	{
-	if (aCommand == EEikCmdZoomIn || aCommand == EEikCmdZoomOut)
+	if (aCommand == EEikCmdZoomIn || aCommand == EEikCmdZoomOut ||
+		aCommand == EPmCmdZoomIn || aCommand == EPmCmdZoomOut)
 		{
-		iView->ZoomL(aCommand == EEikCmdZoomIn ? 1 : -1);
+		iView->ZoomL(aCommand == EEikCmdZoomIn || aCommand == EPmCmdZoomIn ? 1 : -1);
+		return;
+		}
+	if (aCommand == EPmCmdNewPopup || aCommand == EPmCmdReplyPopup)
+		{
+		iView->ToolbarPopupL(aCommand);
 		return;
 		}
 	if (iView->ModalCommandL(aCommand))
@@ -3623,7 +3698,9 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 	if (m == CPmView::ENoAccount && aCommand == EPmCmdEditAccount)
 		aCommand = EPmCmdNewAccount;
 	if (m == CPmView::ENoAccount && aCommand != EEikCmdExit && aCommand != EPmCmdNewAccount &&
-		aCommand != EPmCmdConnSettings && aCommand != EPmCmdAbout && aCommand != EPmCmdUpdate)
+		aCommand != EPmCmdConnSettings && aCommand != EPmCmdAbout && aCommand != EPmCmdUpdate &&
+		aCommand != EPmCmdToggleToolbar && aCommand != EPmCmdToggleTitle && aCommand != EPmCmdToggleFolders &&
+		aCommand != EPmCmdStatusInfo && aCommand != EPmCmdStop)
 		{
 		iView->Toast(_L("Set up an account first: Tools > New account"));
 		return;
@@ -3679,8 +3756,55 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		ForwardL();
 		break;
 	case EPmCmdDelete:
-		iView->DeleteCurrentL();
+		if (m == CPmView::EList || m == CPmView::EOutbox || m == CPmView::EMessage)
+			iView->DeleteCurrentL();
 		break;
+	case EPmCmdStop:
+		if (iView->Busy())
+			{
+			iView->Shared()->net.quit = 1;     // stop what the engine is doing
+			iView->Toast(_L("Stopping..."));
+			}
+		break;
+	case EPmCmdToggleToolbar:
+		iView->ToggleViewL(1);
+		break;
+	case EPmCmdToggleTitle:
+		iView->ToggleViewL(2);
+		break;
+	case EPmCmdToggleFolders:
+		iView->ToggleViewL(4);
+		break;
+	case EPmCmdStatusInfo:
+		iView->StatusInfoL();
+		break;
+	case EPmCmdSort:
+		{
+		CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(8);
+		CleanupStack::PushL(names);
+		names->AppendL(_L("Date, newest first"));
+		names->AppendL(_L("Date, oldest first"));
+		names->AppendL(_L("From, A to Z"));
+		names->AppendL(_L("From, Z to A"));
+		names->AppendL(_L("Subject, A to Z"));
+		names->AppendL(_L("Subject, Z to A"));
+		names->AppendL(_L("Unread first"));
+		TInt choice = iView->SortMode();
+		CleanupStack::Pop();                  // the dialog's choice list takes names
+		CPmChoiceDialog* dlg = new(ELeave) CPmChoiceDialog(_L("Sort messages"), _L("Order"), names, choice);
+		if (dlg->ExecuteLD(R_PM_CHOICE_DIALOG))
+			iView->SortL(choice);
+		break;
+		}
+	case EPmCmdInbox:
+		{
+		TInt inbox = 0;
+		for (TInt i = 0; i < iView->FolderCount(); i++)
+			if (iView->FolderAt(i).iKind == 'I') { inbox = i; break; }
+		if (iView->FolderCount())
+			iView->OpenSidebarItemL(inbox);
+		break;
+		}
 	case EPmCmdMove:
 		MoveL();
 		break;

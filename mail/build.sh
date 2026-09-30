@@ -17,6 +17,10 @@ for t in epoc ${1:+$1}; do
 		|| { grep -E "error|undefined" "$TOP/build/mail-$t.log" | grep -v error_to_string | head -30; exit 1; }
 done
 
+echo "== pictures (PsiMail.mbm)"
+python3 "$HERE/tools/mkicons.py" "$TOP/build/mail-icons" "$HERE/ui/pmicons.h"
+(cd "$TOP/build/mail-icons" && WINEDEBUG=-all wine "$EPOCROOT/epoc32/tools/bmconv.exe" /q psimail.mbm $(tr '\n' ' ' < files.txt) > /dev/null 2>&1)
+
 echo "== PsiMail.app"
 (
 export PATH=/usr/bin:/bin:$PSION_SDK/gcc-3.0-psion-98r2-9/bin:$EPOCROOT/epoc32/tools
@@ -38,7 +42,7 @@ make -f psimail.marm rel > "$TOP/build/psimail-app.log" 2>&1 \
 echo "== package"
 P=$TOP/build/mail-pkg
 rm -rf "$P"; mkdir -p "$P" "$TOP/dist"
-cp "$REL/psimail.app" "$REL/psimail.rsc" "$REL/psimail.exe" "$HERE/pkg/psimail.pkg" "$P/"
+cp "$REL/psimail.app" "$REL/psimail.rsc" "$REL/psimail.exe" "$HERE/pkg/psimail.pkg" "$TOP/build/mail-icons/psimail.mbm" "$P/"
 python3 "$HERE/pkg/mkicon.py" "$P/psimail.aif" > /dev/null
 (cd "$P" && WINEDEBUG=-all wine "$EPOCROOT/epoc32/tools/makesis.exe" psimail.pkg "$TOP/dist/PsiMail.sis" > /dev/null)
 ls -la "$TOP/dist/PsiMail.sis"

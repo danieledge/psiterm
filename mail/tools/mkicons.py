@@ -1,0 +1,392 @@
+#!/usr/bin/env python3
+"""PsiMail's icons (original pixel art, in the spirit of the Psion's own
+programs) -> BMP files for bmconv, and ui/pmicons.h with their ids.
+
+    mail/tools/mkicons.py OUTDIR HEADER
+
+Each icon is ASCII art: k black, d dark grey, l light grey, w white,
+. transparent. Every icon gets a 1-bit mask right after it in the MBM
+(black = drawn), so ids go icon, mask, icon, mask...
+"""
+import sys, os
+from PIL import Image
+
+GREY = {'k': 0, 'd': 85, 'l': 170, 'w': 255, '.': 255}
+
+ICONS = [
+# ---- the folder tree (16x13)
+('Folder', """
+................
+.kkkkk..........
+kllllllk........
+kllllllkkkkkkkk.
+kwwwwwwwwwwwwwk.
+kwlllllllllllldk
+kwlllllllllllldk
+kwlllllllllllldk
+kwlllllllllllldk
+kwlllllllllllldk
+kwlllllllllllldk
+kddddddddddddddk
+.kkkkkkkkkkkkkk.
+"""),
+('FolderOpen', """
+................
+.kkkkk..........
+kllllllk........
+kllllllkkkkkkk..
+klkkkkkkkkkkkkkk
+klkwwwwwwwwwwwwk
+kkwllllllllllldk
+kkwllllllllllldk
+kwllllllllllldk.
+kwllllllllllldk.
+kwlllllllllldk..
+kddddddddddddk..
+kkkkkkkkkkkkk...
+"""),
+('Inbox', """
+......kkkk......
+......kwwk......
+......kwwk......
+....kkkwwkkk....
+.....kwwwwk.....
+..k...kwwk...k..
+.kdk...kk...kdk.
+kdwdk......kdwdk
+kdwwdkkkkkkdwwdk
+kdwwwwwwwwwwwwdk
+kdwwwwwwwwwwwwdk
+kddddddddddddddk
+.kkkkkkkkkkkkkk.
+"""),
+('Outbox', """
+.......kk.......
+......kwwk......
+.....kwwwwk.....
+....kkkwwkkk....
+......kwwk......
+..k...kwwk...k..
+.kdk..kkkk..kdk.
+kdwdk......kdwdk
+kdwwdkkkkkkdwwdk
+kdwwwwwwwwwwwwdk
+kdwwwwwwwwwwwwdk
+kddddddddddddddk
+.kkkkkkkkkkkkkk.
+"""),
+('Drafts', """
+.kkkkkkkkk......
+.kwwwwwwwkk.....
+.kwllllwwkwk.kk.
+.kwwwwwwwkkkkdk.
+.kwllllllwwkddk.
+.kwwwwwwwwkddk..
+.kwlllllwkddkk..
+.kwwwwwwkddkwk..
+.kwllllkddkwwk..
+.kwwwwkkdkwwwk..
+.kwllkkkkllwwk..
+.kwwwwwwwwwwwk..
+.kkkkkkkkkkkkk..
+"""),
+('Sent', """
+..............k.
+............kkk.
+..........kkwk..
+........kkwwdk..
+......kkwwwdk...
+....kkwwwwdlk...
+..kkwwwwwdllk...
+kkwwwwwwdlllk...
+..kkkkkkdlllk...
+.......kdkkllk..
+.......kk..klk..
+.......k....kk..
+.............k..
+"""),
+('Trash', """
+.....kkkkk......
+....kk...kk.....
+.kkkkkkkkkkkkk..
+.kllllllllllldk.
+.kkkkkkkkkkkkkk.
+..kwlwlwlwlwdk..
+..kwlwlwlwlwdk..
+..kwlwlwlwlwdk..
+..kwlwlwlwlwdk..
+..kwlwlwlwlwdk..
+..kwlwlwlwlwdk..
+..kddddddddddk..
+...kkkkkkkkkk...
+"""),
+('Archive', """
+................
+kkkkkkkkkkkkkkkk
+kllllllllllllllk
+kddddddddddddddk
+kkkkkkkkkkkkkkkk
+.kwwwwwwwwwwwwk.
+.kwwwwkkkkwwwdk.
+.kwwwwkddkwwwdk.
+.kwwwwkkkkwwwdk.
+.kwwwwwwwwwwwdk.
+.kwwwwwwwwwwwdk.
+.kddddddddddddk.
+.kkkkkkkkkkkkkk.
+"""),
+('Junk', """
+................
+.....kkkkkk.....
+...kkwwwwwwkk...
+..kwwwwwwwwwwk..
+.kwwkkwwwwkkwwk.
+.kwwwkkwwkkwwwk.
+.kwwwwkkkkwwwwk.
+.kwwwwwkkwwwwwk.
+.kwwwwkkkkwwwwk.
+.kwwwkkwwkkwwwk.
+..kwkkwwwwkkwk..
+...kkwwwwwwkk...
+.....kkkkkk.....
+"""),
+('Calendar', """
+..kk......kk....
+.kkkkkkkkkkkkkk.
+kkwkkkkkkkkwkkkk
+kkkkkkkkkkkkkkkk
+kwwwwwwwwwwwwwdk
+kwkwkwkwkwkwkwdk
+kwwwwwwwwwwwwwdk
+kwkwkwkwkwkwkwdk
+kwwwwwwwwwwwwwdk
+kwkwkwkwkwkkkwdk
+kwwwwwwwwwkkkwdk
+kddddddddddddddk
+.kkkkkkkkkkkkkk.
+"""),
+# ---- a message's state in the list (14x11)
+('MsgUnread', """
+..............
+kkkkkkkkkkkkkk
+kkwwwwwwwwwwkk
+kwkwwwwwwwwkwk
+kwwkwwwwwwkwwk
+kwwwkwwwwkwwwk
+kwwwwkkkkwwwwk
+kwwwkwwwwkwwwk
+kwwkwwwwwwkwwk
+kwkwwwwwwwwkwk
+kkkkkkkkkkkkkk
+"""),
+('MsgRead', """
+......kk......
+....kkwwkk....
+..kkwwwwwwkk..
+kkwwwwwwwwwwkk
+kkkwwwwwwwwkkk
+kwlkwwwwwwklwk
+kwllkkkkkkllwk
+kwlllllllllllk
+kwlllllllllllk
+kwlllllllllllk
+kkkkkkkkkkkkkk
+"""),
+('MsgReplied', """
+......kk......
+....kkwwkk....
+..kkwwwwwwkk..
+kkwwwwwwwwwwkk
+kkkwwwkwwwwkkk
+kwlkwkkwwwklwk
+kwllkkkkkkllwk
+kwllkkkkklllwk
+kwllkkllkkllwk
+kwlllklllkllwk
+kkkkkkkkkkkkkk
+"""),
+('MsgFlag', """
+..kk..........
+..kkkkkkkkk...
+..kkddddddkk..
+..kkddddddddk.
+..kkddddddkk..
+..kkkkkkkkk...
+..kk..........
+..kk..........
+..kk..........
+..kk..........
+.kkkk.........
+"""),
+('MsgAttach', """
+......kkk.....
+.....kwwwk....
+.....kwkwk....
+.....kwkwk....
+.....kwkwk....
+.....kwkwk....
+.....kwkwk....
+.....kwkwk....
+.....kwwwk....
+......kkk.....
+..............
+"""),
+('MsgDraft', """
+.kkkkkkkk.....
+.kwwwwwwkk....
+.kwlllwwkwk...
+.kwwwwwwkkkk..
+.kwllllwwwwk..
+.kwwwwwwwwkk..
+.kwlllllwkdk..
+.kwwwwwwkdkk..
+.kwllllkdkwk..
+.kwwwwwkkwwk..
+.kkkkkkkkkkk..
+"""),
+('MsgError', """
+......kk......
+.....kwwk.....
+.....kwwk.....
+....kwkkwk....
+....kwkkwk....
+...kwwkkwwk...
+...kwwkkwwk...
+..kwwwwwwwwk..
+..kwwwkkwwwk..
+.kwwwwwwwwwwk.
+.kkkkkkkkkkkk.
+"""),
+('MsgOutbox', """
+......kk......
+.....kwwk.....
+....kwwwwk....
+...kkkwwkkk...
+.....kwwk.....
+kkkkkkkkkkkkkk
+kkwwwwwwwwwwkk
+kwkwwwwwwwwkwk
+kwwkkkkkkkkwwk
+kwwwwwwwwwwwwk
+kkkkkkkkkkkkkk
+"""),
+# ---- the toolbar (18 wide: the words beside them need the room)
+('ToolNew', """
+.............kk...
+............kwk...
+...........kwk....
+..........kwk.....
+kkkkkkkkkkwkkkkkk.
+kkwwwwwwwkdkwwwkk.
+kwkwwwwwkkkwwwkwk.
+kwwkwwwwwwwwwkwwk.
+kwwwkwwwwwwwkwwwk.
+kwwwwkwwwwwkwwwwk.
+kwwwwkkwwwkkwwwwk.
+kwwwkwwkkkwwkwwwk.
+kwwkwwwwwwwwwkwwk.
+kwkwwwwwwwwwwwkwk.
+kkwwwwwwwwwwwwwkk.
+kkkkkkkkkkkkkkkkk.
+"""),
+('ToolReply', """
+....k.............
+...kk.............
+..kwkkkkkkkkk.....
+.kwwwwwwwwwwwk....
+..kwkkkkkkkkwwk...
+...kk.......kwk...
+....k........kwk..
+.............kwk..
+......k.....kwk...
+......kk...kwk....
+.kkkkkwk..kwk.....
+.kwwwwwwk.kk......
+.kkkkkwk..........
+......kk..........
+......k...........
+..................
+"""),
+('ToolOpen', """
+..........kk......
+..........kkkkk...
+....kkkkkkkkddk...
+..kkwwwwwwkkkkk...
+.kwwlllllwwk......
+.kwlkkkkkklwk.....
+kwlkwwwwwwklk.....
+kwlkwkkkkwklk.....
+kwlkwwwwwwklk.....
+kwlkkkkkkkklk.....
+kwllllllllllldk...
+kddddddddddddddk..
+kkkkkkkkkkkkkkkk..
+......kddk........
+......kddk........
+......kddk........
+....kkkkkkkk......
+"""),
+('ToolClose', """
+..................
+..................
+....kkkkkkkk......
+..kkwwwwwwwwkk....
+.kwwlllllllllwk...
+.kwlllllllllllk...
+kwlllllllllllldk..
+kwlllllllllllldkk.
+kwlllllllllllldkdk
+kwlllllllllllldkkk
+kwlllllllllllldk..
+kddddddddddddddk..
+kkkkkkkkkkkkkkkk..
+......kddk........
+......kddk........
+......kddk........
+....kkkkkkkk......
+"""),
+]
+
+
+def parse(art):
+    rows = [r for r in art.strip('\n').split('\n')]
+    w = max(len(r) for r in rows)
+    rows = [r.ljust(w, '.') for r in rows]
+    return rows, w, len(rows)
+
+
+def main():
+    out, header = sys.argv[1], sys.argv[2]
+    os.makedirs(out, exist_ok=True)
+    files = []
+    ids = []
+    for name, art in ICONS:
+        rows, w, h = parse(art)
+        img = Image.new('L', (w, h), 255)
+        mask = Image.new('1', (w, h), 1)
+        for y, r in enumerate(rows):
+            for x, c in enumerate(r):
+                if c not in GREY:
+                    raise SystemExit(f'{name}: bad pixel {c!r}')
+                img.putpixel((x, y), GREY[c])
+                if c != '.':
+                    mask.putpixel((x, y), 0)
+        fi = os.path.join(out, f'{name}.bmp')
+        fm = os.path.join(out, f'{name}_m.bmp')
+        img.convert('RGB').save(fi)
+        mask.convert('RGB').save(fm)
+        files += [fi, fm]
+        ids.append(name)
+    with open(header, 'w') as f:
+        f.write('/* pmicons.h - made by mail/tools/mkicons.py: PsiMail.mbm ids */\n')
+        f.write('#ifndef PMICONS_H\n#define PMICONS_H\nenum TPmIconId\n\t{\n')
+        for i, n in enumerate(ids):
+            f.write(f'\tEMbm{n} = {2 * i}, EMbm{n}Mask = {2 * i + 1},\n')
+        f.write(f'\tEMbmCount = {2 * len(ids)}\n\t}};\n#endif\n')
+    with open(os.path.join(out, 'files.txt'), 'w') as f:
+        for i, p in enumerate(files):
+            f.write(('/2' if i % 2 == 0 else '/1') + os.path.basename(p) + '\n')
+
+
+if __name__ == '__main__':
+    main()

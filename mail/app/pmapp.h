@@ -30,6 +30,7 @@ class CEikColumnListBox;
 class CEikRichTextEditor;
 class CEikLabel;
 class CPmFolderListBox;
+class CPmMsgListBox;
 
 extern "C" {
 #include <psimail.h>
@@ -55,7 +56,9 @@ struct TPmSettings
 	TInt iCalSync;         // calendar: sync with the Agenda at Send & receive
 	TInt iPrefetch;        // download the newest N messages' text ahead: 0 = the default (10), -1 = off
 	TInt iZoom;            // text size: 0 = the default (2), else 1..4
-	TInt iSpare[4];        // (TPmSettings is saved whole: keep its size)
+	TInt iSort;            // the message list's order: 0 newest first (see pmnative.cpp)
+	TInt iView;            // what's hidden: 1 toolbar, 2 title bar, 4 folder list
+	TInt iSpare[2];        // (TPmSettings is saved whole: keep its size)
 	PmAccount iAccounts[PM_MAX_ACCOUNTS];
 	};
 
@@ -208,6 +211,21 @@ private:
 	TInt NativeLinkUrl(TInt aLink, TDes& aUrl) const;
 	void DrawNative(const TRect& aRect) const;
 	void DrawStatus(CWindowGc& aGc) const;
+	void DrawTitle(CWindowGc& aGc) const;
+	void DrawHeaders(CWindowGc& aGc) const;
+	TInt HeaderHit(const TPoint& aPos) const;
+	void HeaderActionL(TInt aHit);
+	TBool NativePointerL(const TPointerEvent& aEvent);
+	void LoadIconsL();
+	void FormatNativeDate(TInt aDate, TDes& aOut) const;
+	void SortRows();
+public:
+	void SortL(TInt aMode);                  // Tools > Sort, a column heading
+	void ToggleViewL(TInt aFlag);            // View > Show toolbar / title bar / folders
+	void StatusInfoL();                      // View > Status information
+	void ToolbarPopupL(TInt aCommand);       // the toolbar's New and Reply/f'ward
+	TInt SortMode() const { return iSettings->iSort; }
+private:
 	void Draw(const TRect& aRect) const;
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
 	TKeyResponse MailboxKeyL(TUint aCode);
@@ -370,8 +388,17 @@ private:
 	PmUiAttachment iUiAtt[8];
 	// native screens
 	CPmFolderListBox* iFolderList;
-	CEikColumnListBox* iMsgList;
+	CPmMsgListBox* iMsgList;
 	CEikRichTextEditor* iReader;
+	CArrayPtrFlat<CFbsBitmap>* iIcons;     // PsiMail.mbm: icon, mask, icon, mask... (pmicons.h)
+	CArrayFixFlat<TInt>* iTree;            // the folder tree: per row, depth | icon << 4 | lines << 16
+	CArrayFixFlat<TInt>* iMsgIcons;        // the message list: per row, icon | attachment << 8
+	CFont* iBoldFont;                      // the column headings
+	CFont* iTitleFont;                     // the title band
+	TInt iTitleH;                          // the title band's height (0: hidden)
+	TInt iHeadH;                           // the column headings' height
+	TInt iHeadX[5];                        // where the headings start: folders, ?, from, subject, date
+	TInt iPenHead;                         // the heading the pen is on (-1 none)
 	CEikLabel* iStatusLine;
 	CEikLabel* iEmptyLabel;          // "No messages here", the first-run text
 	CFont* iListFont;
@@ -502,7 +529,9 @@ public:
 	void SaveSettings();
 	void SaveCalSettings();
 	void ComposeDraftL(CPmDraft* aDraft, const TDesC& aTitle) { ComposeL(aDraft, aTitle); }
-	void ShowToolBar(TBool aShow);          // native screens have it; the drawn ones use the whole screen
+	void ShowToolBar(TBool aShow);
+	void ToolbarPicturesL();
+	CCoeControl* ToolBarButton(TInt aId);          // native screens have it; the drawn ones use the whole screen
 private:
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);

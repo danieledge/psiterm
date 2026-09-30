@@ -1,10 +1,12 @@
 // pmnative.cpp - PsiMail's mailbox and reader built from EIKON's own
-// controls, so they look and behave like the Psion's built-in programs:
-// a folder list and a message list (EIKON list boxes), a read-only rich
-// text viewer with a scroll bar, the standard toolbar on the right, and
-// the sidebar's zoom buttons. (Writing, the calendar and event screens are
-// still PsiMail's own drawn screens - see psimail.cpp's Render().)
+// controls, laid out like the Psion's built-in Email program: a title band
+// (where you are, how many messages, the connection), column headings you
+// can tap to sort, a folder tree with pictures, a message list with status
+// pictures, a read-only rich text viewer, the standard toolbar on the right
+// and the sidebar's zoom buttons. (Writing, the calendar and event screens
+// are still PsiMail's own drawn screens - see psimail.cpp's Render().)
 #include "pmapp.h"
+#include "pmicons.h"
 #include <eiktxlbx.h>
 #include <eiktxlbm.h>
 #include <eikclb.h>
@@ -13,33 +15,187 @@
 #include <eiklbv.h>
 #include <eikrted.h>
 #include <eiksbfrm.h>
+#include <eiktbar.h>
+#include <e32hal.h>
 #include <txtrich.h>
 #include <txtfrmat.h>
 #include <frmtlay.h>
 #include <frmtview.h>
 
-// ----- a text list box whose font can change (for zoom) ------------------------
+// the Psion's four greys
+#define KPmDarkGrey  TRgb(85, 85, 85)
+#define KPmLightGrey TRgb(170, 170, 170)
 
-class CPmTextListItemDrawer : public CTextListItemDrawer
+static const TInt KIndent = 12;          // the folder tree: one level
+static const TInt KIconCol = 28;         // the message list: status + attachment pictures
+
+// a picture from PsiMail.mbm, drawn through its mask (black = drawn)
+static void DrawIcon(CWindowGc& aGc, CArrayPtr<CFbsBitmap>* aIcons, TInt aId, const TPoint& aPos)
+	{
+	if (!aIcons || aId < 0 || aId + 1 >= aIcons->Count())
+		return;
+	CFbsBitmap* bmp = aIcons->At(aId);
+	CFbsBitmap* mask = aIcons->At(aId + 1);
+	aGc.BitBltMasked(aPos, bmp, TRect(bmp->SizeInPixels()), mask, ETrue);
+	}
+
+// ----- the folder tree: a text list box that draws lines and pictures ---------------
+
+class CPmTreeDrawer : public CTextListItemDrawer
 	{
 public:
-	CPmTextListItemDrawer(MTextListBoxModel* aModel, const CFont* aFont)
+	CPmTreeDrawer(MTextListBoxModel* aModel, const CFont* aFont)
 		: CTextListItemDrawer(aModel, aFont) {}
 	void SetFont(const CFont* aFont) { iFont = aFont; }
+	void SetData(CArrayPtr<CFbsBitmap>* aIcons, CArrayFixFlat<TInt>* aTree) { iIcons = aIcons; iTree = aTree; }
+protected:
+	void DrawActualItem(TInt aItemIndex, const TRect& aRect, TBool aCurrent, TBool aEmphasized, TBool aDimmed) const;
+private:
+	CArrayPtr<CFbsBitmap>* iIcons;
+	CArrayFixFlat<TInt>* iTree;
 	};
+
+void CPmTreeDrawer::DrawActualItem(TInt aItemIndex, const TRect& aRect, TBool aCurrent, TBool aEmphasized, TBool /*aDimmed*/) const
+	{
+	CWindowGc& gc = *iGc;
+	gc.SetPenStyle(CGraphicsContext::ENullPen);
+	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	gc.SetBrushColor(KRgbWhite);
+	gc.DrawRect(aRect);
+	TInt v = (iTree && aItemIndex < iTree->Count()) ? (*iTree)[aItemIndex] : 0;
+	TInt depth = v & 15;
+	TInt icon = (v >> 4) & 0xfff;
+	TInt lines = v >> 16;
+	TInt x0 = aRect.iTl.iX + 3;
+	TInt top = aRect.iTl.iY, bottom = aRect.iBr.iY;
+	TInt mid = top + aRect.Height() / 2;
+	// the tree's lines: down from the parent, across to the picture
+	gc.SetPenStyle(CGraphicsContext::ESolidPen);
+	gc.SetPenColor(KRgbBlack);
+	for (TInt l = 1; l <= depth; l++)
+		{
+		TInt lx = x0 + (l - 1) * KIndent + 7;
+		if (l < depth)
+			{
+			if (lines & (1 << l))
+				gc.DrawLine(TPoint(lx, top), TPoint(lx, bottom));
+			}
+		else
+			{
+			gc.DrawLine(TPoint(lx, top), TPoint(lx, (lines & (1 << l)) ? bottom : mid + 1));
+			gc.DrawLine(TPoint(lx, mid), TPoint(x0 + depth * KIndent, mid));
+			}
+		}
+	TInt ix = x0 + depth * KIndent;
+	if (iIcons && icon + 1 < iIcons->Count())
+		{
+		TSize s = iIcons->At(icon)->SizeInPixels();
+		DrawIcon(gc, iIcons, icon, TPoint(ix, mid - s.iHeight / 2));
+		}
+	// the name: highlighted on its own, as the built-in programs do
+	TPtrC text = iModel->ItemText(aItemIndex);
+	TInt tx = ix + 16 + 3;
+	TInt tw = iFont->TextWidthInPixels(text) + 5;
+	if (tx + tw > aRect.iBr.iX) tw = aRect.iBr.iX - tx;
+	TRect tr(tx, top + 1, tx + tw, bottom - 1);
+	gc.UseFont(iFont);
+	TInt base = (tr.Height() - iFont->HeightInPixels()) / 2 + iFont->AscentInPixels();
+	if (aCurrent && aEmphasized)
+		{
+		gc.SetPenStyle(CGraphicsContext::ENullPen);
+		gc.SetBrushColor(KRgbBlack);
+		gc.SetPenColor(KRgbWhite);
+		gc.SetPenStyle(CGraphicsContext::ESolidPen);
+		gc.DrawText(text, tr, base, CGraphicsContext::ELeft, 2);
+		}
+	else
+		{
+		gc.SetBrushColor(KRgbWhite);
+		gc.SetPenColor(KRgbBlack);
+		gc.DrawText(text, tr, base, CGraphicsContext::ELeft, 2);
+		if (aCurrent)
+			{
+			// where you are, when the message list has the keys
+			gc.SetBrushStyle(CGraphicsContext::ENullBrush);
+			gc.SetPenStyle(CGraphicsContext::EDottedPen);
+			gc.DrawRect(tr);
+			}
+		}
+	gc.DiscardFont();
+	}
 
 class CPmFolderListBox : public CEikTextListBox
 	{
 public:
 	void SetFontL(const CFont* aFont)
 		{
-		((CPmTextListItemDrawer*)iItemDrawer)->SetFont(aFont);
-		SetItemHeightL(aFont->HeightInPixels() + 4);
+		((CPmTreeDrawer*)iItemDrawer)->SetFont(aFont);
+		TInt h = aFont->HeightInPixels() + 4;
+		if (h < 17) h = 17;                  // (room for the pictures)
+		SetItemHeightL(h);
+		}
+	void SetData(CArrayPtr<CFbsBitmap>* aIcons, CArrayFixFlat<TInt>* aTree)
+		{
+		((CPmTreeDrawer*)iItemDrawer)->SetData(aIcons, aTree);
 		}
 protected:
 	void CreateItemDrawerL()
 		{
-		iItemDrawer = new(ELeave) CPmTextListItemDrawer(Model(), CEikonEnv::Static()->NormalFont());
+		iItemDrawer = new(ELeave) CPmTreeDrawer(Model(), CEikonEnv::Static()->NormalFont());
+		}
+	};
+
+// ----- the message list: EIKON's columns, with the status pictures drawn over -------
+
+class CPmMsgItemDrawer : public CColumnListBoxItemDrawer
+	{
+public:
+	CPmMsgItemDrawer(MTextListBoxModel* aModel, const CFont* aFont)
+		: CColumnListBoxItemDrawer(aModel, aFont) {}
+	void SetData(CArrayPtr<CFbsBitmap>* aIcons, CArrayFixFlat<TInt>* aMsgIcons) { iIcons = aIcons; iMsgIcons = aMsgIcons; }
+	void DrawItemText(TInt aItemIndex, const TRect& aRect, TBool aCurrent, TBool aEmphasized) const
+		{
+		CColumnListBoxItemDrawer::DrawItemText(aItemIndex, aRect, aCurrent, aEmphasized);
+		if (!iMsgIcons || aItemIndex >= iMsgIcons->Count())
+			return;
+		TInt v = (*iMsgIcons)[aItemIndex];
+		TInt icon = v & 0xff;
+		TInt y = aRect.iTl.iY + (aRect.Height() - 11) / 2;
+		// a white tile under the pictures, so they read on the highlight too
+		if (aCurrent)
+			{
+			iGc->SetPenStyle(CGraphicsContext::ENullPen);
+			iGc->SetBrushStyle(CGraphicsContext::ESolidBrush);
+			iGc->SetBrushColor(KRgbWhite);
+			iGc->DrawRect(TRect(aRect.iTl.iX, aRect.iTl.iY, aRect.iTl.iX + KIconCol - 2, aRect.iBr.iY));
+			}
+		if (icon != 0xff)
+			DrawIcon(*iGc, iIcons, icon, TPoint(aRect.iTl.iX + 1, y));
+		if (v & 0x100)
+			DrawIcon(*iGc, iIcons, EMbmMsgAttach, TPoint(aRect.iTl.iX + 11, y));
+		}
+private:
+	CArrayPtr<CFbsBitmap>* iIcons;
+	CArrayFixFlat<TInt>* iMsgIcons;
+	};
+
+class CPmMsgListBox : public CEikTextListBox
+	{
+public:
+	void ConstructL(const CCoeControl* aParent)
+		{
+		CColumnListBoxModel* model = new(ELeave) CColumnListBoxModel;
+		CleanupStack::PushL(model);
+		model->ConstructL(new(ELeave) CDesCArrayFlat(32), ELbmOwnsItemArray);
+		CPmMsgItemDrawer* drawer = new(ELeave) CPmMsgItemDrawer(model, CEikonEnv::Static()->NormalFont());
+		CleanupStack::PushL(drawer);
+		CEikListBox::ConstructL(model, drawer, aParent, 0);
+		CleanupStack::Pop(2);
+		}
+	CColumnListBoxModel* Model() const { return (CColumnListBoxModel*)iModel; }
+	void SetData(CArrayPtr<CFbsBitmap>* aIcons, CArrayFixFlat<TInt>* aMsgIcons)
+		{
+		((CPmMsgItemDrawer*)iItemDrawer)->SetData(aIcons, aMsgIcons);
 		}
 	};
 
@@ -62,11 +218,34 @@ TBool CPmView::NativeMode() const
 	return iMode == EList || iMode == EOutbox || iMode == EMessage || iMode == ENoAccount;
 	}
 
+void CPmView::LoadIconsL()
+	{
+	iIcons = new(ELeave) CArrayPtrFlat<CFbsBitmap>(EMbmCount);
+	TFileName mbm = ((CEikAppUi*)iEikonEnv->EikAppUi())->Application()->BitmapStoreName();
+	for (TInt i = 0; i < EMbmCount; i++)
+		{
+		CFbsBitmap* b = NULL;
+		TRAPD(err, b = iEikonEnv->CreateBitmapL(mbm, i));
+		if (err != KErrNone)
+			{
+			iIcons->ResetAndDestroy();           // no PsiMail.mbm: no pictures
+			return;
+			}
+		CleanupStack::PushL(b);
+		iIcons->AppendL(b);
+		CleanupStack::Pop();
+		}
+	}
+
 void CPmView::CreateNativeL()
 	{
 	iLinks = new(ELeave) CArrayFixFlat<TPmLinkRange>(16);
 	iLinkSel = -1;
+	iPenHead = -1;
 	iZoomFactor = new(ELeave) TZoomFactor(iCoeEnv->ScreenDevice());
+	iTree = new(ELeave) CArrayFixFlat<TInt>(16);
+	iMsgIcons = new(ELeave) CArrayFixFlat<TInt>(32);
+	LoadIconsL();
 
 	iFolderList = new(ELeave) CPmFolderListBox;
 	iFolderList->ConstructL(this, 0);
@@ -75,14 +254,14 @@ void CPmView::CreateNativeL()
 	iFolderList->CreateScrollBarFrameL();
 	iFolderList->ScrollBarFrame()->SetScrollBarVisibilityL(CEikScrollBarFrame::EOff, CEikScrollBarFrame::EAuto);
 	iFolderList->SetListBoxObserver(this);
+	iFolderList->SetData(iIcons, iTree);
 
-	iMsgList = new(ELeave) CEikColumnListBox;
-	iMsgList->ConstructL(this, 0);
-	iMsgList->Model()->SetItemTextArray(new(ELeave) CDesCArrayFlat(32));
-	iMsgList->Model()->SetOwnershipType(ELbmOwnsItemArray);
+	iMsgList = new(ELeave) CPmMsgListBox;
+	iMsgList->ConstructL(this);
 	iMsgList->CreateScrollBarFrameL();
 	iMsgList->ScrollBarFrame()->SetScrollBarVisibilityL(CEikScrollBarFrame::EOff, CEikScrollBarFrame::EAuto);
 	iMsgList->SetListBoxObserver(this);
+	iMsgList->SetData(iIcons, iMsgIcons);
 
 	iReader = new(ELeave) CEikRichTextEditor(TEikBorder(TEikBorder::ENone));
 	iReader->SetContainerWindowL(*this);
@@ -101,16 +280,27 @@ void CPmView::DestroyNative()
 	iMsgList = NULL;
 	delete iReader;
 	iReader = NULL;
-	if (iListFont)
-		iCoeEnv->ScreenDevice()->ReleaseFont(iListFont);
+	CWsScreenDevice* dev = iCoeEnv->ScreenDevice();
+	if (iListFont) dev->ReleaseFont(iListFont);
 	iListFont = NULL;
-	if (iSmallFont)
-		iCoeEnv->ScreenDevice()->ReleaseFont(iSmallFont);
+	if (iSmallFont) dev->ReleaseFont(iSmallFont);
 	iSmallFont = NULL;
+	if (iBoldFont) dev->ReleaseFont(iBoldFont);
+	iBoldFont = NULL;
+	if (iTitleFont) dev->ReleaseFont(iTitleFont);
+	iTitleFont = NULL;
 	delete iZoomFactor;
 	iZoomFactor = NULL;
 	delete iLinks;
 	iLinks = NULL;
+	delete iTree;
+	iTree = NULL;
+	delete iMsgIcons;
+	iMsgIcons = NULL;
+	if (iIcons)
+		iIcons->ResetAndDestroy();
+	delete iIcons;
+	iIcons = NULL;
 	}
 
 TInt CPmView::CountComponentControls() const
@@ -134,31 +324,38 @@ void CPmView::SizeChanged()
 		LayoutNative();
 	}
 
+static CFont* GetFontL(CWsScreenDevice* aDev, TInt aTwips, TBool aBold, CFont*& aOld)
+	{
+	TFontSpec spec(_L("Arial"), aTwips);
+	if (aBold)
+		spec.iFontStyle.SetStrokeWeight(EStrokeWeightBold);
+	CFont* font = NULL;
+	User::LeaveIfError(aDev->GetNearestFontInTwips(font, spec));
+	if (aOld)
+		aDev->ReleaseFont(aOld);
+	aOld = font;
+	return font;
+	}
+
 // fonts and the reader's zoom from the zoom level
 void CPmView::ApplyZoomL()
 	{
 	TInt z = ZoomLevel(*iSettings);
 	CWsScreenDevice* dev = iCoeEnv->ScreenDevice();
-	TFontSpec spec(_L("Arial"), KListTwips[z]);
-	CFont* font = NULL;
-	User::LeaveIfError(dev->GetNearestFontInTwips(font, spec));
-	if (iListFont)
-		dev->ReleaseFont(iListFont);
-	iListFont = font;
-	TFontSpec small(_L("Arial"), 150);
-	CFont* sf = NULL;
-	User::LeaveIfError(dev->GetNearestFontInTwips(sf, small));
-	if (iSmallFont)
-		dev->ReleaseFont(iSmallFont);
-	iSmallFont = sf;
-	iStatusH = iSmallFont->HeightInPixels() + 4;
+	GetFontL(dev, KListTwips[z], EFalse, iListFont);
+	GetFontL(dev, 150, EFalse, iSmallFont);
+	GetFontL(dev, KListTwips[z > 1 ? 1 : z], ETrue, iBoldFont);
+	GetFontL(dev, 180, ETrue, iTitleFont);
+	iStatusH = 0;                              // (the title band says it all now)
 
 	iFolderList->SetFontL(iListFont);
 	CColumnListBoxData* cd = iMsgList->Model()->ColumnData();
 	for (TInt c = 0; c < 7; c++)
 		cd->SetColumnFontL(c, iListFont);
 	cd->SetColumnAlignmentL(6, CGraphicsContext::ERight);
-	iMsgList->SetItemHeightL(iListFont->HeightInPixels() + 4);
+	TInt h = iListFont->HeightInPixels() + 4;
+	if (h < 14) h = 14;                        // (room for the pictures)
+	iMsgList->SetItemHeightL(h);
 
 	iZoomFactor->SetZoomFactor(KZoomFactors[z]);
 	iReader->SetZoomFactorL(iZoomFactor);
@@ -180,6 +377,7 @@ void CPmView::ZoomL(TInt aStep)
 		ApplyZoomL();
 		iReaderUid = 0;                          // lay the message out again
 		iNativeMode = (TMode)-1;
+		iMsgListSum = 0;
 		if (NativeMode())
 			{
 			UpdateNativeL();
@@ -191,30 +389,41 @@ void CPmView::ZoomL(TInt aStep)
 void CPmView::LayoutNative()
 	{
 	TRect r = Rect();
-	TInt h = r.Height() - iStatusH;
+	TBool folders = !(iSettings->iView & 4);
+	iTitleH = (iSettings->iView & 2) ? 0 : iTitleFont->HeightInPixels() + 6;
+	iHeadH = iBoldFont->HeightInPixels() + 6;
+	TInt top = r.iTl.iY + iTitleH;
+	TInt listTop = top + iHeadH;
 	TInt w = r.Width();
 	// the folder list takes about 30% (at least room for "Archive (123)")
-	iSplitX = w * 3 / 10;
-	if (iSplitX < 120) iSplitX = 120;
+	iSplitX = 0;
+	if (folders)
+		{
+		iSplitX = w * 3 / 10;
+		if (iSplitX < 130) iSplitX = 130;
+		}
+	TInt msgX = r.iTl.iX + (folders ? iSplitX + 1 : 0);
 	TRAPD(e1,
-		iFolderList->SetRectL(TRect(r.iTl, TSize(iSplitX, h)));
-		iMsgList->SetRectL(TRect(TPoint(r.iTl.iX + iSplitX + 1, r.iTl.iY), TSize(w - iSplitX - 1, h)));
-		iReader->SetRectL(TRect(r.iTl, TSize(w, h)));
+		iFolderList->SetRectL(TRect(TPoint(r.iTl.iX, listTop), TSize(folders ? iSplitX : 1, r.iBr.iY - listTop)));
+		iMsgList->SetRectL(TRect(TPoint(msgX, listTop), r.iBr));
+		iReader->SetRectL(TRect(TPoint(r.iTl.iX, top), r.iBr));
 		);
 	(void)e1;
-	// columns: marks, from, subject, date
-	TInt lw = w - iSplitX - 1 - 12;             // (room for a scroll bar)
-	TInt mark = iListFont->TextWidthInPixels(_L("\x95!")) + 4;
-	TInt date = iListFont->TextWidthInPixels(_L("Yesterday")) + 6;
-	TInt from = (lw - mark - date) * 2 / 5;
-	TInt subj = lw - mark - date - from;
+	// columns: pictures, from, subject, date (dd/mm/yyyy, as the locale has it)
+	TInt lw = r.iBr.iX - msgX - 12;            // (room for a scroll bar)
+	TBuf<32> sample;
+	TTime t(TDateTime(2026, ESeptember, 29, 23, 0, 0, 0));
+	TRAPD(e2, t.FormatL(sample, _L("%D%M%Y%/0%1%/1%2%/2%3%/3")));
+	if (e2) sample = _L("30/09/2026");
+	TInt date = iListFont->TextWidthInPixels(sample) + 8;
+	TInt gap = 6;
+	TInt rest = lw - KIconCol - 2 - date - gap * 2;
+	TInt from = rest * 2 / 5;
+	TInt subj = rest - from;
 	if (subj < 20) subj = 20;
 	CColumnListBoxData* cd = iMsgList->Model()->ColumnData();
-	TInt gap = 6;
-	from -= gap;
-	subj -= gap * 2;
 	TRAPD(err,
-		cd->SetColumnWidthPixelL(0, mark);
+		cd->SetColumnWidthPixelL(0, KIconCol);
 		cd->SetColumnWidthPixelL(1, 2);
 		cd->SetColumnWidthPixelL(2, from);
 		cd->SetColumnWidthPixelL(3, gap);
@@ -223,6 +432,12 @@ void CPmView::LayoutNative()
 		cd->SetColumnWidthPixelL(6, date);
 		);
 	(void)err;
+	// the headings line up with the columns
+	iHeadX[0] = r.iTl.iX;
+	iHeadX[1] = msgX;
+	iHeadX[2] = msgX + KIconCol + 2 - 4;
+	iHeadX[3] = iHeadX[2] + from + gap;
+	iHeadX[4] = iHeadX[3] + subj + gap;
 	}
 
 static void ShowScrollBar(CEikScrollBarFrame* aFrame, TBool aShow)
@@ -237,9 +452,11 @@ static void ShowScrollBar(CEikScrollBarFrame* aFrame, TBool aShow)
 void CPmView::ShowNative(TBool aShow)
 	{
 	iNativeShown = aShow;
+	if (iSettings->iView & 4)
+		iSidebar = EFalse;                       // (no folder list to be in)
 	TBool list = aShow && (iMode == EList || iMode == EOutbox);
 	TBool reader = aShow && iMode == EMessage;
-	TBool folders = list || (aShow && iMode == ENoAccount);
+	TBool folders = (list || (aShow && iMode == ENoAccount)) && !(iSettings->iView & 4);
 	TBool msgs = list && iRows->Count() > 0;
 	iFolderList->MakeVisible(folders);
 	iMsgList->MakeVisible(msgs);
@@ -248,7 +465,7 @@ void CPmView::ShowNative(TBool aShow)
 	ShowScrollBar(iFolderList->ScrollBarFrame(), folders);
 	ShowScrollBar(iMsgList->ScrollBarFrame(), msgs);
 	ShowScrollBar(iReader->ScrollBarFrame(), reader);
-	iFolderList->SetFocus(list && iSidebar, ENoDrawNow);
+	iFolderList->SetFocus(folders && iSidebar, ENoDrawNow);
 	iMsgList->SetFocus(list && !iSidebar, ENoDrawNow);
 	iReader->SetFocus(reader, ENoDrawNow);
 	}
@@ -262,34 +479,85 @@ static TUint Checksum(TUint aSum, const TDesC& aText)
 	return aSum;
 	}
 
+static TInt FolderIcon(TUint aKind)
+	{
+	switch (aKind)
+		{
+	case 'I': return EMbmInbox;
+	case 'S': return EMbmSent;
+	case 'D': return EMbmDrafts;
+	case 'T': return EMbmTrash;
+	case 'J': return EMbmJunk;
+	case 'A': return EMbmArchive;
+	default: return EMbmFolder;
+		}
+	}
+
+// the tree: row 0 is the account, then its folders (and the Outbox) under
+// it, then the Calendar. The list's row is the sidebar's entry + 1.
 void CPmView::UpdateFolderListL()
 	{
 	CDesCArray* items = (CDesCArray*)iFolderList->Model()->ItemTextArray();
 	CDesCArrayFlat* fresh = new(ELeave) CDesCArrayFlat(16);
 	CleanupStack::PushL(fresh);
+	CArrayFixFlat<TInt>* depth = new(ELeave) CArrayFixFlat<TInt>(16);
+	CleanupStack::PushL(depth);
+	CArrayFixFlat<TInt>* icon = new(ELeave) CArrayFixFlat<TInt>(16);
+	CleanupStack::PushL(icon);
 	TBuf<100> line;
+	const PmAccount& acct = iSettings->iAccounts[iSettings->iAcct];
+	if (acct.used && acct.name[0])
+		{
+		TPtrC8 n((const TUint8*)acct.name);
+		line.Copy(Clip(n, 40));
+		}
+	else
+		line = _L("Mail");
+	fresh->AppendL(line);
+	depth->AppendL(0);
+	icon->AppendL(EMbmFolderOpen);
 	for (TInt i = 0; i < iFolders->Count(); i++)
 		{
 		const TPmFolder& f = (*iFolders)[i];
-		// "Work/Projects": "Projects", indented
-		TInt depth = 0, last = -1;
+		// "Work/Projects": "Projects", a level down
+		TInt d = 0, last = -1;
 		if (f.iKind == '-' || f.iKind == 'N')
 			for (TInt j = 0; j < f.iName.Length(); j++)
-				if (f.iName[j] == '/' || f.iName[j] == '.') { depth++; last = j; }
-		line.Zero();
-		for (TInt d = 0; d < depth && d < 3; d++)
-			line.Append(_L("   "));
-		line.Append(Clip(f.iName.Mid(last + 1), 60));
+				if (f.iName[j] == '/' || f.iName[j] == '.') { d++; last = j; }
+		line = Clip(f.iName.Mid(last + 1), 60);
 		TBool counts = !(f.iKind == 'S' || f.iKind == 'D' || f.iKind == 'T' || f.iKind == 'J');
 		if (counts && f.iUnread > 0)
 			line.AppendFormat(_L(" (%d)"), f.iUnread);
 		fresh->AppendL(line);
+		depth->AppendL(1 + (d < 5 ? d : 5));
+		icon->AppendL(FolderIcon(f.iKind));
 		}
 	TInt ob = OutboxCount();
 	line = _L("Outbox");
 	if (ob) line.AppendFormat(_L(" (%d)"), ob);
 	fresh->AppendL(line);
+	depth->AppendL(1);
+	icon->AppendL(EMbmOutbox);
 	fresh->AppendL(_L("Calendar"));
+	depth->AppendL(0);
+	icon->AppendL(EMbmCalendar);
+	// the lines: level l carries on below a row while a later row sits at
+	// level l before anything shallower
+	iTree->Reset();
+	TInt n = depth->Count();
+	for (TInt r = 0; r < n; r++)
+		{
+		TInt dr = (*depth)[r];
+		TInt mask = 0;
+		for (TInt l = 1; l <= dr; l++)
+			for (TInt k = r + 1; k < n; k++)
+				{
+				if ((*depth)[k] < l) break;
+				if ((*depth)[k] == l) { mask |= 1 << l; break; }
+				}
+		iTree->AppendL(dr | ((*icon)[r] << 4) | (mask << 16));
+		}
+	CleanupStack::PopAndDestroy(2);         // icon, depth
 	TBool same = items->Count() == fresh->Count();
 	for (TInt k = 0; same && k < fresh->Count(); k++)
 		same = (*items)[k] == (*fresh)[k];
@@ -301,13 +569,51 @@ void CPmView::UpdateFolderListL()
 		iFolderList->HandleItemAdditionL();
 		}
 	CleanupStack::PopAndDestroy();          // fresh
-	TInt sel = iSidebar ? iFolderSel : CurrentSidebarItem();
+	TInt sel = (iSidebar ? iFolderSel : CurrentSidebarItem()) + 1;
 	if (sel >= items->Count()) sel = items->Count() - 1;
 	TBool moved = sel >= 0 && sel != iFolderList->CurrentItemIndex();
 	if (moved)
 		iFolderList->SetCurrentItemIndex(sel);
 	if ((!same || moved) && iNativeShown && iFolderList->IsVisible())
 		iFolderList->DrawNow();
+	}
+
+// dates as the built-in programs show them: today's as a time, others as
+// the locale's date
+void CPmView::FormatNativeDate(TInt aDate, TDes& aOut) const
+	{
+	aOut.Zero();
+	if (aDate <= 0)
+		return;
+	TTime t(TDateTime(1970, EJanuary, 0, 0, 0, 0, 0));
+	t += TTimeIntervalSeconds(aDate);
+	t += TLocale().UniversalTimeOffset();
+	TTime now;
+	now.HomeTime();
+	TDateTime d = t.DateTime();
+	TDateTime n = now.DateTime();
+	TBool today = d.Year() == n.Year() && d.Month() == n.Month() && d.Day() == n.Day();
+	TRAPD(err, t.FormatL(aOut, today ? _L("%-B%:0%J%:1%T%+B") : _L("%D%M%Y%/0%1%/1%2%/2%3%/3")));
+	if (err)
+		FormatDate(aDate, aOut);
+	}
+
+static TInt MsgIcon(const TPmRow& aRow, TBool aOutbox)
+	{
+	TInt v;
+	if (aOutbox)
+		v = aRow.iFlags.Locate('E') >= 0 ? EMbmMsgError : aRow.iFlags.Locate('D') >= 0 ? EMbmMsgDraft : EMbmMsgOutbox;
+	else if (aRow.iFlags.Locate('F') >= 0)
+		v = EMbmMsgFlag;
+	else if (aRow.iFlags.Locate('S') < 0)
+		v = EMbmMsgUnread;
+	else if (aRow.iFlags.Locate('A') >= 0)
+		v = EMbmMsgReplied;
+	else
+		v = EMbmMsgRead;
+	if (aRow.iFlags.Locate('T') >= 0)
+		v |= 0x100;
+	return v;
 	}
 
 void CPmView::UpdateMessageListL()
@@ -327,30 +633,25 @@ void CPmView::UpdateMessageListL()
 		{
 		iMsgListSum = sum;
 		items->Reset();
+		iMsgIcons->Reset();
 		TBuf<240> line;
-		TBuf<16> date;
+		TBuf<32> date;
 		for (TInt i = 0; i < iRows->Count(); i++)
 			{
 			const TPmRow& r = (*iRows)[i];
-			line.Zero();
+			TBool unread = iMode != EOutbox && r.iFlags.Locate('S') < 0;
 			if (iMode == EOutbox)
-				{
-				if (r.iFlags.Locate('E') >= 0) line.Append('!');
 				date = r.iFlags.Locate('E') >= 0 ? _L("not sent") : r.iFlags.Locate('D') >= 0 ? _L("draft") : _L("to send");
-				}
 			else
-				{
-				if (r.iFlags.Locate('S') < 0) line.Append(TChar(0x95));    // unread: a bullet
-				if (r.iFlags.Locate('F') >= 0) line.Append('!');
-				else if (r.iFlags.Locate('T') >= 0) line.Append('@');
-				FormatDate(r.iDate, date);
-				}
-			line.Append(_L("\t\t"));
+				FormatNativeDate(r.iDate, date);
+			iMsgIcons->AppendL(MsgIcon(r, iMode == EOutbox));
+			line = _L("\t\t");
 			line.Append(Clip(r.iFrom, 60));
 			line.Append(_L("\t\t"));
 			line.Append(r.iSubject.Length() ? Clip(r.iSubject, 150) : TPtrC(_L("(no subject)")));
 			line.Append(_L("\t\t"));
 			line.Append(date);
+			(void)unread;
 			items->AppendL(line);
 			}
 		iMsgList->HandleItemAdditionL();
@@ -368,6 +669,67 @@ void CPmView::UpdateMessageListL()
 		}
 	if (changed && iNativeShown && iMsgList->IsVisible())
 		iMsgList->DrawNow();
+	}
+
+// ----- the order of the message list -------------------------------------------------
+
+// 0 newest first (the store's order, reversed), 1 oldest first, 2/3 from
+// A-Z/Z-A, 4/5 subject A-Z/Z-A, 6 unread first
+void CPmView::SortRows()
+	{
+	TInt mode = iSettings->iSort;
+	TInt n = iRows->Count();
+	if (mode <= 0 || mode > 6 || n < 2)
+		return;
+	if (mode >= 2 && mode <= 5)
+		{
+		TKeyArrayFix key(mode <= 3 ? _FOFF(TPmRow, iFrom) : _FOFF(TPmRow, iSubject), ECmpFolded);
+		iRows->Sort(key);
+		}
+	if (mode == 6)
+		{
+		// unread first, each part newest first (a stable split)
+		CArrayFixFlat<TPmRow>* tmp = new CArrayFixFlat<TPmRow>(n);
+		if (!tmp)
+			return;
+		TRAPD(err,
+			for (TInt pass = 0; pass < 2; pass++)
+				for (TInt i = 0; i < n; i++)
+					if (((*iRows)[i].iFlags.Locate('S') < 0) == (pass == 0))
+						tmp->AppendL((*iRows)[i]);
+			);
+		if (!err)
+			for (TInt i = 0; i < n; i++)
+				(*iRows)[i] = (*tmp)[i];
+		delete tmp;
+		return;
+		}
+	if (mode == 1 || mode == 3 || mode == 5)
+		for (TInt i = 0; i < n / 2; i++)
+			{
+			TPmRow t = (*iRows)[i];
+			(*iRows)[i] = (*iRows)[n - 1 - i];
+			(*iRows)[n - 1 - i] = t;
+			}
+	}
+
+void CPmView::SortL(TInt aMode)
+	{
+	if (aMode < 0 || aMode > 6)
+		aMode = 0;
+	iSettings->iSort = aMode;
+	((CPmAppUi*)iEikonEnv->EikAppUi())->SaveSettings();
+	if (iMode != EList)
+		return;
+	LoadListL();                               // (sorts, and keeps the selection)
+	iMsgListSum = 0;
+	Render();
+	if (iNativeShown)
+		{
+		ActivateGc();
+		DrawHeaders(SystemGc());
+		DeactivateGc();
+		}
 	}
 
 // ----- the reader -------------------------------------------------------------------
@@ -747,75 +1109,260 @@ void CPmView::NativeActivateLinkL()
 	OpenWebL(url);
 	}
 
-// ----- the status line (drawn here, under the controls) ----------------------------
+// ----- the title band and the column headings (drawn here, around the controls) ----
+
+// an EIKON button face: light grey, lit from the top left
+static void DrawButtonFace(CWindowGc& aGc, const TRect& aRect, TBool aDown)
+	{
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(aDown ? KPmDarkGrey : KPmLightGrey);
+	aGc.DrawRect(aRect);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	TPoint tl = aRect.iTl, br(aRect.iBr.iX - 1, aRect.iBr.iY - 1);
+	aGc.SetPenColor(aDown ? KRgbBlack : KRgbWhite);
+	aGc.DrawLine(tl, TPoint(br.iX, tl.iY));
+	aGc.DrawLine(tl, TPoint(tl.iX, br.iY));
+	aGc.SetPenColor(aDown ? KRgbWhite : KRgbBlack);
+	aGc.DrawLine(TPoint(tl.iX, br.iY), TPoint(br.iX + 1, br.iY));
+	aGc.DrawLine(TPoint(br.iX, tl.iY), TPoint(br.iX, br.iY));
+	if (!aDown)
+		{
+		aGc.SetPenColor(KPmDarkGrey);
+		aGc.DrawLine(TPoint(tl.iX + 1, br.iY - 1), TPoint(br.iX, br.iY - 1));
+		aGc.DrawLine(TPoint(br.iX - 1, tl.iY + 1), TPoint(br.iX - 1, br.iY - 1));
+		}
+	}
+
+// a small triangle: the order a column is sorted in
+static void DrawArrow(CWindowGc& aGc, TInt aX, TInt aY, TBool aDownwards)
+	{
+	for (TInt k = 0; k < 4; k++)
+		{
+		TInt y = aDownwards ? aY + k : aY + 3 - k;
+		aGc.DrawLine(TPoint(aX + k, y), TPoint(aX + 7 - k, y));
+		}
+	}
+
+static void ConnectionText(const TPmSettings& aSettings, const PmShared* aShared, TDes& aOut)
+	{
+	if (aSettings.iOffline)
+		aOut = _L("Working offline");
+	else if (aShared && aShared->online)
+		aOut = aSettings.iNetMode ? _L("Connected to Internet") : _L("Connected");
+	else
+		aOut = aSettings.iNetMode ? _L("Not connected to Internet") : _L("Not connected");
+	}
 
 void CPmView::UpdateStatusLine()
 	{
-	if (!iNativeShown || !IsReadyToDraw())
+	if (!iNativeShown || !IsReadyToDraw() || !iTitleH)
 		return;
 	ActivateGc();
-	DrawStatus(SystemGc());
+	DrawTitle(SystemGc());
 	DeactivateGc();
 	}
 
-void CPmView::DrawStatus(CWindowGc& gc) const
+void CPmView::DrawStatus(CWindowGc& aGc) const
 	{
+	DrawTitle(aGc);
+	}
+
+void CPmView::DrawTitle(CWindowGc& gc) const
+	{
+	if (!iTitleH)
+		return;
 	TRect r = Rect();
-	TRect s(r.iTl.iX, r.iBr.iY - iStatusH, r.iBr.iX, r.iBr.iY);
+	TRect band(r.iTl, TSize(r.Width(), iTitleH));
 	gc.SetPenStyle(CGraphicsContext::ENullPen);
 	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	gc.SetBrushColor(KRgbWhite);
-	gc.DrawRect(s);
+	gc.SetBrushColor(KPmDarkGrey);
+	gc.DrawRect(band);
+	// the folder-list button (it shows or hides the folders)
+	TRect btn(band.iTl.iX + 1, band.iTl.iY + 1, band.iTl.iX + iTitleH + 3, band.iBr.iY - 1);
+	DrawButtonFace(gc, btn, iPenHead == 10);
+	DrawIcon(gc, iIcons, (iSettings->iView & 4) ? EMbmFolder : EMbmFolderOpen,
+		TPoint(btn.iTl.iX + (btn.Width() - 16) / 2, btn.iTl.iY + (btn.Height() - 13) / 2));
+	gc.UseFont(iTitleFont);
+	gc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	TInt base = band.iTl.iY + (iTitleH - iTitleFont->HeightInPixels()) / 2 + iTitleFont->AscentInPixels();
+	// the connection, in a box on the right
+	TBuf<40> conn;
+	ConnectionText(*iSettings, iShared, conn);
+	TInt cw = iTitleFont->TextWidthInPixels(conn) + 10;
+	TRect box(band.iBr.iX - cw - 2, band.iTl.iY + 2, band.iBr.iX - 2, band.iBr.iY - 2);
 	gc.SetPenStyle(CGraphicsContext::ESolidPen);
 	gc.SetPenColor(KRgbBlack);
-	gc.DrawLine(s.iTl, TPoint(s.iBr.iX, s.iTl.iY));
-	gc.UseFont(iSmallFont);
+	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	gc.SetBrushColor(iPenHead == 11 ? KPmDarkGrey : KPmLightGrey);
+	gc.DrawRect(box);
 	gc.SetBrushStyle(CGraphicsContext::ENullBrush);
-	TBuf<160> left;
+	gc.DrawText(conn, TPoint(box.iTl.iX + 5, base));
+	// where you are: "Fastmail\Inbox"
+	TBuf<120> where;
+	const PmAccount& a = iSettings->iAccounts[iSettings->iAcct];
+	if (a.used && a.name[0])
+		{
+		TPtrC8 n((const TUint8*)a.name);
+		where.Copy(Clip(n, 24));
+		where.Append('\\');
+		}
+	if (iMode == EOutbox)
+		where.Append(_L("Outbox"));
+	else if (iMode == ENoAccount)
+		where = _L("PsiMail");
+	else if (iSearch)
+		where.Append(_L("Search"));
+	else
+		{
+		const TPmFolder* f = CurrentFolder();
+		TPtrC name = f ? TPtrC(f->iName) : TPtrC(_L("Inbox"));
+		TInt last = -1;
+		for (TInt j = 0; j < name.Length(); j++)
+			if (name[j] == '/') last = j;
+		where.Append(Clip(name.Mid(last + 1), 40));
+		}
+	TInt x = btn.iBr.iX + 6;
+	TInt maxW = (box.iTl.iX - x) / 2;
+	while (where.Length() > 1 && iTitleFont->TextWidthInPixels(where) > maxW)
+		where.SetLength(where.Length() - 1);
+	gc.SetPenColor(KRgbWhite);
+	gc.DrawText(where, TPoint(x, base));
+	TInt ww = iTitleFont->TextWidthInPixels(where);
+	// the middle: what's happening, or how many messages
+	TBuf<160> mid;
 	if (iToast.Length())
-		left = iToast;
+		mid = iToast;
 	else if (!iSplashDone && iRunning && iShared && iShared->state == PM_STATE_STARTING)
-		left = _L("Starting the mail engine...");
+		mid = _L("Starting the mail engine...");
 	else if (Busy() && iLastProgress.Length())
-		left = iLastProgress;
+		mid = iLastProgress;
 	else if (Busy() || CalendarBusy())
-		left = _L("Working...");
+		mid = _L("Working...");
 	else if (iStatus.Length())
-		left = iStatus;
+		mid = iStatus;
 	else if (iMode == EMessage)
 		{
 		if (iRows->Count())
-			left.Format(_L("Message %d of %d.  Left / right: the one before / after.  Tab: links"), iSel + 1, iRows->Count());
+			mid.Format(_L("Message %d of %d"), iSel + 1, iRows->Count());
 		}
 	else if (iMode == EOutbox)
-		left.Format(_L("%d waiting to be sent"), iRows->Count());
-	else if (iMode == EList && iRows->Count())
+		{
+		if (iRows->Count() == 1) mid = _L("1 message");
+		else if (iRows->Count()) mid.Format(_L("%d messages"), iRows->Count());
+		else mid = _L("No messages");
+		}
+	else if (iMode == EList)
 		{
 		TInt unread = 0;
 		for (TInt i = 0; i < iRows->Count(); i++)
 			if ((*iRows)[i].iFlags.Locate('S') < 0) unread++;
-		if (iSearch) left.Format(_L("%d found"), iRows->Count());
-		else if (unread) left.Format(_L("%d messages, %d unread"), iRows->Count(), unread);
-		else left.Format(_L("%d messages"), iRows->Count());
+		TInt n = iRows->Count();
+		if (iSearch) mid.Format(_L("%d found"), n);
+		else if (n == 0) mid = _L("No messages");
+		else if (n == 1) mid = unread ? _L("1 message, unread") : _L("1 message");
+		else if (unread) mid.Format(_L("%d messages, %d unread"), n, unread);
+		else mid.Format(_L("%d messages"), n);
 		}
-	TBuf<40> right;
-	if (iSettings->iOffline) right = _L("Offline");
-	else if (iShared && iShared->online) right = _L("Online");
-	const PmAccount& a = iSettings->iAccounts[iSettings->iAcct];
-	if (a.used && a.name[0])
-		{
-		if (right.Length()) right.Append(_L("  \x95  "));
-		TPtrC8 n((const TUint8*)a.name);
-		right.Append(Clip(n, 20));
-		}
-	TInt base = s.iTl.iY + 2 + iSmallFont->AscentInPixels();
-	TInt rw = iSmallFont->TextWidthInPixels(right);
-	TInt room = s.Width() - rw - 12;
-	while (left.Length() && iSmallFont->TextWidthInPixels(left) > room)
-		left.SetLength(left.Length() - 1);
-	gc.DrawText(left, TPoint(s.iTl.iX + 3, base));
-	gc.DrawText(right, TPoint(s.iBr.iX - rw - 3, base));
+	TInt ml = x + ww + 10, mr = box.iTl.iX - 8;
+	gc.UseFont(iSmallFont);
+	while (mid.Length() && iSmallFont->TextWidthInPixels(mid) > mr - ml)
+		mid.SetLength(mid.Length() - 1);
+	TInt mw = iSmallFont->TextWidthInPixels(mid);
+	TInt mx = ml + (mr - ml - mw) / 2;
+	TInt mbase = band.iTl.iY + (iTitleH - iSmallFont->HeightInPixels()) / 2 + iSmallFont->AscentInPixels();
+	gc.DrawText(mid, TPoint(mx, mbase));
 	gc.DiscardFont();
+	}
+
+static TBool ListMode(TInt aMode)
+	{
+	return aMode == CPmView::EList || aMode == CPmView::EOutbox || aMode == CPmView::ENoAccount;
+	}
+
+void CPmView::DrawHeaders(CWindowGc& gc) const
+	{
+	if (!ListMode(iMode))
+		return;
+	TRect r = Rect();
+	TInt y = r.iTl.iY + iTitleH;
+	TInt sort = iSettings->iSort;
+	TBool sentLike = iMode == EOutbox;
+	const TPmFolder* f = iMode == EList ? CurrentFolder() : NULL;
+	if (f && (f->iKind == 'S' || f->iKind == 'D'))
+		sentLike = ETrue;
+	const TText* KNames[5] = { _S("Folders"), _S("?"), sentLike ? _S("To") : _S("From"), _S("Subject"), _S("Date") };
+	gc.UseFont(iBoldFont);
+	for (TInt i = (iSettings->iView & 4) ? 1 : 0; i < 5; i++)
+		{
+		TInt x0 = iHeadX[i];
+		TInt x1 = i < 4 ? iHeadX[i + 1] : r.iBr.iX;
+		if (i == 0) x1 = iHeadX[1];
+		TRect b(x0, y, x1, y + iHeadH);
+		DrawButtonFace(gc, b, iPenHead == i);
+		gc.SetBrushStyle(CGraphicsContext::ENullBrush);
+		gc.SetPenColor(KRgbBlack);
+		TPtrC name(KNames[i]);
+		TInt base = y + (iHeadH - iBoldFont->HeightInPixels()) / 2 + iBoldFont->AscentInPixels();
+		// which column sorts the list, and which way
+		TInt arrow = -1;
+		if (iMode == EList)
+			{
+			if (i == 4 && (sort == 0 || sort == 1)) arrow = sort == 0;
+			if (i == 2 && (sort == 2 || sort == 3)) arrow = sort == 2;
+			if (i == 3 && (sort == 4 || sort == 5)) arrow = sort == 4;
+			if (i == 1 && sort == 6) arrow = 1;
+			}
+		TInt room = b.Width() - 8 - (arrow >= 0 ? 12 : 0);
+		TBuf<16> t(name);
+		while (t.Length() > 1 && iBoldFont->TextWidthInPixels(t) > room)
+			t.SetLength(t.Length() - 1);
+		TInt tx = i == 1 ? x0 + (b.Width() - iBoldFont->TextWidthInPixels(t)) / 2 : x0 + 4;
+		gc.DrawText(t, TPoint(tx, base));
+		if (arrow >= 0)
+			DrawArrow(gc, x0 + 4 + iBoldFont->TextWidthInPixels(t) + 4, y + iHeadH / 2 - 2, arrow);
+		}
+	gc.DiscardFont();
+	}
+
+// the pen on the title band or a heading: 10 the folder-list button, 11 the
+// connection box, 0..4 a heading, -1 neither
+TInt CPmView::HeaderHit(const TPoint& aPos) const
+	{
+	TRect r = Rect();
+	if (iTitleH && aPos.iY < r.iTl.iY + iTitleH)
+		{
+		if (aPos.iX < r.iTl.iX + iTitleH + 4)
+			return 10;
+		TBuf<40> conn;
+		ConnectionText(*iSettings, iShared, conn);
+		if (aPos.iX > r.iBr.iX - iTitleFont->TextWidthInPixels(conn) - 12)
+			return 11;
+		return -1;
+		}
+	TInt y = r.iTl.iY + iTitleH;
+	if (!ListMode(iMode) || aPos.iY < y || aPos.iY >= y + iHeadH)
+		return -1;
+	for (TInt i = 4; i >= 0; i--)
+		if (aPos.iX >= iHeadX[i])
+			return (i == 0 && (iSettings->iView & 4)) ? -1 : i;
+	return -1;
+	}
+
+void CPmView::HeaderActionL(TInt aHit)
+	{
+	TInt s = iSettings->iSort;
+	switch (aHit)
+		{
+	case 10: ToggleViewL(4); break;
+	case 11: StatusInfoL(); break;
+	case 0: if (iMode == EList || iMode == EOutbox) FocusFoldersL(); break;
+	case 1: if (iMode == EList) SortL(s == 6 ? 0 : 6); break;
+	case 2: if (iMode == EList) SortL(s == 2 ? 3 : 2); break;
+	case 3: if (iMode == EList) SortL(s == 4 ? 5 : 4); break;
+	case 4: if (iMode == EList) SortL(s == 0 ? 1 : 0); break;
+	default: break;
+		}
 	}
 
 void CPmView::DrawNative(const TRect& /*aRect*/) const
@@ -825,28 +1372,30 @@ void CPmView::DrawNative(const TRect& /*aRect*/) const
 	gc.SetPenStyle(CGraphicsContext::ENullPen);
 	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 	gc.SetBrushColor(KRgbWhite);
-	gc.DrawRect(r);
+	gc.DrawRect(TRect(r.iTl.iX, r.iTl.iY + iTitleH, r.iBr.iX, r.iBr.iY));
+	DrawTitle(gc);
+	DrawHeaders(gc);
 	gc.SetPenStyle(CGraphicsContext::ESolidPen);
 	gc.SetPenColor(KRgbBlack);
-	TInt h = r.Height() - iStatusH;
-	if (iMode != EMessage)
-		gc.DrawLine(TPoint(r.iTl.iX + iSplitX, r.iTl.iY), TPoint(r.iTl.iX + iSplitX, r.iTl.iY + h));
+	TInt top = r.iTl.iY + iTitleH + iHeadH;
+	if (ListMode(iMode) && iSplitX)
+		gc.DrawLine(TPoint(r.iTl.iX + iSplitX, top), TPoint(r.iTl.iX + iSplitX, r.iBr.iY));
 	// an empty folder, or no account yet: say so where the list would be
 	TBool emptyList = (iMode == EList || iMode == EOutbox) && iRows->Count() == 0;
 	if (emptyList || iMode == ENoAccount)
 		{
 		gc.UseFont(iListFont);
 		gc.SetBrushStyle(CGraphicsContext::ENullBrush);
-		TRect area(r.iTl.iX + iSplitX + 1, r.iTl.iY, r.iBr.iX, r.iTl.iY + h);
+		TRect area(iHeadX[1], top, r.iBr.iX, r.iBr.iY);
 		TBuf<120> a, b;
 		if (iMode == ENoAccount)
 			{
-			a = _L("Set up your mail with Tools > New account (Ctrl+K).");
+			a = _L("Set up your mail with Tools > Add new account.");
 			b = _L("For Fastmail, make an app password first.");
 			}
 		else if (iMode == EOutbox) a = _L("Nothing waiting to be sent");
 		else if (iSearch) a = _L("Nothing found");
-		else a = Busy() ? _L("Looking for messages...") : _L("No messages here");
+		else a = Busy() ? _L("Looking for messages...") : _L("No messages");
 		TInt lh = iListFont->HeightInPixels() + 4;
 		TInt y = area.iTl.iY + area.Height() / 2 - lh;
 		TInt w1 = iListFont->TextWidthInPixels(a);
@@ -890,10 +1439,125 @@ void CPmView::SyncSelectionFromLists()
 	if (iMode == EList || iMode == EOutbox)
 		{
 		if (iSidebar)
-			iFolderSel = iFolderList->CurrentItemIndex();
+			{
+			TInt i = iFolderList->CurrentItemIndex() - 1;   // (row 0: the account)
+			if (i >= 0)
+				iFolderSel = i;
+			}
 		else if (iRows->Count())
 			iSel = iMsgList->CurrentItemIndex();
 		}
+	}
+
+// the account at the top of the tree: switch accounts, if there are others
+static void AccountRowL(CPmView& aView, const TPmSettings& aSettings)
+	{
+	TInt used = 0;
+	for (TInt i = 0; i < PM_MAX_ACCOUNTS; i++)
+		if (aSettings.iAccounts[i].used) used++;
+	if (used > 1)
+		CEikonEnv::Static()->EikAppUi()->HandleCommandL(EPmCmdSwitchAccount);
+	else
+		{
+		TBuf<100> m;
+		TPtrC8 e((const TUint8*)aSettings.iAccounts[aSettings.iAcct].email);
+		m.Copy(e.Left(e.Length() < 90 ? e.Length() : 90));
+		CEikonEnv::Static()->InfoMsg(m);
+		}
+	(void)aView;
+	}
+
+// ----- the toolbar's pop-ups, the View menu, Status information --------------------
+
+void CPmView::ToolbarPopupL(TInt aCommand)
+	{
+	CPmAppUi* ui = (CPmAppUi*)iEikonEnv->EikAppUi();
+	if (aCommand == EPmCmdReplyPopup && !((iMode == EList || iMode == EMessage) && CurrentRow()))
+		{
+		iEikonEnv->InfoMsg(_L("Select a message first"));
+		return;
+		}
+	CCoeControl* b = ui->ToolBarButton(aCommand);
+	TPoint pos = b ? b->PositionRelativeToScreen() : TPoint(PositionRelativeToScreen().iX + Rect().Width(), 20);
+	ui->LaunchPopupMenuL(aCommand == EPmCmdNewPopup ? R_PM_NEW_POPUP : R_PM_REPLY_POPUP,
+		pos, EPopupTargetTopRight);
+	}
+
+void CPmView::ToggleViewL(TInt aFlag)
+	{
+	iSettings->iView ^= aFlag;
+	CPmAppUi* ui = (CPmAppUi*)iEikonEnv->EikAppUi();
+	ui->SaveSettings();
+	if (!iFolderList)
+		return;
+	if ((iSettings->iView & 4) && iSidebar)
+		iSidebar = EFalse;
+	if (aFlag == 1)
+		ui->ShowToolBar(NativeMode() && iNativeShown);     // (sets our rect: lays out)
+	else
+		LayoutNative();
+	if (NativeMode() && iNativeShown)
+		{
+		iNativeMode = (TMode)-1;
+		UpdateNativeL();
+		DrawNow();
+		}
+	}
+
+void CPmView::StatusInfoL()
+	{
+	TBuf<120> lines[6];
+	const PmAccount& a = iSettings->iAccounts[iSettings->iAcct];
+	TPtrC8 name((const TUint8*)a.name);
+	TPtrC8 email((const TUint8*)a.email);
+	lines[0] = _L("Account: ");
+	if (a.used)
+		{
+		TBuf<40> n;
+		n.Copy(Clip(name, 30));
+		lines[0].Append(n);
+		TBuf<70> e;
+		e.Copy(Clip(email, 60));
+		lines[0].AppendFormat(_L(" (%S)"), &e);
+		}
+	else
+		lines[0].Append(_L("none yet"));
+	const TInt KBauds[5] = { 9600, 19200, 38400, 57600, 115200 };
+	TInt bi = iSettings->iBaudIndex;
+	if (bi < 0 || bi > 4) bi = 4;
+	if (iSettings->iNetMode)
+		lines[1] = _L("Connection: Psion Internet (TCP/IP)");
+	else
+		lines[1].Format(_L("Connection: serial modem at %d baud"), KBauds[bi]);
+	TBuf<40> conn;
+	ConnectionText(*iSettings, iShared, conn);
+	lines[1].Append(_L(" - "));
+	lines[1].Append(conn);
+	if (iMode == EList)
+		{
+		TInt unread = 0;
+		for (TInt i = 0; i < iRows->Count(); i++)
+			if ((*iRows)[i].iFlags.Locate('S') < 0) unread++;
+		lines[2].Format(_L("This folder: %d messages here, %d unread"), iRows->Count(), unread);
+		}
+	else
+		lines[2] = _L("This folder: -");
+	lines[3].Format(_L("Outbox: %d waiting to be sent"), OutboxCount());
+	lines[4] = _L("Last: ");
+	if (Busy() && iLastProgress.Length())
+		lines[4].Append(Clip(iLastProgress, 100));
+	else if (iStatus.Length())
+		lines[4].Append(Clip(iStatus, 100));
+	else
+		lines[4].Append(iRunning ? _L("the mail engine is ready") : _L("the mail engine is not running"));
+	TMemoryInfoV1Buf mem;
+	UserHal::MemoryInfo(mem);
+	lines[5].Format(_L("Free memory: %d KB. Engine: %d KB."), mem().iFreeRamInBytes / 1024,
+		iShared ? iShared->heap_used / 1024 : 0);
+	TPtrC ptrs[6];
+	for (TInt k = 0; k < 6; k++) ptrs[k].Set(lines[k]);
+	CPmInfoDialog* dlg = new(ELeave) CPmInfoDialog(_L("Status information"), ptrs, 6);
+	dlg->ExecuteLD(R_PM_INFO_DIALOG);
 	}
 
 // ----- keys and the pen -------------------------------------------------------------
@@ -907,6 +1571,7 @@ static TBool IsListKey(TUint aCode)
 TKeyResponse CPmView::NativeKeyL(const TKeyEvent& aKeyEvent, TEventCode aType)
 	{
 	TUint code = aKeyEvent.iCode;
+	TBool canFolders = !(iSettings->iView & 4);
 	if (iMode == EList || iMode == EOutbox)
 		{
 		if (IsListKey(code))
@@ -923,15 +1588,20 @@ TKeyResponse CPmView::NativeKeyL(const TKeyEvent& aKeyEvent, TEventCode aType)
 			{
 		case EKeyEnter:
 		case EKeyRightArrow:
+			if (iSidebar && iFolderList->CurrentItemIndex() == 0)
+				{
+				AccountRowL(*this, *iSettings);
+				return EKeyWasConsumed;
+				}
 			SyncSelectionFromLists();
 			OpenCurrentL();
 			return EKeyWasConsumed;
 		case EKeyTab:
 			SyncSelectionFromLists();
-			if (iSidebar) OpenCurrentL(); else FocusFoldersL();
+			if (iSidebar) OpenCurrentL(); else if (canFolders) FocusFoldersL();
 			return EKeyWasConsumed;
 		case EKeyLeftArrow:
-			if (!iSidebar) FocusFoldersL();
+			if (!iSidebar && canFolders) FocusFoldersL();
 			return EKeyWasConsumed;
 		case EKeyEscape:
 			BackL();
@@ -986,13 +1656,52 @@ TKeyResponse CPmView::NativeKeyL(const TKeyEvent& aKeyEvent, TEventCode aType)
 	return EKeyWasNotConsumed;
 	}
 
+// the pen on the title band and headings (the controls take the rest):
+// returns ETrue if it was ours
+TBool CPmView::NativePointerL(const TPointerEvent& aEvent)
+	{
+	TInt hit = HeaderHit(aEvent.iPosition);
+	if (aEvent.iType == TPointerEvent::EButton1Down)
+		{
+		iPenHead = hit;
+		if (hit < 0)
+			return EFalse;
+		}
+	else if (iPenHead < 0)
+		return EFalse;
+	else if (aEvent.iType == TPointerEvent::EButton1Up)
+		{
+		TInt was = iPenHead;
+		iPenHead = -1;
+		DrawNow();
+		if (hit == was)
+			HeaderActionL(was);
+		return ETrue;
+		}
+	else
+		return ETrue;                            // (a drag: wait for the pen to lift)
+	// pressed: show it
+	ActivateGc();
+	DrawTitle(SystemGc());
+	DrawHeaders(SystemGc());
+	DeactivateGc();
+	return ETrue;
+	}
+
 void CPmView::HandleListBoxEventL(CEikListBox* aListBox, TListBoxEvent aEventType)
 	{
 	if (aListBox == iFolderList)
 		{
-		// a tap on a folder opens it
+		// a tap on a folder opens it (row 0: the account)
+		TInt row = iFolderList->CurrentItemIndex();
+		if (row <= 0)
+			{
+			if (aEventType == EEventItemDoubleClicked || aEventType == EEventEnterKeyPressed || aEventType == EEventItemClicked)
+				AccountRowL(*this, *iSettings);
+			return;
+			}
 		iSidebar = ETrue;
-		iFolderSel = iFolderList->CurrentItemIndex();
+		iFolderSel = row - 1;
 		OpenCurrentL();
 		return;
 		}

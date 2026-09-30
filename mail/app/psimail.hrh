@@ -46,7 +46,19 @@ enum TPmCommands
 	EPmCmdAttachFile,
 	EPmCmdRemoveAttach,
 	EPmCmdDiscard,
-	EPmCmdUpdate
+	EPmCmdUpdate,
+	EPmCmdNewPopup,          // the toolbar's New: Email / Calendar event
+	EPmCmdReplyPopup,        // the toolbar's Reply/f'ward
+	EPmCmdReplyMenu,         // Message > Reply to (a cascade)
+	EPmCmdStop,
+	EPmCmdToggleToolbar,
+	EPmCmdToggleTitle,
+	EPmCmdToggleFolders,
+	EPmCmdStatusInfo,
+	EPmCmdSort,
+	EPmCmdZoomIn,
+	EPmCmdZoomOut,
+	EPmCmdInbox
 	};
 
 enum TPmDialogControls
