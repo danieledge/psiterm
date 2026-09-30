@@ -27,6 +27,7 @@
 #include <eikcmbut.h>
 #include "pmicons.h"
 #include "pmapp.h"
+#include "pmcontacts.h"
 #include "psilink.h"
 
 // how many of the newest messages to download ahead after a sync
@@ -221,6 +222,7 @@ void CPmWatcher::DoCancel()
 
 CPmView::~CPmView()
 	{
+	delete iFwdFiles;
 	StopEngine();
 	DestroyNative();
 	delete iCalSync;
@@ -673,6 +675,14 @@ void CPmView::LoadListL()
 				{
 				DisplayName(row.iFrom, from);
 				SafeCopy(row.iSubject, NextField(l));
+				if (row.iFrom.Locate('@') >= 0)
+					{
+					// only an address: the name from Contacts, when they have been read
+					CPmContacts* c = ((CPmAppUi*)iEikonEnv->EikAppUi())->Contacts();
+					TBuf<64> n;
+					if (c && c->Loaded() && c->NameFor(row.iFrom, n))
+						row.iFrom = n;
+					}
 				}
 			iRows->AppendL(row);
 			}
@@ -1273,6 +1283,153 @@ void CPmView::SaveAttachmentL(TInt aIndex)
 	Cmd(PM_CMD_ATTACH, iFolder, iMsgUid, (*iAttParts)[aIndex]);
 	}
 
+// the engine's name for an attachment file (imap.c's safe_name)
+static void SafeFileName(TDes& aOut, const TDesC& aName)
+	{
+	aOut.Zero();
+	for (TInt i = 0; i < aName.Length() && aOut.Length() < aOut.MaxLength(); i++)
+		{
+		TText c = aName[i];
+		if (c == '\\' || c == '/' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|' || c < 32)
+			c = '_';
+		aOut.Append(c);
+		}
+	while (aOut.Length() && (aOut[aOut.Length() - 1] == '.' || aOut[aOut.Length() - 1] == ' '))
+		aOut.SetLength(aOut.Length() - 1);
+	if (!aOut.Length())
+		aOut = _L("attachment");
+	}
+
+// where opened attachments are kept: beside the message, on the mail's
+// disk (D:\PsiMail\A0\F...\Open\uid\name), so opening one again is instant
+static void AttachCacheDir(TDes& aDir, TUint aUid)
+	{
+	aDir.Append(_L("Open\\"));
+	aDir.AppendNum(aUid);
+	aDir.Append('\\');
+	}
+
+// Open: a copy already here opens at once; otherwise the engine fetches it
+// (the part id, a tab, then where to) and HandleResultL opens it
+void CPmView::OpenAttachmentL(TInt aIndex)
+	{
+	if (aIndex < 0 || aIndex >= iAttParts->Count())
+		return;
+	TBuf<200> path;
+	FolderDir(iFolder, path);
+	AttachCacheDir(path, iMsgUid);
+	TBuf<100> name;
+	SafeFileName(name, (*iAttNames)[aIndex]);
+	TBuf8<PM_ARG_MAX> arg;
+	arg.Copy((*iAttParts)[aIndex]);
+	arg.Append('\t');
+	arg.Append(Clip(path, PM_ARG_MAX - arg.Length() - 1));
+	path.Append(Clip(name, path.MaxLength() - path.Length()));
+	TEntry e;
+	if (iCoeEnv->FsSession().Entry(path, e) == KErrNone && e.iSize > 0)
+		{
+		LaunchFileL(path);
+		return;
+		}
+	Cmd(PM_CMD_ATTACH, iFolder, iMsgUid, arg);
+	}
+
+// the file in its own program: the system's recognisers pick it (Word,
+// Sheet, Sketch, Record...)
+void CPmView::LaunchFileL(const TDesC& aPath)
+	{
+	RApaLsSession ls;
+	User::LeaveIfError(ls.Connect());
+	CleanupClosePushL(ls);
+	TThreadId id;
+	TInt r = ls.StartDocument(aPath, id);
+	CleanupStack::PopAndDestroy();          // ls
+	if (r == KErrNone)
+		{
+		TParsePtrC parse(aPath);
+		TBuf<100> t(_L("Opening "));
+		t.Append(Clip(parse.NameAndExt(), 80));
+		t.Append(_L("..."));
+		Toast(t);
+		return;
+		}
+	if (r == KErrNotFound || r == KErrNotSupported)
+		iEikonEnv->InfoWinL(_L("No program opens this kind of file - it is saved at"), Clip(aPath, 120));
+	else
+		{
+		TBuf<80> t;
+		t.Format(_L("The file can't be opened (%d)"), r);
+		iEikonEnv->InfoWinL(t, Clip(aPath, 120));
+		}
+	}
+
+// Forward with attachments: each is fetched to the message's Open folder
+// (those already there count at once); the last one in starts the forward
+void CPmView::ForwardAttachmentsL(TUint aUid)
+	{
+	if (!iFwdFiles)
+		iFwdFiles = new(ELeave) CDesCArrayFlat(4);
+	iFwdFiles->Reset();
+	iFwdPending = 0;
+	iFwdUid = aUid;
+	TBuf<200> dir;
+	FolderDir(iFolder, dir);
+	AttachCacheDir(dir, aUid);
+	for (TInt i = 0; i < iAttParts->Count(); i++)
+		{
+		TBuf<100> name;
+		SafeFileName(name, (*iAttNames)[i]);
+		TBuf<200> path(dir);
+		path.Append(Clip(name, path.MaxLength() - path.Length()));
+		TEntry e;
+		if (iCoeEnv->FsSession().Entry(path, e) == KErrNone && e.iSize > 0)
+			{
+			iFwdFiles->AppendL(path);
+			continue;
+			}
+		TBuf8<PM_ARG_MAX> arg;
+		arg.Copy((*iAttParts)[i]);
+		arg.Append('\t');
+		arg.Append(Clip(dir, PM_ARG_MAX - arg.Length() - 1));
+		Cmd(PM_CMD_ATTACH, iFolder, aUid, arg);
+		iFwdPending++;
+		}
+	if (iFwdPending == 0)
+		((CPmAppUi*)iEikonEnv->EikAppUi())->ForwardReadyL(aUid, *iFwdFiles);
+	else
+		Toast(_L("Getting the attachments first..."));
+	}
+
+// the From of a message in this folder's index, as the server gave it
+// ("Name <addr>"): there before the message itself is downloaded
+TBool CPmView::IndexFromL(TUint aUid, TDes& aFrom)
+	{
+	aFrom.Zero();
+	TBuf<140> path;
+	FolderDir(iFolder, path);
+	path.Append(iSearch ? _L("search.txt") : _L("index.txt"));
+	HBufC* buf = NULL;
+	ReadFileL(path, buf, 400 * 1024);
+	if (!buf)
+		return EFalse;
+	CleanupStack::PushL(buf);
+	TPtrC rest = *buf;
+	while (rest.Length() && !aFrom.Length())
+		{
+		TInt nl = rest.Locate('\n');
+		TPtrC l = nl >= 0 ? rest.Left(nl) : rest;
+		rest.Set(nl >= 0 ? rest.Mid(nl + 1) : TPtrC());
+		if (l.Length() < 3 || l[0] == '#')
+			continue;
+		if ((TUint)ToInt(NextField(l)) != aUid)
+			continue;
+		NextField(l); NextField(l); NextField(l);      // flags, date, size
+		SafeCopy(aFrom, NextField(l));
+		}
+	CleanupStack::PopAndDestroy();                  // buf
+	return aFrom.Length() > 0;
+	}
+
 // value of a header line in the open message ("From", "Subject"...)
 TBool CPmView::MessageHeader(const TDesC& aName, TDes& aValue) const
 	{
@@ -1697,7 +1854,18 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 			{
 			TBuf<128> file;
 			FromC(file, s->last_file);
-			iEikonEnv->InfoWinL(_L("Attachment saved"), file);
+			TPtrC8 arg((const TUint8*)aCmd.arg);
+			if (arg.Locate('\t') < 0)
+				iEikonEnv->InfoWinL(_L("Attachment saved"), file);
+			else if (iFwdPending > 0 && aCmd.uid == iFwdUid)
+				{
+				// one of a forward's: the last one in starts it
+				iFwdFiles->AppendL(file);
+				if (--iFwdPending == 0)
+					((CPmAppUi*)iEikonEnv->EikAppUi())->ForwardReadyL(iFwdUid, *iFwdFiles);
+				}
+			else
+				LaunchFileL(file);                     // Open attachment: fetched, now open it
 			}
 		else if ((aCmd.op == PM_CMD_SYNC || aCmd.op == PM_CMD_SENDRECV) && s->new_mail > 0 && aCmd.op == PM_CMD_SENDRECV)
 			Toast(msg);
@@ -1768,6 +1936,8 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		break;
 		}
 	case PM_RES_OFFLINE:
+		if (aCmd.op == PM_CMD_ATTACH)
+			iFwdPending = 0;
 		if (aCmd.op == PM_CMD_FLAG && iSettings->iOffline)
 			{
 			ReloadL();                         // queued, as expected when offline
@@ -1777,11 +1947,15 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		ReloadL();
 		break;
 	case PM_RES_CANCELLED:
+		if (aCmd.op == PM_CMD_ATTACH)
+			iFwdPending = 0;
 		Toast(_L("Stopped"));
 		break;
 	default:
 		if ((aCmd.op == PM_CMD_BODY || aCmd.op == PM_CMD_FULLBODY) && aCmd.uid == iMsgUid)
 			iBodyError = msg;                    // shown in place of "Downloading..."
+		if (aCmd.op == PM_CMD_ATTACH && iFwdPending > 0)
+			iFwdPending = 0;                     // (forward without them: Message > Forward again)
 		if (aCmd.op == PM_CMD_BODY || aCmd.op == PM_CMD_ATTACH || aCmd.op == PM_CMD_SEND ||
 			aCmd.op == PM_CMD_SENDRECV || aCmd.op == PM_CMD_SEARCH)
 			iEikonEnv->InfoWinL(_L("PsiMail"), Clip(msg, 120));
@@ -2316,7 +2490,7 @@ void CPmView::ActivateLinkL(TInt aLink)
 	{
 	if (aLink <= -1000)
 		{
-		SaveAttachmentL(-aLink - 1000);
+		OpenAttachmentL(-aLink - 1000);
 		return;
 		}
 	const char* url = 0;
@@ -2324,21 +2498,13 @@ void CPmView::ActivateLinkL(TInt aLink)
 	if (!n)
 		return;
 	TPtrC8 u((const TUint8*)url, n);
-	if (Clip(u, 7).CompareF(_L8("mailto:")) == 0)
-		{
-		// write to them
-		CPmDraft* d = CPmDraft::NewL();
-		CleanupStack::PushL(d);
-		TPtrC8 addr = u.Mid(7);
-		TInt q = addr.Locate('?');
-		if (q >= 0) addr.Set(addr.Left(q));
-		SafeCopy(d->iTo, addr);
-		CleanupStack::Pop();
-		((CPmAppUi*)iEikonEnv->EikAppUi())->ComposeDraftL(d, _L("New message"));
-		return;
-		}
 	TBuf<256> link;
 	SafeCopy(link, u);
+	if (Clip(link, 7).CompareF(_L("mailto:")) == 0)
+		{
+		((CPmAppUi*)iEikonEnv->EikAppUi())->MailtoL(link);   // write to them
+		return;
+		}
 	OpenWebL(link);
 	}
 
@@ -2681,6 +2847,14 @@ TKeyResponse CPmComposeDialog::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEvent
 		if (k == 19 || k == 's' || k == 'S') { TryExitL(EPmBidSend); return EKeyWasConsumed; }
 		if (k == 4 || k == 'd' || k == 'D') { TryExitL(EPmBidSave); return EKeyWasConsumed; }
 		if (k == 1 || k == 'a' || k == 'A') { TryExitL(EPmBidAttach); return EKeyWasConsumed; }
+		if (k == 12 || k == 'l' || k == 'L') { TryExitL(EPmBidContacts); return EKeyWasConsumed; }
+		}
+	// Tab in an address line: complete the name from Contacts
+	if (aType == EEventKey && aKeyEvent.iCode == EKeyTab && !(aKeyEvent.iModifiers & EModifierCtrl) &&
+		(IdOfFocusControl() == EPmDlgTo || IdOfFocusControl() == EPmDlgCc || IdOfFocusControl() == EPmDlgBcc))
+		{
+		ContactsL(ETrue);
+		return EKeyWasConsumed;
 		}
 	if (aType == EEventKey && (aKeyEvent.iModifiers & EModifierCtrl) && IdOfFocusControl() == EPmDlgBody)
 		{
@@ -2704,6 +2878,32 @@ void CPmComposeDialog::PostLayoutDynInitL()
 	((CEikEdwin*)Control(EPmDlgBody))->SetCursorPosL(0, EFalse);
 	if (iDraft.iTo.Length())
 		TryChangeFocusToL(EPmDlgBody);
+	}
+
+// the address line with the focus: To, Cc or Bcc (To from anywhere else)
+TInt CPmComposeDialog::AddressLine() const
+	{
+	TInt id = IdOfFocusControl();
+	return (id == EPmDlgCc || id == EPmDlgBcc) ? id : EPmDlgTo;
+	}
+
+// the Contacts button: pick from the Psion's Contacts into the address line
+// with the focus; Tab: complete what's typed there
+void CPmComposeDialog::ContactsL(TBool aComplete)
+	{
+	CPmContacts* c = ((CPmAppUi*)iEikonEnv->EikAppUi())->Contacts();
+	if (!c)
+		return;
+	TInt id = AddressLine();
+	TDes& field = id == EPmDlgCc ? (TDes&)iDraft.iCc : id == EPmDlgBcc ? (TDes&)iDraft.iBcc : (TDes&)iDraft.iTo;
+	GetEdwinText(field, id);
+	TBool changed = aComplete ? c->CompleteL(field) : c->PickL(field, KNullDesC);
+	if (!changed)
+		return;
+	SetEdwinTextL(id, &field);
+	CEikEdwin* ed = (CEikEdwin*)Control(id);
+	ed->SetCursorPosL(field.Length(), EFalse);
+	ed->DrawDeferred();
 	}
 
 void CPmComposeDialog::ShowAttachments()
@@ -2841,6 +3041,11 @@ TBool CPmComposeDialog::OkToExitL(TInt aButtonId)
 				}
 			}
 		ShowAttachments();
+		return EFalse;                  // stay in the dialog
+		}
+	if (aButtonId == EPmBidContacts)
+		{
+		ContactsL(EFalse);
 		return EFalse;                  // stay in the dialog
 		}
 	if (aButtonId == EPmBidSend)
@@ -3096,6 +3301,116 @@ CPmAppUi::~CPmAppUi()
 		RemoveFromStack(iView);
 		delete iView;
 		}
+	delete iContacts;
+	}
+
+CPmContacts* CPmAppUi::Contacts()
+	{
+	if (!iContacts)
+		{
+		TRAPD(err, iContacts = CPmContacts::NewL());
+		(void)err;
+		}
+	return iContacts;
+	}
+
+// ----- mailto: links (the reader's, and PsiWeb's) ---------------------------------
+
+// %xx and + in a mailto: part
+static void UrlDecode(TDes& aOut, const TDesC& aIn, TBool aPlusIsSpace)
+	{
+	for (TInt i = 0; i < aIn.Length() && aOut.Length() < aOut.MaxLength(); i++)
+		{
+		TText c = aIn[i];
+		if (c == '%' && i + 2 < aIn.Length())
+			{
+			TLex lex(aIn.Mid(i + 1, 2));
+			TUint v;
+			if (lex.Val(v, EHex) == KErrNone)
+				{
+				c = (TText)v;
+				i += 2;
+				}
+			}
+		else if (c == '+' && aPlusIsSpace)
+			c = ' ';
+		if (c == '\r')
+			continue;
+		aOut.Append(c);
+		}
+	}
+
+// mailto:someone@example.com?subject=Hello&cc=...&body=...
+void CPmAppUi::MailtoL(const TDesC& aUrl)
+	{
+	TPtrC u = aUrl;
+	if (Clip(u, 7).CompareF(_L("mailto:")) == 0)
+		u.Set(u.Mid(7));
+	CPmDraft* d = CPmDraft::NewL();
+	CleanupStack::PushL(d);
+	TInt q = u.Locate('?');
+	TPtrC to = q >= 0 ? u.Left(q) : u;
+	TPtrC rest = q >= 0 ? u.Mid(q + 1) : TPtrC();
+	UrlDecode(d->iTo, to, EFalse);
+	HBufC* body = HBufC::NewL(4096);
+	TPtr bp = body->Des();
+	while (rest.Length())
+		{
+		TInt amp = rest.Locate('&');
+		TPtrC pair = amp >= 0 ? rest.Left(amp) : rest;
+		rest.Set(amp >= 0 ? rest.Mid(amp + 1) : TPtrC());
+		TInt eq = pair.Locate('=');
+		if (eq < 0)
+			continue;
+		TPtrC key = pair.Left(eq);
+		TPtrC val = pair.Mid(eq + 1);
+		if (key.CompareF(_L("subject")) == 0) UrlDecode(d->iSubject, val, ETrue);
+		else if (key.CompareF(_L("cc")) == 0) UrlDecode(d->iCc, val, EFalse);
+		else if (key.CompareF(_L("bcc")) == 0) UrlDecode(d->iBcc, val, EFalse);
+		else if (key.CompareF(_L("to")) == 0)
+			{
+			if (d->iTo.Length()) d->iTo.Append(_L(", "));
+			UrlDecode(d->iTo, val, EFalse);
+			}
+		else if (key.CompareF(_L("body")) == 0) UrlDecode(bp, val, ETrue);
+		}
+	if (bp.Length() == 0 || bp[bp.Length() - 1] != '\n')
+		bp.Append('\n');
+	AddSignature(*d, bp);
+	delete d->iBody;
+	d->iBody = body;
+	CleanupStack::Pop();                      // d
+	ComposeL(d, _L("New message"));
+	}
+
+// PsiWeb (or anyone) hands PsiMail a mailto: link as a message ...
+void CPmAppUi::ProcessMessageL(TUid aUid, const TDesC8& aParams)
+	{
+	if (aUid != KUidPsiMail)
+		{
+		CEikAppUi::ProcessMessageL(aUid, aParams);
+		return;
+		}
+	TBuf<500> url;
+	url.Copy(Clip(aParams, url.MaxLength()));
+	url.Trim();
+	if (Clip(url, 7).CompareF(_L("mailto:")) == 0 && iView && iView->Mode() != CPmView::ENoAccount)
+		MailtoL(url);
+	}
+
+// ... or starts it with one on the command line
+TBool CPmAppUi::ProcessCommandParametersL(TApaCommand aCommand, TFileName& aDocumentName, const TDesC8& aTail)
+	{
+	TBuf<500> url;
+	url.Copy(Clip(aTail, url.MaxLength()));
+	url.Trim();
+	if (Clip(url, 7).CompareF(_L("mailto:")) == 0 && iView && iView->Mode() != CPmView::ENoAccount)
+		{
+		TRAPD(err, MailtoL(url));
+		(void)err;
+		return EFalse;
+		}
+	return CEikAppUi::ProcessCommandParametersL(aCommand, aDocumentName, aTail);
 	}
 
 // passwords are kept scrambled (not encrypted: anyone with the Psion can
@@ -3589,7 +3904,7 @@ void CPmAppUi::ReplyL(TBool aAll)
 		ComposeL(d, aAll ? _L("Reply to all") : _L("Reply"));
 	}
 
-CPmDraft* CPmAppUi::ForwardDraftL()
+CPmDraft* CPmAppUi::ForwardDraftL(CDesCArray* aFiles)
 	{
 	if (iView->Mode() == CPmView::EList && iView->CurrentRow())
 		iView->OpenCurrentL();
@@ -3629,7 +3944,10 @@ CPmDraft* CPmAppUi::ForwardDraftL()
 		iView->PlainBodyL(room, EFalse);
 		p.SetLength(room.Length());
 	}
-	if (iView->AttachmentCount())
+	if (aFiles)
+		for (TInt i = 0; i < aFiles->Count() && d->iAttach->Count() < 8; i++)
+			d->iAttach->AppendL((*aFiles)[i]);
+	else if (iView->AttachmentCount())
 		p.Append(_L("\n(The attachments are not forwarded: save them first and attach them.)\n"));
 	CleanupStack::Pop();                      // body
 	delete d->iBody;
@@ -3639,9 +3957,37 @@ CPmDraft* CPmAppUi::ForwardDraftL()
 	return d;
 	}
 
+// Forward: with the message's attachments if wanted (they are downloaded
+// first; ForwardReadyL follows)
 void CPmAppUi::ForwardL()
 	{
-	CPmDraft* d = ForwardDraftL();
+	if (iView->Mode() == CPmView::EList && iView->CurrentRow())
+		iView->OpenCurrentL();
+	TInt n = iView->AttachmentCount();
+	if (n > 0 && iView->CurrentRow())
+		{
+		TBuf<60> t;
+		if (n == 1) t = _L("This message has an attachment");
+		else t.Format(_L("This message has %d attachments"), n);
+		if (iEikonEnv->QueryWinL(t, _L("Forward them too?")))
+			{
+			iView->ForwardAttachmentsL(iView->CurrentRow()->iUid);
+			return;
+			}
+		}
+	CPmDraft* d = ForwardDraftL(NULL);
+	if (d)
+		ComposeL(d, _L("Forward"));
+	}
+
+void CPmAppUi::ForwardReadyL(TUint aUid, CDesCArray& aFiles)
+	{
+	if (iView->Mode() != CPmView::EMessage || !iView->CurrentRow() || iView->CurrentRow()->iUid != aUid)
+		{
+		iView->Toast(_L("The attachments are saved - forward the message again to send them"));
+		return;
+		}
+	CPmDraft* d = ForwardDraftL(&aFiles);
 	if (d)
 		ComposeL(d, _L("Forward"));
 	}
@@ -3684,7 +4030,8 @@ void CPmAppUi::MoveL()
 	CleanupStack::PopAndDestroy();          // map
 	}
 
-void CPmAppUi::SaveAttachmentL()
+// Message > Attachments > Open / Save: which one
+void CPmAppUi::AttachmentL(TBool aOpen)
 	{
 	if (iView->AttachmentCount() == 0)
 		{
@@ -3696,9 +4043,41 @@ void CPmAppUi::SaveAttachmentL()
 	iView->AttachmentsL(*names);
 	TInt choice = 0;
 	CleanupStack::Pop();
-	CPmChoiceDialog* dlg = new(ELeave) CPmChoiceDialog(_L("Save attachment"), _L("Attachment"), names, choice);
+	CPmChoiceDialog* dlg = new(ELeave) CPmChoiceDialog(aOpen ? _L("Open attachment") : _L("Save attachment"), _L("Attachment"), names, choice);
 	if (dlg->ExecuteLD(R_PM_CHOICE_DIALOG))
-		iView->SaveAttachmentL(choice);
+		{
+		if (aOpen) iView->OpenAttachmentL(choice);
+		else iView->SaveAttachmentL(choice);
+		}
+	}
+
+// Edit > Add sender to Contacts: the open (or selected) message's From
+void CPmAppUi::AddSenderL()
+	{
+	if (!iView->CurrentRow() || (iView->Mode() != CPmView::EList && iView->Mode() != CPmView::EMessage))
+		{
+		iView->Toast(_L("No message selected"));
+		return;
+		}
+	// the From line: the open message's, else the folder index's (there
+	// before the message is downloaded; the list needn't be left)
+	TBuf<500> from;
+	if (iView->Mode() == CPmView::EMessage)
+		iView->MessageHeader(_L("From"), from);
+	if (!from.Length())
+		iView->IndexFromL(iView->CurrentRow()->iUid, from);
+	if (!from.Length())
+		{
+		iView->Toast(_L("No sender address"));
+		return;
+		}
+	TBuf<200> name, addr;
+	DisplayName(name, from);
+	AddressOnly(addr, from);
+	TBuf<120> msg;
+	Contacts()->AddL(name, addr, msg);
+	if (msg.Length())
+		iEikonEnv->InfoMsg(msg);
 	}
 
 // hands the checked PsiMail.sis to the system installer, and closes
@@ -3942,6 +4321,12 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemDimmed(EPmCmdMove, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdArchive, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdSearch, m == CPmView::ECalendar || m == CPmView::ENoAccount);
+		aMenuPane->SetItemDimmed(EPmCmdAddSender, !msg);
+		}
+	else if (aMenuId == R_PM_ATTACH_MENU)
+		{
+		aMenuPane->SetItemDimmed(EPmCmdOpenAttach, iView->AttachmentCount() == 0);
+		aMenuPane->SetItemDimmed(EPmCmdSaveAttach, iView->AttachmentCount() == 0);
 		}
 	else if (aMenuId == R_PM_MESSAGE_MENU)
 		{
@@ -3952,7 +4337,7 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		const TPmRow* row = msg ? iView->CurrentRow() : NULL;
 		aMenuPane->SetItemButtonState(EPmCmdUnread, row && row->iFlags.Locate('S') < 0 ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPmCmdFlag, row && row->iFlags.Locate('F') >= 0 ? EEikMenuItemSymbolOn : 0);
-		aMenuPane->SetItemDimmed(EPmCmdSaveAttach, iView->AttachmentCount() == 0);
+		aMenuPane->SetItemDimmed(EPmCmdAttachMenu, iView->AttachmentCount() == 0);
 		aMenuPane->SetItemDimmed(EPmCmdWhole, m != CPmView::EMessage);
 		aMenuPane->SetItemDimmed(EPmCmdWeb, m != CPmView::EMessage || !iView->HasHtml());
 		aMenuPane->SetItemDimmed(EPmCmdNew, m == CPmView::ENoAccount);
@@ -4170,7 +4555,13 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		iView->ToggleFlagL('F');
 		break;
 	case EPmCmdSaveAttach:
-		SaveAttachmentL();
+		AttachmentL(EFalse);
+		break;
+	case EPmCmdOpenAttach:
+		AttachmentL(ETrue);
+		break;
+	case EPmCmdAddSender:
+		AddSenderL();
 		break;
 	case EPmCmdWhole:
 		iView->WholeMessageL();

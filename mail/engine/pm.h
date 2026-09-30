@@ -158,7 +158,7 @@ int  imap_list_folders(int acct, char *why, int whymax);
 int  imap_sync(int acct, const char *folder, int older, char *why, int whymax);
 /* full: bit 0 = past max_body_kb, bit 1 = downloaded ahead (stays unread) */
 int  imap_body(int acct, const char *folder, unsigned int uid, int full, char *why, int whymax);
-int  imap_attach(int acct, const char *folder, unsigned int uid, const char *part, char *why, int whymax);
+int  imap_attach(int acct, const char *folder, unsigned int uid, const char *part, const char *dir, char *why, int whymax);
 int  imap_flag(int acct, const char *folder, unsigned int uid, const char *op, char *why, int whymax);
 int  imap_move(int acct, const char *folder, unsigned int uid, const char *dest, char *why, int whymax);
 int  imap_search(int acct, const char *folder, const char *words, char *why, int whymax);

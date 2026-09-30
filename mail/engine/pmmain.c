@@ -399,8 +399,13 @@ static int run(PmCmd *c, char *why, int whymax)
 		r = imap_body(a, c->folder, c->uid, c->op == PM_CMD_FULLBODY, why, whymax);
 		break;
 	case PM_CMD_ATTACH:
-		r = imap_attach(a, c->folder, c->uid, c->arg, why, whymax);
+	{
+		/* "part", or "part TAB folder" to put it somewhere other than attach_dir */
+		char *tab = strchr(c->arg, '\t');
+		if (tab) *tab++ = 0;
+		r = imap_attach(a, c->folder, c->uid, c->arg, tab, why, whymax);
 		break;
+	}
 	case PM_CMD_FLAG:
 		local_update(a, c->folder, c->uid, c->arg, 0);
 		r = s->offline ? PM_RES_OFFLINE : imap_flag(a, c->folder, c->uid, c->arg, why, whymax);

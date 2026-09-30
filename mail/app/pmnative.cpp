@@ -1281,7 +1281,7 @@ void CPmView::NativeActivateLinkL()
 	TInt link = (*iLinks)[iLinkSel].iLink;
 	if (link <= -1000)
 		{
-		SaveAttachmentL(-link - 1000);
+		OpenAttachmentL(-link - 1000);        // in its own program (Save is on the menu)
 		return;
 		}
 	TBuf<256> url;
@@ -1289,14 +1289,7 @@ void CPmView::NativeActivateLinkL()
 		return;
 	if (Clip(url, 7).CompareF(_L("mailto:")) == 0)
 		{
-		CPmDraft* d = CPmDraft::NewL();
-		CleanupStack::PushL(d);
-		TPtrC addr = url.Mid(7);
-		TInt q = addr.Locate('?');
-		if (q >= 0) addr.Set(addr.Left(q));
-		d->iTo.Copy(Clip(addr, d->iTo.MaxLength()));
-		CleanupStack::Pop();
-		((CPmAppUi*)iEikonEnv->EikAppUi())->ComposeDraftL(d, _L("New message"));
+		((CPmAppUi*)iEikonEnv->EikAppUi())->MailtoL(url);   // write to them
 		return;
 		}
 	OpenWebL(url);
