@@ -17,10 +17,12 @@ an emulator; the screens have been drawn on a PC from real mail
   a title band (account\\folder, how many messages or what's happening, the
   connection), column headings (? / From / Subject / Date) you tap to sort,
   a folder tree with pictures, status pictures in the message list, a
-  read-only rich text reader, the standard toolbar (New and Reply/f'ward pop
-  up a choice, Open mailbox, Close mailbox, the clock), Email's menus and
-  shortcuts, and View > Show toolbar / title bar / list of folders. The
-  sidebar's zoom buttons (or Ctrl+M / Shift+Ctrl+M) change the text size.
+  read-only rich text reader with a scroll bar, the standard toolbar (New and
+  Reply/f'ward pop up a choice, Check mail, Delete - or Close when reading),
+  and View > Show toolbar / title bar / list of folders. Menus, shortcuts,
+  wording and messages follow Symbian's EIKON Application Style Guide
+  (standard shortcuts, busy messages bottom left, infoprints, a second tap
+  opens, zoom goes round three sizes like the built-in Email program).
   (The calendar screen is still drawn by PsiMail itself.) The pictures are
   original pixel art, made by `tools/mkicons.py` into PsiMail.mbm.
 * Folders with unread counts; the newest 50 messages per folder (more with
@@ -52,7 +54,7 @@ an emulator; the screens have been drawn on a PC from real mail
    password.
 3. Tools > Connection settings: as for PsiTerm (modem or Psion TCP/IP, baud
    rate, flow control).
-4. Shift+Ctrl+C (Open mailbox) sends and receives.
+4. Shift+Ctrl+C (Check mail) sends and receives.
 
 If Fastmail already saves messages sent by SMTP in your Sent folder, set
 "Copy to Sent folder" to No in the account settings to avoid two copies (and
@@ -66,7 +68,7 @@ it needs one: `dav.example.com/cal/`). The mail password is used unless
 you give another. Pick your time zone (PsiMail guesses from the Psion's
 home city) and the Agenda file (normally `C:\Documents\Agenda`).
 
-After that, Open mailbox (Shift+Ctrl+C) also syncs the calendar, or Shift+Ctrl+J
+After that, Check mail (Shift+Ctrl+C) also syncs the calendar, or Shift+Ctrl+Y
 does just that. The Agenda can stay open: PsiMail goes through the Agenda
 server as PsiWin does.
 
@@ -85,7 +87,7 @@ server as PsiWin does.
 * The server keeps what the Psion doesn't show (descriptions, guests,
   other alarms): PsiMail changes only the fields it knows.
 
-PsiMail has its own calendar screen too (Shift+Ctrl+E, or Calendar in the folder
+PsiMail has its own calendar screen too (Shift+Ctrl+N, or Calendar in the folder
 column): the week with the chosen day's events, or the month; Enter shows
 an event in full; N adds an event (to the Agenda, and from there to the
 server). It shows what has been synced, and new Psion entries waiting to
@@ -120,31 +122,31 @@ without the `cryptography` package too). The version must go up each time.
 | Esc or Left | back (Esc stops a download while one is running) |
 | Left/Right in a message | previous / next message |
 | Del (and Backspace in a list) | delete |
-| Shift+Ctrl+C / Ctrl+U / Ctrl+Z | open mailbox (send & receive) / close mailbox (hang up) / stop |
+| Shift+Ctrl+C / Ctrl+U / Ctrl+Z | check mail (send & receive) / disconnect / stop |
 | Ctrl+N / Ctrl+R / Shift+Ctrl+R / Ctrl+W | new / reply / reply to all / forward |
-| Ctrl+D / Ctrl+X / Ctrl+A | delete / move to folder / archive |
-| Shift+Ctrl+U / Shift+Ctrl+F | read-unread / flag |
+| Ctrl+D / Ctrl+X / Shift+Ctrl+E | delete / move to folder / archive |
+| Shift+Ctrl+U / Shift+Ctrl+F | unread / flagged |
 | Ctrl+S | save an attachment |
-| Ctrl+I / Ctrl+L / Ctrl+B / Ctrl+F | inbox / go to folder / outbox / find |
-| Ctrl+Y / Shift+Ctrl+Y | check for new mail / get older messages |
-| Ctrl+M / Shift+Ctrl+M | zoom in / out |
+| Ctrl+I / Ctrl+G / Ctrl+B / Ctrl+F | inbox / go to folder / outbox / find |
+| Ctrl+Y / Shift+Ctrl+G | check for new mail / get older messages |
+| Ctrl+M / Shift+Ctrl+M | zoom in / out (three sizes, going round) |
 | Ctrl+T / Shift+Ctrl+T / Shift+Ctrl+L | show the toolbar / title bar / folder list |
 | Shift+Ctrl+Q / Shift+Ctrl+B | status information / sort |
-| Ctrl+O | work offline |
-| Ctrl+J / Ctrl+K / Shift+Ctrl+K | switch account / account settings / connection settings |
+| Ctrl+K / Shift+Ctrl+W | preferences / work offline |
+| Shift+Ctrl+A / Ctrl+E | about PsiMail / close |
 | Tab / Shift+Tab in a message | next / previous link or attachment (Enter opens it) |
 | Ctrl+P | view the message as a web page (PsiWeb) |
-| Shift+Ctrl+E | the calendar |
-| Shift+Ctrl+J | sync the calendar |
+| Shift+Ctrl+N / Ctrl+Q | the calendar / switch its view (month or week) |
+| Shift+Ctrl+Y | sync the calendar |
 | In the calendar: Left/Right, PgUp/PgDn, Home | day, week (month), today |
 | In the calendar: M / N (or Ctrl+N) / Enter | month or week / new event / the event in full |
 | Tab or Left in the message list | the folder column |
 
-Writing a message is a PsiMail screen too: To, Cc and Subject as lines,
-the text below. Tab (or Enter in a field) moves on; Ctrl+S sends, Ctrl+D
-keeps it in the outbox, Ctrl+A attaches a file, Ctrl+U takes the last one
-off (or tap its chip); Esc twice throws it away. A new event (N in the
-calendar) works the same way: Up/Down between the lines, Left/Right (or +
+Writing a message fills the screen, as in the built-in Email program: To,
+CC, BCC, Attachments and Subject, then the text, with the buttons on the
+right. Ctrl+S sends, Ctrl+D saves it as a draft (in the outbox), Ctrl+A
+adds or removes attachments, Esc closes (asking before it throws anything
+away). A new event (N in the calendar) is a PsiMail screen: Up/Down between the lines, Left/Right (or +
 and -) to change the date, times and alarm, Enter to save.
 
 ## How it works

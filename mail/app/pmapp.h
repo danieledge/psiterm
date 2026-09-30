@@ -23,11 +23,13 @@
 #include <badesca.h>
 #include <fbs.h>
 #include <eiklbo.h>
+#include <eiksbobs.h>
 #include <gdi.h>
 
 class CEikTextListBox;
 class CEikColumnListBox;
 class CEikRichTextEditor;
+class CEikScrollBar;
 class CEikLabel;
 class CPmFolderListBox;
 class CPmMsgListBox;
@@ -217,6 +219,13 @@ private:
 	void HeaderActionL(TInt aHit);
 	TBool NativePointerL(const TPointerEvent& aEvent);
 	void LoadIconsL();
+	void UpdateReaderBar();
+	void ReaderBarModel(TInt& aTotal, TInt& aShown, TInt& aAbove) const;
+	void ReaderBarParts(TRect& aShaft, TRect& aThumb, TRect& aUp, TRect& aDown) const;
+	void DrawReaderBar(CWindowGc& aGc) const;
+	TBool ReaderBarPointerL(const TPointerEvent& aEvent);
+	void ReaderScrollL(TInt aMovement);
+	void ReaderToL(TBool aEnd);
 	void FormatNativeDate(TInt aDate, TDes& aOut) const;
 	void SortRows();
 public:
@@ -345,6 +354,9 @@ private:
 	TBuf<80> iLinkMsg;
 	TBuf<128> iLinkProg;           // the engine's progress text when that message came
 	TInt iBusyWas;
+	TInt iOnlineWas;
+	TBool iBusyShown;
+	TBool iMsgTapArmed;              // the selected message was tapped: another tap opens it                // EIKON's busy message is up
 	TInt iEntropyPos;
 	TBuf<100> iToast;
 	TUint iToastUntil;
@@ -390,6 +402,10 @@ private:
 	CPmFolderListBox* iFolderList;
 	CPmMsgListBox* iMsgList;
 	CEikRichTextEditor* iReader;
+	TRect iBarRect;                        // the reader's scroll bar (drawn here)
+	TInt iBarPress;                        // the pen on it: 1 up, 2 down, 3 the thumb
+	TInt iBarGrab;
+	TInt iReaderAbove;                     // how far down the reader is, in pixels
 	CArrayPtrFlat<CFbsBitmap>* iIcons;     // PsiMail.mbm: icon, mask, icon, mask... (pmicons.h)
 	CArrayFixFlat<TInt>* iTree;            // the folder tree: per row, depth | icon << 4 | lines << 16
 	CArrayFixFlat<TInt>* iMsgIcons;        // the message list: per row, icon | attachment << 8
@@ -468,6 +484,17 @@ private:
 	TInt& iChoice;
 	};
 
+class CPmPrefsDialog : public CEikDialog
+	{
+public:
+	CPmPrefsDialog(TPmSettings& aSettings, TInt& aSort) : iSettings(aSettings), iSort(aSort) {}
+private:
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	TPmSettings& iSettings;
+	TInt& iSort;
+	};
+
 class CPmComposeDialog : public CEikDialog
 	{
 public:
@@ -531,6 +558,8 @@ public:
 	void ComposeDraftL(CPmDraft* aDraft, const TDesC& aTitle) { ComposeL(aDraft, aTitle); }
 	void ShowToolBar(TBool aShow);
 	void ToolbarPicturesL();
+	void ButtonPictureL(TInt aId, TInt aIcon, const TDesC* aText = NULL);
+	void SetTool4L(TBool aClose);
 	CCoeControl* ToolBarButton(TInt aId);          // native screens have it; the drawn ones use the whole screen
 private:
 	void HandleCommandL(TInt aCommand);
@@ -555,6 +584,7 @@ private:
 	void LoadCalSettings();
 	void EditCalendarL();
 	CPmView* iView;
+	TBool iTool4Close;                 // the last toolbar button says Close
 	TPmSettings iSettings;
 	TPmCalSettings iCalSettings;
 	};

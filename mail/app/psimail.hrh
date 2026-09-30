@@ -58,7 +58,10 @@ enum TPmCommands
 	EPmCmdSort,
 	EPmCmdZoomIn,
 	EPmCmdZoomOut,
-	EPmCmdInbox
+	EPmCmdInbox,
+	EPmCmdTool4,             // the toolbar's last button: Delete, or Close in a message
+	EPmCmdAccountsMenu,
+	EPmCmdPrefs
 	};
 
 enum TPmDialogControls
@@ -114,7 +117,9 @@ enum TPmDialogControls
 	EPmDlgEvEnd,
 	EPmDlgEvAllDay,
 	EPmDlgEvLoc,
-	EPmDlgEvAlarm
+	EPmDlgEvAlarm,
+	EPmDlgSort,
+	EPmDlgSmooth
 	};
 
 enum TPmButtons

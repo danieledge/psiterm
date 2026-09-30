@@ -23,8 +23,9 @@ enum TPmIconId
 	EMbmMsgOutbox = 34, EMbmMsgOutboxMask = 35,
 	EMbmToolNew = 36, EMbmToolNewMask = 37,
 	EMbmToolReply = 38, EMbmToolReplyMask = 39,
-	EMbmToolOpen = 40, EMbmToolOpenMask = 41,
-	EMbmToolClose = 42, EMbmToolCloseMask = 43,
-	EMbmCount = 44
+	EMbmToolCheck = 40, EMbmToolCheckMask = 41,
+	EMbmToolDelete = 42, EMbmToolDeleteMask = 43,
+	EMbmToolBack = 44, EMbmToolBackMask = 45,
+	EMbmCount = 46
 	};
 #endif

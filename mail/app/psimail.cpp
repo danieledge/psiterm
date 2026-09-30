@@ -10,6 +10,7 @@
 #include <eikchlst.h>
 #include <eikedwin.h>
 #include <eiklabel.h>
+#include <eikimage.h>
 #include <eikmfne.h>
 #include <eikseced.h>
 #include <eikcfdlg.h>
@@ -72,7 +73,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.6");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.6.1");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -314,6 +315,22 @@ void CPmView::CopySettingsToShared()
 	CopyToC(s->net.version, sizeof(s->net.version), KVersion);
 	Mem::Copy(s->acct, iSettings->iAccounts, sizeof(s->acct));
 	Mem::Copy(&s->cal, &iCal->iCal, sizeof(s->cal));
+	if (!s->cal.host[0])
+		{
+		// not given: "caldav." and the account's domain
+		const PmAccount& ca = iSettings->iAccounts[iSettings->iAcct];
+		const char* at = ca.email;
+		while (*at && *at != '@') at++;
+		if (*at && at[1])
+			{
+			TBuf<64> h(_L("caldav."));
+			TPtrC8 d((const TUint8*)at + 1);
+			TBuf<60> d16;
+			d16.Copy(d.Left(d.Length() < 55 ? d.Length() : 55));
+			h.Append(d16);
+			CopyToC(s->cal.host, sizeof(s->cal.host), h);
+			}
+		}
 	if (s->cal.acct < 0 || s->cal.acct >= PM_MAX_ACCOUNTS || !s->acct[s->cal.acct].used)
 		s->cal.acct = iSettings->iAcct;
 	s->acct_seq++;
@@ -429,7 +446,7 @@ void CPmView::Cmd(TInt aOp, const TDesC8& aFolder, TUint aUid, const TDesC8& aAr
 		}
 	if (s->cmd_head - s->cmd_tail >= PM_CMDQ)
 		{
-		Toast(_L("Busy - try again in a moment"));
+		Toast(_L("Not available at this time"));
 		return;
 		}
 	PmCmd& c = s->cmd[s->cmd_head % PM_CMDQ];
@@ -1026,7 +1043,7 @@ void CPmView::DeleteCurrentL()
 	TUint uid = row->iUid;                    // (the list may reload during the query)
 	const TPmFolder* f = CurrentFolder();
 	TBool forGood = f && f->iKind == 'T';
-	if (forGood && !iEikonEnv->QueryWinL(_L("Delete this message for good?"), _L("It is in the Trash already")))
+	if (forGood && !iEikonEnv->QueryWinL(_L("It is in the Trash already"), _L("Delete this message for good?")))
 		return;
 	Cmd(PM_CMD_MOVE, iFolder, uid, KNullDesC8);
 	for (TInt i = 0; i < iRows->Count(); i++)
@@ -1138,7 +1155,7 @@ void CPmView::CalendarSyncL()
 	{
 	if (!iCal->iCal.enabled)
 		{
-		Toast(_L("Turn calendar sync on in Tools > Calendar settings"));
+		Toast(_L("Calendar sync is off - see Tools > Calendar settings"));
 		return;
 		}
 	if (CalendarBusy())
@@ -1394,7 +1411,7 @@ void CPmView::SaveDraftL(CPmDraft& aDraft, TBool aSend)
 	if (aSend)
 		{
 		if (iSettings->iOffline)
-			Toast(_L("In the outbox - it goes at the next Send & receive"));
+			Toast(_L("In the outbox - it goes at the next check for mail"));
 		else
 			{
 			Cmd(PM_CMD_SEND, KNullDesC8, 0, KNullDesC8);
@@ -1414,8 +1431,11 @@ void CPmView::DeleteOutboxL()
 	if (!row)
 		return;
 	TUint no = row->iUid;                     // (the list may reload during the query)
-	TBuf<100> subj(row->iSubject);
-	if (!iEikonEnv->QueryWinL(_L("Delete this message?"), subj))
+	TBuf<104> subj;
+	subj.Append('"');
+	subj.Append(row->iSubject.Left(row->iSubject.Length() < 100 ? row->iSubject.Length() : 100));
+	subj.Append('"');
+	if (!iEikonEnv->QueryWinL(subj, _L("Delete this message?")))
 		return;
 	TBuf<120> dir;
 	OutboxDir(dir);
@@ -1492,11 +1512,28 @@ void CPmView::TickL()
 		iLinkMsg.Zero();
 	else if (iLinkMsg.Length() && prog == iLinkProg)
 		prog = iLinkMsg;
+	if (s->online != iOnlineWas)
+		{
+		iOnlineWas = s->online;
+		redraw = ETrue;
+		}
 	if (prog != iLastProgress || s->busy != iBusyWas)
 		{
 		iLastProgress = prog;
 		iBusyWas = s->busy;
 		redraw = ETrue;
+		// what the engine is doing: EIKON's busy message, bottom left
+		if (iNativeShown && NativeMode() && s->busy && prog.Length())
+			{
+			TRAPD(err, iEikonEnv->BusyMsgL(prog, EHLeftVBottom, TTimeIntervalMicroSeconds32(300000)));
+			(void)err;
+			iBusyShown = ETrue;
+			}
+		else if (iBusyShown && !s->busy)
+			{
+			iEikonEnv->BusyMsgCancel();
+			iBusyShown = EFalse;
+			}
 		}
 	// messages that have had their time
 	TUint now = User::TickCount();
@@ -1529,6 +1566,8 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 	TInt res = s->last_res;
 	SafeCopy(iStatus, msg);
 	iStatusUntil = User::TickCount() + 64 * 6;
+	if (iNativeShown && NativeMode() && iStatus.Length() && aCmd.op != PM_CMD_UPDATE)
+		iEikonEnv->InfoMsg(iStatus);         // the outcome, as an infoprint
 	if (aCmd.op == PM_CMD_UPDATE)
 		{
 		iStatus.Zero();
@@ -1540,7 +1579,7 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 			q.Format(_L("Install PsiMail %S now?"), &v);
 			TBuf<128> file;
 			FromC(file, s->last_file);
-			if (iEikonEnv->QueryWinL(q, _L("PsiMail will close while it installs")))
+			if (iEikonEnv->QueryWinL(_L("PsiMail will close while it installs"), q))
 				StartInstallerL(file);
 			else
 				iEikonEnv->InfoWinL(_L("The update is saved"), file);
@@ -1613,7 +1652,7 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		for (TInt k = 0; k < 4; k++) ptrs[k].Set(lines[k]);
 		CPmInfoDialog* dlg = new(ELeave) CPmInfoDialog(_L("Certificate not trusted"), ptrs, 4);
 		dlg->ExecuteLD(R_PM_INFO_DIALOG);
-		if (iEikonEnv->QueryWinL(_L("Trust this server's key from now on?"), host))
+		if (iEikonEnv->QueryWinL(host, _L("Trust this server's key from now on?")))
 			{
 			TBuf8<80> hp;
 			hp.Copy(host);
@@ -1704,8 +1743,8 @@ void CPmView::HandleCalResultL(const PmCmd& aCmd, TInt aRes, const TDesC& aMsg)
 			{
 			TBuf<200> lines[3];
 			lines[0] = _L("The calendar server refused the password.");
-			lines[1] = _L("Fastmail: make an app password that can use");
-			lines[2] = _L("Calendars (CalDAV), and enter it here.");
+			lines[1] = _L("If your provider uses app passwords, make one");
+			lines[2] = _L("that can use calendars (CalDAV), and enter it here.");
 			TPtrC ptrs[3];
 			for (TInt k = 0; k < 3; k++) ptrs[k].Set(lines[k]);
 			CPmInfoDialog* info = new(ELeave) CPmInfoDialog(_L("Calendar"), ptrs, 3);
@@ -1745,9 +1784,9 @@ TInt CPmView::Rows() const
 
 void CPmView::Toast(const TDesC& aText)
 	{
-	if (iNativeShown && NativeMode() && iTitleH == 0)
+	if (iNativeShown && NativeMode())
 		{
-		iEikonEnv->InfoMsg(aText);           // (no title band to show it in)
+		iEikonEnv->InfoMsg(aText);           // EIKON's own message, as the style guide has it
 		return;
 		}
 	SafeCopy(iToast, aText);
@@ -1999,7 +2038,7 @@ void CPmView::Render()
 	case ENoAccount:
 		{
 		const TDesC& a = _L("Set up your mail with Tools > New account (Ctrl+K).");
-		const TDesC& b = _L("For Fastmail, make an app password at Settings > Privacy & Security.");
+		const TDesC& b = _L("Most providers want an app password for this.");
 		ui_welcome(&iCanvas, CStr(a), a.Length(), CStr(b), b.Length());
 		break;
 		}
@@ -2545,19 +2584,17 @@ TBool CPmChoiceDialog::OkToExitL(TInt /*aButtonId*/)
 // ----- compose ---------------------------------------------------------------
 
 // EIKON sizes a dialog to fit its contents: keep it on the 640x240 screen
-void CPmComposeDialog::SetSizeAndPositionL(const TSize& aSize)
+void CPmComposeDialog::SetSizeAndPositionL(const TSize& /*aSize*/)
 	{
-	TSize screen = iEikonEnv->ScreenDevice()->SizeInPixels();
-	TSize size(aSize.iWidth < screen.iWidth - 4 ? aSize.iWidth : screen.iWidth - 4,
-		aSize.iHeight < screen.iHeight - 4 ? aSize.iHeight : screen.iHeight - 4);
-	SetCornerAndSizeL(EHCenterVCenter, size);
+	// the whole screen, like the built-in Email program's new message
+	SetCornerAndSizeL(EHLeftVTop, iEikonEnv->ScreenDevice()->SizeInPixels());
 	}
 
 void CPmComposeDialog::PreLayoutDynInitL()
 	{
-	SetTitleL(iTitle);
 	SetEdwinTextL(EPmDlgTo, &iDraft.iTo);
 	SetEdwinTextL(EPmDlgCc, &iDraft.iCc);
+	SetEdwinTextL(EPmDlgBcc, &iDraft.iBcc);
 	SetEdwinTextL(EPmDlgSubject, &iDraft.iSubject);
 	// the edwin wants its own paragraph ends (0x06), not '\n'
 	HBufC* b = iDraft.iBody->AllocLC();
@@ -2582,7 +2619,7 @@ void CPmComposeDialog::ShowAttachments()
 	TBuf<120> t;
 	TInt n = iDraft.iAttach->Count();
 	if (n == 0)
-		t = _L("none (Ctrl+A to add)");
+		t = _L("none");
 	else
 		{
 		for (TInt i = 0; i < n; i++)
@@ -2605,6 +2642,7 @@ void CPmComposeDialog::Collect()
 	{
 	GetEdwinText(iDraft.iTo, EPmDlgTo);
 	GetEdwinText(iDraft.iCc, EPmDlgCc);
+	GetEdwinText(iDraft.iBcc, EPmDlgBcc);
 	GetEdwinText(iDraft.iSubject, EPmDlgSubject);
 	HBufC* body = NULL;
 	TRAPD(err, body = ((CEikEdwin*)Control(EPmDlgBody))->GetTextInHBufL());
@@ -2626,34 +2664,50 @@ TBool CPmComposeDialog::OkToExitL(TInt aButtonId)
 	Collect();
 	if (aButtonId == EPmBidAttach)
 		{
-		TFileName name;
-		name = _L("C:\\Documents\\");
-		CEikFileOpenDialog* dlg = new(ELeave) CEikFileOpenDialog(&name);
-		if (dlg->ExecuteLD(R_EIK_DIALOG_FILE_OPEN))
+		// with some attached already: add another, or take one off
+		TInt choice = 0;
+		TInt n = iDraft.iAttach->Count();
+		if (n)
 			{
-			if (iDraft.iAttach->Count() >= 8)
-				iEikonEnv->InfoMsg(_L("At most 8 attachments"));
-			else
-				iDraft.iAttach->AppendL(name);
-			ShowAttachments();
+			CDesCArrayFlat* items = new(ELeave) CDesCArrayFlat(n + 1);
+			CleanupStack::PushL(items);
+			items->AppendL(_L("Add a file..."));
+			for (TInt i = 0; i < n; i++)
+				{
+				TParsePtrC parse((*iDraft.iAttach)[i]);
+				TBuf<60> t(_L("Remove "));
+				t.Append(Clip(parse.NameAndExt(), 50));
+				items->AppendL(t);
+				}
+			CleanupStack::Pop();              // the dialog's choice list takes items
+			CPmChoiceDialog* cd = new(ELeave) CPmChoiceDialog(_L("Attachments"), _L("Attachments"), items, choice);
+			if (!cd->ExecuteLD(R_PM_CHOICE_DIALOG))
+				return EFalse;
 			}
+		if (choice > 0)
+			iDraft.iAttach->Delete(choice - 1);
+		else
+			{
+			TFileName name;
+			name = _L("C:\\Documents\\");
+			CEikFileOpenDialog* dlg = new(ELeave) CEikFileOpenDialog(&name);
+			if (dlg->ExecuteLD(R_EIK_DIALOG_FILE_OPEN))
+				{
+				if (iDraft.iAttach->Count() >= 8)
+					iEikonEnv->InfoMsg(_L("At most 8 attachments"));
+				else
+					iDraft.iAttach->AppendL(name);
+				}
+			}
+		ShowAttachments();
 		return EFalse;                  // stay in the dialog
-		}
-	if (aButtonId == EPmBidRemove)
-		{
-		if (iDraft.iAttach->Count())
-			{
-			iDraft.iAttach->Delete(iDraft.iAttach->Count() - 1);
-			ShowAttachments();
-			}
-		return EFalse;
 		}
 	if (aButtonId == EPmBidSend)
 		{
 		iDraft.iTo.Trim();
 		if (iDraft.iTo.Length() == 0 || iDraft.iTo.Locate('@') < 0)
 			{
-			iEikonEnv->InfoMsg(_L("Who is it to? Enter an address"));
+			iEikonEnv->InfoMsg(_L("No address entered"));
 			TryChangeFocusToL(EPmDlgTo);
 			return EFalse;
 			}
@@ -2661,8 +2715,28 @@ TBool CPmComposeDialog::OkToExitL(TInt aButtonId)
 	if (aButtonId == EEikBidCancel)
 		{
 		if ((iDraft.iBody && iDraft.iBody->Length() > 0) || iDraft.iTo.Length())
-			return iEikonEnv->QueryWinL(_L("Discard this message?"), _L("Save keeps it in the outbox"));
+			return iEikonEnv->QueryWinL(_L("Save as draft keeps it in the outbox"), _L("Discard this message?"));
 		}
+	return ETrue;
+	}
+
+// ----- preferences ---------------------------------------------------------------
+
+void CPmPrefsDialog::PreLayoutDynInitL()
+	{
+	SetChoiceListCurrentItem(EPmDlgSort, iSettings.iSort >= 0 && iSettings.iSort <= 6 ? iSettings.iSort : 0);
+	SetNumberEditorValue(EPmDlgPrefetch, PrefetchCount(iSettings));
+	SetChoiceListCurrentItem(EPmDlgStore, iSettings.iStore ? 1 : 0);
+	SetChoiceListCurrentItem(EPmDlgSmooth, iSettings.iMono ? 0 : 1);
+	}
+
+TBool CPmPrefsDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	iSort = ChoiceListCurrentItem(EPmDlgSort);
+	TInt ahead = NumberEditorValue(EPmDlgPrefetch);
+	iSettings.iPrefetch = ahead > 0 ? ahead : -1;
+	iSettings.iStore = ChoiceListCurrentItem(EPmDlgStore);
+	iSettings.iMono = ChoiceListCurrentItem(EPmDlgSmooth) ? 0 : 1;
 	return ETrue;
 	}
 
@@ -2698,8 +2772,6 @@ void CPmAccountDialog::PreLayoutDynInitL()
 	SetNumberEditorValue(EPmDlgSyncCount, iAcct.sync_count);
 	SetNumberEditorValue(EPmDlgBodyKb, iAcct.max_body_kb);
 	SetChoiceListCurrentItem(EPmDlgSaveSent, iAcct.save_sent ? 1 : 0);
-	SetChoiceListCurrentItem(EPmDlgStore, iStore);
-	SetNumberEditorValue(EPmDlgPrefetch, iPrefetch);
 	// the signature's lines are kept as "\n"
 	TBuf<200> sig;
 	FromC(sig, iAcct.signature);
@@ -2716,15 +2788,7 @@ TBool CPmAccountDialog::OkToExitL(TInt /*aButtonId*/)
 	email.Trim();
 	if (email.Locate('@') < 1)
 		{
-		iEikonEnv->InfoMsg(_L("Enter your email address"));
-		return EFalse;
-		}
-	TBuf<64> host;
-	GetEdwinText(host, EPmDlgImapHost);
-	host.Trim();
-	if (host.Length() == 0)
-		{
-		iEikonEnv->InfoMsg(_L("Enter the incoming (IMAP) server"));
+		iEikonEnv->InfoMsg(_L("No email address entered"));
 		return EFalse;
 		}
 	GetText(EPmDlgName, iAcct.name, sizeof(iAcct.name));
@@ -2739,11 +2803,23 @@ TBool CPmAccountDialog::OkToExitL(TInt /*aButtonId*/)
 	GetText(EPmDlgUser, iAcct.user, sizeof(iAcct.user));
 	if (!iAcct.user[0])
 		CopyToC(iAcct.user, sizeof(iAcct.user), email);
-	if (!iAcct.name[0])
+	// servers left empty: the usual names for the address's domain
+	TPtrC domain = email.Mid(email.Locate('@') + 1);
+	TBuf<80> guess;
+	if (!iAcct.imap_host[0])
 		{
-		TInt at = email.Locate('@');
-		CopyToC(iAcct.name, sizeof(iAcct.name), email.Mid(at + 1));
+		guess = _L("imap.");
+		guess.Append(domain.Left(domain.Length() < 70 ? domain.Length() : 70));
+		CopyToC(iAcct.imap_host, sizeof(iAcct.imap_host), guess);
 		}
+	if (!iAcct.smtp_host[0])
+		{
+		guess = _L("smtp.");
+		guess.Append(domain.Left(domain.Length() < 70 ? domain.Length() : 70));
+		CopyToC(iAcct.smtp_host, sizeof(iAcct.smtp_host), guess);
+		}
+	if (!iAcct.name[0])
+		CopyToC(iAcct.name, sizeof(iAcct.name), domain);
 	TBuf<32> pw;
 	GetSecretEditorText(pw, EPmDlgPass);
 	if (pw.Length())                     // blank keeps the saved password
@@ -2751,8 +2827,6 @@ TBool CPmAccountDialog::OkToExitL(TInt /*aButtonId*/)
 	iAcct.sync_count = NumberEditorValue(EPmDlgSyncCount);
 	iAcct.max_body_kb = NumberEditorValue(EPmDlgBodyKb);
 	iAcct.save_sent = ChoiceListCurrentItem(EPmDlgSaveSent);
-	iStore = ChoiceListCurrentItem(EPmDlgStore);
-	iPrefetch = NumberEditorValue(EPmDlgPrefetch);
 	TBuf<200> sig;
 	GetEdwinText(sig, EPmDlgSignature);
 	sig.Trim();
@@ -2805,29 +2879,53 @@ void CPmAppUi::ConstructL()
 		}
 	}
 
-// the toolbar buttons' pictures, from PsiMail.mbm (made by tools/mkicons.py)
+// a toolbar button's picture, from PsiMail.mbm (made by tools/mkicons.py)
+void CPmAppUi::ButtonPictureL(TInt aId, TInt aIcon, const TDesC* aText)
+	{
+	CEikCommandButton* b = iToolBar ? (CEikCommandButton*)iToolBar->ControlById(aId) : NULL;
+	if (!b)
+		return;
+	if (aText)
+		b->SetTextL(*aText);
+	TFileName mbm = Application()->BitmapStoreName();
+	CFbsBitmap* bmp = iEikonEnv->CreateBitmapL(mbm, aIcon);
+	CleanupStack::PushL(bmp);
+	CFbsBitmap* mask = iEikonEnv->CreateBitmapL(mbm, aIcon + 1);
+	CleanupStack::PushL(mask);
+	b->SetPictureL(bmp, mask);                // (the button owns them now)
+	CleanupStack::Pop(2);
+	// the picture in the middle of its side, the words beside it (as the
+	// built-in programs' buttons)
+	if (b->Picture())
+		b->Picture()->SetAlignment(EHCenterVCenter);
+	if (b->Label())
+		b->Label()->SetAlignment(EHLeftVCenter);
+	b->LayoutComponentsL();
+	}
+
 void CPmAppUi::ToolbarPicturesL()
 	{
 	if (!iToolBar)
 		return;
-	TFileName mbm = Application()->BitmapStoreName();
-	const TInt KButtons[4][2] = {
-		{ EPmCmdNewPopup, EMbmToolNew }, { EPmCmdReplyPopup, EMbmToolReply },
-		{ EPmCmdSendRecv, EMbmToolOpen }, { EPmCmdHangup, EMbmToolClose } };
-	for (TInt i = 0; i < 4; i++)
-		{
-		CEikCommandButton* b = (CEikCommandButton*)iToolBar->ControlById(KButtons[i][0]);
-		if (!b)
-			continue;
-		CFbsBitmap* bmp = iEikonEnv->CreateBitmapL(mbm, KButtons[i][1]);
-		CleanupStack::PushL(bmp);
-		CFbsBitmap* mask = iEikonEnv->CreateBitmapL(mbm, KButtons[i][1] + 1);
-		CleanupStack::PushL(mask);
-		b->SetPictureL(bmp, mask);            // (the button owns them now)
-		CleanupStack::Pop(2);
-		b->LayoutComponentsL();
-		}
+	ButtonPictureL(EPmCmdNewPopup, EMbmToolNew);
+	ButtonPictureL(EPmCmdReplyPopup, EMbmToolReply);
+	ButtonPictureL(EPmCmdSendRecv, EMbmToolCheck);
+	ButtonPictureL(EPmCmdTool4, EMbmToolDelete);
 	iToolBar->DrawNow();
+	}
+
+// the last button: Delete in a list, Close (back to the list) in a message
+void CPmAppUi::SetTool4L(TBool aClose)
+	{
+	if (!iToolBar || aClose == iTool4Close)
+		return;
+	iTool4Close = aClose;
+	TPtrC text(aClose ? _L("Close") : _L("Delete"));
+	TRAPD(err, ButtonPictureL(EPmCmdTool4, aClose ? EMbmToolBack : EMbmToolDelete, &text));
+	(void)err;
+	CCoeControl* b = iToolBar->ControlById(EPmCmdTool4);
+	if (b && iToolBar->IsVisible())
+		b->DrawNow();
 	}
 
 CCoeControl* CPmAppUi::ToolBarButton(TInt aId)
@@ -2845,7 +2943,10 @@ void CPmAppUi::ShowToolBar(TBool aShow)
 		iToolBar->MakeVisible(aShow);
 	if (iView)
 		{
-		TRAPD(err, iView->SetRectL(ClientRect()));
+		TRect r = ClientRect();
+		if (!aShow)
+			r.iBr.iX = iEikonEnv->ScreenDevice()->SizeInPixels().iWidth;   // (its room too)
+		TRAPD(err, iView->SetRectL(r));
 		(void)err;
 		}
 	}
@@ -2981,7 +3082,6 @@ void CPmAppUi::LoadCalSettings()
 	if (!ok)
 		{
 		ClearCalSettings(c);
-		Mem::Copy(c.iCal.host, "caldav.fastmail.com", 20);
 		c.iCal.port = 443;
 		c.iCal.zone = GuessZone();
 		c.iCal.days_back = 30;
@@ -3083,7 +3183,7 @@ TBool CPmCalDialog::OkToExitL(TInt /*aButtonId*/)
 	TInt on = ChoiceListCurrentItem(EPmDlgCalOn);
 	if (on && host.Length() == 0)
 		{
-		iEikonEnv->InfoMsg(_L("Enter the calendar server"));
+		iEikonEnv->InfoMsg(_L("No calendar server entered"));
 		return EFalse;
 		}
 	TBuf<128> file;
@@ -3145,13 +3245,8 @@ TBool CPmAppUi::EditAccountL(TInt aIndex, TBool aNew)
 	PmAccount a = iSettings.iAccounts[aIndex];
 	if (aNew)
 		{
-		// Fastmail's settings to start with
+		// the usual ports; the servers come from the address if left empty
 		Mem::FillZ(&a, sizeof(a));
-		const char* imap = "imap.fastmail.com";
-		const char* smtp = "smtp.fastmail.com";
-		Mem::Copy(a.imap_host, imap, 18);
-		Mem::Copy(a.smtp_host, smtp, 18);
-		Mem::Copy(a.name, "Fastmail", 9);
 		a.imap_port = 993;
 		a.imap_tls = PM_TLS_ON;
 		a.smtp_port = 465;
@@ -3262,7 +3357,7 @@ CPmDraft* CPmAppUi::ReplyDraftL(TBool aAll)
 	const TPmRow* row = iView->CurrentRow();
 	if (!row || (iView->Mode() != CPmView::EList && iView->Mode() != CPmView::EMessage))
 		{
-		iView->Toast(_L("Choose a message first"));
+		iView->Toast(_L("No message selected"));
 		return NULL;
 		}
 	if (iView->Mode() == CPmView::EList)
@@ -3346,7 +3441,7 @@ CPmDraft* CPmAppUi::ForwardDraftL()
 		iView->OpenCurrentL();
 	if (iView->Mode() != CPmView::EMessage)
 		{
-		iView->Toast(_L("Choose a message first"));
+		iView->Toast(_L("No message selected"));
 		return NULL;
 		}
 	THdrs* h = HeadersLC(*iView);
@@ -3401,7 +3496,7 @@ void CPmAppUi::MoveL()
 	{
 	if (!iView->CurrentRow() || (iView->Mode() != CPmView::EList && iView->Mode() != CPmView::EMessage))
 		{
-		iView->Toast(_L("Choose a message first"));
+		iView->Toast(_L("No message selected"));
 		return;
 		}
 	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(8);
@@ -3419,7 +3514,7 @@ void CPmAppUi::MoveL()
 	if (names->Count() == 0)
 		{
 		CleanupStack::PopAndDestroy(2);    // map, names
-		iView->Toast(_L("No folders yet - Send & receive first"));
+		iView->Toast(_L("No folders yet - check mail first"));
 		return;
 		}
 	TInt choice = 0;
@@ -3572,7 +3667,7 @@ void CPmAppUi::SwitchAccountL()
 	if (names->Count() < 2)
 		{
 		CleanupStack::PopAndDestroy(2);    // map, names
-		iView->Toast(_L("There is only one account (Tools > New account)"));
+		iView->Toast(_L("There is only one account"));
 		return;
 		}
 	CleanupStack::Pop(2);
@@ -3595,7 +3690,11 @@ void CPmAppUi::DeleteAccountL()
 		return;
 	TBuf<60> n;
 	FromC(n, a.name);
-	if (!iEikonEnv->QueryWinL(_L("Delete this account from PsiMail?"), n))
+	TBuf<64> qn;
+	qn.Append('"');
+	qn.Append(n.Left(n.Length() < 60 ? n.Length() : 60));
+	qn.Append('"');
+	if (!iEikonEnv->QueryWinL(qn, _L("Delete this account from PsiMail?")))
 		return;
 	Mem::FillZ(&a, sizeof(a));
 	// its files go when the slot is next used (the engine checks account.txt)
@@ -3611,9 +3710,9 @@ void CPmAppUi::AboutL()
 	lines[0] = _L("PsiMail ");
 	lines[0].Append(KVersion);
 	lines[0].Append(_L(" - email for the Psion Series 5mx"));
-	lines[1] = _L("IMAP and SMTP over TLS 1.3, made for Fastmail.");
+	lines[1] = _L("IMAP and SMTP over TLS 1.3, CalDAV calendars.");
 	lines[2] = _L("Networking and TLS from PsiTerm (MIT).");
-	lines[3] = _L("Shift+Ctrl+C open mailbox, Ctrl+N new, Ctrl+R reply.");
+	lines[3] = _L("Shift+Ctrl+C check mail, Ctrl+N new, Ctrl+R reply.");
 	lines[4] = _L("Esc goes back, or stops a download.");
 	TMemoryInfoV1Buf mem;
 	UserHal::MemoryInfo(mem);
@@ -3648,6 +3747,9 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemDimmed(EPmCmdForward, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdUnread, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdFlag, !msg);
+		const TPmRow* row = msg ? iView->CurrentRow() : NULL;
+		aMenuPane->SetItemButtonState(EPmCmdUnread, row && row->iFlags.Locate('S') < 0 ? EEikMenuItemSymbolOn : 0);
+		aMenuPane->SetItemButtonState(EPmCmdFlag, row && row->iFlags.Locate('F') >= 0 ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemDimmed(EPmCmdSaveAttach, iView->AttachmentCount() == 0);
 		aMenuPane->SetItemDimmed(EPmCmdWhole, m != CPmView::EMessage);
 		aMenuPane->SetItemDimmed(EPmCmdWeb, m != CPmView::EMessage || !iView->HasHtml());
@@ -3658,25 +3760,22 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPmCmdToggleToolbar, (iSettings.iView & 1) ? 0 : EEikMenuItemSymbolOn);
 		aMenuPane->SetItemButtonState(EPmCmdToggleTitle, (iSettings.iView & 2) ? 0 : EEikMenuItemSymbolOn);
 		aMenuPane->SetItemButtonState(EPmCmdToggleFolders, (iSettings.iView & 4) ? 0 : EEikMenuItemSymbolOn);
-		aMenuPane->SetItemButtonState(EPmCmdSmooth, iSettings.iMono ? 0 : EEikMenuItemSymbolOn);
 		aMenuPane->SetItemDimmed(EPmCmdToggleToolbar, !native);
 		aMenuPane->SetItemDimmed(EPmCmdToggleTitle, !native);
 		aMenuPane->SetItemDimmed(EPmCmdToggleFolders, !native);
+		aMenuPane->SetItemDimmed(EPmCmdSort, m != CPmView::EList);
 		}
 	else if (aMenuId == R_PM_FOLDER_MENU)
 		{
 		aMenuPane->SetItemDimmed(EPmCmdOlder, m != CPmView::EList || iView->CurrentIsSearch());
 		}
-	else if (aMenuId == R_PM_REPLY_POPUP)
+	else if (aMenuId == R_PM_REPLY_MENU || aMenuId == R_PM_REPLY_POPUP)
 		{
 		aMenuPane->SetItemDimmed(EPmCmdReply, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdReplyAll, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdForward, !msg);
 		}
-	else if (aMenuId == R_PM_TOOLS_MENU)
-		{
-		aMenuPane->SetItemDimmed(EPmCmdSort, m != CPmView::EList);
-		}
+
 	}
 
 void CPmAppUi::HandleCommandL(TInt aCommand)
@@ -3700,9 +3799,9 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 	if (m == CPmView::ENoAccount && aCommand != EEikCmdExit && aCommand != EPmCmdNewAccount &&
 		aCommand != EPmCmdConnSettings && aCommand != EPmCmdAbout && aCommand != EPmCmdUpdate &&
 		aCommand != EPmCmdToggleToolbar && aCommand != EPmCmdToggleTitle && aCommand != EPmCmdToggleFolders &&
-		aCommand != EPmCmdStatusInfo && aCommand != EPmCmdStop)
+		aCommand != EPmCmdStatusInfo && aCommand != EPmCmdStop && aCommand != EPmCmdPrefs)
 		{
-		iView->Toast(_L("Set up an account first: Tools > New account"));
+		iView->Toast(_L("No account - add one with Tools > Accounts"));
 		return;
 		}
 	switch (aCommand)
@@ -3734,7 +3833,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdHangup:
 		iView->Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
-		iView->Toast(_L("Hanging up - the serial port will be free"));
+		iView->Toast(_L("Disconnecting..."));
 		break;
 	case EPmCmdAbout:
 		AboutL();
@@ -3757,6 +3856,26 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdDelete:
 		if (m == CPmView::EList || m == CPmView::EOutbox || m == CPmView::EMessage)
+			iView->DeleteCurrentL();
+		break;
+	case EPmCmdPrefs:
+		{
+		TInt sort = iSettings.iSort;
+		CPmPrefsDialog* dlg = new(ELeave) CPmPrefsDialog(iSettings, sort);
+		if (dlg->ExecuteLD(R_PM_PREFS_DIALOG))
+			{
+			SaveSettings();
+			iView->SettingsChanged();
+			if (sort != iSettings.iSort)
+				iView->SortL(sort);
+			iView->Render();
+			}
+		break;
+		}
+	case EPmCmdTool4:
+		if (m == CPmView::EMessage)
+			iView->BackL();
+		else if (m == CPmView::EList || m == CPmView::EOutbox)
 			iView->DeleteCurrentL();
 		break;
 	case EPmCmdStop:
@@ -3902,7 +4021,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 			if (!iSettings.iAccounts[i].used) { slot = i; break; }
 		if (slot < 0)
 			{
-			iView->Toast(_L("PsiMail has room for 4 accounts"));
+			iView->Toast(_L("PsiMail has room for only 4 accounts"));
 			break;
 			}
 		if (EditAccountL(slot, ETrue))

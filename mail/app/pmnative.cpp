@@ -15,6 +15,7 @@
 #include <eiklbv.h>
 #include <eikrted.h>
 #include <eiksbfrm.h>
+#include <eikscrlb.h>
 #include <eiktbar.h>
 #include <e32hal.h>
 #include <txtrich.h>
@@ -28,6 +29,7 @@
 
 static const TInt KIndent = 12;          // the folder tree: one level
 static const TInt KIconCol = 28;         // the message list: status + attachment pictures
+static const TInt KScrollBarW = 23;      // room beside the reader for its scroll bar (EIKON's width)
 
 // a picture from PsiMail.mbm, drawn through its mask (black = drawn)
 static void DrawIcon(CWindowGc& aGc, CArrayPtr<CFbsBitmap>* aIcons, TInt aId, const TPoint& aPos)
@@ -127,11 +129,11 @@ void CPmTreeDrawer::DrawActualItem(TInt aItemIndex, const TRect& aRect, TBool aC
 class CPmFolderListBox : public CEikTextListBox
 	{
 public:
-	void SetFontL(const CFont* aFont)
+	void SetFontL(const CFont* aFont, TInt aRowHeight)
 		{
 		((CPmTreeDrawer*)iItemDrawer)->SetFont(aFont);
 		TInt h = aFont->HeightInPixels() + 4;
-		if (h < 17) h = 17;                  // (room for the pictures)
+		if (h < aRowHeight) h = aRowHeight;
 		SetItemHeightL(h);
 		}
 	void SetData(CArrayPtr<CFbsBitmap>* aIcons, CArrayFixFlat<TInt>* aTree)
@@ -201,16 +203,20 @@ public:
 
 // ----- zoom -----------------------------------------------------------------------
 
-static const TInt KZoomFactors[4] = { 800, 1000, 1250, 1500 };
-// the list font at each zoom level (twips): the built-in programs' Arial
-static const TInt KListTwips[4] = { 150, 180, 220, 270 };
+// three sizes, as the built-in Email program has: small, medium (the
+// default) and large, and zooming goes round from one to the next
+static const TInt KZoomLevels = 3;
+static const TInt KZoomFactors[KZoomLevels] = { 800, 1000, 1250 };
+// the lists' and headings' Arial at each size (twips), and their rows (pixels)
+static const TInt KListTwips[KZoomLevels] = { 150, 200, 250 };
+static const TInt KRowHeight[KZoomLevels] = { 18, 24, 29 };
 
 static TInt ZoomLevel(const TPmSettings& aSettings)
 	{
 	TInt z = aSettings.iZoom;                  // 0 = the default
-	if (z < 1 || z > 4)
-		z = 2;
-	return z - 1;                              // 0..3
+	if (z < 1) z = 2;
+	if (z > KZoomLevels) z = KZoomLevels;
+	return z - 1;                              // 0..2
 	}
 
 TBool CPmView::NativeMode() const
@@ -266,7 +272,7 @@ void CPmView::CreateNativeL()
 	iReader = new(ELeave) CEikRichTextEditor(TEikBorder(TEikBorder::ENone));
 	iReader->SetContainerWindowL(*this);
 	iReader->ConstructL(this, 0, 0, CEikEdwin::EReadOnly | CEikEdwin::ENoAutoSelection | CEikEdwin::EAlwaysShowSelection);
-	iReader->CreateScrollBarFrameL()->SetScrollBarVisibilityL(CEikScrollBarFrame::EOff, CEikScrollBarFrame::EAuto);
+	// (the reader's scroll bar is drawn here: see DrawReaderBar)
 
 	ApplyZoomL();
 	ShowNative(EFalse);
@@ -344,17 +350,17 @@ void CPmView::ApplyZoomL()
 	CWsScreenDevice* dev = iCoeEnv->ScreenDevice();
 	GetFontL(dev, KListTwips[z], EFalse, iListFont);
 	GetFontL(dev, 150, EFalse, iSmallFont);
-	GetFontL(dev, KListTwips[z > 1 ? 1 : z], ETrue, iBoldFont);
-	GetFontL(dev, 180, ETrue, iTitleFont);
+	GetFontL(dev, KListTwips[z], ETrue, iBoldFont);
+	GetFontL(dev, 160, ETrue, iTitleFont);     // (the title band doesn't zoom)
 	iStatusH = 0;                              // (the title band says it all now)
 
-	iFolderList->SetFontL(iListFont);
+	iFolderList->SetFontL(iListFont, KRowHeight[z]);
 	CColumnListBoxData* cd = iMsgList->Model()->ColumnData();
 	for (TInt c = 0; c < 7; c++)
 		cd->SetColumnFontL(c, iListFont);
 	cd->SetColumnAlignmentL(6, CGraphicsContext::ERight);
 	TInt h = iListFont->HeightInPixels() + 4;
-	if (h < 14) h = 14;                        // (room for the pictures)
+	if (h < KRowHeight[z]) h = KRowHeight[z];
 	iMsgList->SetItemHeightL(h);
 
 	iZoomFactor->SetZoomFactor(KZoomFactors[z]);
@@ -364,12 +370,7 @@ void CPmView::ApplyZoomL()
 
 void CPmView::ZoomL(TInt aStep)
 	{
-	TInt z = ZoomLevel(*iSettings) + aStep;
-	if (z < 0 || z > 3)
-		{
-		iEikonEnv->InfoMsg(aStep > 0 ? _L("Largest text size") : _L("Smallest text size"));
-		return;
-		}
+	TInt z = (ZoomLevel(*iSettings) + aStep + KZoomLevels) % KZoomLevels;
 	iSettings->iZoom = z + 1;
 	((CPmAppUi*)iEikonEnv->EikAppUi())->SaveSettings();
 	if (iFolderList)
@@ -392,6 +393,7 @@ void CPmView::LayoutNative()
 	TBool folders = !(iSettings->iView & 4);
 	iTitleH = (iSettings->iView & 2) ? 0 : iTitleFont->HeightInPixels() + 6;
 	iHeadH = iBoldFont->HeightInPixels() + 6;
+	if (iHeadH < KRowHeight[ZoomLevel(*iSettings)]) iHeadH = KRowHeight[ZoomLevel(*iSettings)];
 	TInt top = r.iTl.iY + iTitleH;
 	TInt listTop = top + iHeadH;
 	TInt w = r.Width();
@@ -403,19 +405,22 @@ void CPmView::LayoutNative()
 		if (iSplitX < 130) iSplitX = 130;
 		}
 	TInt msgX = r.iTl.iX + (folders ? iSplitX + 1 : 0);
-	TRAPD(e1,
-		iFolderList->SetRectL(TRect(TPoint(r.iTl.iX, listTop), TSize(folders ? iSplitX : 1, r.iBr.iY - listTop)));
-		iMsgList->SetRectL(TRect(TPoint(msgX, listTop), r.iBr));
-		iReader->SetRectL(TRect(TPoint(r.iTl.iX, top), r.iBr));
-		);
-	(void)e1;
+	TRAPD(e1, iFolderList->SetRectL(TRect(TPoint(r.iTl.iX, listTop), TSize(folders ? iSplitX : 1, r.iBr.iY - listTop))));
+	TRAPD(e2a, iMsgList->SetRectL(TRect(TPoint(msgX, listTop), r.iBr)));
+	TRAPD(e3, iReader->SetRectL(TRect(TPoint(r.iTl.iX, top), TPoint(r.iBr.iX - KScrollBarW, r.iBr.iY))));
+	iBarRect = TRect(r.iBr.iX - KScrollBarW, top, r.iBr.iX, r.iBr.iY);
+	(void)e1; (void)e2a; (void)e3;
 	// columns: pictures, from, subject, date (dd/mm/yyyy, as the locale has it)
-	TInt lw = r.iBr.iX - msgX - 12;            // (room for a scroll bar)
+	TInt lw = r.iBr.iX - msgX - 30;            // (room for the scroll bar)
 	TBuf<32> sample;
-	TTime t(TDateTime(2026, ESeptember, 29, 23, 0, 0, 0));
+	TTime t(TDateTime(2026, EDecember, 27, 23, 58, 0, 0));
 	TRAPD(e2, t.FormatL(sample, _L("%D%M%Y%/0%1%/1%2%/2%3%/3")));
-	if (e2) sample = _L("30/09/2026");
-	TInt date = iListFont->TextWidthInPixels(sample) + 8;
+	if (e2) sample = _L("28/12/2026");
+	TInt date = iListFont->TextWidthInPixels(sample);
+	TRAP(e2, t.FormatL(sample, _L("%-B%:0%J%:1%T%+B")));
+	if (!e2 && iListFont->TextWidthInPixels(sample) > date)
+		date = iListFont->TextWidthInPixels(sample);
+	date += 10;
 	TInt gap = 6;
 	TInt rest = lw - KIconCol - 2 - date - gap * 2;
 	TInt from = rest * 2 / 5;
@@ -445,8 +450,20 @@ static void ShowScrollBar(CEikScrollBarFrame* aFrame, TBool aShow)
 	if (!aFrame)
 		return;
 	CEikScrollBar* sb = aFrame->GetScrollBarHandle(CEikScrollBar::EVertical);
-	if (sb && (aShow ? aFrame->VScrollBarVisibility() != CEikScrollBarFrame::EOff : ETrue))
+	if (sb && sb->IsVisible() != aShow)
 		sb->MakeVisible(aShow);
+	}
+
+// a list's scroll bar: there when its rows don't all fit
+static void ListScrollBar(CEikListBox* aList, TBool aShown)
+	{
+	TBool need = aShown && aList->Model()->NumberOfItems() * aList->ItemHeight() > aList->Rect().Height();
+	ShowScrollBar(aList->ScrollBarFrame(), need);
+	if (need)
+		{
+		TRAPD(err, aList->UpdateScrollBarsL());
+		(void)err;
+		}
 	}
 
 void CPmView::ShowNative(TBool aShow)
@@ -462,12 +479,19 @@ void CPmView::ShowNative(TBool aShow)
 	iMsgList->MakeVisible(msgs);
 	iReader->MakeVisible(reader);
 	// (the scroll bars are controls of their own: hide them with their owner)
-	ShowScrollBar(iFolderList->ScrollBarFrame(), folders);
-	ShowScrollBar(iMsgList->ScrollBarFrame(), msgs);
-	ShowScrollBar(iReader->ScrollBarFrame(), reader);
+	ListScrollBar(iFolderList, folders);
+	ListScrollBar(iMsgList, msgs);
+
 	iFolderList->SetFocus(folders && iSidebar, ENoDrawNow);
 	iMsgList->SetFocus(list && !iSidebar, ENoDrawNow);
 	iReader->SetFocus(reader, ENoDrawNow);
+	if (reader)
+		{
+		// reading, not writing: no cursor; and the scroll bar up to date
+		TRAPD(err, iReader->TextView()->SetCursorVisibilityL(TCursor::EFCursorInvisible, TCursor::EFCursorInvisible));
+		(void)err;
+		UpdateReaderBar();
+		}
 	}
 
 // ----- filling the controls ---------------------------------------------------------
@@ -567,6 +591,7 @@ void CPmView::UpdateFolderListL()
 		for (TInt k = 0; k < fresh->Count(); k++)
 			items->AppendL((*fresh)[k]);
 		iFolderList->HandleItemAdditionL();
+		ListScrollBar(iFolderList, iNativeShown && iFolderList->IsVisible());
 		}
 	CleanupStack::PopAndDestroy();          // fresh
 	TInt sel = (iSidebar ? iFolderSel : CurrentSidebarItem()) + 1;
@@ -655,6 +680,7 @@ void CPmView::UpdateMessageListL()
 			items->AppendL(line);
 			}
 		iMsgList->HandleItemAdditionL();
+		ListScrollBar(iMsgList, iNativeShown && iMsgList->IsVisible());
 		}
 	if (iRows->Count())
 		{
@@ -1042,8 +1068,151 @@ void CPmView::UpdateReaderL()
 	iReader->SetCursorPosL(0, EFalse);
 	// reading, not writing: no cursor
 	iReader->TextView()->SetCursorVisibilityL(TCursor::EFCursorInvisible, TCursor::EFCursorInvisible);
-	iReader->UpdateScrollBarsL();
+	iReaderAbove = 0;
+	UpdateReaderBar();
 	}
+
+// the reader's scroll bar, drawn here as EIKON draws its own: a shaft with
+// a thumb, and the up and down buttons at the bottom. In pixels: the text's
+// height, the window's, and how far down it has been scrolled.
+void CPmView::ReaderBarModel(TInt& aTotal, TInt& aShown, TInt& aAbove) const
+	{
+	CTextLayout* lay = iReader->TextLayout();
+	aShown = iReader->Rect().Height();
+	aTotal = lay ? lay->FormattedHeightInPixels() : aShown;
+	if (aTotal < aShown) aTotal = aShown;
+	aAbove = iReaderAbove;
+	if (aAbove > aTotal - aShown) aAbove = aTotal - aShown;
+	if (aAbove < 0) aAbove = 0;
+	}
+
+// the parts: the shaft, the thumb within it, the two buttons
+void CPmView::ReaderBarParts(TRect& aShaft, TRect& aThumb, TRect& aUp, TRect& aDown) const
+	{
+	TRect r = iBarRect;
+	TInt bh = 20;
+	aDown = TRect(r.iTl.iX, r.iBr.iY - bh, r.iBr.iX, r.iBr.iY);
+	aUp = TRect(r.iTl.iX, r.iBr.iY - 2 * bh, r.iBr.iX, r.iBr.iY - bh);
+	aShaft = TRect(r.iTl.iX, r.iTl.iY, r.iBr.iX, aUp.iTl.iY);
+	TInt total, shown, above;
+	ReaderBarModel(total, shown, above);
+	TInt sh = aShaft.Height();
+	TInt th = total > 0 ? sh * shown / total : sh;
+	if (th < 16) th = 16;
+	if (th > sh) th = sh;
+	TInt room = total - shown;
+	TInt ty = aShaft.iTl.iY + (room > 0 ? (sh - th) * above / room : 0);
+	aThumb = TRect(aShaft.iTl.iX, ty, aShaft.iBr.iX, ty + th);
+	}
+
+static void DrawBarButton(CWindowGc& aGc, const TRect& aRect, TBool aUp, TBool aDown);
+static void DrawButtonFace(CWindowGc& aGc, const TRect& aRect, TBool aDown);
+
+void CPmView::DrawReaderBar(CWindowGc& gc) const
+	{
+	if (iMode != EMessage || iBarRect.Width() <= 0)
+		return;
+	TRect shaft, thumb, up, down;
+	ReaderBarParts(shaft, thumb, up, down);
+	gc.SetPenStyle(CGraphicsContext::ESolidPen);
+	gc.SetPenColor(KRgbBlack);
+	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	gc.SetBrushColor(KPmLightGrey);
+	gc.DrawRect(shaft);
+	// the thumb: a raised button with grip lines
+	TRect t(thumb.iTl.iX + 1, thumb.iTl.iY, thumb.iBr.iX - 1, thumb.iBr.iY);
+	DrawButtonFace(gc, t, EFalse);
+	gc.SetPenColor(KRgbBlack);
+	TInt cy = t.iTl.iY + t.Height() / 2;
+	for (TInt k = -4; k <= 4; k += 2)
+		if (cy + k > t.iTl.iY + 2 && cy + k < t.iBr.iY - 2)
+			gc.DrawLine(TPoint(t.iTl.iX + 5, cy + k), TPoint(t.iBr.iX - 5, cy + k));
+	DrawBarButton(gc, up, ETrue, iBarPress == 1);
+	DrawBarButton(gc, down, EFalse, iBarPress == 2);
+	}
+
+void CPmView::UpdateReaderBar()
+	{
+	if (iMode != EMessage || !iNativeShown || !IsReadyToDraw())
+		return;
+	ActivateGc();
+	DrawReaderBar(SystemGc());
+	DeactivateGc();
+	}
+
+// scrolls the reader, keeping count of how far down it is (for the scroll bar)
+void CPmView::ReaderScrollL(TInt aMovement)
+	{
+	TCursorPosition::TMovementType m = (TCursorPosition::TMovementType)aMovement;
+	TInt px = iReader->TextView()->ScrollDisplayL(m);
+	if (px < 0) px = -px;
+	TBool down = m == TCursorPosition::EFLineDown || m == TCursorPosition::EFPageDown;
+	iReaderAbove += down ? px : -px;
+	if (iReaderAbove < 0) iReaderAbove = 0;
+	UpdateReaderBar();
+	}
+
+void CPmView::ReaderToL(TBool aEnd)
+	{
+	iReader->SetCursorPosL(aEnd ? iReader->TextLength() : 0, EFalse);
+	CTextLayout* lay = iReader->TextLayout();
+	iReaderAbove = aEnd && lay ? lay->FormattedHeightInPixels() : 0;   // (UpdateReaderBar clamps it)
+	iReader->TextView()->SetCursorVisibilityL(TCursor::EFCursorInvisible, TCursor::EFCursorInvisible);
+	UpdateReaderBar();
+	}
+
+// the pen on the reader's scroll bar: ETrue if it was there
+TBool CPmView::ReaderBarPointerL(const TPointerEvent& aEvent)
+	{
+	if (iMode != EMessage)
+		return EFalse;
+	TPoint p = aEvent.iPosition;
+	TRect shaft, thumb, up, down;
+	ReaderBarParts(shaft, thumb, up, down);
+	if (aEvent.iType == TPointerEvent::EButton1Down)
+		{
+		if (!iBarRect.Contains(p))
+			return EFalse;
+		iBarPress = 0;
+		if (up.Contains(p)) { iBarPress = 1; ReaderScrollL(TCursorPosition::EFLineUp); }
+		else if (down.Contains(p)) { iBarPress = 2; ReaderScrollL(TCursorPosition::EFLineDown); }
+		else if (thumb.Contains(p)) { iBarPress = 3; iBarGrab = p.iY - thumb.iTl.iY; }
+		else if (p.iY < thumb.iTl.iY) ReaderScrollL(TCursorPosition::EFPageUp);
+		else ReaderScrollL(TCursorPosition::EFPageDown);
+		UpdateReaderBar();
+		return ETrue;
+		}
+	if (iBarPress == 0)
+		return EFalse;
+	if (aEvent.iType == TPointerEvent::EDrag && iBarPress == 3)
+		{
+		// the thumb follows the pen: scroll a line at a time to match
+		TInt total, shown, above;
+		ReaderBarModel(total, shown, above);
+		TInt room = shaft.Height() - thumb.Height();
+		if (room > 0 && total > shown)
+			{
+			TInt want = (p.iY - iBarGrab - shaft.iTl.iY) * (total - shown) / room;
+			TInt line = iListFont->HeightInPixels();
+			for (TInt guard = 0; guard < 200; guard++)
+				{
+				TInt at = iReaderAbove;
+				if (at + line < want) ReaderScrollL(TCursorPosition::EFLineDown);
+				else if (at - line > want && at > 0) ReaderScrollL(TCursorPosition::EFLineUp);
+				else break;
+				if (iReaderAbove == at) break;
+				}
+			}
+		return ETrue;
+		}
+	if (aEvent.iType == TPointerEvent::EButton1Up)
+		{
+		iBarPress = 0;
+		UpdateReaderBar();
+		}
+	return ETrue;
+	}
+
 
 // the address of link n (from the "\x01u<n> url" lines), 0 if none
 TInt CPmView::NativeLinkUrl(TInt aLink, TDes& aUrl) const
@@ -1134,6 +1303,20 @@ static void DrawButtonFace(CWindowGc& aGc, const TRect& aRect, TBool aDown)
 		}
 	}
 
+// the scroll bar's buttons: a face with a solid triangle
+static void DrawBarButton(CWindowGc& aGc, const TRect& aRect, TBool aUp, TBool aDown)
+	{
+	DrawButtonFace(aGc, aRect, aDown);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.SetPenColor(KRgbBlack);
+	TInt cx = aRect.iTl.iX + aRect.Width() / 2, cy = aRect.iTl.iY + aRect.Height() / 2;
+	for (TInt k = 0; k < 5; k++)
+		{
+		TInt y = aUp ? cy - 2 + k : cy + 2 - k;
+		aGc.DrawLine(TPoint(cx - k, y), TPoint(cx + k + 1, y));
+		}
+	}
+
 // a small triangle: the order a column is sorted in
 static void DrawArrow(CWindowGc& aGc, TInt aX, TInt aY, TBool aDownwards)
 	{
@@ -1144,14 +1327,15 @@ static void DrawArrow(CWindowGc& aGc, TInt aX, TInt aY, TBool aDownwards)
 		}
 	}
 
+// the box on the right of the title band: only when there's something to
+// say (the middle shows what the engine is doing)
 static void ConnectionText(const TPmSettings& aSettings, const PmShared* aShared, TDes& aOut)
 	{
+	aOut.Zero();
 	if (aSettings.iOffline)
-		aOut = _L("Working offline");
+		aOut = _L("Offline");
 	else if (aShared && aShared->online)
-		aOut = aSettings.iNetMode ? _L("Connected to Internet") : _L("Connected");
-	else
-		aOut = aSettings.iNetMode ? _L("Not connected to Internet") : _L("Not connected");
+		aOut = _L("Online");
 	}
 
 void CPmView::UpdateStatusLine()
@@ -1186,33 +1370,30 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 	gc.UseFont(iTitleFont);
 	gc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	TInt base = band.iTl.iY + (iTitleH - iTitleFont->HeightInPixels()) / 2 + iTitleFont->AscentInPixels();
-	// the connection, in a box on the right
+	// the connection, in a box on the right (when there's one to show)
 	TBuf<40> conn;
 	ConnectionText(*iSettings, iShared, conn);
-	TInt cw = iTitleFont->TextWidthInPixels(conn) + 10;
-	TRect box(band.iBr.iX - cw - 2, band.iTl.iY + 2, band.iBr.iX - 2, band.iBr.iY - 2);
-	gc.SetPenStyle(CGraphicsContext::ESolidPen);
-	gc.SetPenColor(KRgbBlack);
-	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	gc.SetBrushColor(iPenHead == 11 ? KPmDarkGrey : KPmLightGrey);
-	gc.DrawRect(box);
-	gc.SetBrushStyle(CGraphicsContext::ENullBrush);
-	gc.DrawText(conn, TPoint(box.iTl.iX + 5, base));
-	// where you are: "Fastmail\Inbox"
-	TBuf<120> where;
-	const PmAccount& a = iSettings->iAccounts[iSettings->iAcct];
-	if (a.used && a.name[0])
+	TRect box(band.iBr.iX, band.iTl.iY, band.iBr.iX, band.iBr.iY);
+	if (conn.Length())
 		{
-		TPtrC8 n((const TUint8*)a.name);
-		where.Copy(Clip(n, 24));
-		where.Append('\\');
+		TInt cw = iTitleFont->TextWidthInPixels(conn) + 12;
+		box = TRect(band.iBr.iX - cw - 2, band.iTl.iY + 2, band.iBr.iX - 2, band.iBr.iY - 2);
+		gc.SetPenStyle(CGraphicsContext::ESolidPen);
+		gc.SetPenColor(KRgbBlack);
+		gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+		gc.SetBrushColor(iPenHead == 11 ? KPmDarkGrey : KPmLightGrey);
+		gc.DrawRect(box);
+		gc.SetBrushStyle(CGraphicsContext::ENullBrush);
+		gc.DrawText(conn, TPoint(box.iTl.iX + 6, base));
 		}
+	// where you are: the folder
+	TBuf<120> where;
 	if (iMode == EOutbox)
-		where.Append(_L("Outbox"));
+		where = _L("Outbox");
 	else if (iMode == ENoAccount)
 		where = _L("PsiMail");
 	else if (iSearch)
-		where.Append(_L("Search"));
+		where = _L("Find results");
 	else
 		{
 		const TPmFolder* f = CurrentFolder();
@@ -1220,7 +1401,7 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 		TInt last = -1;
 		for (TInt j = 0; j < name.Length(); j++)
 			if (name[j] == '/') last = j;
-		where.Append(Clip(name.Mid(last + 1), 40));
+		where = Clip(name.Mid(last + 1), 40);
 		}
 	TInt x = btn.iBr.iX + 6;
 	TInt maxW = (box.iTl.iX - x) / 2;
@@ -1231,16 +1412,8 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 	TInt ww = iTitleFont->TextWidthInPixels(where);
 	// the middle: what's happening, or how many messages
 	TBuf<160> mid;
-	if (iToast.Length())
-		mid = iToast;
-	else if (!iSplashDone && iRunning && iShared && iShared->state == PM_STATE_STARTING)
-		mid = _L("Starting the mail engine...");
-	else if (Busy() && iLastProgress.Length())
-		mid = iLastProgress;
-	else if (Busy() || CalendarBusy())
-		mid = _L("Working...");
-	else if (iStatus.Length())
-		mid = iStatus;
+	if (!iSplashDone && iRunning && iShared && iShared->state == PM_STATE_STARTING)
+		mid = _L("Starting...");
 	else if (iMode == EMessage)
 		{
 		if (iRows->Count())
@@ -1260,8 +1433,8 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 		TInt n = iRows->Count();
 		if (iSearch) mid.Format(_L("%d found"), n);
 		else if (n == 0) mid = _L("No messages");
-		else if (n == 1) mid = unread ? _L("1 message, unread") : _L("1 message");
-		else if (unread) mid.Format(_L("%d messages, %d unread"), n, unread);
+		else if (n == 1) mid = unread ? _L("1 message (new)") : _L("1 message");
+		else if (unread) mid.Format(_L("%d messages (%d new)"), n, unread);
 		else mid.Format(_L("%d messages"), n);
 		}
 	TInt ml = x + ww + 10, mr = box.iTl.iX - 8;
@@ -1336,7 +1509,7 @@ TInt CPmView::HeaderHit(const TPoint& aPos) const
 			return 10;
 		TBuf<40> conn;
 		ConnectionText(*iSettings, iShared, conn);
-		if (aPos.iX > r.iBr.iX - iTitleFont->TextWidthInPixels(conn) - 12)
+		if (conn.Length() && aPos.iX > r.iBr.iX - iTitleFont->TextWidthInPixels(conn) - 14)
 			return 11;
 		return -1;
 		}
@@ -1354,7 +1527,11 @@ void CPmView::HeaderActionL(TInt aHit)
 	TInt s = iSettings->iSort;
 	switch (aHit)
 		{
-	case 10: ToggleViewL(4); break;
+	case 10:
+		// the folder button: back to the list from a message, else the folders
+		if (iMode == EMessage) BackL();
+		else ToggleViewL(4);
+		break;
 	case 11: StatusInfoL(); break;
 	case 0: if (iMode == EList || iMode == EOutbox) FocusFoldersL(); break;
 	case 1: if (iMode == EList) SortL(s == 6 ? 0 : 6); break;
@@ -1375,6 +1552,7 @@ void CPmView::DrawNative(const TRect& /*aRect*/) const
 	gc.DrawRect(TRect(r.iTl.iX, r.iTl.iY + iTitleH, r.iBr.iX, r.iBr.iY));
 	DrawTitle(gc);
 	DrawHeaders(gc);
+	DrawReaderBar(gc);
 	gc.SetPenStyle(CGraphicsContext::ESolidPen);
 	gc.SetPenColor(KRgbBlack);
 	TInt top = r.iTl.iY + iTitleH + iHeadH;
@@ -1391,7 +1569,7 @@ void CPmView::DrawNative(const TRect& /*aRect*/) const
 		if (iMode == ENoAccount)
 			{
 			a = _L("Set up your mail with Tools > Add new account.");
-			b = _L("For Fastmail, make an app password first.");
+			b = _L("Most providers want an app password for this.");
 			}
 		else if (iMode == EOutbox) a = _L("Nothing waiting to be sent");
 		else if (iSearch) a = _L("Nothing found");
@@ -1423,6 +1601,11 @@ void CPmView::UpdateNativeL()
 	else if (iMode == ENoAccount)
 		UpdateFolderListL();
 	TBool wantMsgList = (iMode == EList || iMode == EOutbox) && iRows->Count() > 0;
+	if (modeChanged)
+		{
+		TRAPD(e, ((CPmAppUi*)iEikonEnv->EikAppUi())->SetTool4L(iMode == EMessage));
+		(void)e;
+		}
 	if (modeChanged || wantMsgList != iMsgList->IsVisible() ||
 		iFolderList->IsFocused() != ((iMode == EList || iMode == EOutbox) && iSidebar))
 		{
@@ -1474,7 +1657,7 @@ void CPmView::ToolbarPopupL(TInt aCommand)
 	CPmAppUi* ui = (CPmAppUi*)iEikonEnv->EikAppUi();
 	if (aCommand == EPmCmdReplyPopup && !((iMode == EList || iMode == EMessage) && CurrentRow()))
 		{
-		iEikonEnv->InfoMsg(_L("Select a message first"));
+		iEikonEnv->InfoMsg(_L("No message selected"));
 		return;
 		}
 	CCoeControl* b = ui->ToolBarButton(aCommand);
@@ -1493,9 +1676,8 @@ void CPmView::ToggleViewL(TInt aFlag)
 	if ((iSettings->iView & 4) && iSidebar)
 		iSidebar = EFalse;
 	if (aFlag == 1)
-		ui->ShowToolBar(NativeMode() && iNativeShown);     // (sets our rect: lays out)
-	else
-		LayoutNative();
+		ui->ShowToolBar(NativeMode() && iNativeShown);     // (sets our rect)
+	LayoutNative();
 	if (NativeMode() && iNativeShown)
 		{
 		iNativeMode = (TMode)-1;
@@ -1622,15 +1804,15 @@ TKeyResponse CPmView::NativeKeyL(const TKeyEvent& aKeyEvent, TEventCode aType)
 		{
 		switch (code)
 			{
-		case EKeyUpArrow: iReader->MoveDisplayL(TCursorPosition::EFLineUp); break;
-		case EKeyDownArrow: iReader->MoveDisplayL(TCursorPosition::EFLineDown); break;
-		case EKeyPageUp: iReader->MoveDisplayL(TCursorPosition::EFPageUp); break;
+		case EKeyUpArrow: ReaderScrollL(TCursorPosition::EFLineUp); break;
+		case EKeyDownArrow: ReaderScrollL(TCursorPosition::EFLineDown); break;
+		case EKeyPageUp: ReaderScrollL(TCursorPosition::EFPageUp); break;
 		case EKeyPageDown:
 		case ' ':
-			iReader->MoveDisplayL(TCursorPosition::EFPageDown);
+			ReaderScrollL(TCursorPosition::EFPageDown);
 			break;
-		case EKeyHome: iReader->SetCursorPosL(0, EFalse); break;
-		case EKeyEnd: iReader->SetCursorPosL(iReader->TextLength(), EFalse); break;
+		case EKeyHome: ReaderToL(EFalse); break;
+		case EKeyEnd: ReaderToL(ETrue); break;
 		case EKeyLeftArrow: StepMessageL(-1); return EKeyWasConsumed;
 		case EKeyRightArrow: StepMessageL(1); return EKeyWasConsumed;
 		case EKeyTab: NativeLinkStepL((aKeyEvent.iModifiers & EModifierShift) ? -1 : 1); break;
@@ -1650,7 +1832,7 @@ TKeyResponse CPmView::NativeKeyL(const TKeyEvent& aKeyEvent, TEventCode aType)
 		default:
 			return EKeyWasNotConsumed;
 			}
-		iReader->UpdateScrollBarsL();
+		UpdateReaderBar();
 		return EKeyWasConsumed;
 		}
 	return EKeyWasNotConsumed;
@@ -1660,6 +1842,8 @@ TKeyResponse CPmView::NativeKeyL(const TKeyEvent& aKeyEvent, TEventCode aType)
 // returns ETrue if it was ours
 TBool CPmView::NativePointerL(const TPointerEvent& aEvent)
 	{
+	if (ReaderBarPointerL(aEvent))
+		return ETrue;
 	TInt hit = HeaderHit(aEvent.iPosition);
 	if (aEvent.iType == TPointerEvent::EButton1Down)
 		{
@@ -1707,12 +1891,19 @@ void CPmView::HandleListBoxEventL(CEikListBox* aListBox, TListBoxEvent aEventTyp
 		}
 	if (aListBox == iMsgList)
 		{
+		// a tap selects; a second tap on the selected message opens it (the
+		// style guide: no double taps)
 		TBool wasSide = iSidebar;
+		TInt was = iSel;
 		iSidebar = EFalse;
 		iSel = iMsgList->CurrentItemIndex();
-		if (aEventType == EEventItemDoubleClicked || aEventType == EEventEnterKeyPressed)
+		if (aEventType == EEventEnterKeyPressed || aEventType == EEventItemDoubleClicked ||
+			(aEventType == EEventItemClicked && !wasSide && iSel == was))
+			{
 			OpenCurrentL();
-		else if (wasSide)
+			return;
+			}
+		if (wasSide)
 			Render();
 		else
 			UpdateStatusLine();

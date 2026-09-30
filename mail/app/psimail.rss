@@ -36,7 +36,8 @@ RESOURCE EIK_APP_INFO
 	}
 
 // the standard toolbar, laid out as the built-in Email program has it: New,
-// Reply/f'ward (both pop up a choice), Open mailbox, Close mailbox, the clock.
+// Reply/f'ward (both pop up a choice), Check mail, and Delete (in a list) or
+// Close (reading a message: back to the list), then the clock.
 // (The pictures come from PsiMail.mbm: CPmAppUi::ConstructL puts them on.)
 RESOURCE TOOLBAR r_pm_toolbar
 	{
@@ -48,22 +49,22 @@ RESOURCE TOOLBAR r_pm_toolbar
 			type=EEikCtLabel;
 			flags=EEikToolBarCtrlHasSetMinLength;
 			length=KEikStdFileNameLabelHeight;
-			control=LABEL { txt="PsiMail"; horiz_align=EEikLabelAlignHCenter; };
+			control=LABEL { txt="PsiMail"; horiz_align=EEikLabelAlignHCenter; vert_align=EEikLabelAlignVCenter; };
 			},
 		TBAR_CTRL
 			{
 			type=EEikCtMenuButton; id=EPmCmdNewPopup;
 			flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight;
-			control=MNBUT { popout=r_pm_new_popup; txt="New"; };
+			control=MNBUT { popout=r_pm_new_popup; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="New"; };
 			},
 		TBAR_CTRL
 			{
 			type=EEikCtMenuButton; id=EPmCmdReplyPopup;
 			flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight;
-			control=MNBUT { popout=r_pm_reply_popup; txt="Reply/\nf'ward"; };
+			control=MNBUT { popout=r_pm_reply_popup; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Reply/\nf'ward"; };
 			},
-		TBAR_BUTTON { id=EPmCmdSendRecv; txt="Open\nmailbox"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
-		TBAR_BUTTON { id=EPmCmdHangup; txt="Close\nmailbox"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPmCmdSendRecv; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Check\nmail"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPmCmdTool4; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Delete"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
 		TBAR_CTRL
 			{
 			type=EEikCtSpacer;
@@ -86,9 +87,11 @@ RESOURCE TOOLBAR r_pm_toolbar
 		};
 	}
 
-// the shortcuts follow the built-in Email program's where it has the same
-// command (Ctrl+N new, Ctrl+D delete, Ctrl+U disconnect, Ctrl+M zoom,
-// Ctrl+T toolbar, Shift+Ctrl+C open mailbox...)
+// the shortcuts: EIKON's standard ones for standard commands (Ctrl+E close,
+// Ctrl+N create new, Ctrl+D delete, Ctrl+F find, Ctrl+G go to, Ctrl+K
+// preferences, Ctrl+M zoom, Ctrl+Q switch view, Ctrl+T toolbar, Shift+Ctrl+A
+// about), then the built-in Email program's (Shift+Ctrl+C check mail, Ctrl+U
+// disconnect, Ctrl+X move), then free shifted keys for the rest
 RESOURCE HOTKEYS r_pm_hotkeys
 	{
 	control=
@@ -99,39 +102,37 @@ RESOURCE HOTKEYS r_pm_hotkeys
 		HOTKEY { command=EPmCmdForward; key='w'; },
 		HOTKEY { command=EPmCmdDelete; key='d'; },
 		HOTKEY { command=EPmCmdMove; key='x'; },
-		HOTKEY { command=EPmCmdArchive; key='a'; },
 		HOTKEY { command=EPmCmdHangup; key='u'; },
 		HOTKEY { command=EPmCmdStop; key='z'; },
 		HOTKEY { command=EPmCmdZoomIn; key='m'; },
 		HOTKEY { command=EPmCmdToggleToolbar; key='t'; },
-		HOTKEY { command=EPmCmdEditAccount; key='k'; },
+		HOTKEY { command=EPmCmdPrefs; key='k'; },
 		HOTKEY { command=EPmCmdSaveAttach; key='s'; },
-		HOTKEY { command=EPmCmdFolders; key='l'; },
+		HOTKEY { command=EPmCmdFolders; key='g'; },
 		HOTKEY { command=EPmCmdInbox; key='i'; },
 		HOTKEY { command=EPmCmdRefresh; key='y'; },
 		HOTKEY { command=EPmCmdSearch; key='f'; },
 		HOTKEY { command=EPmCmdOutbox; key='b'; },
-		HOTKEY { command=EPmCmdSwitchAccount; key='j'; },
-		HOTKEY { command=EPmCmdOffline; key='o'; },
-		HOTKEY { command=EPmCmdWeb; key='p'; }
+		HOTKEY { command=EPmCmdWeb; key='p'; },
+		HOTKEY { command=EPmCmdMonth; key='q'; }
 		};
 	shift_control=
 		{
 		HOTKEY { command=EPmCmdSendRecv; key='c'; },
 		HOTKEY { command=EPmCmdReplyAll; key='r'; },
-		HOTKEY { command=EPmCmdWhole; key='w'; },
-		HOTKEY { command=EPmCmdOlder; key='y'; },
+		HOTKEY { command=EPmCmdOffline; key='w'; },
+		HOTKEY { command=EPmCmdArchive; key='e'; },
+		HOTKEY { command=EPmCmdOlder; key='g'; },
 		HOTKEY { command=EPmCmdZoomOut; key='m'; },
 		HOTKEY { command=EPmCmdToggleTitle; key='t'; },
 		HOTKEY { command=EPmCmdToggleFolders; key='l'; },
 		HOTKEY { command=EPmCmdStatusInfo; key='q'; },
 		HOTKEY { command=EPmCmdSort; key='b'; },
 		HOTKEY { command=EPmCmdAbout; key='a'; },
-		HOTKEY { command=EPmCmdShowCalendar; key='e'; },
-		HOTKEY { command=EPmCmdCalendar; key='j'; },
+		HOTKEY { command=EPmCmdShowCalendar; key='n'; },
+		HOTKEY { command=EPmCmdCalendar; key='y'; },
 		HOTKEY { command=EPmCmdUnread; key='u'; },
-		HOTKEY { command=EPmCmdFlag; key='f'; },
-		HOTKEY { command=EPmCmdConnSettings; key='k'; }
+		HOTKEY { command=EPmCmdFlag; key='f'; }
 		};
 	}
 
@@ -152,8 +153,8 @@ RESOURCE MENU_PANE r_pm_file_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPmCmdSendRecv; txt="Open mailbox (send & receive)"; },
-		MENU_ITEM { command=EPmCmdHangup; txt="Close mailbox (disconnect)"; },
+		MENU_ITEM { command=EPmCmdSendRecv; txt="Check mail (send & receive)"; },
+		MENU_ITEM { command=EPmCmdHangup; txt="Disconnect"; },
 		MENU_ITEM { command=EPmCmdStop; txt="Stop"; },
 		MENU_ITEM { command=EPmCmdOffline; txt="Work offline"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdCalendar; txt="Sync calendar"; },
@@ -177,14 +178,14 @@ RESOURCE MENU_PANE r_pm_message_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPmCmdNew; txt="Create new email"; },
-		MENU_ITEM { command=EPmCmdReplyMenu; cascade=r_pm_reply_menu; txt="Reply to"; },
+		MENU_ITEM { command=EPmCmdNew; txt="Create new email..."; },
 		MENU_ITEM { command=EPmCmdForward; txt="Forward..."; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdUnread; txt="Mark read / unread"; },
-		MENU_ITEM { command=EPmCmdFlag; txt="Flag / unflag"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdUnread; txt="Unread"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPmCmdFlag; txt="Flagged"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdSaveAttach; txt="Save attachment..."; },
 		MENU_ITEM { command=EPmCmdWhole; txt="Get whole message"; },
-		MENU_ITEM { command=EPmCmdWeb; txt="View as web page"; }
+		MENU_ITEM { command=EPmCmdWeb; txt="View as web page"; },
+		MENU_ITEM { command=EPmCmdReplyMenu; cascade=r_pm_reply_menu; txt="Reply to"; }
 		};
 	}
 
@@ -192,8 +193,8 @@ RESOURCE MENU_PANE r_pm_reply_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPmCmdReply; txt="Sender"; },
-		MENU_ITEM { command=EPmCmdReplyAll; txt="All recipients"; }
+		MENU_ITEM { command=EPmCmdReply; txt="Sender..."; },
+		MENU_ITEM { command=EPmCmdReplyAll; txt="All recipients..."; }
 		};
 	}
 
@@ -206,7 +207,7 @@ RESOURCE MENU_PANE r_pm_view_menu
 		MENU_ITEM { command=EPmCmdToggleToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPmCmdToggleTitle; txt="Show title bar"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPmCmdToggleFolders; txt="Show list of folders"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdSmooth; txt="Smooth text"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPmCmdSort; txt="Sort..."; },
 		MENU_ITEM { command=EPmCmdStatusInfo; txt="Status information..."; }
 		};
 	}
@@ -221,8 +222,8 @@ RESOURCE MENU_PANE r_pm_folder_menu
 		MENU_ITEM { command=EPmCmdRefresh; txt="Check for new mail"; },
 		MENU_ITEM { command=EPmCmdOlder; txt="Get older messages"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdShowCalendar; txt="Calendar"; },
-		MENU_ITEM { command=EPmCmdMonth; txt="Month / week"; },
-		MENU_ITEM { command=EPmCmdNewEvent; txt="New event..."; }
+		MENU_ITEM { command=EPmCmdMonth; txt="Switch view"; },
+		MENU_ITEM { command=EPmCmdNewEvent; txt="Create new event..."; }
 		};
 	}
 
@@ -230,25 +231,33 @@ RESOURCE MENU_PANE r_pm_tools_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPmCmdEditAccount; txt="Account settings..."; },
-		MENU_ITEM { command=EPmCmdSwitchAccount; txt="Switch account..."; },
-		MENU_ITEM { command=EPmCmdNewAccount; txt="Add new account..."; },
-		MENU_ITEM { command=EPmCmdDeleteAccount; txt="Delete account"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdPrefs; txt="Preferences..."; },
 		MENU_ITEM { command=EPmCmdConnSettings; txt="Connection settings..."; },
 		MENU_ITEM { command=EPmCmdCalSettings; txt="Calendar settings..."; },
-		MENU_ITEM { command=EPmCmdSort; txt="Sort..."; },
+		MENU_ITEM { command=EPmCmdAccountsMenu; cascade=r_pm_accounts_menu; txt="Accounts"; },
 		MENU_ITEM { command=EPmCmdRestart; txt="Restart mail engine"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdAbout; txt="About PsiMail"; }
 		};
 	}
 
-// the toolbar's pop-ups
+RESOURCE MENU_PANE r_pm_accounts_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdEditAccount; txt="Settings..."; },
+		MENU_ITEM { command=EPmCmdSwitchAccount; txt="Switch..."; },
+		MENU_ITEM { command=EPmCmdNewAccount; txt="Add..."; },
+		MENU_ITEM { command=EPmCmdDeleteAccount; txt="Remove"; }
+		};
+	}
+
+// the toolbar's pop-ups (no shortcuts: they're for the pen)
 RESOURCE MENU_PANE r_pm_new_popup
 	{
 	items=
 		{
-		MENU_ITEM { command=EPmCmdNew; txt="Email"; },
-		MENU_ITEM { command=EPmCmdNewEvent; txt="Calendar event"; }
+		MENU_ITEM { command=EPmCmdNew; txt="Email..."; },
+		MENU_ITEM { command=EPmCmdNewEvent; txt="Calendar event..."; }
 		};
 	}
 
@@ -256,9 +265,9 @@ RESOURCE MENU_PANE r_pm_reply_popup
 	{
 	items=
 		{
-		MENU_ITEM { command=EPmCmdReply; txt="Reply"; },
-		MENU_ITEM { command=EPmCmdReplyAll; txt="Reply to all"; },
-		MENU_ITEM { command=EPmCmdForward; txt="Forward"; }
+		MENU_ITEM { command=EPmCmdReply; txt="Reply..."; },
+		MENU_ITEM { command=EPmCmdReplyAll; txt="Reply to all..."; },
+		MENU_ITEM { command=EPmCmdForward; txt="Forward..."; }
 		};
 	}
 
@@ -338,35 +347,37 @@ RESOURCE DIALOG r_pm_choice_dialog
 		};
 	}
 
+// writing: the whole screen, as the built-in Email program does it - the
+// address lines, the subject, a rule, the text; its buttons on the right
 RESOURCE DLG_BUTTONS r_pm_compose_buttons
 	{
 	buttons=
 		{
 		DLG_BUTTON { id=EPmBidSend; button=CMBUT { txt="Send"; }; hotkey='S'; },
-		DLG_BUTTON { id=EPmBidSave; button=CMBUT { txt="Save"; }; hotkey='D'; },
-		DLG_BUTTON { id=EPmBidAttach; button=CMBUT { txt="Attach..."; }; hotkey='A'; },
-		DLG_BUTTON { id=EPmBidRemove; button=CMBUT { txt="Unattach"; }; hotkey='U'; },
-		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; }
+		DLG_BUTTON { id=EPmBidSave; button=CMBUT { txt="Save as\ndraft"; }; hotkey='D'; },
+		DLG_BUTTON { id=EPmBidAttach; button=CMBUT { txt="Attach-\nments"; }; hotkey='A'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Close"; }; hotkey=EEikBidCancel; flags=0; }
 		};
 	}
 
 RESOURCE DIALOG r_pm_compose_dialog
 	{
-	title="New message";
-	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight|EEikDialogFlagNotifyEsc;
+	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight|EEikDialogFlagNotifyEsc|EEikDialogFlagNoTitleBar|EEikDialogFlagNoDrag;
 	buttons=r_pm_compose_buttons;
 	items=
 		{
-		DLG_LINE { type=EEikCtEdwin; prompt="To"; id=EPmDlgTo;
+		DLG_LINE { type=EEikCtEdwin; prompt="To:"; id=EPmDlgTo;
 			control=EDWIN { width=26; maxlength=500; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Cc"; id=EPmDlgCc;
+		DLG_LINE { type=EEikCtEdwin; prompt="CC:"; id=EPmDlgCc;
 			control=EDWIN { width=26; maxlength=500; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Subject"; id=EPmDlgSubject;
+		DLG_LINE { type=EEikCtEdwin; prompt="BCC:"; id=EPmDlgBcc;
+			control=EDWIN { width=26; maxlength=300; }; },
+		DLG_LINE { type=EEikCtLabel; prompt="Attachments:"; id=EPmDlgAttachments;
+			control=LABEL { horiz_align=EEikLabelAlignHLeft; txt="none"; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Subject:"; id=EPmDlgSubject;
 			control=EDWIN { width=26; maxlength=200; }; },
-		DLG_LINE { type=EEikCtLabel; prompt="Attached"; id=EPmDlgAttachments;
-			control=LABEL { txt="none"; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Text"; id=EPmDlgBody; itemflags=EEikDlgItemTakesEnterKey;
-			control=EDWIN { flags=EEikEdwinNoAutoSelection; width=26; lines=5; maxlength=60000; }; }
+		DLG_LINE { type=EEikCtEdwin; prompt=""; id=EPmDlgBody; itemflags=EEikDlgItemTakesEnterKey;
+			control=EDWIN { flags=EEikEdwinNoAutoSelection; width=44; lines=4; maxlength=60000; }; }
 		};
 	}
 
@@ -450,11 +461,36 @@ RESOURCE ARRAY r_pm_options_lines
 		DLG_LINE { type=EEikCtNumberEditor; prompt="Messages per folder"; id=EPmDlgSyncCount;
 			control=NUMBER_EDITOR { min=10; max=500; }; },
 		DLG_LINE { type=EEikCtNumberEditor; prompt="Text per message (KB)"; id=EPmDlgBodyKb;
-			control=NUMBER_EDITOR { min=4; max=1024; }; },
+			control=NUMBER_EDITOR { min=4; max=1024; }; }
+		};
+	}
+
+RESOURCE DIALOG r_pm_prefs_dialog
+	{
+	title="Preferences";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Order of messages"; id=EPmDlgSort;
+			control=CHOICELIST { array_id=r_pm_sort_array; }; },
 		DLG_LINE { type=EEikCtNumberEditor; prompt="Download ahead (newest)"; id=EPmDlgPrefetch;
 			control=NUMBER_EDITOR { min=0; max=50; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Keep mail on"; id=EPmDlgStore;
-			control=CHOICELIST { array_id=r_pm_store_array; }; }
+			control=CHOICELIST { array_id=r_pm_store_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Smooth text in the calendar"; id=EPmDlgSmooth;
+			control=CHOICELIST { array_id=r_pm_yesno_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_sort_array
+	{
+	items=
+		{
+		LBUF { txt="Newest first"; }, LBUF { txt="Oldest first"; },
+		LBUF { txt="By sender, A to Z"; }, LBUF { txt="By sender, Z to A"; },
+		LBUF { txt="By subject, A to Z"; }, LBUF { txt="By subject, Z to A"; },
+		LBUF { txt="Unread first"; }
 		};
 	}
 

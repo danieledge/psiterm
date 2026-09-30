@@ -130,7 +130,7 @@ void CPmView::EndComposeL(TInt aHow)
 		ComposeCollect();
 		if (iDraft->iTo.Length() == 0 || iDraft->iTo.Locate('@') < 0)
 			{
-			Toast(_L("Who is it to? Enter an address"));
+			Toast(_L("No address entered"));
 			iCmpFocus = 0;
 			Render();
 			return;
@@ -431,7 +431,7 @@ void CPmView::EndEventEditL(TBool aSave)
 		{
 		if (iEd[4].len == 0)
 			{
-			Toast(_L("Give the event a name"));
+			Toast(_L("No event name entered"));
 			iEvFocus = EvTitle;
 			Render();
 			return;
