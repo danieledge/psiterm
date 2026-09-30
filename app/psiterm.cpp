@@ -64,7 +64,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.58");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.59");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -570,6 +570,8 @@ void CTermView::SerialDataL(const TDesC8& aData)
 	// follow the modem's own messages, so Hang up modem is only offered
 	// (and the status line only says "Modem connected") when it is online
 	iLastRx = User::TickCount();
+	iLastTx = 0;
+	iNoReplyShown = EFalse;
 	TBuf8<64> look(iRxTail);
 	TInt room = look.MaxLength() - look.Length();
 	look.Append(aData.Right(aData.Length() < room ? aData.Length() : room));
@@ -934,8 +936,37 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 		iEikonEnv->InfoMsg(_L("Psion Internet mode: pick a server to connect"));
 		return;
 		}
-	if (iSerial)
-		iSerial->Write(aBytes);
+	if (!iSerial)
+		return;
+	TUint now = User::TickCount();
+	if (!iSerial->IsOpen())
+		{
+		if (iLastSerialErr == 0 || now - iLastSerialErr > 320)
+			{
+			iLastSerialErr = now;
+			LocalMessage(_L8("\r\n[PsiTerm: the serial port is not open, so typing goes nowhere.\r\n"
+				" Is Remote link switched off? Try Menu > Connection settings > OK to reopen it.]\r\n"));
+			}
+		return;
+		}
+	TInt r = iSerial->Write(aBytes);
+	if (r != KErrNone)
+		{
+		if (iLastSerialErr == 0 || now - iLastSerialErr > 320)
+			{
+			iLastSerialErr = now;
+			TBuf8<200> msg;
+			if (iSettings.iRtsCts && !(iSerial->Signals() & KSignalCTS))
+				msg.Format(_L8("\r\n[PsiTerm: the modem is not accepting data (CTS is off).\r\n"
+					" Set Flow control to None, or send AT&K1 then AT&W to the WiRSa.]\r\n"));
+			else
+				msg.Format(_L8("\r\n[PsiTerm: could not send to the modem (error %d).]\r\n"), r);
+			LocalMessage(msg);
+			}
+		return;
+		}
+	if (iLastTx == 0)
+		iLastTx = now;
 	}
 
 // ----- drawing -------------------------------------------------------------
@@ -1131,6 +1162,19 @@ void CTermView::Tick()
 		}
 	if (SshLoggedIn())
 		iEverLoggedIn = ETrue;
+	// typed to the modem but nothing came back (the WiRSa echoes what it
+	// is sent): say what to check, once per burst of typing
+	if (!iSshActive && iLastTx && !iNoReplyShown && User::TickCount() - iLastTx > 192)
+		{
+		iNoReplyShown = ETrue;
+		iLastTx = 0;
+		TBuf8<300> msg;
+		msg.Format(_L8("\r\n[PsiTerm: no reply from the modem. Check the WiRSa is in MODEM mode\r\n"
+			" (not its menu or PPP), and its speed matches PsiTerm's %d baud\r\n"
+			" (a new WiRSa starts at 9600; AT$SB=115200 then AT&W changes it).]\r\n"),
+			BaudValue(iSettings.iBaudIndex));
+		LocalMessage(msg);
+		}
 	ParseTmuxTabs();
 	if (iStatusH)
 		{
@@ -5254,13 +5298,10 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		if (!dlg->ExecuteLD(R_PT_CONN_DIALOG))
 			break;
 		SaveSettings(s);
-		if (s.iBaudIndex != old.iBaudIndex || s.iRtsCts != old.iRtsCts || s.iNetMode != old.iNetMode)
-			{
-			if (iView->SshActive())
-				iEikonEnv->InfoMsg(_L("New speed applies when SSH disconnects"));
-			else
-				iView->ApplySerialSettings();
-			}
+		if (!iView->SshActive())
+			iView->ApplySerialSettings();       // also reopens a port that failed to open
+		else if (s.iBaudIndex != old.iBaudIndex || s.iRtsCts != old.iRtsCts || s.iNetMode != old.iNetMode)
+			iEikonEnv->InfoMsg(_L("New settings apply when SSH disconnects"));
 		if (s.iNetMode != old.iNetMode && s.iNetMode)
 			iEikonEnv->InfoMsg(_L("Set up Control panel > Internet (number 777)"));
 		break;

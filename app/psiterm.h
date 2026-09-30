@@ -163,6 +163,7 @@ public:
 	void Close();
 	TInt Write(const TDesC8& aData);
 	TBool IsOpen() const { return iOpen; }
+	TUint Signals() { return iOpen ? iComm.Signals() : 0; }
 	void Probe(TDes8& aOut);
 private:
 	CSerialPort(MSerialObserver& aObserver);
@@ -657,6 +658,9 @@ private:
 	TInt iEntropyMode;        // what to launch once the randomness is gathered
 	TBool iModemOnline;       // the terminal saw CONNECT (and no NO CARRIER since)
 	TUint iLastRx;            // tick of the last serial data outside SSH
+	TUint iLastTx;            // tick of the first key typed since the last reply (0 = none)
+	TBool iNoReplyShown;      // the no-reply hint was shown for this burst
+	TUint iLastSerialErr;     // tick of the last write-error message
 	TBuf8<16> iRxTail;        // end of the last serial data, for split words
 	TUint iLastBell;          // tick of the last beep
 	TBuf<96> iKeyBase;        // the key offered to this host (base name), or empty
