@@ -1,7 +1,7 @@
-; PsiMail 0.67 installer for Psion Series 5mx (EPOC R5)
+; PsiMail 0.68 installer for Psion Series 5mx (EPOC R5)
 ; PsiMail.app: screen, menus, settings.  psimail.exe: the mail engine.
 &EN
-#{"PsiMail"},(0x01000A7C),0,67,0
+#{"PsiMail"},(0x01000A7C),0,68,0
 "psimail.app"-"!:\System\Apps\PsiMail\PsiMail.app"
 "psimail.rsc"-"!:\System\Apps\PsiMail\PsiMail.rsc"
 "psimail.mbm"-"!:\System\Apps\PsiMail\PsiMail.mbm"
