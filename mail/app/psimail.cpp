@@ -2638,10 +2638,19 @@ static TInt GuessZone()
 	return 0;
 	}
 
+// zeroes the settings - but a TBuf keeps its size in the object, so the
+// Agenda file name is made again afterwards (zeroed, it could hold nothing:
+// USER 23 on the first copy into it)
+static void ClearCalSettings(TPmCalSettings& aCal)
+	{
+	Mem::FillZ(&aCal, sizeof(aCal));
+	new(&aCal.iAgendaFile) TBuf<128>;
+	}
+
 void CPmAppUi::LoadCalSettings()
 	{
 	TPmCalSettings& c = iCalSettings;
-	Mem::FillZ(&c, sizeof(c));
+	ClearCalSettings(c);
 	RFile file;
 	TBool ok = EFalse;
 	if (file.Open(iCoeEnv->FsSession(), KCalIniFile, EFileRead) == KErrNone)
@@ -2654,13 +2663,20 @@ void CPmAppUi::LoadCalSettings()
 			file.Read(p) == KErrNone && p.Length() == (TInt)sizeof(TPmCalSettings))
 			{
 			ScrambleCal(c.iCal);
-			ok = ETrue;
+			// the file holds the descriptor's own header too: rebuild it
+			// rather than trust it
+			TBuf<128> agenda;
+			TInt n = c.iAgendaFile.Length();
+			if (n >= 0 && n <= 128 && c.iAgendaFile.MaxLength() == 128)
+				agenda.Copy(TPtrC((const TText*)c.iAgendaFile.Ptr(), n));
+			new(&c.iAgendaFile) TBuf<128>(agenda);
+			ok = agenda.Length() > 0;
 			}
 		file.Close();
 		}
 	if (!ok)
 		{
-		Mem::FillZ(&c, sizeof(c));
+		ClearCalSettings(c);
 		Mem::Copy(c.iCal.host, "caldav.fastmail.com", 20);
 		c.iCal.port = 443;
 		c.iCal.zone = GuessZone();
