@@ -207,6 +207,11 @@ int main(int argc, char **argv)
 		else if (!strcmp(op, "calendars")) { c.op = PM_CMD_CALSYNC; pm_copy(c.arg, "list", sizeof(c.arg)); c.folder[0] = 0; }
 		else if (!strcmp(op, "update")) { c.op = PM_CMD_UPDATE; pm_copy(c.arg, args[0], sizeof(c.arg)); pm_copy(c.folder, args[1], sizeof(c.folder)); c.uid = 0; }
 		else if (!strcmp(op, "hangup")) c.op = PM_CMD_HANGUP;
+		else if (!strcmp(op, "sleep")) {
+			/* leave the connection idle, as the app does while a message is read */
+			usleep(atoi(args[0]) * 1000);
+			continue;
+		}
 		else if (!strcmp(op, "trust")) { c.op = PM_CMD_TRUST; pm_copy(c.arg, args[0], sizeof(c.arg)); c.folder[0] = 0; }
 		else if (!strcmp(op, "trustlast")) { c.op = PM_CMD_TRUST; pm_copy(c.arg, g_sh.trust_host, sizeof(c.arg)); c.folder[0] = 0; }
 		else if (!strcmp(op, "loop")) {

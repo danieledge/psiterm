@@ -2,13 +2,16 @@
 """fakeimap.py - a tiny plaintext IMAP server for the modem-mode tests
 
   fakeimap.py PORT [--drop-at N[,N...]] [--drop-every N] [--slow MS_PER_KB]
+              [--mute-noop]
 
 Serves an INBOX of a few messages: one whose text has "NO CARRIER" on a
 line of its own (as an email about modems would), one of 30 KB (several
 8 KB pieces), and small ones. --drop-at closes the TCP connection abruptly
 once the given byte counts have been sent (over the whole run), the way a
 modem line dropping looks to the client; --drop-every does it every N
-bytes sent on each connection.
+bytes sent on each connection. --mute-noop never answers a NOOP (nor
+anything after it) but keeps the connection open: what an idle connection
+looks like once a router has quietly forgotten it.
 """
 import socket, sys, threading, time
 
@@ -16,12 +19,14 @@ PORT = int(sys.argv[1])
 DROP_AT = []
 DROP_EVERY = 0
 SLOW_MS = 0
+MUTE_NOOP = False
 args = sys.argv[2:]
 while args:
     a = args.pop(0)
     if a == '--drop-at': DROP_AT = [int(x) for x in args.pop(0).split(',')]
     elif a == '--drop-every': DROP_EVERY = int(args.pop(0))
     elif a == '--slow': SLOW_MS = int(args.pop(0))      # per 1000 bytes (87 = 115200 baud)
+    elif a == '--mute-noop': MUTE_NOOP = True
 
 def msg(uid, subject, text):
     return dict(uid=uid, subject=subject, text=text.replace('\n', '\r\n'))
@@ -109,7 +114,12 @@ def handle(conn, addr):
             rest = parts[2] if len(parts) > 2 else ''
             if cmd == 'LOGIN': send('%s OK [CAPABILITY IMAP4rev1 LITERAL+ UIDPLUS MOVE] logged in\r\n' % tag)
             elif cmd == 'CAPABILITY': send('* CAPABILITY IMAP4rev1 LITERAL+ UIDPLUS MOVE\r\n%s OK done\r\n' % tag)
-            elif cmd == 'NOOP': send('%s OK nothing\r\n' % tag)
+            elif cmd == 'NOOP':
+                if MUTE_NOOP:
+                    log('mute: not answering the NOOP, or anything else')
+                    while f.readline(): pass
+                    break
+                send('%s OK nothing\r\n' % tag)
             elif cmd == 'LOGOUT': send('* BYE bye\r\n%s OK out\r\n' % tag); break
             elif cmd == 'LIST':
                 send('* LIST (\\HasNoChildren) "/" "INBOX"\r\n* LIST (\\HasNoChildren \\Trash) "/" "Trash"\r\n%s OK done\r\n' % tag)

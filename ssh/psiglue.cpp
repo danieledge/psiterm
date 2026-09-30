@@ -81,7 +81,21 @@ static RHostResolver* gResolver = 0;
 static int gResolverOpen = 0;
 static TNameEntry* gNameEntry = 0;
 static TInt64 gLinkFailAt;                 // when a link start last failed (0 = never)
-static int gLinkSuspect = 0;               // a receive failed: PPP may be down
+static int gLinkSuspect = 0;               // a receive or send failed: PPP may be down
+
+// The last name looked up, kept while the session (and so the link) lasts:
+// a reconnect to the same server then skips GetByName. Over a dial-up each
+// lookup is a round trip to the ISP's DNS, and it is the step that stalls
+// when the link has quietly gone.
+static char gAddrHost[128];
+static TUint32 gAddr = 0;
+static TInt64 gAddrAt;
+const TInt64 KAddrKeepUs = TInt64(600000000);      // 10 minutes
+
+// An app without a terminal (PsiMail) can have every link message in its
+// own log: it sets this and LinkMsg calls it. PsiTerm never sets it.
+static void (*gLinkLog)(const char*) = 0;
+extern "C" void pg_set_link_log(void (*aFn)(const char*)) { gLinkLog = aFn; }
 
 static int LinkOpen()
 	{
@@ -268,6 +282,7 @@ static void NetClose()
 		}
 	ReapOrphans(2000000);
 	gLinkSuspect = 0;
+	gAddrHost[0] = 0;               // a new link may see the name differently
 	}
 
 // A link start (lookup or connect) failed: start afresh next time, and for
@@ -312,8 +327,41 @@ static void LinkMsg(const char* aText)
 			{
 			gShared->link_msg[k] = 0;
 			gShared->link_seq++;
+			if (gLinkLog)
+				gLinkLog(gShared->link_msg);
 			}
 		}
+	}
+
+// Is an IP interface - the PPP link - up on the open socket server session?
+// Asks the TCP/IP stack to list its interfaces (KSoInetEnumInterfaces, an
+// ER5 API on any socket); nothing here starts a dial-up. Returns 1 if one
+// is up with an address, 0 if none is, -1 if the stack would not say.
+static int LinkUp()
+	{
+	if (!gSsOpen)
+		return 0;
+	RSocket probe;
+	if (probe.Open(*gSs, KAfInet, KSockDatagram, KProtocolInetUdp) != KErrNone)
+		return -1;
+	int up = 0, listed = 0;
+	if (probe.SetOpt(KSoInetEnumInterfaces, KSolInetIfCtrl) == KErrNone)
+		{
+		TPckgBuf<TSoInetInterfaceInfo> info;
+		while (probe.GetOpt(KSoInetNextInterface, KSolInetIfCtrl, info) == KErrNone)
+			{
+			TUint32 a = info().iAddress.Address();
+			listed++;
+			if ((info().iState == EIfUp || info().iState == EIfBusy) && a != 0 && (a >> 24) != 127)
+				up = 1;
+			}
+		}
+	else
+		listed = -1;
+	probe.Close();
+	if (listed < 0)
+		return -1;
+	return up;
 	}
 
 // Explains the dial-up errors people meet when setting this up
@@ -383,8 +431,22 @@ static int NetConnect(char* aResult, int aMax)
 	TBuf<128> host;
 	host.Copy(TPtrC8((const TUint8*)gShared->host));
 	TInetAddr addr;
-	int lookedUp = 0;
-	if (addr.Input(host) != KErrNone)
+	int lookedUp = 0, fromCache = 0;
+	int sameHost = 1;
+	for (int i = 0; ; i++)
+		{
+		if (gAddrHost[i] != gShared->host[i]) { sameHost = 0; break; }
+		if (!gAddrHost[i] || i >= (int)sizeof(gAddrHost) - 1) break;
+		}
+	if (addr.Input(host) != KErrNone && gAddrHost[0] && sameHost && gAddr != 0
+		&& NowMicro() - gAddrAt < KAddrKeepUs)
+		{
+		// looked up a moment ago on this same link: no need to ask again
+		addr.SetAddress(gAddr);
+		fromCache = 1;
+		Say("  Using the address looked up a moment ago.\r\n");
+		}
+	else if (addr.Input(host) != KErrNone)
 		{
 		// a name: look it up (this is usually what starts the dial-up)
 		lookedUp = 1;
@@ -444,6 +506,13 @@ static int NetConnect(char* aResult, int aMax)
 			return -1;
 			}
 		addr = TInetAddr((*gNameEntry)().iAddr);
+		{
+		int i = 0;
+		while (gShared->host[i] && i < (int)sizeof(gAddrHost) - 1) { gAddrHost[i] = gShared->host[i]; i++; }
+		gAddrHost[i] = 0;
+		gAddr = addr.Address();
+		gAddrAt = NowMicro();
+		}
 		}
 	addr.SetPort(gShared->port > 0 ? gShared->port : 22);
 	{
@@ -475,7 +544,8 @@ static int NetConnect(char* aResult, int aMax)
 		}
 	gConnStat = KRequestPending;
 	gSock->Connect(addr, gConnStat);     // starts the dial-up if it isn't up
-	// a numeric host skips the lookup, so then this is the step that dials
+	// a numeric host (or a remembered address) skips the lookup, so then
+	// this is the step that dials
 	int w = WaitLink(gConnStat, lookedUp ? KConnectTimeoutUs : KLookupTimeoutUs, "connecting");
 	if (w != 1)
 		{
@@ -490,6 +560,8 @@ static int NetConnect(char* aResult, int aMax)
 	if (gConnStat.Int() != KErrNone)
 		{
 		gSock->Close();
+		if (fromCache)
+			gAddrHost[0] = 0;            // look the name up afresh next time
 		NetHint(gConnStat.Int());
 		SetMsgNet(aResult, aMax, "Could not connect to the server", gConnStat.Int());
 		NetFail();
@@ -546,9 +618,12 @@ static void NetRxFill(int aTimeoutUs)
 		else
 			{
 			// not a clean close: PPP itself may have gone. The next
-			// pg_dial then starts the link afresh (StartPpp and all)
+			// pg_dial asks the stack (LinkUp) and, if it has, starts the
+			// link afresh (StartPpp and all)
 			gLinkSuspect = 1;
-			LinkMsg("  The connection dropped.\r\n");
+			char m[80];
+			SetMsgNet(m, sizeof(m), "  The connection dropped", gRecvStat.Int());
+			LinkMsg(m);
 			}
 		}
 	}
@@ -564,11 +639,16 @@ static int NetWrite(const void* aBuf, int aLen)
 		{
 		gSock->CancelWrite();
 		User::WaitForRequest(stat);
+		gLinkSuspect = 1;                // a minute without an ACK: PPP may be gone
+		LinkMsg("  Sending to the server timed out.\r\n");
 		return -1;
 		}
 	if (stat.Int() != KErrNone)
 		{
-		LinkMsg("  Could not send to the server.\r\n");
+		char m[80];
+		gLinkSuspect = 1;
+		SetMsgNet(m, sizeof(m), "  Could not send to the server", stat.Int());
+		LinkMsg(m);
 		return -1;
 		}
 	if (!gNetSent)
@@ -1142,8 +1222,30 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 			SetMsg(aResult, aResultMax, "The Psion's Internet connection is still busy with the last attempt - wait a moment and try again");
 			return -1;
 			}
+		// The last TCP connection, if a caller left it open (a close without
+		// a hang-up): a second RSocket::Open on the same handle would leak
+		// the ESOCK subsession, and its pending receive would be taken for
+		// the new connection's - which then looked closed or dropped.
+		NetCloseSocket();
 		if (gLinkSuspect)
-			NetClose();                  // the link dropped: start it afresh
+			{
+			// a receive or send failed: was it the TCP connection (a server
+			// closing, a reset on the way) or the PPP link itself? Ask the
+			// stack before throwing the dial-up away: bringing it back costs
+			// half a minute and the Psion's connection dialogs.
+			int up = LinkUp();
+			if (up == 1)
+				{
+				Say("  The Psion's Internet connection is still up.\r\n");
+				gLinkSuspect = 0;
+				}
+			else
+				{
+				Say(up == 0 ? "  The Psion's Internet connection has gone: starting it again.\r\n"
+				            : "  The connection dropped: starting the Internet connection again.\r\n");
+				NetClose();              // the link dropped: start it afresh
+				}
+			}
 		if (gShared->ppp_start[0] && !gSsOpen && StartPpp(aResult, aResultMax) != 0)
 			{
 			gLinkFailAt = NowMicro();

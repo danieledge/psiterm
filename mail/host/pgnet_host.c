@@ -27,12 +27,18 @@ int pg_quit_requested(void) { return 0; }
 void pg_link_close(void) { if (g_fd >= 0) { close(g_fd); g_fd = -1; } fprintf(stderr, "[net] port released\n"); }
 int pg_link_is_open(void) { return g_fd >= 0; }
 int pg_rx_errors(int *last) { if (last) *last = 0; return 0; }
+void pg_set_link_log(void (*fn)(const char *)) { (void)fn; }
 
 int pg_dial(char *why, int max)
 {
 	struct addrinfo hints, *ai = NULL;
 	char port[16];
 	PsiShared *s = pg_shared();
+	if (g_fd >= 0 && s->net_mode) {
+		/* on the Psion this leaked an ESOCK subsession and confused the
+		   next connection's receive: pmnet must close before it dials */
+		fprintf(stderr, "[net] WARNING: dialling with the last connection still open\n");
+	}
 	if (g_fd >= 0) close(g_fd);
 	g_fd = -1; g_len = g_pos = 0; g_closed = 0;
 	memset(&hints, 0, sizeof(hints));

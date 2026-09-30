@@ -29,8 +29,25 @@ extern int  pg_wait(int ms, int want_net, int want_kbd);
 extern void pg_link_close(void);
 extern int  pg_link_is_open(void);
 extern int  pg_rx_errors(int *last);      /* psiglue: serial line errors so far (host: 0) */
+extern void pg_set_link_log(void (*fn)(const char *));   /* psiglue's link messages, for the log */
 
-#define IDLE_RELEASE_MS 90000
+/* With nothing to do for this long, hang up and let go of the line.
+ *
+ * Modem (WiRSa pipe): 90 s. The serial port is ours while a connection is
+ * open, PsiTerm and PsiWeb need it, and dialling again costs ten seconds.
+ *
+ * Psion Internet (PPP): 20 minutes, with the IMAP connection kept open.
+ * Here the port belongs to the Psion's dial-up, not to us, and while a
+ * socket is open the dial-up stays up. Letting go after 90 s made EPOC
+ * hang the dial-up up, and the next thing the user did - opening a
+ * message, a sync - had to start PPP again from the modem's AT prompt:
+ * half a minute of "Looking up ...", the Psion's connection dialogs, and
+ * a WiRSa still in PPP mode from last time answering nothing. IMAP servers
+ * keep an idle connection at least 30 minutes (RFC 3501), so 20 minutes
+ * is safe; a server or router that drops it sooner is caught by the NOOP
+ * imap_open sends before reusing an idle connection. */
+#define IDLE_RELEASE_MS      90000
+#define IDLE_RELEASE_NET_MS  (20 * 60 * 1000L)
 
 /* After the modem's "NO CARRIER" nothing more ever arrives. Text that only
    looks like it (an email about modems, on plain IMAP) is followed by more
@@ -58,11 +75,18 @@ int pmn_conn_id(void) { return g_open ? g_connid : -1; }
 
 static int modem(void) { return pg_shared() && !pg_shared()->net_mode; }
 
+/* psiglue's one-line link messages ("Looking up...", "Modem: CONNECT",
+   "The connection dropped (error -36)") in psimail.log too: on the Psion
+   Internet route they are the only account of what the dial-up did */
+static void link_log(const char *msg) { pm_log("link: %s", msg); }
+
 int pmn_connect(const char *host, int port, int tls, char *why, int whymax)
 {
 	PsiShared *s = pg_shared();
 	unsigned long t0;
 	int errs, last;
+	static int hooked;
+	if (!hooked) { hooked = 1; pg_set_link_log(link_log); }
 	if (g_open) pmn_close_why(1, "making way for a new connection");
 	used();
 	pm_copy(s->host, host, sizeof(s->host));
@@ -249,9 +273,17 @@ void pmn_close_why(int hangup, const char *why)
 		pm_log("net: close conn %d, hangup=%d: %s%s%s", g_connid, hangup && !g_dead, why ? why : "",
 			g_err[0] ? "; last error: " : "", g_err[0] ? g_err : "");
 		if (errs) pm_log("net: %d serial line error(s) on this connection, last %d", errs, last);
-		/* after the modem's own NO CARRIER it is at its prompt already:
-		   +++ ATH would only cost 2.5 s */
-		if (hangup && !g_dead) pg_hangup();
+		/* Psion Internet: "hang up" only closes the TCP socket (the dial-up
+		   stays), and that must always happen - a socket left open, as
+		   hangup=0 used to after SMTP's QUIT or an HTTP "Connection: close",
+		   was reopened by the next connection: a leaked ESOCK handle whose
+		   stale receive made the new connection look dropped, which then
+		   had PPP taken down and dialled again. */
+		if (!modem()) pg_hangup();
+		/* modem: after its own NO CARRIER it is at its prompt already, and
+		   hangup=0 says the server is closing the call: +++ ATH would only
+		   cost 2.5 s */
+		else if (hangup && !g_dead) pg_hangup();
 	}
 	g_open = 0;
 	g_dead = 0;
@@ -270,9 +302,10 @@ void pmn_close(int hangup)
    let go of the serial port so other programs (PsiTerm, PsiWeb) can have it. */
 void pmn_idle_tick(void)
 {
+	long idle = modem() ? IDLE_RELEASE_MS : IDLE_RELEASE_NET_MS;
 	if (!g_open && !pg_link_is_open()) return;
-	if (pm_ms() - g_last_use < IDLE_RELEASE_MS) return;
-	pm_log("net: nothing to do for %d s: releasing the line", IDLE_RELEASE_MS / 1000);
+	if (pm_ms() - g_last_use < (unsigned long)idle) return;
+	pm_log("net: nothing to do for %ld s: releasing the line", idle / 1000);
 	pmn_release_now();
 }
 

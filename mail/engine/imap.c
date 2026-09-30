@@ -251,8 +251,22 @@ int imap_open(int acct, char *why, int whymax)
 	if (g_acct >= 0 && pmn_conn_id() != g_conn) { g_acct = -1; g_sel[0] = 0; }   /* SMTP took the line */
 	if (g_acct == acct && pmn_is_open()) {
 		/* still there? (a modem link or the server may have dropped it) */
-		if (pm_ms() - g_last_cmd < 30000) return PM_RES_OK;
-		if (cmd(0, 0, why, whymax, "NOOP") == PM_RES_OK) return PM_RES_OK;
+		int drops = g_drops;
+		unsigned long idle = pm_ms() - g_last_cmd;
+		if (idle < 30000) return PM_RES_OK;
+		/* A live server answers NOOP in a second or two; one that does not
+		   in 15 s is a connection a router or the server quietly dropped
+		   while it was idle (the Psion Internet route keeps it open for a
+		   long time), and connecting again is quicker than the full minute.
+		   Nor is that a line drop for download ahead's count. */
+		g_rd_timeout = 15000;
+		r = cmd(0, 0, why, whymax, "NOOP");
+		g_rd_timeout = TIMEOUT;
+		if (r == PM_RES_OK) return PM_RES_OK;
+		if (r == PM_RES_CANCELLED) return r;
+		g_drops = drops;
+		pm_log("imap: the connection idle for %lu s had gone (%d): connecting again", idle / 1000, r);
+		why[0] = 0;                        /* (not the result of what follows) */
 	}
 	if (s->offline) { set_why(why, whymax, "Working offline"); return PM_RES_OFFLINE; }
 	if (!a->pass[0]) { set_why(why, whymax, "Password needed for %s", a->name); return PM_RES_NEED_PASS; }

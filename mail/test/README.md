@@ -57,6 +57,35 @@ Expected: all five texts in the store, one "lost #1 ... NO CARRIER" and one
 (`--drop-at 9000,20000,30000`) end with "download ahead is off for 10
 minutes: the line keeps dropping".
 
+## The Psion Internet route (PPP)
+
+The same fake server with `PM_NETMODE=1` (the default) runs the code the
+Psion Internet route uses: the connection is a socket, "hang up" only
+closes it, and the dial-up itself (psiglue's StartPpp, NetDial) has no
+stand-in. What can be checked here:
+
+* a drop is a TCP-level reconnect, not a redial: the run above with
+  `PM_NETMODE=1` and no `PM_MODEM` gives "lost #1: The connection was lost",
+  "dropped at ... again", two connections and all five texts.
+* every close closes the socket. The host's `pg_dial` prints
+  `WARNING: dialling with the last connection still open` if a connection
+  was left open (as `pmn_close(0)` after SMTP's QUIT once did: on the Psion
+  that leaked an ESOCK handle whose stale receive made the next connection
+  look dropped, and PPP was then taken down and dialled again). A send
+  followed by a sync (`sendrecv` with a message in `A0/outbox/`, against
+  any plain SMTP on `PM_SMTP_PORT`) must not print it.
+* an idle connection a router has quietly dropped is noticed in 15 s, not
+  60, and does not count as a line drop. `--mute-noop` makes the server
+  swallow a NOOP and everything after it; `sleep MS` leaves the connection
+  idle between commands as the app does while a message is read:
+
+      python3 fakeimap.py 1143 --mute-noop &
+      PM_HOST=127.0.0.1 PM_PORT=1143 PM_TLS=0 PM_USER=x PM_PASS=x \
+      psimail-host -s /tmp/store sync INBOX , sleep 31000 , body INBOX 101
+
+  Expected: "the connection idle for 31 s had gone (2): connecting again"
+  about 15 s after the sleep, then `body: OK` on a second connection.
+
 ## Certificates
 
 `certtest.c` + `certtest.py` check the chain code on a saved chain, e.g.
