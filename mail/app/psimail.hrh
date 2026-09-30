@@ -119,7 +119,10 @@ enum TPmDialogControls
 	EPmDlgEvLoc,
 	EPmDlgEvAlarm,
 	EPmDlgSort,
-	EPmDlgSmooth
+	EPmDlgSmooth,
+	EPmDlgUpdSource,
+	EPmDlgUpdHost,
+	EPmDlgUpdPort
 	};
 
 enum TPmButtons

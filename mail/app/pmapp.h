@@ -489,6 +489,18 @@ private:
 	TInt& iChoice;
 	};
 
+class CPmUpdateDialog : public CEikDialog
+	{
+public:
+	CPmUpdateDialog(TInt& aSource, TDes& aHost, TInt& aPort) : iSource(aSource), iHost(aHost), iPort(aPort) {}
+private:
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	TInt& iSource;               // 0 GitHub, 1 GitHub test builds, 2 local server
+	TDes& iHost;
+	TInt& iPort;
+	};
+
 class CPmAboutDialog : public CEikDialog
 	{
 public:

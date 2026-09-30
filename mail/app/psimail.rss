@@ -302,6 +302,8 @@ RESOURCE DIALOG r_pm_text_dialog
 		};
 	}
 
+// Update: where to fetch PsiMail-version.txt and PsiMail.sis from (as
+// PsiTerm's Update source dialog)
 RESOURCE DIALOG r_pm_update_dialog
 	{
 	title="Update PsiMail";
@@ -309,13 +311,15 @@ RESOURCE DIALOG r_pm_update_dialog
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
 		{
-		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1; control=LABEL { standard_font=EEikLabelFontAnnotation;
-			txt="Your update server as host:port (e.g. 192.168.1.20:8686),"; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo2; control=LABEL { standard_font=EEikLabelFontAnnotation;
-			txt="or github for the published releases."; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Get it from"; id=EPmDlgWords;
-			control=EDWIN { width=30; maxlength=60; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Updates from"; id=EPmDlgUpdSource; control=CHOICELIST { array_id=r_pm_source_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Local server"; id=EPmDlgUpdHost; control=EDWIN { width=22; maxlength=50; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Port"; id=EPmDlgUpdPort; control=NUMBER_EDITOR { min=1; max=65535; }; }
 		};
+	}
+
+RESOURCE ARRAY r_pm_source_array
+	{
+	items={ LBUF { txt="GitHub"; }, LBUF { txt="GitHub - test builds (dev)"; }, LBUF { txt="Local server"; } };
 	}
 
 RESOURCE DIALOG r_pm_password_dialog

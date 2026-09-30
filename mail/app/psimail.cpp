@@ -75,7 +75,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.64");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.65");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -3813,6 +3813,7 @@ _LIT(KUpdIniFile, "C:\\System\\Apps\\PsiMail\\Update.ini");
 // Tools > Update PsiMail: where from, then the engine fetches and checks it
 void CPmAppUi::UpdateL()
 	{
+	// Update.ini holds "github", "github-dev" or "host:port"
 	RFs& fs = iCoeEnv->FsSession();
 	TBuf<60> src;
 	RFile f;
@@ -3824,11 +3825,31 @@ void CPmAppUi::UpdateL()
 		src.Copy(b);
 		src.Trim();
 		}
-	if (!src.Length())
-		src = _L("github");
-	CPmTextDialog* dlg = new(ELeave) CPmTextDialog(_L("Update PsiMail"), _L("Get it from"), src);
-	if (!dlg->ExecuteLD(R_PM_UPDATE_DIALOG) || !src.Length())
+	TInt source = 0, port = 8686;
+	TBuf<50> host;
+	if (src.CompareF(_L("github-dev")) == 0)
+		source = 1;
+	else if (src.Length() && src.CompareF(_L("github")) != 0)
+		{
+		source = 2;
+		TInt c = src.Locate(':');
+		host.Copy(src.Left(c >= 0 ? (c < 50 ? c : 50) : (src.Length() < 50 ? src.Length() : 50)));
+		if (c >= 0)
+			{
+			TLex lex(src.Mid(c + 1));
+			if (lex.Val(port) != KErrNone || port <= 0) port = 8686;
+			}
+		}
+	CPmUpdateDialog* dlg = new(ELeave) CPmUpdateDialog(source, host, port);
+	if (!dlg->ExecuteLD(R_PM_UPDATE_DIALOG))
 		return;
+	if (source == 0) src = _L("github");
+	else if (source == 1) src = _L("github-dev");
+	else
+		{
+		src = host;
+		src.AppendFormat(_L(":%d"), port);
+		}
 	fs.MkDirAll(KUpdIniFile);
 	if (f.Replace(fs, KUpdIniFile, EFileWrite) == KErrNone)
 		{
@@ -3845,6 +3866,28 @@ void CPmAppUi::UpdateL()
 	arg.Copy(src);
 	iView->SetStatus(_L("Looking for a new PsiMail..."));
 	iView->Cmd(PM_CMD_UPDATE, save, 0, arg);
+	}
+
+void CPmUpdateDialog::PreLayoutDynInitL()
+	{
+	SetChoiceListCurrentItem(EPmDlgUpdSource, iSource >= 0 && iSource <= 2 ? iSource : 0);
+	SetEdwinTextL(EPmDlgUpdHost, &iHost);
+	SetNumberEditorValue(EPmDlgUpdPort, iPort > 0 ? iPort : 8686);
+	}
+
+TBool CPmUpdateDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	iSource = ChoiceListCurrentItem(EPmDlgUpdSource);
+	GetEdwinText(iHost, EPmDlgUpdHost);
+	iHost.Trim();
+	iPort = NumberEditorValue(EPmDlgUpdPort);
+	if (iSource == 2 && iHost.Length() == 0)
+		{
+		iEikonEnv->InfoMsg(_L("No local server entered"));
+		TryChangeFocusToL(EPmDlgUpdHost);
+		return EFalse;
+		}
+	return ETrue;
 	}
 
 // Folder > Go to folder: every folder, however many the column can show

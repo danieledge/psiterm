@@ -12,6 +12,7 @@
  *                local network: plain HTTP, ?o=&n= pieces each with a CRC-32
  *   "github"     raw.githubusercontent.com/danieledge/psiterm/main/dist/
  *                over TLS 1.3, pieces with HTTP Range on one connection
+ *   "github-dev" the same from the dev branch (test builds)
  * A piece is kept in memory until it is whole (and its CRC matches), so a
  * dropped line costs one piece.
  */
@@ -38,6 +39,7 @@ static const unsigned char KUpdateKey[32] = {
 
 #define GH_HOST  "raw.githubusercontent.com"
 #define GH_PATH  "/danieledge/psiterm/main/dist/"
+#define GH_DEV_PATH "/danieledge/psiterm/dev/dist/"
 #define PIECE    65536
 
 static struct {
@@ -70,7 +72,7 @@ static int route(const char *src, char *why, int whymax)
 		pm_copy(R.host, GH_HOST, sizeof(R.host));
 		R.port = 443;
 		R.tls = 1;
-		pm_copy(R.prefix, GH_PATH, sizeof(R.prefix));
+		pm_copy(R.prefix, !pm_strcasecmp(src, "github-dev") ? GH_DEV_PATH : GH_PATH, sizeof(R.prefix));
 		return 0;
 	}
 	{
