@@ -7,6 +7,7 @@
 // pmcalview.cpp; writing a message and making an event are dialogs.)
 #include "pmapp.h"
 #include "pmicons.h"
+#include "pmpict.h"
 #include <eiktxlbx.h>
 #include <eiktxlbm.h>
 #include <eikclb.h>
@@ -394,6 +395,7 @@ void CPmView::CreateNativeL()
 	iReader->SetContainerWindowL(*this);
 	iReader->ConstructL(this, 0, 0, CEikEdwin::EReadOnly | CEikEdwin::ENoAutoSelection | CEikEdwin::EAlwaysShowSelection);
 	// (the reader's scroll bar is drawn here: see DrawReaderBar)
+	iPictures = CPmPictures::NewL();
 
 	ApplyZoomL();
 	ShowNative(EFalse);
@@ -405,8 +407,10 @@ void CPmView::DestroyNative()
 	iFolderList = NULL;
 	delete iMsgList;
 	iMsgList = NULL;
-	delete iReader;
+	delete iReader;                              // (its pictures go with it, before their bitmaps)
 	iReader = NULL;
+	delete iPictures;
+	iPictures = NULL;
 	CWsScreenDevice* dev = iCoeEnv->ScreenDevice();
 	if (iListFont) dev->ReleaseFont(iListFont);
 	iListFont = NULL;
@@ -908,8 +912,22 @@ void CPmView::UpdateReaderL()
 	iReaderWaiting = waiting;
 	iLinks->Reset();
 	iLinkSel = -1;
+	// the message's pictures: what the engine listed, and what it has decoded
+	TInt picPref = PicturesPref();
+	if (picPref < 0 || picPref > 2) picPref = 0;
+	{
+	TFileName dir;
+	FolderDir(iFolder, dir);
+	iPictures->LoadIndexL(iCoeEnv->FsSession(), dir, iMsgUid);
+	for (TInt k = 0; k < iPictures->Count(); k++)
+		{
+		TRAPD(le, iPictures->LoadReadyL(iCoeEnv->FsSession(), k));
+		(void)le;
+		iPictures->At(k).iInline = EFalse;
+		}
+	}
 
-	HBufC* buf = HBufC::NewLC((iText ? iText->Length() : 0) + 2048);
+	HBufC* buf = HBufC::NewLC((iText ? iText->Length() : 0) + 4096);   // (headers, and a line per picture)
 	TPtr t = buf->Des();
 	CArrayFixFlat<TPmSpan>* spans = new(ELeave) CArrayFixFlat<TPmSpan>(64);
 	CleanupStack::PushL(spans);
@@ -1038,10 +1056,33 @@ void CPmView::UpdateReaderL()
 					break;
 				case 'c': kind = 'c'; break;
 				case 'i':
+					{
+					// alt text, then the address: a "cid:" part of the
+					// message is shown as itself, anything else as words
+					// (nothing is fetched from the web: see pmpict.h)
 					kind = 'i';
+					TInt sep = body.Locate(0x02);
+					TPtrC alt = sep >= 0 ? body.Left(sep) : body;
+					TPtrC src = sep >= 0 ? body.Mid(sep + 1) : TPtrC();
+					while (alt.Length() && alt[0] == ' ') alt.Set(alt.Mid(1));
+					TInt e = -1;
+					if (picPref == 0 && src.Length() > 4 && src.Left(4).CompareF(_L("cid:")) == 0)
+						e = iPictures->FindCid(src.Mid(4));
+					if (e >= 0 && t.Length() < t.MaxLength() - 4)
+						{
+						// the picture on a line of its own (a space stands
+						// in for it until the text is in the editor)
+						iPictures->At(e).iInline = ETrue;
+						iPictures->AddPlaceL(e, t.Length());
+						t.Append(' ');
+						t.Append(KPara);
+						continue;
+						}
 					t.Append(_L("[Picture"));
-					if (body.Length() > 1) { t.Append(_L(": ")); }
+					if (alt.Length()) t.Append(_L(": "));
+					body.Set(alt);
 					break;
+					}
 				case 's': kind = 's'; break;
 				default: break;                   // 'p': a paragraph
 					}
@@ -1109,6 +1150,52 @@ void CPmView::UpdateReaderL()
 				}
 			t.Append(KPara);
 			}
+		// pictures that came as files (not placed by the HTML): after the
+		// text, each with its name; a big one waits for a tap
+		for (TInt e = 0; picPref != 2 && e < iPictures->Count() && t.Length() < t.MaxLength() - 300; e++)
+			{
+			TPmPicEntry& pe = iPictures->At(e);
+			if (pe.iInline)
+				continue;
+			TBuf<16> z;
+			CPmPictures::SizeText(pe.iSize, z);
+			if (pe.iState == TPmPicEntry::EReady || pe.iState == TPmPicEntry::EFailed ||
+				pe.iState == TPmPicEntry::EWaiting || pe.iSize <= PM_PIC_AUTO_KB * 1024)
+				{
+				iPictures->AddPlaceL(e, t.Length());
+				t.Append(' ');
+				t.Append(KPara);
+				p0 = t.Length();
+				t.Append(pe.iName.Length() ? Clip(pe.iName, 60) : TPtrC(_L("picture")));
+				t.Append(_L(" ("));
+				t.Append(z);
+				t.Append(')');
+				AddSpan(*spans, p0, t.Length() - p0, ESpanItalic);
+				AddSpan(*spans, p0, t.Length() - p0, ESpanBig, 850);
+				t.Append(KPara);
+				}
+			else
+				{
+				pe.iState = TPmPicEntry::ETooBig;
+				TPmLinkRange lr;
+				lr.iPos = t.Length();
+				t.Append(_L("[Picture: "));
+				t.Append(pe.iName.Length() ? Clip(pe.iName, 60) : TPtrC(_L("picture")));
+				t.Append(_L(", "));
+				t.Append(z);
+				if (pe.iSize > PM_PIC_MAX_KB * 1024) t.Append(_L(" - too big to download]"));
+				else t.Append(_L(" - not downloaded. Tap to get it]"));
+				lr.iLen = t.Length() - lr.iPos;
+				lr.iLink = -2000 - e;
+				if (pe.iSize <= PM_PIC_MAX_KB * 1024)
+					{
+					iLinks->AppendL(lr);
+					AddSpan(*spans, lr.iPos, lr.iLen, ESpanUnder);
+					}
+				AddSpan(*spans, lr.iPos, lr.iLen, ESpanItalic);
+				t.Append(KPara);
+				}
+			}
 		if (iTruncated > 0)
 			{
 			TBuf<120> m;
@@ -1119,6 +1206,11 @@ void CPmView::UpdateReaderL()
 			t.Append(KPara);
 			}
 		}
+
+	// the pictures not decoded yet: asked for now, so their frames say so
+	// (the engine's answer comes through TickL and RefreshPicturesL)
+	if (!waiting)
+		AskForPicturesL();
 
 	// into the editor, then the styles
 	CRichText* rt = iReader->RichText();
@@ -1195,12 +1287,176 @@ void CPmView::UpdateReaderL()
 		rt->ApplyCharFormatL(cf, cm, sp.iPos, sp.iLen);
 		}
 	CleanupStack::PopAndDestroy(2);         // spans, buf
+	// the pictures, in place of their stand-in spaces
+	for (TInt pl = 0; pl < iPictures->PlaceCount(); pl++)
+		PlacePictureL(pl);
 	iReader->HandleTextChangedL();
 	iReader->SetCursorPosL(0, EFalse);
 	// reading, not writing: no cursor
 	iReader->TextView()->SetCursorVisibilityL(TCursor::EFCursorInvisible, TCursor::EFCursorInvisible);
 	iReaderAbove = 0;
 	UpdateReaderBar();
+	}
+
+// ----- the pictures in the reader ------------------------------------------------------
+
+// what a picture shows: its bitmap, shrunk to fit the room across and down
+// the reader (a line taller than the reader cannot be scrolled into view),
+// or a frame with a word on the way there
+static void PictureLook(CPmPicture& aPic, const TPmPicEntry& aEntry, const CFont* aFont, const TSize& aRoom,
+	TBool aOffline, MGraphicsDeviceMap* aMap)
+	{
+	if (aEntry.iState == TPmPicEntry::EReady && aEntry.iBitmap)
+		{
+		TSize bs = aEntry.iBitmap->SizeInPixels();
+		TSize shown = bs;
+		if (shown.iWidth > aRoom.iWidth && aRoom.iWidth > 16)
+			{
+			shown.iWidth = aRoom.iWidth;
+			shown.iHeight = bs.iHeight * aRoom.iWidth / bs.iWidth;
+			}
+		if (shown.iHeight > aRoom.iHeight && aRoom.iHeight > 16)
+			{
+			shown.iWidth = shown.iWidth * aRoom.iHeight / shown.iHeight;
+			shown.iHeight = aRoom.iHeight;
+			}
+		if (shown.iWidth < 1) shown.iWidth = 1;
+		if (shown.iHeight < 1) shown.iHeight = 1;
+		aPic.Set(aEntry.iBitmap, shown, KNullDesC, EFalse, aMap);
+		return;
+		}
+	TBuf<90> text;
+	TBool failed = EFalse;
+	if (aEntry.iState == TPmPicEntry::EFailed)
+		{
+		text = _L("Picture not shown: ");
+		text.Append(Clip(aEntry.iWhy, 60));
+		failed = ETrue;
+		}
+	else if (aEntry.iState == TPmPicEntry::EWaiting)
+		text = _L("Getting the picture...");
+	else if (aOffline)
+		text = _L("Picture not downloaded - you are working offline");
+	else
+		text = _L("Picture not downloaded");
+	aPic.Set(NULL, CPmPicture::FrameSize(aFont, text, aRoom.iWidth), text, failed, aMap);
+	}
+
+// the room a picture has in the reader: across it, and down it less a line
+// or so, so the text before and after can still be seen
+static TSize PictureRoom(CEikRichTextEditor* aReader)
+	{
+	TInt w = aReader->Rect().Width() - 8;
+	TInt h = aReader->Rect().Height() - 24;
+	if (w < 100) w = 500;                      // (not laid out yet)
+	if (h < 60) h = 160;
+	if (w > PM_PIC_MAX_W) w = PM_PIC_MAX_W;
+	return TSize(w, h);
+	}
+
+void CPmView::PlacePictureL(TInt aPlace)
+	{
+	TPmPicPlace& pl = iPictures->Place(aPlace);
+	TPmPicEntry& e = iPictures->At(pl.iEntry);
+	CRichText* rt = iReader->RichText();
+	if (pl.iDocPos < 0 || pl.iDocPos >= rt->DocumentLength())
+		return;
+	CPmPicture* pic = new(ELeave) CPmPicture(*iPictures, iSmallFont);
+	CleanupStack::PushL(pic);
+	PictureLook(*pic, e, iSmallFont, PictureRoom(iReader), iSettings->iOffline, iZoomFactor);
+	TPictureHeader h;
+	h.iPicture = pic;
+	h.iPictureType = KUidPmPicture;
+	pic->GetOriginalSizeInTwips(h.iSize);
+	rt->DeleteL(pl.iDocPos, 1);                // the stand-in space
+	rt->InsertL(pl.iDocPos, h);                // (the text owns the picture now)
+	CleanupStack::Pop();                       // pic
+	pl.iPicture = pic;
+	}
+
+// asks the engine for the pictures placed in the text that are not decoded
+// yet: the ones small enough to fetch unasked (a bigger one waits for a
+// tap), once per message. Called before the pictures are placed, so that
+// their frames say "Getting the picture..."
+void CPmView::AskForPicturesL()
+	{
+	// (offline too: a part downloaded but not yet decoded is still turned
+	// into a picture; the engine fetches nothing then)
+	if (iPictures->Asked() || !iRunning)
+		return;
+	TBuf8<PM_ARG_MAX> arg;
+	TInt total = 0;
+	for (TInt pl = 0; pl < iPictures->PlaceCount(); pl++)
+		{
+		TInt ei = iPictures->Place(pl).iEntry;
+		TPmPicEntry& e = iPictures->At(ei);
+		if (e.iState != TPmPicEntry::EUnknown || e.iSize > PM_PIC_AUTO_KB * 1024)
+			continue;
+		if (total + e.iSize > PM_PIC_AUTO_TOTAL_KB * 1024)
+			continue;
+		if (arg.Length() + e.iPart.Length() + 1 > arg.MaxLength())
+			break;
+		total += e.iSize;
+		if (arg.Length()) arg.Append(' ');
+		arg.Append(e.iPart);
+		if (!iSettings->iOffline)
+			e.iState = TPmPicEntry::EWaiting;
+		}
+	iPictures->SetAsked(ETrue);
+	if (!arg.Length())
+		return;
+	Cmd(PM_CMD_PICTURES, iFolder, iMsgUid, arg);
+	}
+
+// pictures the engine has decoded since the text was laid out go into it:
+// the text is laid out again with them (as Word does when a picture
+// changes size), and the view put back where it was
+void CPmView::RefreshPicturesL()
+	{
+	if (iMode != EMessage || !iPictures || !iPictures->Count() || iReaderUid != iMsgUid)
+		return;
+	TBool any = EFalse;
+	for (TInt i = 0; i < iPictures->Count(); i++)
+		{
+		TPmPicEntry& e = iPictures->At(i);
+		if (e.iState != TPmPicEntry::EUnknown && e.iState != TPmPicEntry::EWaiting)
+			continue;
+		if (iPictures->LoadReadyL(iCoeEnv->FsSession(), i))
+			any = ETrue;
+		}
+	if (!any)
+		return;
+	RelayoutReaderL();
+	}
+
+// the reader's text laid out afresh (a picture changed), with what was at
+// the top of it still there
+void CPmView::RelayoutReaderL()
+	{
+	if (!iNativeShown || !iReader->IsVisible())
+		{
+		iReaderUid = 0;                            // laid out afresh when next shown
+		return;
+		}
+	TInt topPos = -1;
+	TPoint top(iReader->Rect().iTl.iX + 4, iReader->Rect().iTl.iY + 2);
+	if (iReaderAbove > 0)
+		{
+		TRAPD(pe, topPos = iReader->TextView()->XyPosToDocPosL(top));
+		if (pe) topPos = -1;
+		}
+	iReaderUid = 0;
+	UpdateReaderL();
+	if (topPos > 0 && topPos < iReader->TextLength())
+		{
+		TInt y = top.iY;
+		TRAPD(ve, iReader->TextView()->SetViewL(topPos, y));
+		(void)ve;
+		CTextLayout* lay = iReader->TextLayout();
+		iReaderAbove = lay ? lay->PixelsAboveBand() : 0;
+		if (iReaderAbove < 0) iReaderAbove = 0;
+		UpdateReaderBar();
+		}
 	}
 
 // the reader's scroll bar, drawn here as EIKON draws its own: a shaft with
@@ -1399,6 +1655,26 @@ void CPmView::NativeActivateLinkL()
 	if (iLinkSel < 0 || iLinkSel >= iLinks->Count())
 		return;
 	TInt link = (*iLinks)[iLinkSel].iLink;
+	if (link <= -2000)
+		{
+		// a big picture: fetched only when asked for
+		TInt e = -link - 2000;
+		if (e < iPictures->Count())
+			{
+			if (iSettings->iOffline)
+				{
+				Toast(_L("Not downloaded - you are working offline"));
+				return;
+				}
+			TBuf8<20> arg;
+			arg.Append('!');
+			arg.Append(iPictures->At(e).iPart);
+			iPictures->At(e).iState = TPmPicEntry::EWaiting;
+			Cmd(PM_CMD_PICTURES, iFolder, iMsgUid, arg);
+			RelayoutReaderL();                     // its line becomes a frame saying so
+			}
+		return;
+		}
 	if (link <= -1000)
 		{
 		OpenAttachmentL(-link - 1000);        // in its own program (Save is on the menu)

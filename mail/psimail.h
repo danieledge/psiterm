@@ -92,8 +92,19 @@ enum
 	/* folders (online only): the new IMAP name comes back in last_file */
 	PM_CMD_MKFOLDER,         /* folder = parent ("" = top level), arg = the name to show */
 	PM_CMD_RENFOLDER,        /* folder, arg = its new name */
-	PM_CMD_DELFOLDER         /* folder (not the Inbox or a standard folder) */
+	PM_CMD_DELFOLDER,        /* folder (not the Inbox or a standard folder) */
+	PM_CMD_PICTURES          /* folder, uid, arg = part ids to fetch and decode ("1.2 1.3"; "!2" = however big): see engine/pictures.c */
 	};
+
+/* pictures in a message (engine/pictures.c, app/pmpict.cpp): a part this
+   big (its size in the message, base64 and all) or smaller is fetched
+   without asking when the message is read; bigger ones wait for a tap */
+#define PM_PIC_AUTO_KB     300
+#define PM_PIC_AUTO_TOTAL_KB 1024    /* all of a message's automatic pictures together */
+#define PM_PIC_MAX_KB      4096      /* never fetched: too big for the line */
+#define PM_PIC_MAX_W       544       /* a decoded picture is at most this wide (the reader beside the toolbar) */
+#define PM_PIC_MAX_H       960
+#define PM_PIC_BUDGET_KB   600       /* decoded pictures kept for one message, all together */
 
 typedef struct
 	{

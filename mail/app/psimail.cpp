@@ -443,6 +443,7 @@ void CPmView::EngineEnded()
 void CPmView::SettingsChanged()
 	{
 	CopySettingsToShared();
+	iReaderUid = 0;                          // (the pictures preference may have changed)
 	Render();
 	}
 
@@ -1750,6 +1751,14 @@ void CPmView::TickL()
 		}
 	s->app_beat++;                       // "still here": see pmepoc.cpp
 	TBool redraw = EFalse;
+	// a picture the engine has just decoded goes into the message being read
+	// (whether or not it is still busy with the rest)
+	if (iMode == EMessage && s->changed_seq != iPicChangedSeen)
+		{
+		iPicChangedSeen = s->changed_seq;
+		TRAPD(pe, RefreshPicturesL());
+		(void)pe;
+		}
 	if (s->done_seq != iDoneSeen)
 		{
 		iDoneSeen = s->done_seq;
@@ -1840,6 +1849,8 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 	TInt res = s->last_res;
 	SafeCopy(iStatus, msg);
 	iStatusUntil = User::TickCount() + 64 * 6;
+	if (aCmd.op == PM_CMD_PICTURES && res == PM_RES_OK)
+		iStatus.Zero();                      // (the pictures themselves say so)
 	if (iNativeShown && NativeMode() && iStatus.Length() && aCmd.op != PM_CMD_UPDATE)
 		iEikonEnv->InfoMsg(iStatus);         // the outcome, as an infoprint
 	if (aCmd.op == PM_CMD_UPDATE)
@@ -2676,6 +2687,7 @@ void CPmPrefsDialog::PreLayoutDynInitL()
 	SetChoiceListCurrentItem(EPmDlgSort, iSettings.iSort >= 0 && iSettings.iSort <= 6 ? iSettings.iSort : 0);
 	SetNumberEditorValue(EPmDlgPrefetch, PrefetchCount(iSettings));
 	SetChoiceListCurrentItem(EPmDlgStore, iSettings.iStore ? 1 : 0);
+	SetChoiceListCurrentItem(EPmDlgPictures, iSettings.iSpare[0] >= 0 && iSettings.iSpare[0] <= 2 ? iSettings.iSpare[0] : 0);
 	}
 
 TBool CPmPrefsDialog::OkToExitL(TInt /*aButtonId*/)
@@ -2684,6 +2696,7 @@ TBool CPmPrefsDialog::OkToExitL(TInt /*aButtonId*/)
 	TInt ahead = NumberEditorValue(EPmDlgPrefetch);
 	iSettings.iPrefetch = ahead > 0 ? ahead : -1;
 	iSettings.iStore = ChoiceListCurrentItem(EPmDlgStore);
+	iSettings.iSpare[0] = ChoiceListCurrentItem(EPmDlgPictures);   // pictures: 0 shown, 1 only attached files, 2 none
 	return ETrue;
 	}
 

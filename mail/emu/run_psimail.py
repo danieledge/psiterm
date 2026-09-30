@@ -11,7 +11,7 @@ certificate checks.
     run_psimail.py [--count] [--align] [--trace f1,f2] CMD [ARGS] [, CMD [ARGS]] ...
 
 Commands as mail/host/pmhost.c (folders, sync F, body F UID, attach F UID
-PART, flag F UID +S, move F UID [DEST], search F WORDS, send, sendrecv,
+PART, pictures F UID PARTS, flag F UID +S, move F UID [DEST], search F WORDS, send, sendrecv,
 trustlast, older F, full F UID, hangup). The account comes from PM_*
 variables as for psimail-host; files go under $PM_EMU_ROOT
 (/tmp/psimailemu): C:\ is $PM_EMU_ROOT/C.
@@ -70,7 +70,7 @@ mem = {"in_use": 0, "peak": 0, "arena": 0, "n": 0}
 RES = ["OK", "FAILED", "OFFLINE", "CANCELLED", "UNTRUSTED", "NEED_PASS", "LOGIN_FAILED"]
 OPS = {"folders": 1, "sync": 2, "older": 3, "body": 4, "full": 5, "attach": 6, "flag": 7, "move": 8,
        "search": 9, "send": 10, "sendrecv": 11, "hangup": 12, "trust": 13, "trustlast": 13, "expunge": 14,
-       "cal": 15, "calendars": 15, "update": 16}
+       "cal": 15, "calendars": 15, "update": 16, "pictures": 17}
 cmds, cur = [], []
 for w in WORDS + [","]:
     if w == ",":

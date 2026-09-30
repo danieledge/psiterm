@@ -25,6 +25,21 @@ long pm_time(void) { return emu_hc(HM_TIME, 0, 0, 0, 0); }
 int pm_mkdir(const char *p) { return emu_hc(HM_MKDIR, (int)p, 0, 0, 0); }
 void pm_rmtree(const char *p) { emu_hc(HM_RMTREE, (int)p, 0, 0, 0); }
 void pm_idle(int ms) { (void)ms; }
+int unlink(const char *p);
+int pm_replace(const char *tmp, const char *path) { unlink(path); return rename(tmp, path); }
+long pm_free_kb(const char *path) { (void)path; return -1; }
+int pm_write_whole(const char *path, const void *data, long n)
+{
+	FILE *f = fopen(path, "wb");
+	int ok;
+	if (!f) return -1;
+	ok = (long)fwrite(data, 1, n, f) == n;
+	if (fclose(f) != 0) ok = 0;
+	if (!ok) unlink(path);
+	return ok ? 0 : -1;
+}
+int pg_rx_errors(int *last) { if (last) *last = 0; return 0; }
+void pg_set_link_log(void (*fn)(const char *)) { (void)fn; }
 
 /* the harness writes the names, NUL-separated, into buf */
 int pm_list_dir(const char *dir, const char *suffix, void (*cb)(const char *, void *), void *ctx)

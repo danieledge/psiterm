@@ -139,7 +139,8 @@ enum TPmDialogControls
 	EPmDlgFolderName,        // New folder / Rename folder
 	EPmDlgFolderParent,
 	EPmDlgHelpTopic,         // Help on PsiMail
-	EPmDlgHelpText
+	EPmDlgHelpText,
+	EPmDlgPictures           // Preferences: Show pictures
 	};
 
 enum TPmButtons

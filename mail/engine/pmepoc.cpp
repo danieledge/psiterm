@@ -136,6 +136,26 @@ extern "C" void pm_rmtree(const char* aDir)
 		}
 	}
 
+extern "C" int pm_write_whole(const char* aPath, const void* aData, long aLen)
+	{
+	if (!gFs && (Fs(), !gFs))
+		return -1;
+	TFileName n;
+	ToName(n, aPath);
+	RFile f;
+	TInt r = f.Replace(Fs(), n, EFileWrite | EFileShareExclusive);
+	if (r != KErrNone)
+		return -1;
+	TPtrC8 p((const TUint8*)aData, aLen);
+	r = f.Write(p);
+	if (r == KErrNone)
+		r = f.Flush();
+	f.Close();
+	if (r != KErrNone)
+		Fs().Delete(n);
+	return r == KErrNone ? 0 : -1;
+	}
+
 // tmp takes path's place in one file-server call (RFs::Replace), so there is
 // no moment when neither exists. The app may have the old file open to read
 // it (a message being shown, the list): then it is tried again after a moment.

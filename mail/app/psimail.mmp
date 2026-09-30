@@ -7,7 +7,7 @@ TARGETPATH    \system\apps\psimail
 PROJECT       ptproj
 SUBPROJECT    psimail
 
-SOURCE        psimail.cpp pmcal.cpp pmcalview.cpp pmwrite.cpp pmnative.cpp pmcontacts.cpp pmhelp.cpp
+SOURCE        psimail.cpp pmcal.cpp pmcalview.cpp pmwrite.cpp pmnative.cpp pmcontacts.cpp pmhelp.cpp pmpict.cpp
 SUBPROJECT    psimailinc\ui
 SOURCE        pmquote.cpp pmcalmodel.cpp
 SUBPROJECT    psimail
