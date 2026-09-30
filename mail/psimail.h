@@ -88,7 +88,11 @@ enum
 	PM_CMD_EXPUNGE,          /* folder: remove messages marked deleted */
 	PM_CMD_CALSYNC,          /* calendar: send push.txt, fetch changes (arg "list": calendars only) */
 	PM_CMD_UPDATE,           /* arg = "host:port" or "github", folder = where to save PsiMail.sis */
-	PM_CMD_QUIT
+	PM_CMD_QUIT,
+	/* folders (online only): the new IMAP name comes back in last_file */
+	PM_CMD_MKFOLDER,         /* folder = parent ("" = top level), arg = the name to show */
+	PM_CMD_RENFOLDER,        /* folder, arg = its new name */
+	PM_CMD_DELFOLDER         /* folder (not the Inbox or a standard folder) */
 	};
 
 typedef struct

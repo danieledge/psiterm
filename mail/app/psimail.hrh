@@ -64,7 +64,12 @@ enum TPmCommands
 	EPmCmdPrefs,
 	EPmCmdGoToMenu,          // View > Go to (a cascade)
 	EPmCmdToday,             // Event > Go to today
-	EPmCmdEventDetails       // Event > Details
+	EPmCmdEventDetails,      // Event > Details
+	EPmCmdFolderMenu,        // File > Folder (a cascade)
+	EPmCmdNewFolder,         // File > Folder > New folder...
+	EPmCmdRenameFolder,      // File > Folder > Rename folder...
+	EPmCmdDeleteFolder,      // File > Folder > Delete folder
+	EPmCmdHelp               // Tools > Help on PsiMail
 	};
 
 enum TPmDialogControls
@@ -125,7 +130,11 @@ enum TPmDialogControls
 	EPmDlgSmooth,
 	EPmDlgUpdSource,
 	EPmDlgUpdHost,
-	EPmDlgUpdPort
+	EPmDlgUpdPort,
+	EPmDlgFolderName,        // New folder / Rename folder
+	EPmDlgFolderParent,
+	EPmDlgHelpTopic,         // Help on PsiMail
+	EPmDlgHelpText
 	};
 
 enum TPmButtons

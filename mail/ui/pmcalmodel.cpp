@@ -3,7 +3,7 @@
  *   calendars.txt  id TAB sync TAB ctag TAB href TAB flags TAB name
  *   events.txt     calid TAB href TAB etag TAB recurid TAB flags TAB start TAB end TAB alarm TAB summary TAB location
  *   push.txt       N TAB key TAB calid TAB start TAB end TAB flags TAB alarm TAB summary TAB location (new on the Psion)
- * Portable: used by PsiMail.app and by uishot on a PC. */
+ * Portable: no EIKON, so it also builds on a PC. */
 #include "pmui.h"
 
 long cal_days_from(int y, int m, int d)

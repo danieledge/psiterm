@@ -165,6 +165,11 @@ int  imap_search(int acct, const char *folder, const char *words, char *why, int
 int  imap_expunge(int acct, const char *folder, char *why, int whymax);
 int  imap_append(int acct, const char *folder, const char *path, const char *flags, char *why, int whymax);
 int  imap_special_folder(int acct, char kind, char *out, int max); /* from folders.txt */
+/* folders: name is the user's (cp1252); parent/folder are IMAP names. Each
+   refreshes folders.txt and leaves the new IMAP name in last_file */
+int  imap_create_folder(int acct, const char *parent, const char *name, char *why, int whymax);
+int  imap_rename_folder(int acct, const char *folder, const char *name, char *why, int whymax);
+int  imap_delete_folder(int acct, const char *folder, char *why, int whymax);
 
 /* ---- SMTP (smtp.c) */
 int  smtp_send(int acct, const char *mime_path, const char *from, const char *rcpts, char *why, int whymax);

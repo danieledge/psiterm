@@ -466,6 +466,140 @@ int imap_special_folder(int acct, char kind, char *out, int max)
 	return 1;
 }
 
+/* what folders.txt says about a folder: its kind letter and the server's
+   hierarchy delimiter (1 found, 0 not listed: kind '-', delim from the INBOX
+   line or '/') */
+static int folder_info(int acct, const char *name, char *kind, char *delim)
+{
+	char dir[160], path[190];
+	static char line[400];
+	FILE *f;
+	int found = 0;
+	*kind = '-';
+	*delim = 0;
+	st_acct_dir(acct, dir, sizeof(dir));
+	snprintf(path, sizeof(path), "%sfolders.txt", dir);
+	if ((f = fopen(path, "r")) != 0) {
+		while (fgets(line, sizeof(line), f)) {
+			/* kind unseen total NAME display delim */
+			char *fld[6];
+			char *p = line;
+			int i;
+			line[strcspn(line, "\r\n")] = 0;
+			if (line[0] == '#' || !line[0]) continue;
+			for (i = 0; i < 6; i++) {
+				fld[i] = p;
+				if ((p = strchr(p, '\t')) != 0) *p++ = 0;
+				else { while (++i < 6) fld[i] = ""; break; }
+			}
+			if (!*delim && fld[5][0]) *delim = fld[5][0];
+			if (!strcmp(fld[3], name)) {
+				*kind = fld[0][0];
+				if (fld[5][0]) *delim = fld[5][0];
+				found = 1;
+				break;
+			}
+		}
+		fclose(f);
+	}
+	if (!*delim) *delim = '/';
+	return found;
+}
+
+/* "Parent/Name": the name (cp1252) encoded as the server wants it, under
+   parent ("" = the top level) */
+static void child_name(const char *parent, char delim, const char *name, char *out, int max)
+{
+	int k = 0;
+	if (parent[0]) {
+		pm_copy(out, parent, max);
+		k = (int)strlen(out);
+		if (k < max - 1) out[k++] = delim;
+	}
+	cs_mutf7_encode(name, out + k, max - k);
+}
+
+/* the local files of a folder follow it to its new name (they are named
+   by a hash of the IMAP name); if that can't be done they go, and the next
+   sync gets the messages again */
+static void move_store(int acct, const char *from, const char *to)
+{
+	char a[180], b[180];
+	st_folder_dir(acct, from, a, sizeof(a));
+	st_folder_dir(acct, to, b, sizeof(b));
+	a[strlen(a) - 1] = 0;                 /* no trailing separator for rename() */
+	b[strlen(b) - 1] = 0;
+	if (rename(a, b) != 0) pm_rmtree(a);
+}
+
+int imap_create_folder(int acct, const char *parent, const char *name, char *why, int whymax)
+{
+	PmShared *s = pm_shared();
+	char full[128], q[300], w2[60], kind, delim;
+	int r;
+	if (!name[0]) { set_why(why, whymax, "No folder name entered"); return PM_RES_FAILED; }
+	if ((r = imap_open(acct, why, whymax)) != PM_RES_OK) return r;
+	folder_info(acct, parent, &kind, &delim);
+	child_name(parent, delim, name, full, sizeof(full));
+	pm_progress("Creating folder %s...", name);
+	quote(full, q, sizeof(q));
+	if ((r = cmd(0, 0, why, whymax, "CREATE %s", q)) != PM_RES_OK) return r;
+	cmd(0, 0, w2, sizeof(w2), "SUBSCRIBE %s", q);   /* (some servers list only subscribed folders) */
+	pm_copy(s->last_file, full, sizeof(s->last_file));
+	if ((r = imap_list_folders(acct, why, whymax)) != PM_RES_OK) return r;
+	set_why(why, whymax, "Folder \"%s\" created", name);
+	return PM_RES_OK;
+}
+
+int imap_rename_folder(int acct, const char *folder, const char *name, char *why, int whymax)
+{
+	PmShared *s = pm_shared();
+	char full[128], parent[128], q1[300], q2[300], w2[60], kind, delim;
+	char *d;
+	int r;
+	if (!name[0]) { set_why(why, whymax, "No folder name entered"); return PM_RES_FAILED; }
+	if (!folder_info(acct, folder, &kind, &delim)) { set_why(why, whymax, "No such folder"); return PM_RES_FAILED; }
+	if (kind != '-' && kind != 'N') { set_why(why, whymax, "%s can't be renamed", kind == 'I' ? "The Inbox" : "A standard folder"); return PM_RES_FAILED; }
+	/* the same parent, a new last part */
+	pm_copy(parent, folder, sizeof(parent));
+	d = strrchr(parent, delim);
+	if (d) *d = 0; else parent[0] = 0;
+	child_name(parent, delim, name, full, sizeof(full));
+	if (!strcmp(full, folder)) { set_why(why, whymax, "The folder is called that already"); return PM_RES_FAILED; }
+	if ((r = imap_open(acct, why, whymax)) != PM_RES_OK) return r;
+	if (!strcmp(g_sel, folder)) { cmd(0, 0, w2, sizeof(w2), "CLOSE"); g_sel[0] = 0; }
+	pm_progress("Renaming folder to %s...", name);
+	quote(folder, q1, sizeof(q1));
+	quote(full, q2, sizeof(q2));
+	if ((r = cmd(0, 0, why, whymax, "RENAME %s %s", q1, q2)) != PM_RES_OK) return r;
+	cmd(0, 0, w2, sizeof(w2), "UNSUBSCRIBE %s", q1);
+	cmd(0, 0, w2, sizeof(w2), "SUBSCRIBE %s", q2);
+	move_store(acct, folder, full);
+	pm_copy(s->last_file, full, sizeof(s->last_file));
+	if ((r = imap_list_folders(acct, why, whymax)) != PM_RES_OK) return r;
+	set_why(why, whymax, "Folder renamed \"%s\"", name);
+	return PM_RES_OK;
+}
+
+int imap_delete_folder(int acct, const char *folder, char *why, int whymax)
+{
+	char dir[180], q[300], w2[60], kind, delim;
+	int r;
+	if (!folder_info(acct, folder, &kind, &delim)) { set_why(why, whymax, "No such folder"); return PM_RES_FAILED; }
+	if (kind != '-' && kind != 'N') { set_why(why, whymax, "%s can't be deleted", kind == 'I' ? "The Inbox" : "A standard folder"); return PM_RES_FAILED; }
+	if ((r = imap_open(acct, why, whymax)) != PM_RES_OK) return r;
+	if (!strcmp(g_sel, folder)) { cmd(0, 0, w2, sizeof(w2), "CLOSE"); g_sel[0] = 0; }
+	pm_progress("Deleting the folder...");
+	quote(folder, q, sizeof(q));
+	if ((r = cmd(0, 0, why, whymax, "DELETE %s", q)) != PM_RES_OK) return r;
+	cmd(0, 0, w2, sizeof(w2), "UNSUBSCRIBE %s", q);
+	st_folder_dir(acct, folder, dir, sizeof(dir));
+	pm_rmtree(dir);
+	if ((r = imap_list_folders(acct, why, whymax)) != PM_RES_OK) return r;
+	set_why(why, whymax, "Folder deleted");
+	return PM_RES_OK;
+}
+
 /* ----------------------------------------------------------------- sync */
 
 typedef struct

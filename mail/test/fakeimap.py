@@ -42,6 +42,33 @@ MSGS = [
 sent_total = 0
 lock = threading.Lock()
 
+# the folders, as the server names them (modified UTF-7): INBOX, the Trash
+# and a "Work" tree with a non-ASCII child ("Work/Ideas & Pl&AOQ-ne" is
+# "Ideas & Pläne"). CREATE, RENAME and DELETE change this list; DELETE of a
+# folder with children is refused (as Dovecot's default is to say NO).
+FOLDERS = [
+    dict(name='INBOX', attrs='\\HasNoChildren'),
+    dict(name='Trash', attrs='\\HasNoChildren \\Trash'),
+    dict(name='Work', attrs='\\HasChildren'),
+    dict(name='Work/Ideas &- Pl&AOQ-ne', attrs='\\HasNoChildren'),
+]
+folders_lock = threading.Lock()
+
+def unquote(s):
+    s = s.strip()
+    if s.startswith('"') and s.endswith('"'): s = s[1:-1]
+    return s.replace('\\"', '"').replace('\\\\', '\\')
+
+def list_lines():
+    out = ''
+    for fo in FOLDERS:
+        attrs = fo['attrs']
+        kids = any(x['name'].startswith(fo['name'] + '/') for x in FOLDERS)
+        attrs = ' '.join(a for a in attrs.split() if a not in ('\\HasChildren', '\\HasNoChildren'))
+        attrs = ('\\HasChildren ' if kids else '\\HasNoChildren ') + attrs
+        out += '* LIST (%s) "/" "%s"\r\n' % (attrs.strip(), fo['name'])
+    return out
+
 class Drop(Exception): pass
 
 def envelope(m):
@@ -122,11 +149,48 @@ def handle(conn, addr):
                 send('%s OK nothing\r\n' % tag)
             elif cmd == 'LOGOUT': send('* BYE bye\r\n%s OK out\r\n' % tag); break
             elif cmd == 'LIST':
-                send('* LIST (\\HasNoChildren) "/" "INBOX"\r\n* LIST (\\HasNoChildren \\Trash) "/" "Trash"\r\n%s OK done\r\n' % tag)
+                with folders_lock: send(list_lines() + '%s OK done\r\n' % tag)
             elif cmd == 'STATUS':
-                send('* STATUS %s (MESSAGES %d UNSEEN 0)\r\n%s OK done\r\n' % (rest.split()[0], len(MSGS), tag))
+                name = unquote(rest[:rest.rindex('(')])
+                n = len(MSGS) if name.upper() == 'INBOX' else 0
+                send('* STATUS "%s" (MESSAGES %d UNSEEN 0)\r\n%s OK done\r\n' % (name, n, tag))
             elif cmd == 'SELECT':
-                send('* %d EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 1] ok\r\n* OK [UIDNEXT %d] ok\r\n* FLAGS (\\Seen)\r\n%s OK [READ-WRITE] selected\r\n' % (len(MSGS), MSGS[-1]['uid'] + 1, tag))
+                if unquote(rest).upper() != 'INBOX':
+                    send('* 0 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 7] ok\r\n* OK [UIDNEXT 1] ok\r\n%s OK [READ-WRITE] selected\r\n' % tag)
+                else:
+                    send('* %d EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 1] ok\r\n* OK [UIDNEXT %d] ok\r\n* FLAGS (\\Seen)\r\n%s OK [READ-WRITE] selected\r\n' % (len(MSGS), MSGS[-1]['uid'] + 1, tag))
+            elif cmd == 'CLOSE': send('%s OK closed\r\n' % tag)
+            elif cmd in ('SUBSCRIBE', 'UNSUBSCRIBE'): send('%s OK noted\r\n' % tag)
+            elif cmd == 'CREATE':
+                name = unquote(rest)
+                with folders_lock:
+                    if any(fo['name'] == name for fo in FOLDERS): send('%s NO [ALREADYEXISTS] Mailbox already exists\r\n' % tag)
+                    elif not name or name.endswith('/'): send('%s BAD Invalid mailbox name\r\n' % tag)
+                    else:
+                        FOLDERS.append(dict(name=name, attrs='\\HasNoChildren'))
+                        send('%s OK created\r\n' % tag)
+            elif cmd == 'RENAME':
+                # RENAME "old" "new" (both quoted)
+                parts2 = [unquote(x) for x in rest.replace('" "', '"\x00"').split('\x00')]
+                old, new = parts2[0], parts2[-1]
+                with folders_lock:
+                    if not any(fo['name'] == old for fo in FOLDERS): send('%s NO [NONEXISTENT] Mailbox doesn\'t exist\r\n' % tag)
+                    elif any(fo['name'] == new for fo in FOLDERS): send('%s NO [ALREADYEXISTS] Mailbox already exists\r\n' % tag)
+                    elif old.upper() == 'INBOX': send('%s NO Cannot rename INBOX\r\n' % tag)
+                    else:
+                        for fo in FOLDERS:
+                            if fo['name'] == old: fo['name'] = new
+                            elif fo['name'].startswith(old + '/'): fo['name'] = new + fo['name'][len(old):]
+                        send('%s OK renamed\r\n' % tag)
+            elif cmd == 'DELETE':
+                name = unquote(rest)
+                with folders_lock:
+                    if not any(fo['name'] == name for fo in FOLDERS): send('%s NO [NONEXISTENT] Mailbox doesn\'t exist\r\n' % tag)
+                    elif name.upper() == 'INBOX': send('%s NO Cannot delete INBOX\r\n' % tag)
+                    elif any(fo['name'].startswith(name + '/') for fo in FOLDERS): send('%s NO Mailbox has children\r\n' % tag)
+                    else:
+                        FOLDERS[:] = [fo for fo in FOLDERS if fo['name'] != name]
+                        send('%s OK deleted\r\n' % tag)
             elif cmd == 'FETCH' or (cmd == 'UID' and rest.upper().startswith('FETCH')):
                 if cmd == 'UID': rest = rest[6:]
                 rng, items = rest.split(' ', 1)
