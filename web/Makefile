@@ -41,7 +41,7 @@ PLAT_OBJS := $(O)/web/pwepoc.o $(O)/web/psiglue.o $(O)/web/nscompat.o $(O)/web/n
 	$(O)/web/tls13.o $(O)/web/x25519.o $(O)/web/pwrandom.o $(O)/web/pwupdate.o \
 	$(addprefix $(O)/ltc/,$(subst /,__,$(LTC_SRCS:=.o))) $(addprefix $(O)/zlib/,$(Z_SRCS:=.o))
 LIBGCC  := $(SDK)/gcc-3.0-psion-98r2-9/lib/gcc-lib/arm-epoc-pe/3.0-psion-98r2/libgcc.a
-SYSLIBS := $(REL)/estlib.lib $(REL)/euser.lib $(REL)/c32.lib $(REL)/efsrv.lib $(REL)/esock.lib $(REL)/insock.lib $(LIBGCC)
+SYSLIBS := $(REL)/estlib.lib $(REL)/euser.lib $(REL)/c32.lib $(REL)/efsrv.lib $(REL)/esock.lib $(REL)/insock.lib $(REL)/nifman.lib $(LIBGCC)
 endif
 
 NSFLAGS := -I$(NS)/netsurf -I$(NS)/netsurf/include -I$(NS)/netsurf/build/Linux-framebuffer \

@@ -83,6 +83,10 @@ typedef struct
 	   "Looking up 68k.news"... - for apps that show it (PsiWeb, PsiMail) */
 	char link_msg[80];
 	volatile unsigned int link_seq;    /* +1 each time link_msg changes */
+	/* (0.68) the app adds 1 when the Psion is switched back on
+	   (HandleSwitchOnEventL): the engine then checks the link is still
+	   there (PPP up? modem carrier?) instead of trusting a dead socket */
+	volatile unsigned int switch_on;
 	} PsiShared;
 
 #endif

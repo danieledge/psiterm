@@ -343,7 +343,10 @@ CTermView::~CTermView()
 		for (TInt i = 0; i < 30 && iSshProcess.ExitType() == EExitPending; i++)
 			User::After(100000);
 		if (iSshProcess.ExitType() == EExitPending)
+			{
 			iSshProcess.Kill(0);
+			PsiLinkTimersBack();         // it never got to give NIFMAN its timers back
+			}
 		}
 	delete iPump;
 	delete iWatcher;
@@ -3516,6 +3519,8 @@ void CTermView::SshProcessEnded()
 	iRxTail.Zero();
 	TBuf8<160> msg;
 	if (type == EExitPanic)
+		PsiLinkTimersBack();             // (0.68) the crash skipped psissh's own clean-up
+	if (type == EExitPanic)
 		{
 		static const char* const KStage[] = { "starting", "dialling", "setting up encryption", "connected", "finished" };
 		TBuf8<16> cat;
@@ -4643,6 +4648,16 @@ void CPsiTermAppUi::ConstructL()
 	iView->SetHosts(iHosts);
 	iView->ConstructL(ClientRect(), settings);
 	AddToStackL(iView);
+	iCoeEnv->RootWin().EnableOnEvents(EEventControlAlways);   // (0.68) switch-on events even when in the background
+	}
+
+// The Psion was switched back on (0.68): the modem or the ISP may have hung
+// up meanwhile, so psissh re-checks the link rather than wait on a dead one.
+void CPsiTermAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
+	{
+	(void)aDestination;                  // (the CONE default does nothing, and is private)
+	if (iView)
+		iView->LinkSwitchedOn();
 	}
 
 CPsiTermAppUi::~CPsiTermAppUi()

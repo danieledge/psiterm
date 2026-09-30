@@ -398,7 +398,10 @@ void CPmView::StopEngine()
 	if (iWatcher)
 		iWatcher->Cancel();
 	if (iShared->state != PM_STATE_EXITED)
+		{
 		iProcess.Kill(0);
+		PsiLinkTimersBack();             // it never got to give NIFMAN its timers back
+		}
 	iProcess.Close();
 	iRunning = EFalse;
 	}
@@ -414,6 +417,8 @@ void CPmView::EngineEnded()
 	if (iShared->quitting)
 		return;
 	TBuf<120> why;
+	if (type == EExitPanic)
+		PsiLinkTimersBack();             // (0.68) the crash skipped the engine's own clean-up
 	if (type == EExitPanic)
 		why.Format(_L("The mail engine stopped: %S %d. Tools > Restart engine."), &cat, reason);
 	else
@@ -3011,6 +3016,7 @@ void CPmAppUi::ConstructL()
 	iView = new(ELeave) CPmView;
 	iView->ConstructL(ClientRect(), iSettings, iCalSettings);
 	AddToStackL(iView);
+	iCoeEnv->RootWin().EnableOnEvents(EEventControlAlways);   // (0.68) switch-on events even when in the background
 	if (!iSettings.iAccounts[iSettings.iAcct].used)
 		{
 		if (EditAccountL(iSettings.iAcct, ETrue))
@@ -3087,6 +3093,15 @@ void CPmAppUi::ShowToolBar(TBool aShow)
 		TRAPD(err, iView->SetRectL(r));
 		(void)err;
 		}
+	}
+
+// The Psion was switched back on (0.68): the engine re-checks the link
+// (PPP up? modem carrier?) rather than wait on a dead connection.
+void CPmAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
+	{
+	(void)aDestination;                  // (the CONE default does nothing, and is private)
+	if (iView && iView->Shared())
+		iView->Shared()->net.switch_on++;
 	}
 
 CPmAppUi::~CPmAppUi()

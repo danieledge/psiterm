@@ -612,6 +612,7 @@ public:
 private:
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
+	void HandleSwitchOnEventL(CCoeControl* aDestination);
 	void LoadSettings();
 	TBool EditAccountL(TInt aIndex, TBool aNew);
 	CPmDraft* ReplyDraftL(TBool aAll);

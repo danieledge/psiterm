@@ -15,4 +15,4 @@ SYSTEMINCLUDE \ptproj\psiterm\vterm \epoc32\include\libc \epoc32\include
 
 LIBRARY       psivterm.lib
 LIBRARY       euser.lib efsrv.lib apparc.lib apgrfx.lib cone.lib eikon.lib ws32.lib gdi.lib
-LIBRARY       c32.lib bafl.lib estlib.lib etext.lib estor.lib fbscli.lib
+LIBRARY       c32.lib bafl.lib estlib.lib etext.lib estor.lib fbscli.lib nifman.lib

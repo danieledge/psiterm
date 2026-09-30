@@ -166,6 +166,7 @@ public:
 	~CPwAppUi();
 private:
 	void HandleCommandL(TInt aCommand);
+	void HandleSwitchOnEventL(CCoeControl* aDestination);
 	TBool ProcessCommandParametersL(TApaCommand aCommand, TFileName& aDocumentName, const TDesC8& aTail);
 	void ProcessMessageL(TUid aUid, const TDesC8& aParams);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);

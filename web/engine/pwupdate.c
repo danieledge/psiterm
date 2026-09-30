@@ -7,11 +7,14 @@
  * (tools/release/sign.py --product PsiWeb), and nothing is handed to the
  * installer unless it verifies against the public key built in here.
  *
- * Sources (the app sets them in PwShared):
- *   GitHub  raw.githubusercontent.com/danieledge/psiterm/main/dist/, in
- *           64 KB pieces with HTTP Range on one kept-alive connection:
- *           through the proxy if one is set (WebOne does the HTTPS), else
- *           directly over PsiTerm's TLS 1.3 client
+ * Sources (the app sets them in PwShared, or - 0.54 - Update.ini next to
+ * the app says, in PsiMail's words: "github", "github-dev" or "host:port"):
+ *   GitHub  raw.githubusercontent.com/danieledge/psiterm/main/dist/ (the
+ *           branch's dist/ folder, not a release tag: whatever is committed
+ *           there is what gets offered), in 64 KB pieces with HTTP Range on
+ *           one kept-alive connection: through the proxy if one is set
+ *           (WebOne does the HTTPS), else directly over PsiTerm's TLS 1.3
+ *           client. "github-dev" is the same from the dev branch.
  *   local   PsiTerm's update server (server/psion-update.sh): plain HTTP,
  *           ?o=&n= pieces each with a CRC-32
  * Each piece is kept in memory until complete, and retried if it arrives
@@ -46,6 +49,7 @@ static const unsigned char KUpdateKey[32] = {
 
 #define GH_HOST  "raw.githubusercontent.com"
 #define GH_PATH  "/danieledge/psiterm/main/dist/"
+#define GH_DEV_PATH "/danieledge/psiterm/dev/dist/"
 #define PIECE    65536
 
 static PwShared *S(void) { return (PwShared *)pwb_shared(); }
@@ -70,10 +74,44 @@ static struct {
 	int local;              /* PsiTerm's local server protocol */
 } R;
 
+/* (0.54) The same choice PsiMail keeps in its Update.ini, read from
+   <home>\Update.ini: "github" (default), "github-dev" or "host[:port]" for
+   PsiTerm's local update server. Without the file nothing changes. */
+static void read_update_ini(char *src, int max)
+{
+	char path[128];
+	FILE *f;
+	int n = 0, c;
+	src[0] = 0;
+	snprintf(path, sizeof(path), "%s\\Update.ini", pg_shared()->home[0] ? pg_shared()->home : "C:\\System\\Apps\\PsiWeb");
+	f = fopen(path, "rb");
+	if (!f) return;
+	while ((c = fgetc(f)) != EOF && c != '\r' && c != '\n' && n < max - 1)
+		src[n++] = (char)c;
+	fclose(f);
+	while (n > 0 && (src[n - 1] == ' ' || src[n - 1] == '\t')) n--;
+	src[n] = 0;
+	while (src[0] == ' ' || src[0] == '\t') memmove(src, src + 1, strlen(src));
+}
+
 static void setup_route(void)
 {
 	PwShared *s = S();
+	char ini[64];
+	const char *gh_path = GH_PATH;
 	memset(&R, 0, sizeof(R));
+	read_update_ini(ini, sizeof(ini));
+	if (!strncasecmp(ini, "github", 6)) {
+		if (!strcasecmp(ini, "github-dev")) gh_path = GH_DEV_PATH;
+		ini[0] = 0;
+	} else if (ini[0]) {
+		/* a local server, PsiMail's way: host or host:port */
+		char *c = strchr(ini, ':');
+		if (c) { *c = 0; s->upd_port = atoi(c + 1); }
+		else s->upd_port = 0;
+		snprintf(s->upd_host, sizeof(s->upd_host), "%s", ini);
+		s->upd_source = 1;
+	}
 	if (s->upd_source == 1 && s->upd_host[0]) {
 		snprintf(R.host, sizeof(R.host), "%s", s->upd_host);
 		R.port = s->upd_port > 0 ? s->upd_port : 8686;
@@ -84,13 +122,13 @@ static void setup_route(void)
 		snprintf(R.host, sizeof(R.host), "%s", s->proxy_host);
 		R.port = s->proxy_port > 0 ? s->proxy_port : 8080;
 		snprintf(R.vhost, sizeof(R.vhost), GH_HOST);
-		snprintf(R.prefix, sizeof(R.prefix), "http://" GH_HOST GH_PATH);
+		snprintf(R.prefix, sizeof(R.prefix), "http://%s%s", GH_HOST, gh_path);
 	} else {
 		snprintf(R.host, sizeof(R.host), GH_HOST);
 		R.port = 443;
 		R.tls = 1;
 		snprintf(R.vhost, sizeof(R.vhost), GH_HOST);
-		snprintf(R.prefix, sizeof(R.prefix), GH_PATH);
+		snprintf(R.prefix, sizeof(R.prefix), "%s", gh_path);
 	}
 }
 
@@ -233,6 +271,10 @@ static int fetch_small(const char *name, char *buf, int max, char *why, int whym
 	return 0;
 }
 
+/* major.minor only, as the EPOC installer compares them. Versions were
+   three-part up to 0.5.3 and two-digit from 0.54: "0.5.3" parses as 0.5,
+   "0.54" as 0.54, so 0.54 is newer than 0.5.3 (54 > 5) and a device on
+   0.5.3 is offered it; later 0.55 > 0.54 as usual. */
 static int version_newer(const char *remote, const char *local)
 {
 	int rm = 0, rn = 0, lm = 0, ln = 0;

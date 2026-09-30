@@ -11,6 +11,8 @@
 #include <f32file.h>
 #include <es_sock.h>
 #include <in_sock.h>
+#include <nifman.h>       // RNif: the Psion's network interface manager (nifman.lib)
+#include <netdial.h>      // TNetDialProgress: the dial-up's stages (enum only)
 
 extern "C" {
 #include "psishared.h"
@@ -97,6 +99,36 @@ const TInt64 KAddrKeepUs = TInt64(600000000);      // 10 minutes
 static void (*gLinkLog)(const char*) = 0;
 extern "C" void pg_set_link_log(void (*aFn)(const char*)) { gLinkLog = aFn; }
 
+// (0.68) NIFMAN, the manager of the Psion's Internet connection. While an
+// app is online over it, an RNif session holds its idle timers off (the
+// Control panel's "disconnect after n minutes idle" would otherwise drop
+// PPP in the middle of a long sync), and answers NetworkActive() - is the
+// link really up - before a lookup that would otherwise dial again.
+static RNif* gNif = 0;
+static int gNifOpen = 0;
+static int gNifTimersOff = 0;             // DisableTimers(ETrue) is in force
+static unsigned int gSwitchOnSeen = 0;    // gShared->switch_on last acted on
+static TInt64 gKeepAwakeAt;               // ResetAutoSwitchOffTimer last called
+static int gKeptAwake = 0;                // ...and said so in the log (once per connection)
+const TInt64 KKeepAwakeEveryUs = TInt64(30000000);
+const TInt KShutdownWaitUs    = 3000000;  // RSocket::Shutdown before giving up on it
+const TInt KProgressPollUs    = 1000000;  // WaitLink asks NIFMAN for its stage this often
+
+// The socket shutdown's request status lives here for the same reason as
+// gLookupStat (see above): a Shutdown() cannot be cancelled.
+static TRequestStatus gShutStat;
+static int gShutOrphan = 0;
+
+// (0.68) modem route: carrier detect. After CONNECT, if the modem drives
+// DCD (it is high), the port is set to fail reads and writes at once
+// (KErrCommsLineFail, -29) when DCD drops - the carrier has gone - instead
+// of waiting for "NO CARRIER" text or a timeout. A modem that leaves DCD
+// low (a WiRSa without &C1, a cable without the wire) gets the old way.
+static int gDcdFail = 0;                  // KConfigFailDCD is set on the port
+static int gDcdLost = 0;                  // a read or write failed with -29: no carrier
+static TUint gCommHandshake = 0;          // iHandshake without the DCD bit
+static int gNetClosedWhy = 0;             // the error that set gNetClosed (0: EOF/none)
+
 static int LinkOpen()
 	{
 	return gNet ? gSockOpen : gCommOpen;
@@ -122,6 +154,7 @@ static void SetMsgErr(char* aOut, int aMax, const char* aText, TInt aErr)
 	}
 
 static TInt64 NowMicro();
+static void RxFill(int aTimeoutUs);
 extern "C" int pg_quit_requested();
 
 // Waits for aStat for at most aTimeoutUs (aTimeoutUs < 0: no limit), giving
@@ -178,6 +211,8 @@ static int WaitFor(TRequestStatus& aStat, TInt aTimeoutUs, int aQuitAware)
 				gLookupOrphan = 0;
 			else if (gConnOrphan && gConnStat != KRequestPending)
 				gConnOrphan = 0;
+			else if (gShutOrphan && gShutStat != KRequestPending)
+				gShutOrphan = 0;
 			}
 		if (aQuitAware && pg_quit_requested())
 			return 0;
@@ -199,6 +234,160 @@ static void ReapOrphans(TInt aWaitUs)
 		gLookupOrphan = 0;
 	if (gConnOrphan && WaitFor(gConnStat, aWaitUs, 0))
 		gConnOrphan = 0;
+	if (gShutOrphan && WaitFor(gShutStat, aWaitUs, 0))
+		gShutOrphan = 0;
+	}
+
+// ----- the log --------------------------------------------------------------
+// LinkLog: a line for the app's log only (psimail.log "link:" lines), not
+// for the status line - the decisions this file takes about the link.
+static void LinkLog(const char* aText)
+	{
+	if (gLinkLog)
+		gLinkLog(aText);
+	}
+
+static void LinkLogErr(const char* aText, TInt aErr)
+	{
+	if (!gLinkLog)
+		return;
+	char m[160];
+	SetMsgErr(m, sizeof(m), aText, aErr);
+	LinkLog(m);
+	}
+
+static void LinkLogNum(const char* aText, TInt aNum)
+	{
+	if (!gLinkLog)
+		return;
+	char m[160];
+	TPtr8 p((TUint8*)m, 0, sizeof(m) - 1);
+	p.Copy(TPtrC8((const TUint8*)aText));
+	p.AppendNum(aNum);
+	p.ZeroTerminate();
+	LinkLog(m);
+	}
+
+// ----- NIFMAN ---------------------------------------------------------------
+
+// Opens the session with the network interface manager. RNif::Open only
+// connects to the manager: nothing here dials.
+static int NifOpen()
+	{
+	if (gNifOpen)
+		return 1;
+	if (!gNif) gNif = new RNif;
+	if (!gNif)
+		return 0;
+	TInt r = gNif->Open();
+	if (r != KErrNone)
+		{
+		LinkLogErr("nifman: could not open a session", r);
+		return 0;
+		}
+	gNifOpen = 1;
+	return 1;
+	}
+
+// The link is up and the app is online: hold NIFMAN's idle timers off, so
+// the Control panel's idle disconnect does not drop PPP mid-sync. Undone by
+// NifRelease when the app goes offline (NetClose), hangs up or exits.
+static void NifHoldLink()
+	{
+	if (!NifOpen() || gNifTimersOff)
+		return;
+	TInt r = gNif->DisableTimers(ETrue);
+	if (r == KErrNone)
+		{
+		gNifTimersOff = 1;
+		LinkLog("nifman: idle timers disabled while online");
+		}
+	else
+		LinkLogErr("nifman: could not disable the idle timers", r);
+	}
+
+// Gives the idle timers back to NIFMAN and closes the session, so the
+// Psion's own idle hang-up works again once the app is done with the link.
+static void NifRelease()
+	{
+	if (!gNifOpen)
+		return;
+	if (gNifTimersOff)
+		{
+		TInt r = gNif->DisableTimers(EFalse);
+		gNifTimersOff = 0;
+		if (r == KErrNone)
+			LinkLog("nifman: idle timers enabled again");
+		else
+			LinkLogErr("nifman: could not enable the idle timers again", r);
+		}
+	gNif->Close();
+	gNifOpen = 0;
+	}
+
+// Is the Psion's Internet connection up, by NIFMAN's own account?
+// 1 yes, 0 no, -1 it would not say (no session).
+static int NifActive()
+	{
+	if (!gNifOpen)
+		return -1;
+	TBool active = EFalse;
+	if (gNif->NetworkActive(active) != KErrNone)
+		return -1;
+	return active ? 1 : 0;
+	}
+
+// NetDial's stages (TNetDialProgress) in plain words; 0 for the rest
+static const char* NifStageName(TInt aStage)
+	{
+	switch (aStage)
+		{
+	case EStartingSelection:
+	case EFinishedSelection:  return "choosing the service";
+	case EStartingDialling:   return "dialling";
+	case EFinishedDialling:   return "dialled";
+	case EScanningScript:
+	case EScannedScript:      return "running the login script";
+	case EGettingLoginInfo:
+	case EGotLoginInfo:       return "getting the login details";
+	case EStartingConnect:    return "connecting";
+	case EFinishedConnect:    return "connected";
+	case EStartingLogIn:      return "logging in";
+	case EFinishedLogIn:      return "logged in";
+	case EConnectionOpen:     return "connection open";
+	case EStartingHangUp:     return "hanging up";
+	case EFinishedHangUp:     return "hung up";
+	default:                  return 0;
+		}
+	}
+
+// The dial-up's current stage, if NIFMAN says (else -1)
+static TInt NifStage()
+	{
+	if (!gNifOpen)
+		return -1;
+	TNifProgress p;
+	if (gNif->Progress(p) != KErrNone)
+		return -1;
+	return p.iStage;
+	}
+
+// ----- keeping the Psion awake ---------------------------------------------
+// Called whenever data has just flowed: every 30 s of that, the auto
+// switch-off timer is reset, so the Psion does not switch off in the middle
+// of a download. An idle connection lets it sleep as before.
+static void KeepAwake()
+	{
+	TInt64 now = NowMicro();
+	if (gKeepAwakeAt != TInt64(0) && now - gKeepAwakeAt < KKeepAwakeEveryUs)
+		return;
+	gKeepAwakeAt = now;
+	UserHal::ResetAutoSwitchOffTimer();
+	if (!gKeptAwake)
+		{
+		gKeptAwake = 1;
+		LinkLog("keeping the Psion awake while data flows (auto switch-off timer reset every 30 s)");
+		}
 	}
 
 // A short name for the error codes people meet while the dial-up starts
@@ -247,19 +436,48 @@ static void SetMsgNet(char* aOut, int aMax, const char* aText, TInt aErr)
 // connection each: closing the session every time made EPOC take the dial-up
 // down and bring it back between pieces, and that churn crashed the socket
 // server (KERN-EXEC 3).
-static void NetCloseSocket()
+//
+// (0.68) RSocket::Close() on a connected socket is a Shutdown(ENormal) that
+// waits, without limit, for the FIN handshake - with the link gone that
+// froze the app until TCP gave up. So: an asynchronous Shutdown first, given
+// 3 s; EImmediate (a reset, which needs no reply) when aAbort says the link
+// is suspect. A shutdown cannot be cancelled: one that does not complete is
+// left behind (its status is static), and the socket with it - closing the
+// session (NetClose) takes it down abortively, with no waiting.
+static void NetCloseSocket(int aAbort)
 	{
-	if (gSockOpen)
+	if (!gSockOpen)
+		return;
+	if (gRecvPending)
 		{
-		if (gRecvPending)
-			{
-			gSock->CancelRecv();
-			User::WaitForRequest(gRecvStat);
-			gRecvPending = 0;
-			}
-		gSock->Close();
-		gSockOpen = 0;
+		gSock->CancelRecv();
+		User::WaitForRequest(gRecvStat);
+		gRecvPending = 0;
 		}
+	gSockOpen = 0;
+	if (gShutOrphan)
+		{
+		// the previous socket's shutdown is still out: this one gets no
+		// second static status - close it abortively via the session later
+		LinkLog("socket: an earlier shutdown is still pending: leaving this socket to the session");
+		RSocket* fresh = new RSocket;
+		if (fresh) gSock = fresh;
+		return;
+		}
+	gShutStat = KRequestPending;
+	gSock->Shutdown(aAbort ? RSocket::EImmediate : RSocket::ENormal, gShutStat);
+	if (WaitFor(gShutStat, KShutdownWaitUs, 0))
+		{
+		if (gShutStat.Int() != KErrNone && gShutStat.Int() != KErrDisconnected && gShutStat.Int() != KErrEof)
+			LinkLogErr(aAbort ? "socket: shutdown (immediate) completed" : "socket: shutdown completed", gShutStat.Int());
+		gSock->Close();
+		return;
+		}
+	LinkLog(aAbort ? "socket: the immediate shutdown did not complete in 3 s: leaving the socket to the session"
+	               : "socket: the shutdown did not complete in 3 s (link down?): leaving the socket to the session");
+	gShutOrphan = 1;
+	RSocket* fresh = new RSocket;           // the old object stays with its request
+	if (fresh) gSock = fresh;
 	}
 
 // Closes everything ESOCK: the socket, a resolver still open and the session
@@ -269,12 +487,13 @@ static void NetCloseSocket()
 // Cancel() could not, so abandoned requests are collected here.
 static void NetClose()
 	{
-	NetCloseSocket();
+	NetCloseSocket(1);              // the link is going anyway: no FIN handshake to wait for
 	if (gResolverOpen)
 		{
 		gResolver->Close();
 		gResolverOpen = 0;
 		}
+	NifRelease();                   // idle timers back on before the session goes
 	if (gSsOpen)
 		{
 		gSs->Close();               // EPOC hangs the dial-up up after its idle time
@@ -378,14 +597,18 @@ static void NetHint(TInt aErr)
 // Waits for a lookup/connect request with a hard timeout, noting every so
 // often that it is still waiting (the dial-up can take a while and the app
 // shows the last note). Returns 1 done, 0 timed out, -1 stopped by the user.
+// (0.68) Meanwhile NIFMAN is asked, once a second, what stage the dial-up
+// is at (TNetDialProgress): each new stage goes on the status line, and the
+// "still waiting" note says where it has got to.
 static int WaitLink(TRequestStatus& aStat, TInt aTimeoutUs, const char* aWhat)
 	{
-	TInt waited = 0;
+	TInt waited = 0, sinceNote = 0;
+	TInt lastStage = -1;
 	for (;;)
 		{
 		TInt slice = aTimeoutUs - waited;
-		if (slice > KStillWaitingUs)
-			slice = KStillWaitingUs;
+		if (slice > KProgressPollUs)
+			slice = KProgressPollUs;
 		if (slice <= 0)
 			return 0;
 		if (WaitFor(aStat, slice, 1))
@@ -393,11 +616,33 @@ static int WaitLink(TRequestStatus& aStat, TInt aTimeoutUs, const char* aWhat)
 		if (pg_quit_requested())
 			return -1;
 		waited += slice;
-		char m[120];
-		TPtr8 p((TUint8*)m, 0, sizeof(m) - 1);
-		p.Format(_L8("  Still %s (%d s)...\r\n"), aWhat, waited / 1000000);
-		p.ZeroTerminate();
-		Say(m);
+		sinceNote += slice;
+		TInt stage = NifStage();
+		const char* stageName = NifStageName(stage);
+		if (stage >= 0 && stage != lastStage)
+			{
+			lastStage = stage;
+			if (stageName)
+				{
+				char m[100];
+				TPtr8 p((TUint8*)m, 0, sizeof(m) - 1);
+				p.Format(_L8("  Psion Internet: %s (stage %d)...\r\n"), stageName, stage);
+				p.ZeroTerminate();
+				LinkMsg(m);
+				}
+			}
+		if (sinceNote >= KStillWaitingUs)
+			{
+			sinceNote = 0;
+			char m[160];
+			TPtr8 p((TUint8*)m, 0, sizeof(m) - 1);
+			if (stageName)
+				p.Format(_L8("  Still %s (%d s, %s)...\r\n"), aWhat, waited / 1000000, stageName);
+			else
+				p.Format(_L8("  Still %s (%d s)...\r\n"), aWhat, waited / 1000000);
+			p.ZeroTerminate();
+			Say(m);
+			}
 		}
 	}
 
@@ -427,6 +672,7 @@ static int NetConnect(char* aResult, int aMax)
 			}
 		gSsOpen = 1;
 		}
+	NifOpen();                               // for the stages while it dials; no dial itself
 
 	TBuf<128> host;
 	host.Copy(TPtrC8((const TUint8*)gShared->host));
@@ -570,7 +816,9 @@ static int NetConnect(char* aResult, int aMax)
 	gSockOpen = 1;
 	gLinkFailAt = TInt64(0);
 	gNetSent = gNetGotData = 0;
+	gNetClosedWhy = 0;
 	Say("  TCP connection open.\r\n");
+	NifHoldLink();                           // online: no idle disconnect until NetClose
 	return 0;
 	}
 
@@ -603,6 +851,8 @@ static void NetRxFill(int aTimeoutUs)
 	if (gRecvStat.Int() == KErrNone)
 		{
 		gRxLen = gRecvDes->Length();
+		if (gRxLen > 0)
+			KeepAwake();
 		if (!gNetGotData && gRxLen > 0)
 			{
 			gNetGotData = 1;
@@ -613,6 +863,7 @@ static void NetRxFill(int aTimeoutUs)
 		{
 		gRxLen = 0;
 		gNetClosed = 1;                  // KErrEof or a link error
+		gNetClosedWhy = gRecvStat.Int() == KErrEof ? 0 : gRecvStat.Int();
 		if (gRecvStat.Int() == KErrEof)
 			LinkMsg("  The server closed the connection.\r\n");
 		else
@@ -656,6 +907,7 @@ static int NetWrite(const void* aBuf, int aLen)
 		gNetSent = 1;
 		LinkMsg("  Request sent, waiting for the reply...\r\n");
 		}
+	KeepAwake();
 	return aLen;
 	}
 
@@ -724,7 +976,30 @@ static int OpenSerial()
 	cfg().iParity = EParityNone;
 	cfg().iFifo = EFifoEnable;
 	cfg().iTerminatorCount = 0;
-	cfg().iHandshake = gShared->rtscts ? (KConfigObeyCTS | KConfigFreeRTS) : 0;
+	// Flow control (0.68). "RTS/CTS on" is KConfigObeyCTS alone:
+	//  - ObeyCTS: we stop sending while the modem holds CTS low (csapi-000,
+	//    "Flow control when sending").
+	//  - RTS, our side of it, is the driver's to lower at the 75 % high-water
+	//    mark and raise at 25 %, and it is so unless KConfigFreeRTS is set:
+	//    the constants table (csapi-017) says KConfigFreeRTS means "the
+	//    output RTS line should NOT be controlled by the driver", and the
+	//    port defaults (csapi-000, "Serial Port Defaults": ObeyCTS only,
+	//    "DTR and RTS are both held high") are exactly the driver-controlled
+	//    case. The guide's prose reads the bit the other way round, but the
+	//    name, the table and the defaults agree: Free = hands off. With it
+	//    set (as up to 0.67, after the SDK's cmterm example) RTS would be a
+	//    fixed high: no receive flow control at all, which fits the overruns
+	//    seen at 115200 with "RTS/CTS on". To check on a real 5mx: stop
+	//    reading, let the buffer pass 75 %, and watch Signals(KSignalRTS).
+	//  - Never KConfigObeyXoff: the driver would eat 0x11/0x13 out of the
+	//    SSH/TLS byte stream (csapi-000, "Software flow control and data
+	//    transparency").
+	// "RTS/CTS off" is 0: no bit obeyed, so a modem or cable that does not
+	// drive CTS cannot stall every Write for ever (the port's default is
+	// ObeyCTS, so it must be set explicitly).
+	cfg().iHandshake = gShared->rtscts ? KConfigObeyCTS : 0;
+	gCommHandshake = cfg().iHandshake;
+	gComm->Cancel();                         // never SetConfig with I/O pending (it panics)
 	r = gComm->SetConfig(cfg);
 	if (r != KErrNone)
 		{
@@ -734,12 +1009,164 @@ static int OpenSerial()
 		}
 	// Bigger than Dropbear's 8 KB SSH receive window plus packet overhead,
 	// so the server can never send more than fits here: no overruns even
-	// at 115200 without working hardware flow control.
+	// at 115200 without working hardware flow control. SetReceiveBufferLength
+	// is silently ignored if too big, so the size is read back and logged.
 	gComm->SetReceiveBufferLength(16384);
+	LinkLogNum(gShared->rtscts ? "serial: handshake ObeyCTS (driver controls RTS), receive buffer "
+	                           : "serial: handshake none, receive buffer ", gComm->ReceiveBufferLength());
 	gComm->SetSignals(KSignalDTR | KSignalRTS, 0);
+	// The UART is unpowered, and DTR not really asserted, until the first
+	// read or write: a zero-length read powers it up now (cmterm.cpp does the
+	// same), so the modem sees DTR before we talk to it.
+		{
+		TRequestStatus wake;
+		TBuf8<4> none;
+		gComm->Read(wake, none, 0);
+		User::WaitForRequest(wake);
+		}
+	gDcdFail = 0;
+	gDcdLost = 0;
 	gRxErrors = 0;
 	gRxLastErr = 0;
 	return 0;
+	}
+
+// ----- carrier detect (modem route) -----------------------------------------
+
+// After CONNECT: if the modem has raised DCD, make the port fail any read or
+// write the moment DCD drops (KConfigFailDCD -> KErrCommsLineFail, -29). A
+// modem that has not (a WiRSa without &C1, a 3-wire cable) keeps the old
+// in-band NO CARRIER detection only. Every decision is logged.
+static void DcdArm()
+	{
+	if (!gCommOpen || gDcdFail)
+		return;
+	TCommCaps caps;
+	gComm->Caps(caps);
+	if (!(caps().iSignals & KCapsSignalDCDSupported))
+		{
+		LinkLog("carrier detect: this port has no DCD line; FailDCD off, relying on NO CARRIER");
+		return;
+		}
+	// the modem may take a moment after CONNECT to raise DCD
+	TUint sig = 0;
+	for (int i = 0; i < 4; i++)
+		{
+		sig = gComm->Signals(KSignalDCD);
+		if (sig & KSignalDCD)
+			break;
+		User::After(100000);
+		}
+	if (!(sig & KSignalDCD))
+		{
+		LinkLog("carrier detect: DCD low after CONNECT (modem not set to &C1?); FailDCD off, relying on NO CARRIER");
+		return;
+		}
+	// SetConfig must not have I/O pending, and should not have data waiting
+	// in the port either (the server's first bytes): take what fits, and if
+	// more is already flowing leave the port alone this time.
+	if (gRxPos >= gRxLen && gComm->QueryReceiveBuffer() > 0)
+		RxFill(1000);
+	if (gComm->QueryReceiveBuffer() > 0)
+		{
+		LinkLog("carrier detect: DCD high but data is already arriving; FailDCD left off this call");
+		return;
+		}
+	TCommConfig cfg;
+	gComm->Config(cfg);
+	cfg().iHandshake = gCommHandshake | KConfigFailDCD;
+	gComm->Cancel();
+	TInt r = gComm->SetConfig(cfg);
+	if (r != KErrNone)
+		{
+		LinkLogErr("carrier detect: DCD high but SetConfig(FailDCD) failed; relying on NO CARRIER", r);
+		return;
+		}
+	gDcdFail = 1;
+	LinkLog("carrier detect: DCD high after CONNECT: FailDCD on (reads fail with -29 when the carrier drops)");
+	}
+
+// Back to the plain configuration before talking AT to the modem again (with
+// FailDCD on and no carrier, every read and write would fail at once).
+static void DcdDisarm()
+	{
+	if (!gCommOpen || !gDcdFail)
+		return;
+	TCommConfig cfg;
+	gComm->Config(cfg);
+	cfg().iHandshake = gCommHandshake;
+	gComm->Cancel();
+	TInt r = gComm->SetConfig(cfg);
+	gDcdFail = 0;
+	if (r != KErrNone)
+		LinkLogErr("carrier detect: could not turn FailDCD off", r);
+	else
+		LinkLog("carrier detect: FailDCD off (back at the modem's prompt)");
+	}
+
+// ----- switched back on -----------------------------------------------------
+// PsiTerm/PsiMail/PsiWeb add 1 to switch_on when the Psion is switched back
+// on. The UART was unpowered meanwhile and the modem or the ISP may have
+// hung up: ask NIFMAN (PPP) or the DCD line (modem) rather than wait on a
+// dead socket. A dead link marks the connection closed - the current
+// operation ends, and the next pg_dial starts the link again.
+static void SwitchOnCheck()
+	{
+	if (!gShared || gShared->switch_on == gSwitchOnSeen)
+		return;
+	gSwitchOnSeen = gShared->switch_on;
+	if (gNet)
+		{
+		if (!gSsOpen)
+			{
+			LinkLog("switch-on: not online (no Internet session open)");
+			return;
+			}
+		int up = NifActive();
+		if (up < 0)
+			up = LinkUp();
+		if (up == 1)
+			{
+			LinkLog("switch-on: the Psion's Internet connection is still up");
+			return;
+			}
+		gLinkSuspect = 1;
+		if (gSockOpen && !gNetClosed)
+			{
+			gNetClosed = 1;
+			gNetClosedWhy = KErrDisconnected;
+			LinkMsg(up == 0 ? "  The Psion's Internet connection went while the Psion was off.\r\n"
+			                : "  The Psion's Internet connection is in doubt after switching on.\r\n");
+			}
+		else
+			LinkLog(up == 0 ? "switch-on: the Psion's Internet connection has gone; the next connection starts it again"
+			                : "switch-on: could not tell if the Psion's Internet connection is up; it is checked at the next connection");
+		return;
+		}
+	if (!gCommOpen)
+		{
+		LinkLog("switch-on: the serial port is not open");
+		return;
+		}
+	if (!gDcdFail)
+		{
+		LinkLog("switch-on: modem port open, no carrier detect to check (FailDCD off)");
+		return;
+		}
+	if (gComm->Signals(KSignalDCD) & KSignalDCD)
+		{
+		LinkLog("switch-on: the modem still has the carrier (DCD high)");
+		return;
+		}
+	gDcdLost = 1;
+	if (!gNetClosed)
+		{
+		gNetClosed = 1;
+		gNetClosedWhy = KErrCommsLineFail;
+		LinkMsg("  The modem lost the connection while the Psion was off (no carrier).\r\n");
+		}
+	else
+		LinkLog("switch-on: DCD low, the connection was already closed");
 	}
 
 // Opens the chunk the app created. Returns 0, or <0 (see pg_init).
@@ -847,16 +1274,37 @@ extern "C" void pg_msleep(int aMs)
 
 // ----- serial ("network") ---------------------------------------------------
 
+// The carrier went (FailDCD: -29 on a read or write): the connection is
+// over. Said once; pg_hangup then skips the +++ ATH the modem no longer needs.
+static void CarrierLost(TInt aErr)
+	{
+	gDcdLost = 1;
+	if (gNetClosed)
+		return;
+	gNetClosed = 1;
+	gNetClosedWhy = aErr;
+	char m[100];
+	SetMsgErr(m, sizeof(m), "  The modem lost the connection: no carrier", aErr);
+	LinkMsg(m);
+	}
+
 extern "C" int pg_serial_write(const void* aBuf, int aLen)
 	{
+	SwitchOnCheck();
 	if (gNet)
 		return aLen > 0 ? NetWrite(aBuf, aLen) : -1;
 	if (!gCommOpen || aLen <= 0)
 		return -1;
+	if (gDcdLost && gDcdFail)
+		return -1;                       // no carrier: the write would fail at once anyway
 	TPtrC8 data((const TUint8*)aBuf, aLen);
 	TRequestStatus stat;
 	gComm->Write(stat, TTimeIntervalMicroSeconds32(10000000), data);
 	User::WaitForRequest(stat);
+	if (stat.Int() == KErrCommsLineFail && gDcdFail)
+		CarrierLost(stat.Int());
+	if (stat.Int() == KErrNone)
+		KeepAwake();
 	return (stat.Int() == KErrNone) ? aLen : -1;
 	}
 
@@ -870,6 +1318,8 @@ static void RxFill(int aTimeoutUs)
 		}
 	if (gRxPos < gRxLen || !gCommOpen)
 		return;
+	if (gDcdLost && gDcdFail)
+		return;                          // no carrier: every read fails at once
 	gRxPos = 0;
 	gRxLen = 0;
 	TPtr8 p(gRx, 0, sizeof(gRx));
@@ -877,7 +1327,13 @@ static void RxFill(int aTimeoutUs)
 	gComm->Read(stat, TTimeIntervalMicroSeconds32(aTimeoutUs), p);
 	User::WaitForRequest(stat);
 	if (stat.Int() == KErrNone || stat.Int() == KErrTimedOut)
+		{
 		gRxLen = p.Length();
+		if (gRxLen > 0)
+			KeepAwake();
+		}
+	else if (stat.Int() == KErrCommsLineFail && gDcdFail)
+		CarrierLost(stat.Int());         // DCD dropped: not a line error, the line has gone
 	else
 		{
 		gRxLen = 0;      // line error: drop this burst, SSH will notice
@@ -994,6 +1450,7 @@ extern "C" int pg_wait(int aMs, int aWantNet, int aWantKbd)
 	for (;;)
 		{
 		int mask = 0;
+		SwitchOnCheck();                    // switched back on? is the link still there
 		if (aWantNet && (pg_net_avail() > 0 || gNetClosed))
 			mask |= 1;
 		if (aWantKbd && pg_kbd_avail() > 0)
@@ -1197,7 +1654,10 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 	char cmd[220];
 	char line[160];
 	int i;
+	SwitchOnCheck();                     // (before gNetClosed is reset below)
 	gNetClosed = 0;                      // a fresh connection (update does two)
+	gNetClosedWhy = 0;
+	gKeptAwake = 0;
 	gRxPos = gRxLen = 0;
 	if (gNet)
 		{
@@ -1226,14 +1686,19 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 		// a hang-up): a second RSocket::Open on the same handle would leak
 		// the ESOCK subsession, and its pending receive would be taken for
 		// the new connection's - which then looked closed or dropped.
-		NetCloseSocket();
+		NetCloseSocket(gLinkSuspect);
 		if (gLinkSuspect)
 			{
 			// a receive or send failed: was it the TCP connection (a server
-			// closing, a reset on the way) or the PPP link itself? Ask the
-			// stack before throwing the dial-up away: bringing it back costs
-			// half a minute and the Psion's connection dialogs.
-			int up = LinkUp();
+			// closing, a reset on the way) or the PPP link itself? Ask
+			// NIFMAN (NetworkActive), or failing that the stack, before
+			// throwing the dial-up away: bringing it back costs half a
+			// minute and the Psion's connection dialogs.
+			int up = NifActive();
+			if (up < 0)
+				up = LinkUp();
+			else
+				LinkLog(up ? "nifman: NetworkActive says the link is up" : "nifman: NetworkActive says the link is down");
 			if (up == 1)
 				{
 				Say("  The Psion's Internet connection is still up.\r\n");
@@ -1245,6 +1710,16 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 				            : "  The connection dropped: starting the Internet connection again.\r\n");
 				NetClose();              // the link dropped: start it afresh
 				}
+			}
+		else if (gSsOpen && NifActive() == 0)
+			{
+			// nothing failed, but NIFMAN says the link is down (its idle
+			// hang-up, before the timers were held; the ISP's): a lookup
+			// now would make NetDial dial by itself, from PPP's leftovers -
+			// start it again our way (StartPpp and all) instead.
+			LinkLog("nifman: NetworkActive says the link is down before the connection");
+			Say("  The Psion's Internet connection has gone: starting it again.\r\n");
+			NetClose();
 			}
 		if (gShared->ppp_start[0] && !gSsOpen && StartPpp(aResult, aResultMax) != 0)
 			{
@@ -1259,12 +1734,17 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 		TInt r = pg_link_open();
 		if (r != 0)
 			{
-			SetMsg(aResult, aResultMax, r == -10
-				? "the serial port is in use by another program (PsiTerm? Remote link?)"
-				: "could not set up the serial port");
+			if (r == -10)
+				SetMsg(aResult, aResultMax, "the serial port is in use by another program (PsiTerm? Remote link?)");
+			else
+				SetMsgErr(aResult, aResultMax, "could not set up the serial port", r);   // (pg_link_open's step codes)
 			return -1;
 			}
 		}
+	// back to the plain port setup: with FailDCD still on from the last
+	// call, and no carrier, the AT dialogue below would fail at once
+	DcdDisarm();
+	gDcdLost = 0;
 	// quick wake-up so the modem is at a command prompt
 	pg_serial_write("\r", 1);
 	pg_msleep(300);
@@ -1335,7 +1815,19 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 			Say("\r\n");
 			}
 		if (StartsWith(line, "CONNECT"))
+			{
+			// (0.68) the rest of the modem's line ending ("CONNECT\r\n":
+			// ReadLine stopped at the '\r') must not reach the protocol as
+			// data - IMAP would read an empty first line, TLS a bad record
+			// type. Only CR/LF already here (or arriving within 50 ms) go:
+			// SSH, IMAP and TLS servers never start with those.
+			if (pg_net_avail() == 0)
+				RxFill(50000);
+			while (gRxPos < gRxLen && (gRx[gRxPos] == '\r' || gRx[gRxPos] == '\n'))
+				gRxPos++;
+			DcdArm();                    // carrier detect, if the modem gives us DCD
 			return 0;
+			}
 		if (StartsWith(line, "NO CARRIER") || StartsWith(line, "ERROR") ||
 			StartsWith(line, "BUSY") || StartsWith(line, "NO ANSWER") ||
 			StartsWith(line, "NO DIALTONE"))
@@ -1353,11 +1845,23 @@ extern "C" void pg_hangup()
 	{
 	if (gNet)
 		{
-		NetCloseSocket();                // the dial-up stays up until pg_close
+		// the dial-up stays up until pg_close; a suspect link gets the
+		// abortive shutdown (no reply to wait for)
+		NetCloseSocket(gLinkSuspect || (gNetClosed && gNetClosedWhy != 0));
 		return;
 		}
 	if (!gCommOpen)
 		return;
+	int lost = gDcdLost && gDcdFail;
+	DcdDisarm();                         // the AT dialogue needs the plain setup
+	if (lost)
+		{
+		// the carrier has already gone: the modem is at its prompt, and
+		// the 2.5 s of +++ ATH would buy nothing
+		LinkLog("hangup: carrier already lost (DCD), skipping +++ ATH");
+		gDcdLost = 0;
+		return;
+		}
 	User::After(1100000);
 	pg_serial_write("+++", 3);
 	User::After(1100000);

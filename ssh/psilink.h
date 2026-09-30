@@ -14,6 +14,7 @@
 #define PSILINK_H
 
 #include <f32file.h>
+#include <nifman.h>      // RNif, for PsiLinkTimersBack
 
 _LIT(KPsiLinkFile, "C:\\System\\Data\\PsiLink.ini");
 
@@ -86,5 +87,21 @@ struct TPsiLink
 			aFs.Delete(tmp);
 		}
 	};
+
+// (0.68) The engine holds NIFMAN's idle timers off while it is online over
+// Psion Internet (psiglue's RNif::DisableTimers), and gives them back as it
+// hangs up or exits. If it crashed, or the app had to kill it, that last
+// step never ran: the app calls this so the Psion's own idle hang-up works
+// again and the link is not left up for ever. Harmless when the timers are
+// already on, or no link is up. Needs nifman.lib.
+inline void PsiLinkTimersBack()
+	{
+	RNif nif;
+	if (nif.Open() == KErrNone)
+		{
+		nif.DisableTimers(EFalse);
+		nif.Close();
+		}
+	}
 
 #endif

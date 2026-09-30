@@ -82,7 +82,7 @@ obj/libltm.a: $(LTM_OBJS)
 	rm -f $@; arm-pe-ar rcs $@ $^
 
 LIBGCC := $(SDK)/gcc-3.0-psion-98r2-9/lib/gcc-lib/arm-epoc-pe/3.0-psion-98r2/libgcc.a
-LIBS := $(REL)/ecrt0.o obj/libz.a obj/libltc.a obj/libltm.a $(REL)/estlib.lib $(REL)/euser.lib $(REL)/c32.lib $(REL)/efsrv.lib $(REL)/esock.lib $(REL)/insock.lib $(LIBGCC)
+LIBS := $(REL)/ecrt0.o obj/libz.a obj/libltc.a obj/libltm.a $(REL)/estlib.lib $(REL)/euser.lib $(REL)/c32.lib $(REL)/efsrv.lib $(REL)/esock.lib $(REL)/insock.lib $(REL)/nifman.lib $(LIBGCC)
 
 $(REL)/psissh.exe: $(DB_OBJS) $(GLUE_OBJS) obj/libz.a obj/libltc.a obj/libltm.a
 	arm-pe-ld -s -e _E32Startup --base-file obj/psissh.bas -o obj/psissh.tmp.exe $(REL)/eexe.o $(DB_OBJS) $(GLUE_OBJS) $(LIBS)

@@ -462,6 +462,8 @@ public:
 	void DisconnectSsh();
 	void SshProcessEnded();
 	TBool SshActive() const { return iSshActive; }
+	// (0.68) the Psion was switched back on: psissh checks the link is still there
+	void LinkSwitchedOn() { if (iSshActive && iShared) iShared->switch_on++; }
 	TBool ModemOnline() const;
 	TBool SshLoggedIn() const;
 	TBool InTmux() const { return iTabRow >= 0; }
@@ -695,6 +697,7 @@ public:
 private:
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
+	void HandleSwitchOnEventL(CCoeControl* aDestination);
 	TBool ConfirmDisconnectL(TInt aCommand);
 	void LoadSettings(TPsiSettings& aSettings);
 	void SshToL();

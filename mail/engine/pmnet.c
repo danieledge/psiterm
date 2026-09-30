@@ -30,6 +30,7 @@ extern void pg_link_close(void);
 extern int  pg_link_is_open(void);
 extern int  pg_rx_errors(int *last);      /* psiglue: serial line errors so far (host: 0) */
 extern void pg_set_link_log(void (*fn)(const char *));   /* psiglue's link messages, for the log */
+extern int  pg_net_closed(void);          /* psiglue: the link says the connection is over */
 
 /* With nothing to do for this long, hang up and let go of the line.
  *
@@ -173,6 +174,19 @@ static void note_tail(const unsigned char *b, int n)
 	if (strstr(g_tail, "NO CARRIER")) g_suspect = 1;
 }
 
+/* (0.68) On the modem route psiglue now also knows the connection is over
+   from the carrier: DCD dropped and the read failed with -29 (or the Psion
+   was switched off and on and DCD was low). That is the modem's NO CARRIER
+   without the text: the same handling (no +++ ATH, "The modem lost the
+   connection"), and download ahead counts it as a line drop as before. */
+static int carrier_lost(void)
+{
+	if (!modem() || !pg_net_closed()) return 0;
+	pm_copy(g_err, "NO CARRIER (modem, carrier lost)", sizeof(g_err));
+	g_dead = 1;
+	return 1;
+}
+
 static int raw_read(void *buf, int max, int timeout_ms)
 {
 	int n;
@@ -183,6 +197,7 @@ static int raw_read(void *buf, int max, int timeout_ms)
 			int m = pg_wait(timeout_ms, 1, 0);
 			if (m & 8) return PMN_CANCEL;
 			if (pg_net_avail() == 0) {
+				if (carrier_lost()) return 0;
 				pm_copy(g_err, (m & 1) ? "line closed" : "timeout", sizeof(g_err));
 				return (m & 1) ? 0 : PMN_TIMEOUT;
 			}
@@ -206,6 +221,7 @@ static int raw_read(void *buf, int max, int timeout_ms)
 		m = pg_wait(t, 1, 0);
 		if (m & 8) return PMN_CANCEL;
 		if (pg_net_avail() == 0) {
+			if (carrier_lost()) return 0;
 			if (g_suspect) {
 				pm_copy(g_err, "NO CARRIER (modem)", sizeof(g_err));
 				g_dead = 1;

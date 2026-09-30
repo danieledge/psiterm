@@ -18,6 +18,7 @@ extern int  pg_serial_write(const void *buf, int len);
 extern int  pg_wait(int ms, int want_net, int want_kbd);
 extern void pg_link_close(void);
 extern int  pg_link_is_open(void);
+extern int  pg_net_closed(void);          /* psiglue: the link says the connection is over */
 extern unsigned long pwb_ms(void);
 
 #define IDLE_RELEASE_MS 60000       /* give the serial port back after this */
@@ -74,6 +75,12 @@ int pwn_is_open(const char *host, int port, int tls)
 {
 	if (!g_open || g_dead || g_tls != tls || g_port != port || strcmp(g_host, host))
 		return 0;
+	/* (0.54) the link itself says so: the server closed the socket (Psion
+	   Internet), or the carrier went - DCD dropped - on the modem */
+	if (pg_net_closed()) {
+		pwn_close(1);
+		return 0;
+	}
 	/* EPOC's pg_net_avail only counts bytes already taken from the port:
 	   look for anything the modem has said since the last reply (a
 	   "NO CARRIER" when the server dropped the kept-alive connection) */

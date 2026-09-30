@@ -38,7 +38,7 @@ static void SaveSharedLink(RFs& aFs, const TPwSettings& aSettings)
 
 _LIT(KEngineExe, "psiweb.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiWeb\\PsiWeb.ini");
-_LIT(KVersion, "0.5.3");          // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt
+_LIT(KVersion, "0.54");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
 _LIT(KDefaultHome, "http://68k.news/");
 const TInt KZoomSteps[] = { 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200 };
 const TInt KZoomCount = 11;
@@ -251,7 +251,10 @@ void CPwView::StopEngine()
 	if (iWatcher)
 		iWatcher->Cancel();
 	if (iShared->state != PW_STATE_EXITED)
+		{
 		iProcess.Kill(0);
+		PsiLinkTimersBack();             // it never got to give NIFMAN its timers back
+		}
 	iProcess.Close();
 	iRunning = EFalse;
 	}
@@ -266,6 +269,8 @@ void CPwView::EngineEnded()
 	if (iShared->quitting)
 		return;
 	TBuf<120> why;
+	if (type == EExitPanic)
+		PsiLinkTimersBack();             // (0.54) the crash skipped the engine's own clean-up
 	if (type == EExitPanic)
 		why.Format(_L("It stopped: %S %d. Tools > Restart to try again."), &cat, reason);
 	else if (iShared->exit_msg[0])
@@ -633,6 +638,16 @@ void CPwAppUi::ConstructL()
 	iView = new(ELeave) CPwView;
 	iView->ConstructL(ClientRect(), settings);
 	AddToStackL(iView);
+	iCoeEnv->RootWin().EnableOnEvents(EEventControlAlways);   // (0.54) switch-on events even when in the background
+	}
+
+// The Psion was switched back on (0.54): the engine re-checks the link
+// (PPP up? modem carrier?) rather than wait on a dead connection.
+void CPwAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
+	{
+	(void)aDestination;                  // (the CONE default does nothing, and is private)
+	if (iView && iView->Shared())
+		iView->Shared()->net.switch_on++;
 	}
 
 CPwAppUi::~CPwAppUi()
