@@ -160,11 +160,27 @@ static int gDialVerbose = 0;
 extern "C" void pg_dial_verbose(int aOn) { gDialVerbose = aOn; }
 static void Say(const char* aText)
 	{
-	if (!gDialVerbose)
-		return;
 	int n = 0;
 	while (aText[n]) n++;
-	pg_out_write(aText, n);
+	if (gShared)
+		{
+		// also as a one-line status for apps without a terminal
+		const char* p = aText;
+		while (*p == ' ' || *p == '\r' || *p == '\n') p++;
+		int k = 0;
+		while (p[k] && p[k] != '\r' && p[k] != '\n' && k < (int)sizeof(gShared->link_msg) - 1)
+			{
+			gShared->link_msg[k] = p[k];
+			k++;
+			}
+		if (k > 0)
+			{
+			gShared->link_msg[k] = 0;
+			gShared->link_seq++;
+			}
+		}
+	if (gDialVerbose)
+		pg_out_write(aText, n);
 	}
 
 // Explains the dial-up errors people meet when setting this up
@@ -218,7 +234,18 @@ static int NetConnect(char* aResult, int aMax)
 			}
 		TNameEntry entry;
 		TRequestStatus stat;
-		Say("  Starting the Psion's dial-up (Control panel > Internet; the WiRSa should see ATDT 777)...\r\n");
+		{
+		char m[160];
+		int k = 0;
+		const char* a = "  Looking up ";
+		while (*a) m[k++] = *a++;
+		const char* h = (const char*)gShared->host;
+		while (*h && k < 140) m[k++] = *h++;
+		a = " (this starts the Psion's Internet connection)...\r\n";
+		while (*a && k < 158) m[k++] = *a++;
+		m[k] = 0;
+		Say(m);
+		}
 		resolver.GetByName(host, entry, stat);
 		if (!WaitFor(stat, 120000000, 1))
 			{
@@ -236,11 +263,27 @@ static int NetConnect(char* aResult, int aMax)
 			return -1;
 			}
 		addr = TInetAddr(entry().iAddr);
-		Say("  Dial-up is up, host name found.\r\n");
 		}
-	else
-		Say("  Starting the Psion's dial-up if it is not up already...\r\n");
 	addr.SetPort(gShared->port > 0 ? gShared->port : 22);
+	{
+	TBuf<40> a;
+	addr.Output(a);
+	char m[80];
+	int k = 0;
+	const char* t = "  Connecting to ";
+	while (*t) m[k++] = *t++;
+	for (TInt i = 0; i < a.Length() && k < 60; i++) m[k++] = (char)a[i];
+	m[k++] = ':';
+	char num[8];
+	TInt nd = 0;
+	TUint port = addr.Port();
+	do { num[nd++] = (char)('0' + port % 10); port /= 10; } while (port && nd < 7);
+	while (nd) m[k++] = num[--nd];
+	t = "...\r\n";
+	while (*t) m[k++] = *t++;
+	m[k] = 0;
+	Say(m);
+	}
 
 	r = gSock->Open(*gSs, KAfInet, KSockStream, KProtocolInetTcp);
 	if (r != KErrNone)

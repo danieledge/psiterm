@@ -107,6 +107,7 @@ private:
 	CIdle* iStarter;
 	TBuf<PW_URL_MAX> iStartUrl;
 	TUint iLastFrame;
+	TUint iLinkSeq;               // last link message shown (PsiShared link_seq)
 	TInt iEntropyPos;
 	TBuf<80> iMsg1;
 	TBuf<120> iMsg2;

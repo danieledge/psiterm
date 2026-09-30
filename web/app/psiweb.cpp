@@ -38,7 +38,7 @@ static void SaveSharedLink(RFs& aFs, const TPwSettings& aSettings)
 
 _LIT(KEngineExe, "psiweb.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiWeb\\PsiWeb.ini");
-_LIT(KVersion, "0.5");          // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt
+_LIT(KVersion, "0.5.1");          // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt
 _LIT(KDefaultHome, "http://68k.news/");
 const TInt KZoomSteps[] = { 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200 };
 const TInt KZoomCount = 11;
@@ -310,6 +310,16 @@ void CPwView::Tick()
 	PwShared* s = iShared;
 	if (s)
 		s->app_beat++;                   // "still here": see pwepoc.cpp
+	if (s && s->net.link_seq != iLinkSeq)
+		{
+		// what the connection is doing (dialling, looking up, connecting):
+		// the engine is busy then and can't draw its own status line
+		iLinkSeq = s->net.link_seq;
+		TBuf<80> m;
+		FromUtf8(m, s->net.link_msg);
+		if (m.Length())
+			iEikonEnv->InfoMsg(m);
+		}
 	if (s && (iUpdState == PW_UPD_RUNNING || s->update_state != iUpdState))
 		{
 		TRAPD(err, UpdateTickL());

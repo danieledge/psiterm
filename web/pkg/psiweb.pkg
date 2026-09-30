@@ -1,7 +1,7 @@
-; PsiWeb 0.5 installer for Psion Series 5mx (EPOC R5)
+; PsiWeb 0.5.1 installer for Psion Series 5mx (EPOC R5)
 ; PsiWeb.app: screen, menus, settings.  psiweb.exe: NetSurf (the browser).
 &EN
-#{"PsiWeb"},(0x01000A7A),0,5,0
+#{"PsiWeb"},(0x01000A7A),0,5,1
 "psiweb.app"-"!:\System\Apps\PsiWeb\PsiWeb.app"
 "psiweb.rsc"-"!:\System\Apps\PsiWeb\PsiWeb.rsc"
 "psiweb.aif"-"!:\System\Apps\PsiWeb\PsiWeb.aif"

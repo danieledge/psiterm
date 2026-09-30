@@ -285,6 +285,9 @@ private:
 	TBuf<128> iStatus;
 	TUint iStatusUntil;              // tick count when it goes
 	TBuf<128> iLastProgress;
+	TUint iLinkSeq;               // link messages (dialling, looking up...) from psiglue
+	TBuf<80> iLinkMsg;
+	TBuf<128> iLinkProg;           // the engine's progress text when that message came
 	TInt iBusyWas;
 	TInt iEntropyPos;
 	TBuf<100> iToast;

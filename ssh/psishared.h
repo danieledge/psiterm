@@ -79,6 +79,10 @@ typedef struct
 	   TCP/IP connection starts, e.g. ATDT777 to put a WiRSa into PPP.
 	   Empty = send nothing (the Psion's own dial-up does the dialling). */
 	char ppp_start[48];
+	/* (0.65) what the link is doing right now - "Sending ATDT777",
+	   "Looking up 68k.news"... - for apps that show it (PsiWeb, PsiMail) */
+	char link_msg[80];
+	volatile unsigned int link_seq;    /* +1 each time link_msg changes */
 	} PsiShared;
 
 #endif

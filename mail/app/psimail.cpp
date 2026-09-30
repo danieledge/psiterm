@@ -58,7 +58,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.4.1");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.4.2");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -1459,6 +1459,18 @@ void CPmView::TickL()
 	// progress
 	TBuf<128> prog;
 	FromC(prog, s->progress);
+	// while it connects, show what the link is doing until the engine has
+	// news of its own
+	if (s->net.link_seq != iLinkSeq)
+		{
+		iLinkSeq = s->net.link_seq;
+		FromC(iLinkMsg, s->net.link_msg);
+		iLinkProg = prog;
+		}
+	if (!s->busy)
+		iLinkMsg.Zero();
+	else if (iLinkMsg.Length() && prog == iLinkProg)
+		prog = iLinkMsg;
 	if (prog != iLastProgress || s->busy != iBusyWas)
 		{
 		iLastProgress = prog;
