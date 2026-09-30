@@ -75,6 +75,7 @@ enum TPmDialogControls
 	EPmDlgBaud,
 	EPmDlgFlow,
 	EPmDlgLink,
+	EPmDlgPppStart,
 	EPmDlgStore,
 	EPmDlgChoice,
 	EPmDlgWords,

@@ -349,7 +349,8 @@ RESOURCE DIALOG r_pm_conn_dialog
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Connect via"; id=EPmDlgLink; control=CHOICELIST { array_id=r_pm_link_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Baud rate"; id=EPmDlgBaud; control=CHOICELIST { array_id=r_pm_baud_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Flow control"; id=EPmDlgFlow; control=CHOICELIST { array_id=r_pm_flow_array; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Flow control"; id=EPmDlgFlow; control=CHOICELIST { array_id=r_pm_flow_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Psion Internet: first send"; id=EPmDlgPppStart; control=EDWIN { width=14; maxlength=40; }; }
 		};
 	}
 

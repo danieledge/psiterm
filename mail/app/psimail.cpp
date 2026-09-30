@@ -20,10 +20,45 @@
 #include <apgtask.h>
 #include <eikdll.h>
 #include "pmapp.h"
+#include "psilink.h"
+
+// The link settings (speed, flow control, modem or Psion Internet, the PPP
+// start command) are shared with PsiTerm and PsiWeb in PsiLink.ini. The
+// start command lives only there: TPmSettings is saved as a whole struct,
+// so it can't grow without losing everyone's accounts.
+static void UseSharedLink(RFs& aFs, TPmSettings& aSettings, TDes* aPppStart)
+	{
+	TPsiLink link;
+	if (!link.Load(aFs))
+		{
+		link.SetDefaults();
+		if (aPppStart)
+			*aPppStart = link.iPppStart;
+		return;
+		}
+	aSettings.iBaudIndex = link.iBaudIndex;
+	aSettings.iRtsCts = link.iRtsCts;
+	aSettings.iNetMode = link.iNetMode;
+	if (aPppStart)
+		*aPppStart = link.iPppStart;
+	}
+
+static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& aPppStart)
+	{
+	TPsiLink link, old;
+	link.iBaudIndex = aSettings.iBaudIndex;
+	link.iRtsCts = aSettings.iRtsCts ? 1 : 0;
+	link.iNetMode = aSettings.iNetMode ? 1 : 0;
+	link.iPppStart = aPppStart.Left(40);
+	if (old.Load(aFs) && old.iBaudIndex == link.iBaudIndex && old.iRtsCts == link.iRtsCts
+		&& old.iNetMode == link.iNetMode && old.iPppStart == link.iPppStart)
+		return;
+	link.Save(aFs);
+	}
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.3");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.4");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -249,9 +284,12 @@ void CPmView::StoreDir(TDes& aDir) const
 void CPmView::CopySettingsToShared()
 	{
 	PmShared* s = iShared;
+	TBuf<40> ppp;
+	UseSharedLink(iCoeEnv->FsSession(), *iSettings, &ppp);   // may have changed in another app
 	s->net.baud_index = iSettings->iBaudIndex;
 	s->net.rtscts = iSettings->iRtsCts;
 	s->net.net_mode = iSettings->iNetMode;
+	CopyToC(s->net.ppp_start, sizeof(s->net.ppp_start), ppp);
 	s->offline = iSettings->iOffline;
 	CopyToC(s->net.version, sizeof(s->net.version), KVersion);
 	Mem::Copy(s->acct, iSettings->iAccounts, sizeof(s->acct));
@@ -2627,6 +2665,7 @@ void CPmConnDialog::PreLayoutDynInitL()
 	SetChoiceListCurrentItem(EPmDlgLink, iSettings.iNetMode ? 1 : 0);
 	SetChoiceListCurrentItem(EPmDlgBaud, iSettings.iBaudIndex);
 	SetChoiceListCurrentItem(EPmDlgFlow, iSettings.iRtsCts ? 1 : 0);
+	SetEdwinTextL(EPmDlgPppStart, &iPppStart);
 	}
 
 TBool CPmConnDialog::OkToExitL(TInt /*aButtonId*/)
@@ -2634,6 +2673,10 @@ TBool CPmConnDialog::OkToExitL(TInt /*aButtonId*/)
 	iSettings.iNetMode = ChoiceListCurrentItem(EPmDlgLink) == 1;
 	iSettings.iBaudIndex = ChoiceListCurrentItem(EPmDlgBaud);
 	iSettings.iRtsCts = ChoiceListCurrentItem(EPmDlgFlow) == 1;
+	TBuf<40> ppp;
+	GetEdwinText(ppp, EPmDlgPppStart);
+	ppp.TrimAll();
+	iPppStart = ppp;
 	return ETrue;
 	}
 
@@ -2679,7 +2722,10 @@ void CPmAppUi::LoadSettings()
 	iSettings.iBaudIndex = 4;           // 115200, as PsiTerm recommends
 	RFile file;
 	if (file.Open(iCoeEnv->FsSession(), KIniFile, EFileRead) != KErrNone)
+		{
+		UseSharedLink(iCoeEnv->FsSession(), iSettings, NULL);
 		return;
+		}
 	TPckgBuf<TUint32> magic;
 	TPckgBuf<TInt> size;
 	if (file.Read(magic) == KErrNone && magic() == KIniMagic &&
@@ -2695,6 +2741,7 @@ void CPmAppUi::LoadSettings()
 	file.Close();
 	if (iSettings.iAcct < 0 || iSettings.iAcct >= PM_MAX_ACCOUNTS)
 		iSettings.iAcct = 0;
+	UseSharedLink(iCoeEnv->FsSession(), iSettings, NULL);
 	}
 
 void CPmAppUi::SaveSettings()
@@ -3628,9 +3675,12 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdConnSettings:
 		{
-		CPmConnDialog* dlg = new(ELeave) CPmConnDialog(iSettings);
+		TBuf<40> ppp;
+		UseSharedLink(iCoeEnv->FsSession(), iSettings, &ppp);
+		CPmConnDialog* dlg = new(ELeave) CPmConnDialog(iSettings, ppp);
 		if (dlg->ExecuteLD(R_PM_CONN_DIALOG))
 			{
+			SaveSharedLink(iCoeEnv->FsSession(), iSettings, ppp);
 			SaveSettings();
 			iView->StopEngine();
 			iView->StartEngineL();

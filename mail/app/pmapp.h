@@ -412,11 +412,12 @@ private:
 class CPmConnDialog : public CEikDialog
 	{
 public:
-	CPmConnDialog(TPmSettings& aSettings) : iSettings(aSettings) {}
+	CPmConnDialog(TPmSettings& aSettings, TDes& aPppStart) : iSettings(aSettings), iPppStart(aPppStart) {}
 private:
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
 	TPmSettings& iSettings;
+	TDes& iPppStart;          // kept in the shared PsiLink.ini, not in TPmSettings
 	};
 
 class CPmCalDialog : public CEikDialog

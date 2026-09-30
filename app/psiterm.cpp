@@ -23,6 +23,10 @@
 #include <eiksbfrm.h>
 #include <eikbtpan.h>
 #include "psiterm.h"
+#include "psilink.h"
+
+static void UseSharedLink(RFs& aFs, TPsiSettings& aSettings);
+static void SaveSharedLink(RFs& aFs, const TPsiSettings& aSettings);
 
 #ifndef TRAP_IGNORE
 #define TRAP_IGNORE(s) { TInt _ignored; TRAP(_ignored, s); }
@@ -64,7 +68,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.61");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.62");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -3254,6 +3258,9 @@ void CTermView::LaunchSshL(TInt aMode)
 	kn.ZeroTerminate();
 	}
 	iLaunchMode = aMode;
+	UseSharedLink(iCoeEnv->FsSession(), iSettings);   // PsiMail/PsiWeb may have changed it
+	iShared->baud_index = iSettings.iBaudIndex;
+	iShared->rtscts = iSettings.iRtsCts;
 	iShared->net_mode = (aMode != 1 && aMode < 4 && iSettings.iNetMode) ? 1 : 0;
 	{
 	TPtr8 ps((TUint8*)iShared->ppp_start, sizeof(iShared->ppp_start) - 1);
@@ -4739,6 +4746,36 @@ void CPsiTermAppUi::SshToL()
 		}
 	}
 
+// The link settings (speed, flow control, modem or Psion Internet, the PPP
+// start command) are shared with PsiMail and PsiWeb in PsiLink.ini. If it is
+// there it wins; if not, PsiTerm's own settings start it off.
+static void UseSharedLink(RFs& aFs, TPsiSettings& aSettings)
+	{
+	TPsiLink link;
+	if (link.Load(aFs))
+		{
+		aSettings.iBaudIndex = link.iBaudIndex;
+		aSettings.iRtsCts = link.iRtsCts;
+		aSettings.iNetMode = link.iNetMode;
+		aSettings.iPppStart = link.iPppStart;
+		}
+	else
+		SaveSharedLink(aFs, aSettings);
+	}
+
+static void SaveSharedLink(RFs& aFs, const TPsiSettings& aSettings)
+	{
+	TPsiLink link, old;
+	link.iBaudIndex = aSettings.iBaudIndex;
+	link.iRtsCts = aSettings.iRtsCts ? 1 : 0;
+	link.iNetMode = aSettings.iNetMode ? 1 : 0;
+	link.iPppStart = aSettings.iPppStart;
+	if (old.Load(aFs) && old.iBaudIndex == link.iBaudIndex && old.iRtsCts == link.iRtsCts
+		&& old.iNetMode == link.iNetMode && old.iPppStart == link.iPppStart)
+		return;                              // unchanged: don't rewrite it
+	link.Save(aFs);
+	}
+
 void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	{
 	aSettings.iBaudIndex = 0;     // 9600: what most modems start at
@@ -4766,7 +4803,10 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
+		{
+		UseSharedLink(fs, aSettings);
 		return;
+		}
 	TBuf8<512> data;
 	if (file.Read(data) == KErrNone && data.Length() >= 3)
 		{
@@ -4854,11 +4894,13 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 			}
 		}
 	file.Close();
+	UseSharedLink(fs, aSettings);
 	}
 
 void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	{
 	RFs& fs = iCoeEnv->FsSession();
+	SaveSharedLink(fs, aSettings);
 	TBuf8<512> data;
 	data.Append((TUint8)aSettings.iBaudIndex);
 	data.Append((TUint8)aSettings.iRtsCts);

@@ -9,10 +9,36 @@
 #include <eikmfne.h>
 #include <apgcli.h>
 #include "pwapp.h"
+#include "psilink.h"
+
+// The link settings are shared with PsiTerm and PsiMail (psilink.h)
+static void UseSharedLink(RFs& aFs, TPwSettings& aSettings)
+	{
+	TPsiLink link;
+	if (!link.Load(aFs))
+		return;
+	aSettings.iBaudIndex = link.iBaudIndex;
+	aSettings.iRtsCts = link.iRtsCts;
+	aSettings.iNetMode = link.iNetMode;
+	aSettings.iPppStart = link.iPppStart;
+	}
+
+static void SaveSharedLink(RFs& aFs, const TPwSettings& aSettings)
+	{
+	TPsiLink link, old;
+	link.iBaudIndex = aSettings.iBaudIndex;
+	link.iRtsCts = aSettings.iRtsCts ? 1 : 0;
+	link.iNetMode = aSettings.iNetMode ? 1 : 0;
+	link.iPppStart = aSettings.iPppStart;
+	if (old.Load(aFs) && old.iBaudIndex == link.iBaudIndex && old.iRtsCts == link.iRtsCts
+		&& old.iNetMode == link.iNetMode && old.iPppStart == link.iPppStart)
+		return;
+	link.Save(aFs);
+	}
 
 _LIT(KEngineExe, "psiweb.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiWeb\\PsiWeb.ini");
-_LIT(KVersion, "0.4");          // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt
+_LIT(KVersion, "0.5");          // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt
 _LIT(KDefaultHome, "http://68k.news/");
 const TInt KZoomSteps[] = { 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200 };
 const TInt KZoomCount = 11;
@@ -160,9 +186,11 @@ void CPwView::StartEngineL()
 	s->height = h;
 	s->magic = PW_MAGIC;
 	s->net.magic = PSI_SHARED_MAGIC;
+	UseSharedLink(iCoeEnv->FsSession(), iSettings);   // may have changed in another app
 	s->net.baud_index = iSettings.iBaudIndex;
 	s->net.rtscts = iSettings.iRtsCts;
 	s->net.net_mode = iSettings.iNetMode;
+	CopyToC(s->net.ppp_start, sizeof(s->net.ppp_start), iSettings.iPppStart);
 	s->net.port = 80;
 	CopyToC(s->net.dial_prefix, sizeof(s->net.dial_prefix), _L("ATDT"));
 	CopyToC(s->net.home, sizeof(s->net.home), _L("C:\\System\\Apps\\PsiWeb"));
@@ -541,6 +569,7 @@ void CPwConnDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPwDlgLink))->SetCurrentItem(iSettings.iNetMode ? 1 : 0);
 	((CEikChoiceList*)Control(EPwDlgBaud))->SetCurrentItem(iSettings.iBaudIndex);
 	((CEikChoiceList*)Control(EPwDlgFlow))->SetCurrentItem(iSettings.iRtsCts ? 1 : 0);
+	SetEdwinTextL(EPwDlgPppStart, &iSettings.iPppStart);
 	}
 
 TBool CPwConnDialog::OkToExitL(TInt /*aButtonId*/)
@@ -548,6 +577,10 @@ TBool CPwConnDialog::OkToExitL(TInt /*aButtonId*/)
 	iSettings.iNetMode = ((CEikChoiceList*)Control(EPwDlgLink))->CurrentItem() == 1;
 	iSettings.iBaudIndex = ((CEikChoiceList*)Control(EPwDlgBaud))->CurrentItem();
 	iSettings.iRtsCts = ((CEikChoiceList*)Control(EPwDlgFlow))->CurrentItem() == 1;
+	TBuf<40> ppp;
+	GetEdwinText(ppp, EPwDlgPppStart);
+	ppp.TrimAll();
+	iSettings.iPppStart = ppp;
 	return ETrue;
 	}
 
@@ -606,6 +639,7 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 	aSettings.iBaudIndex = 4;          // 115200, as PsiTerm recommends
 	aSettings.iRtsCts = 0;
 	aSettings.iNetMode = 0;
+	aSettings.iPppStart.Copy(_L("ATDT777"));
 	aSettings.iUseProxy = 0;
 	aSettings.iProxyHost.Zero();
 	aSettings.iProxyPort = 8080;
@@ -614,7 +648,10 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 	aSettings.iZoom = 100;
 	RFile file;
 	if (file.Open(iCoeEnv->FsSession(), KIniFile, EFileRead) != KErrNone)
+		{
+		UseSharedLink(iCoeEnv->FsSession(), aSettings);
 		return;
+		}
 	TBuf8<400> d;
 	if (file.Read(d) == KErrNone && d.Length() >= 10 && d[0] == 1)
 		{
@@ -641,11 +678,13 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 			}
 		}
 	file.Close();
+	UseSharedLink(iCoeEnv->FsSession(), aSettings);
 	}
 
 void CPwAppUi::SaveSettings(const TPwSettings& aSettings)
 	{
 	RFs& fs = iCoeEnv->FsSession();
+	SaveSharedLink(fs, aSettings);
 	fs.MkDirAll(KIniFile);
 	RFile file;
 	if (file.Replace(fs, KIniFile, EFileWrite) != KErrNone)

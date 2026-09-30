@@ -29,6 +29,7 @@ enum TPwDialogControls
 	EPwDlgBaud,
 	EPwDlgFlow,
 	EPwDlgLink,
+	EPwDlgPppStart,
 	EPwDlgProxy,
 	EPwDlgProxyHost,
 	EPwDlgProxyPort,

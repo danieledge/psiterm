@@ -43,6 +43,7 @@ struct TPwSettings
 	TInt iBaudIndex;       // 0=9600 .. 4=115200
 	TInt iRtsCts;
 	TInt iNetMode;         // 0 = modem "ATDT host:port", 1 = Psion TCP/IP
+	TBuf<40> iPppStart;    // Psion TCP/IP: sent to the modem first (shared, see psilink.h)
 	TInt iUseProxy;
 	TBuf<60> iProxyHost;
 	TInt iProxyPort;
