@@ -102,6 +102,7 @@ int main(int argc, char **argv)
 	snprintf(g_sh.attach_dir, sizeof(g_sh.attach_dir), "%sattachments/", g_sh.store_dir);
 	pm_mkdir(g_sh.store_dir);
 	g_sh.offline = atoi(env("PM_OFFLINE", "0"));
+	pm_copy(g_sh.net.version, env("PM_VERSION", "0.3"), sizeof(g_sh.net.version));
 	a->used = 1;
 	pm_copy(a->name, "Test", sizeof(a->name));
 	pm_copy(a->imap_host, env("PM_HOST", "127.0.0.1"), sizeof(a->imap_host));
@@ -150,12 +151,14 @@ int main(int argc, char **argv)
 		else if (!strcmp(op, "expunge")) c.op = PM_CMD_EXPUNGE;
 		else if (!strcmp(op, "cal")) { c.op = PM_CMD_CALSYNC; c.folder[0] = 0; }
 		else if (!strcmp(op, "calendars")) { c.op = PM_CMD_CALSYNC; pm_copy(c.arg, "list", sizeof(c.arg)); c.folder[0] = 0; }
+		else if (!strcmp(op, "update")) { c.op = PM_CMD_UPDATE; pm_copy(c.arg, args[0], sizeof(c.arg)); pm_copy(c.folder, args[1], sizeof(c.folder)); c.uid = 0; }
 		else if (!strcmp(op, "hangup")) c.op = PM_CMD_HANGUP;
 		else if (!strcmp(op, "trust")) { c.op = PM_CMD_TRUST; pm_copy(c.arg, args[0], sizeof(c.arg)); c.folder[0] = 0; }
 		else if (!strcmp(op, "trustlast")) { c.op = PM_CMD_TRUST; pm_copy(c.arg, g_sh.trust_host, sizeof(c.arg)); c.folder[0] = 0; }
 		else { fprintf(stderr, "unknown command %s\n", op); return 2; }
 		pm_do_command(&c);
 		printf("%s: %s %s\n", op, k_res[g_sh.last_res], g_sh.last_msg);
+		if (c.op == PM_CMD_UPDATE && g_sh.update_ready) printf("  ready: %s\n", g_sh.last_file);
 		if (g_sh.last_res == PM_RES_UNTRUSTED)
 			printf("  untrusted %s: %s\n  key %s\n", g_sh.trust_host, g_sh.trust_why, g_sh.trust_fp);
 		if (g_sh.last_res != PM_RES_OK) rc = 1;

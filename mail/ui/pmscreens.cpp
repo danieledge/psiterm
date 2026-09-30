@@ -27,11 +27,11 @@ const PmFont* ui_font(int aId)
 /* layout */
 enum
 	{
-	KSide = 156,               /* folder column */
+	KSide = UI_SIDE_W,         /* folder column */
 	KHead = 36,                /* header of the message list */
 	KRow = 30,                 /* a message: two lines */
 	KFolderTop = 36,
-	KFolderRow = 22,
+	KFolderRow = UI_FOLDER_ROW,
 	KBar = 28                  /* the reader's top bar */
 	};
 

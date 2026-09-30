@@ -138,6 +138,8 @@ public:
 	const TPmFolder& FolderAt(TInt aIndex) const;
 	void FocusFoldersL();
 	void SidebarPage(TInt aDir);
+	void StartInstallerL(const TDesC& aFile);
+	void SetStatus(const TDesC& aText);
 	void OpenSidebarItemL(TInt aIndex);
 	TInt CurrentSidebarItem() const;
 	void OpenFolderL(const TDesC8& aImap);
@@ -198,7 +200,6 @@ private:
 	void EnsureVisible();
 	void FormatDate(TInt aDate, TDes& aOut) const;
 	void CopySettingsToShared();
-	void SetStatus(const TDesC& aText);
 	void RenderMailbox();
 	void RenderReader();
 	TInt SidebarCount() const { return iFolders->Count() + 2; }   // + the outbox and the calendar
@@ -252,7 +253,10 @@ private:
 	TBool iSidebar;                  // keys move in the folder column
 	TInt iFolderSel;
 	TInt iFolderTop;
-	TBool iFolderFollow;                 // bring the highlighted folder into view
+	TBool iFolderFollow;
+	TBool iPenSide, iPenDragged;           // the pen went down in the folder column
+	TPoint iPenStart;
+	TInt iPenTop;                 // bring the highlighted folder into view
 	TBool iSearch;                   // the list shows search results
 	TBuf<60> iSearchWords;
 	TBuf8<128> iFolder;              // IMAP name of the open folder
@@ -451,6 +455,7 @@ private:
 	void SaveAttachmentL();
 	void SearchL();
 	void FoldersL();
+	void UpdateL();
 	void SwitchAccountL();
 	void DeleteAccountL();
 	void AboutL();

@@ -133,7 +133,8 @@ RESOURCE MENU_PANE r_pm_tools_menu
 		MENU_ITEM { command=EPmCmdCalSettings; txt="Calendar settings..."; },
 		MENU_ITEM { command=EPmCmdConnSettings; txt="Connection settings..."; },
 		MENU_ITEM { command=EPmCmdSmooth; txt="Smooth text"; flags=EEikMenuItemCheckBox; },
-		MENU_ITEM { command=EPmCmdRestart; txt="Restart mail engine"; }
+		MENU_ITEM { command=EPmCmdRestart; txt="Restart mail engine"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdUpdate; txt="Update PsiMail..."; }
 		};
 	}
 
@@ -163,6 +164,22 @@ RESOURCE DIALOG r_pm_text_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Find"; id=EPmDlgWords;
+			control=EDWIN { width=30; maxlength=60; }; }
+		};
+	}
+
+RESOURCE DIALOG r_pm_update_dialog
+	{
+	title="Update PsiMail";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1; control=LABEL { standard_font=EEikLabelFontAnnotation;
+			txt="Your update server as host:port (e.g. 192.168.1.20:8686),"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo2; control=LABEL { standard_font=EEikLabelFontAnnotation;
+			txt="or github for the published releases."; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Get it from"; id=EPmDlgWords;
 			control=EDWIN { width=30; maxlength=60; }; }
 		};
 	}

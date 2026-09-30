@@ -74,6 +74,7 @@ int main(int argc, char **argv)
 	gets_("store_dir", g_sh.store_dir, sizeof(g_sh.store_dir));
 	gets_("attach_dir", g_sh.attach_dir, sizeof(g_sh.attach_dir));
 	g_sh.offline = geti("offline", 0);
+	strcpy(g_sh.net.version, "0.3");
 	a->used = 1;
 	gets_("name", a->name, sizeof(a->name));
 	gets_("fullname", a->fullname, sizeof(a->fullname));

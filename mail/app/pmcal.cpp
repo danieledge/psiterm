@@ -521,7 +521,7 @@ void CPmCalSync::SaveMapL()
 		line.Append('\t');
 		line.AppendNum((TInt)m.iFlags);
 		line.Append('\t');
-		line.Append(m.iKey->Left(line.MaxLength() - line.Length() - 1));
+		line.Append(Clip(*m.iKey, line.MaxLength() - line.Length() - 1));
 		line.Append('\n');
 		User::LeaveIfError(f.Write(line));
 		}

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Tiny HTTP/1.0 server for PsiTerm (run by socat, one process per connection)
 #   GET  /version.txt, /PsiTerm.sis(.sig)  -> from $PSION_UPDATE_DIR
-#   GET  /PsiTerm.sis?o=OFFSET&n=LENGTH    -> one chunk, with X-CRC32 header
+#        (and PsiWeb-/PsiMail-version.txt, PsiWeb.sis(.sig), PsiMail.sis(.sig))
+#   GET  /<file>.sis?o=OFFSET&n=LENGTH     -> one chunk, with X-CRC32 header
 #   POST /upload                           -> saved in $PSION_SHOTS_DIR
 # After sending, the connection is held open until the Psion hangs up
 # (max 20 s): closing at once makes the modem drop its unsent buffer.
@@ -64,6 +65,8 @@ case "$path" in *\?*) query=${path#*\?}; path=${path%%\?*} ;; esac
 f="${path#/}"
 case "$f" in
   version.txt|PsiTerm.sis|PsiTerm.sis.sig) ;;
+  PsiWeb-version.txt|PsiWeb.sis|PsiWeb.sis.sig) ;;
+  PsiMail-version.txt|PsiMail.sis|PsiMail.sis.sig) ;;
   *) f="" ;;
 esac
 if [ "$method" = "GET" ] && [ -n "$f" ] && [ -f "$DIR/$f" ]; then

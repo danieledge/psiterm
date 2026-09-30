@@ -9,7 +9,7 @@ LTC     := $(TOP)/ssh/db/libtomcrypt/src
 LTM     := $(TOP)/ssh/db/libtommath
 
 ENGINE  := pmmain imap imapparse smtp compose mime charset html store pmnet certcheck pmrsa \
-           caldav caltz ics http xmlscan
+           caldav caltz ics http xmlscan pmupdate
 LTC_SRCS := stream/chacha/chacha_crypt stream/chacha/chacha_ivctr32 stream/chacha/chacha_keystream \
 	stream/chacha/chacha_setup stream/chacha/chacha_done mac/poly1305/poly1305 hashes/sha2/sha256 \
 	hashes/sha2/sha384 hashes/sha2/sha512 misc/zeromem misc/burn_stack misc/crypt/crypt_argchk misc/compare_testvector
@@ -60,6 +60,9 @@ $(O)/%.o: engine/%.c $(HDRS)
 $(O)/certcheck.o: engine/certcheck.c engine/roots.h $(HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) -c $(LTCFLAGS) -I$(TOP)/ssh $< -o $@
+$(O)/pmupdate.o: engine/pmupdate.c $(HDRS)
+	@mkdir -p $(dir $@)
+	$(CC) -c $(LTCFLAGS) $(if $(filter host,$(TARGET)),-DPM_TEST_KEY) -I$(TOP)/ssh $< -o $@
 $(O)/pmrsa.o: engine/pmrsa.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(LTMFLAGS) $< -o $@

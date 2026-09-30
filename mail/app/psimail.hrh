@@ -45,7 +45,8 @@ enum TPmCommands
 	EPmCmdSaveDraft,
 	EPmCmdAttachFile,
 	EPmCmdRemoveAttach,
-	EPmCmdDiscard
+	EPmCmdDiscard,
+	EPmCmdUpdate
 	};
 
 enum TPmDialogControls

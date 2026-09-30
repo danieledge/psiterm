@@ -88,6 +88,23 @@ be sent.
 Not yet: repeating entries made on the Psion (they stay on the Psion), to-do
 lists, anniversaries, more than one calendar account.
 
+## Updating from the Psion
+
+Tools > Update PsiMail asks where to look: `github` for published releases
+(raw.githubusercontent.com/danieledge/psiterm/main/dist/, over TLS 1.3), or
+`host:port` of PsiTerm's local update server (server/psion-update.sh, port
+8686). It fetches PsiMail-version.txt; if that is newer, it downloads
+PsiMail.sis in 64 KB pieces (each checked, and fetched again if damaged) to
+D:\PsiMail-update.sis (C: without a card), checks the Ed25519 signature in
+PsiMail.sis.sig against the release key, and offers to install it.
+
+To put a build on the local server:
+
+    tools/release/publish-local.sh PsiMail 0.3.1
+
+(signs with ~/.psiterm-signing/release.key; tools/release/sign.py works
+without the `cryptography` package too). The version must go up each time.
+
 ## Keys
 
 | | |

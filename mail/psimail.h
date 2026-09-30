@@ -87,6 +87,7 @@ enum
 	PM_CMD_TRUST,            /* arg = "host:port": accept its certificate (pin) */
 	PM_CMD_EXPUNGE,          /* folder: remove messages marked deleted */
 	PM_CMD_CALSYNC,          /* calendar: send push.txt, fetch changes (arg "list": calendars only) */
+	PM_CMD_UPDATE,           /* arg = "host:port" or "github", folder = where to save PsiMail.sis */
 	PM_CMD_QUIT
 	};
 
@@ -161,6 +162,10 @@ typedef struct
 	char trust_fp[100];             /* SHA-256 of the key, hex with colons */
 
 	volatile unsigned int heap_used;
+
+	/* Tools > Update PsiMail (the version running is in net.version) */
+	volatile int update_ready;      /* 1: last_file is a checked, newer PsiMail.sis */
+	char update_version[16];        /* what the server has */
 	} PmShared;
 
 #endif

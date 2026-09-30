@@ -74,6 +74,8 @@ struct PmUiMailbox
 
 int  ui_mailbox_rows(int aHeight);           /* message rows that fit */
 int  ui_sidebar_rows(int aHeight);
+#define UI_SIDE_W     156        /* the folder column's width */
+#define UI_FOLDER_ROW 22         /* and its rows' height */
 void ui_mailbox(PmCanvas* c, const PmUiMailbox* m);
 
 /* what the pen touched */

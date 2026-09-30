@@ -70,7 +70,7 @@ mem = {"in_use": 0, "peak": 0, "arena": 0, "n": 0}
 RES = ["OK", "FAILED", "OFFLINE", "CANCELLED", "UNTRUSTED", "NEED_PASS", "LOGIN_FAILED"]
 OPS = {"folders": 1, "sync": 2, "older": 3, "body": 4, "full": 5, "attach": 6, "flag": 7, "move": 8,
        "search": 9, "send": 10, "sendrecv": 11, "hangup": 12, "trust": 13, "trustlast": 13, "expunge": 14,
-       "cal": 15, "calendars": 15}
+       "cal": 15, "calendars": 15, "update": 16}
 cmds, cur = [], []
 for w in WORDS + [","]:
     if w == ",":
@@ -188,6 +188,7 @@ def hc(op, a, b, c, d):
         elif w[0] in ("trust",): arg, folder = rest[0], ""
         elif w[0] == "trustlast": folder = ""
         elif w[0] in ("cal", "calendars"): folder, arg = "", ("list" if w[0] == "calendars" else "")
+        elif w[0] == "update": arg, folder = rest[0], rest[1]
         else:
             uid = int(rest[1] or 0); arg = rest[2]
         log(">", " ".join(w))

@@ -23,7 +23,7 @@
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.2");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.3");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -253,6 +253,7 @@ void CPmView::CopySettingsToShared()
 	s->net.rtscts = iSettings->iRtsCts;
 	s->net.net_mode = iSettings->iNetMode;
 	s->offline = iSettings->iOffline;
+	CopyToC(s->net.version, sizeof(s->net.version), KVersion);
 	Mem::Copy(s->acct, iSettings->iAccounts, sizeof(s->acct));
 	Mem::Copy(&s->cal, &iCal->iCal, sizeof(s->cal));
 	if (s->cal.acct < 0 || s->cal.acct >= PM_MAX_ACCOUNTS || !s->acct[s->cal.acct].used)
@@ -808,6 +809,7 @@ void CPmView::FocusFoldersL()
 	if (iMode == ECalendar)
 		{
 		iSidebar = ETrue;
+		iFolderFollow = ETrue;
 		iFolderSel = iFolders->Count() + 1;
 		Render();
 		return;
@@ -815,6 +817,7 @@ void CPmView::FocusFoldersL()
 	if (iMode != EList && iMode != EOutbox)
 		return;
 	iSidebar = ETrue;
+	iFolderFollow = ETrue;
 	// the open folder is the highlighted one
 	iFolderSel = iFolders->Count();                // (the outbox)
 	if (iMode == EList)
@@ -1455,6 +1458,28 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 	TInt res = s->last_res;
 	SafeCopy(iStatus, msg);
 	iStatusUntil = User::TickCount() + 64 * 6;
+	if (aCmd.op == PM_CMD_UPDATE)
+		{
+		iStatus.Zero();
+		if (res == PM_RES_OK && s->update_ready)
+			{
+			TBuf<16> v;
+			FromC(v, s->update_version);
+			TBuf<64> q;
+			q.Format(_L("Install PsiMail %S now?"), &v);
+			TBuf<128> file;
+			FromC(file, s->last_file);
+			if (iEikonEnv->QueryWinL(q, _L("PsiMail will close while it installs")))
+				StartInstallerL(file);
+			else
+				iEikonEnv->InfoWinL(_L("The update is saved"), file);
+			}
+		else if (res == PM_RES_OK)
+			Toast(msg);
+		else
+			iEikonEnv->InfoWinL(_L("Update PsiMail"), msg);
+		return;
+		}
 	if (aCmd.op == PM_CMD_CALSYNC)
 		iCalPending = EFalse;
 	if (aCmd.op == PM_CMD_CALSYNC && res != PM_RES_UNTRUSTED && res != PM_RES_CANCELLED)
@@ -1721,7 +1746,7 @@ void CPmView::FillSidebar(PmUiMailbox& m)
 	m.nfolders = k;
 	m.folderSel = iFolderSel < k ? iFolderSel : k - 1;
 	TInt srows = ui_sidebar_rows(iCanvas.h);
-	if (iSidebar || iFolderFollow)
+	if (iFolderFollow)
 		{
 		// (the keyboard moves the highlight: keep it in view; the pen
 		// scrolls the column by itself)
@@ -1923,6 +1948,7 @@ void CPmView::MoveSel(TInt aDelta)
 	{
 	if (iSidebar)
 		{
+		iFolderFollow = ETrue;
 		iFolderSel += aDelta;
 		if (iFolderSel >= SidebarCount()) iFolderSel = SidebarCount() - 1;
 		if (iFolderSel < 0) iFolderSel = 0;
@@ -2158,7 +2184,41 @@ void CPmView::HandlePointerEventL(const TPointerEvent& aEvent)
 	{
 	TPoint p = aEvent.iPosition;
 	AddEntropy(p.iX * 1000 + p.iY);
-	if (aEvent.iType != TPointerEvent::EButton1Down)
+	// the folder column: the pen drags it up and down; a tap (no drag)
+	// opens the folder when the pen lifts
+	TBool side = (iMode == EList || iMode == EOutbox || iMode == ECalendar) && p.iX < UI_SIDE_W;
+	if (aEvent.iType == TPointerEvent::EButton1Down && side)
+		{
+		iPenSide = ETrue;
+		iPenDragged = EFalse;
+		iPenStart = p;
+		iPenTop = iFolderTop;
+		return;
+		}
+	if (iPenSide && aEvent.iType == TPointerEvent::EDrag)
+		{
+		TInt dy = p.iY - iPenStart.iY;
+		if (dy > 6 || dy < -6)
+			iPenDragged = ETrue;
+		if (iPenDragged)
+			{
+			TInt top = iPenTop - dy / UI_FOLDER_ROW;
+			if (top != iFolderTop)
+				{
+				iFolderTop = top;             // (FillSidebar keeps it in range)
+				Render();
+				}
+			}
+		return;
+		}
+	if (iPenSide && aEvent.iType == TPointerEvent::EButton1Up)
+		{
+		iPenSide = EFalse;
+		if (iPenDragged)
+			return;
+		p = iPenStart;                        // a tap: handled as before
+		}
+	else if (aEvent.iType != TPointerEvent::EButton1Down)
 		return;
 	TInt index = -1;
 	if (iMode == ECompose)
@@ -3186,6 +3246,70 @@ void CPmAppUi::SaveAttachmentL()
 		iView->SaveAttachmentL(choice);
 	}
 
+// hands the checked PsiMail.sis to the system installer, and closes
+// (PsiMail.app and psimail.exe are among the files it replaces)
+void CPmView::StartInstallerL(const TDesC& aFile)
+	{
+	StopEngine();
+	TInt err;
+	RApaLsSession ls;
+	err = ls.Connect();
+	if (err == KErrNone)
+		{
+		TThreadId tid;
+		err = ls.StartDocument(aFile, TUid::Uid(0x10000419), tid);
+		ls.Close();
+		}
+	if (err == KErrNone)
+		{
+		iEikonEnv->EikAppUi()->HandleCommandL(EEikCmdExit);
+		return;
+		}
+	TBuf<200> m;
+	m.Format(_L("Could not start the installer (%d). Open %S from the System screen."), err, &aFile);
+	iEikonEnv->InfoWinL(_L("Update downloaded"), m);
+	StartEngineL();
+	}
+
+_LIT(KUpdIniFile, "C:\\System\\Apps\\PsiMail\\Update.ini");
+
+// Tools > Update PsiMail: where from, then the engine fetches and checks it
+void CPmAppUi::UpdateL()
+	{
+	RFs& fs = iCoeEnv->FsSession();
+	TBuf<60> src;
+	RFile f;
+	if (f.Open(fs, KUpdIniFile, EFileRead) == KErrNone)
+		{
+		TBuf8<60> b;
+		f.Read(b);
+		f.Close();
+		src.Copy(b);
+		src.Trim();
+		}
+	if (!src.Length())
+		src = _L("github");
+	CPmTextDialog* dlg = new(ELeave) CPmTextDialog(_L("Update PsiMail"), _L("Get it from"), src);
+	if (!dlg->ExecuteLD(R_PM_UPDATE_DIALOG) || !src.Length())
+		return;
+	fs.MkDirAll(KUpdIniFile);
+	if (f.Replace(fs, KUpdIniFile, EFileWrite) == KErrNone)
+		{
+		TBuf8<60> b;
+		b.Copy(src);
+		f.Write(b);
+		f.Close();
+		}
+	// saved to the CF card if there is one: C: is small
+	TVolumeInfo vol;
+	TBool card = fs.Volume(vol, EDriveD) == KErrNone && vol.iFree > 600 * 1024;
+	TBuf8<40> save(card ? _L8("D:\\PsiMail-update.sis") : _L8("C:\\PsiMail-update.sis"));
+	TBuf8<60> arg;
+	arg.Copy(src);
+	iView->SetStatus(_L("Looking for a new PsiMail..."));
+	iView->Cmd(PM_CMD_UPDATE, save, 0, arg);
+	}
+
 // Folder > Go to folder: every folder, however many the column can show
 void CPmAppUi::FoldersL()
 	{
@@ -3333,7 +3457,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 	if (m == CPmView::ENoAccount && aCommand == EPmCmdEditAccount)
 		aCommand = EPmCmdNewAccount;
 	if (m == CPmView::ENoAccount && aCommand != EEikCmdExit && aCommand != EPmCmdNewAccount &&
-		aCommand != EPmCmdConnSettings && aCommand != EPmCmdAbout)
+		aCommand != EPmCmdConnSettings && aCommand != EPmCmdAbout && aCommand != EPmCmdUpdate)
 		{
 		iView->Toast(_L("Set up an account first: Tools > New account"));
 		return;
@@ -3446,6 +3570,9 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdFolders:
 		FoldersL();
+		break;
+	case EPmCmdUpdate:
+		UpdateL();
 		break;
 	case EPmCmdRefresh:
 		iView->RefreshL();
