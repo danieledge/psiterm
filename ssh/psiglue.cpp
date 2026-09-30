@@ -243,11 +243,17 @@ static void NetRxFill(int aTimeoutUs)
 		gSock->RecvOneOrMore(*gRecvDes, 0, gRecvStat, gRecvLen);
 		gRecvPending = 1;
 		}
-	if (gRecvStat == KRequestPending && !WaitFor(gRecvStat, aTimeoutUs, 0))
-		return;                          // still waiting; try again later
+	// Take the receive's completion signal exactly once. WaitFor returning 1
+	// has already taken it; User::WaitForRequest on a request whose signal is
+	// gone blocks until some other request completes - with nothing else
+	// outstanding that is forever (the hang after "Securing the connection").
 	if (gRecvStat == KRequestPending)
-		return;
-	User::WaitForRequest(gRecvStat);     // consume its completion signal
+		{
+		if (!WaitFor(gRecvStat, aTimeoutUs, 0))
+			return;                      // still waiting (signal not taken)
+		}
+	else
+		User::WaitForRequest(gRecvStat); // completed earlier: take its signal
 	gRecvPending = 0;
 	gRxPos = 0;
 	if (gRecvStat.Int() == KErrNone)
