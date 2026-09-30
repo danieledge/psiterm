@@ -64,7 +64,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.57");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.58");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -105,7 +105,6 @@ static TInt SafeWrite(RFs& aFs, const TDesC& aName, const TDesC8& aData)
 	return r;
 	}
 
-_LIT(KPppSuffix, " (Psion Internet)");
 
 static TInt BaudValue(TInt aIndex)
 	{
@@ -441,6 +440,13 @@ void CTermView::ApplySerialSettings()
 	{
 	if (!iSerial)
 		return;
+	if (iSettings.iNetMode)
+		{
+		// Psion Internet: the Psion's own dial-up owns the serial port, so
+		// PsiTerm leaves it alone (no DTR, no stray keys to the WiRSa)
+		iSerial->Close();
+		return;
+		}
 	TInt r = iSerial->Open(iSettings.iBaudIndex, iSettings.iRtsCts);
 	if (r != KErrNone)
 		{
@@ -923,6 +929,11 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 			}
 		return;
 		}
+	if (iSettings.iNetMode)
+		{
+		iEikonEnv->InfoMsg(_L("Psion Internet mode: pick a server to connect"));
+		return;
+		}
 	if (iSerial)
 		iSerial->Write(aBytes);
 	}
@@ -1051,9 +1062,10 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 		}
 	else if (ModemOnline())
 		aText.Format(_L("Modem connected   %d baud   Shift+Ctrl+H: hang up"), BaudValue(iSettings.iBaudIndex));
+	else if (iSettings.iNetMode)
+		aText.Copy(_L("Not connected   link: Psion Internet (PPP)"));
 	else
-		aText.Format(_L("Not connected   %d baud%S"), BaudValue(iSettings.iBaudIndex),
-			iSettings.iNetMode ? &KPppSuffix : &KNullDesC);
+		aText.Format(_L("Not connected   %d baud"), BaudValue(iSettings.iBaudIndex));
 	aSplit = aText.Length();
 	TTime now;
 	now.HomeTime();
@@ -5220,9 +5232,11 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdLinkPpp:
 		s.iNetMode = (aCommand == EPtCmdLinkPpp);
 		SaveSettings(s);
+		if (!iView->SshActive())
+			iView->ApplySerialSettings();
 		iView->LocalMessage(s.iNetMode
-			? _L8("\r\n[SSH will use the Psion's own Internet connection (dial-up/PPP).\r\n"
-				" Set it up in Control panel > Dial: number PPP, no login script.]\r\n")
+			? _L8("\r\n[SSH will use the Psion's own Internet connection (PPP).\r\n"
+				" Set it up in Control panel > Internet: number 777, no login script.]\r\n")
 			: _L8("\r\n[SSH will dial through the modem (ATDT host:port).]\r\n"));
 		break;
 	case EPtCmdZoom0:
@@ -5240,7 +5254,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		if (!dlg->ExecuteLD(R_PT_CONN_DIALOG))
 			break;
 		SaveSettings(s);
-		if (s.iBaudIndex != old.iBaudIndex || s.iRtsCts != old.iRtsCts)
+		if (s.iBaudIndex != old.iBaudIndex || s.iRtsCts != old.iRtsCts || s.iNetMode != old.iNetMode)
 			{
 			if (iView->SshActive())
 				iEikonEnv->InfoMsg(_L("New speed applies when SSH disconnects"));
@@ -5248,7 +5262,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 				iView->ApplySerialSettings();
 			}
 		if (s.iNetMode != old.iNetMode && s.iNetMode)
-			iEikonEnv->InfoMsg(_L("Set up the dial-up in Control panel > Dial (number PPP)"));
+			iEikonEnv->InfoMsg(_L("Set up Control panel > Internet (number 777)"));
 		break;
 		}
 	case EPtCmdBold:

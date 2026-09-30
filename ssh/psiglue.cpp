@@ -132,6 +132,19 @@ static void NetClose()
 		}
 	}
 
+// SSH mode says what the link is doing (updates stay quiet)
+extern "C" void pg_out_write(const void* aData, int aLen);
+static int gDialVerbose = 0;
+extern "C" void pg_dial_verbose(int aOn) { gDialVerbose = aOn; }
+static void Say(const char* aText)
+	{
+	if (!gDialVerbose)
+		return;
+	int n = 0;
+	while (aText[n]) n++;
+	pg_out_write(aText, n);
+	}
+
 static int NetConnect(char* aResult, int aMax)
 	{
 	if (!gSs) gSs = new RSocketServ;
@@ -168,6 +181,7 @@ static int NetConnect(char* aResult, int aMax)
 			}
 		TNameEntry entry;
 		TRequestStatus stat;
+		Say("  Starting the Psion's dial-up (Control panel > Internet; the WiRSa should see ATDT 777)...\r\n");
 		resolver.GetByName(host, entry, stat);
 		if (!WaitFor(stat, 120000000, 1))
 			{
@@ -184,7 +198,10 @@ static int NetConnect(char* aResult, int aMax)
 			return -1;
 			}
 		addr = TInetAddr(entry().iAddr);
+		Say("  Dial-up is up, host name found.\r\n");
 		}
+	else
+		Say("  Starting the Psion's dial-up if it is not up already...\r\n");
 	addr.SetPort(gShared->port > 0 ? gShared->port : 22);
 
 	r = gSock->Open(*gSs, KAfInet, KSockStream, KProtocolInetTcp);
@@ -210,6 +227,7 @@ static int NetConnect(char* aResult, int aMax)
 		return -1;
 		}
 	gSockOpen = 1;
+	Say("  TCP connection open.\r\n");
 	return 0;
 	}
 
@@ -603,16 +621,6 @@ static int StartsWith(const char* aS, const char* aP)
 // Dials host:port through the WiRSa. Returns 0 on CONNECT.
 // Sends AT and waits briefly for OK: is the modem at its command prompt?
 // SSH mode says what the modem is doing (updates dial ten times, quietly)
-static int gDialVerbose = 0;
-extern "C" void pg_dial_verbose(int aOn) { gDialVerbose = aOn; }
-static void Say(const char* aText)
-	{
-	if (!gDialVerbose)
-		return;
-	int n = 0;
-	while (aText[n]) n++;
-	pg_out_write(aText, n);
-	}
 
 static int ModemAnswersAt()
 	{
