@@ -73,6 +73,10 @@ typedef struct
 	char keyfile[96];
 	char keysrc[96];
 	char keyname[32];              /* the comment on the .pub line */
+	/* Psion Internet (0.61): sent to the modem on the serial port before the
+	   TCP/IP connection starts, e.g. ATDT777 to put a WiRSa into PPP.
+	   Empty = send nothing (the Psion's own dial-up does the dialling). */
+	char ppp_start[48];
 	} PsiShared;
 
 #endif

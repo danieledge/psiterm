@@ -64,7 +64,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.60");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.61");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -3255,6 +3255,11 @@ void CTermView::LaunchSshL(TInt aMode)
 	}
 	iLaunchMode = aMode;
 	iShared->net_mode = (aMode != 1 && aMode < 4 && iSettings.iNetMode) ? 1 : 0;
+	{
+	TPtr8 ps((TUint8*)iShared->ppp_start, sizeof(iShared->ppp_start) - 1);
+	ps.Copy(iSettings.iPppStart);
+	ps.ZeroTerminate();
+	}
 	if (aMode == 3)
 		{
 		// send screenshots: POST the bundle to the update server
@@ -4441,6 +4446,7 @@ void CConnDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPtDlgFlow))->SetCurrentItem(iSettings.iRtsCts ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgLink))->SetCurrentItem(iSettings.iNetMode ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgReconnect))->SetCurrentItem(iSettings.iAutoReconnect ? 1 : 0);
+	SetEdwinTextL(EPtDlgPppStart, &iSettings.iPppStart);
 	}
 
 TBool CConnDialog::OkToExitL(TInt /*aButtonId*/)
@@ -4449,6 +4455,10 @@ TBool CConnDialog::OkToExitL(TInt /*aButtonId*/)
 	iSettings.iRtsCts = ((CEikChoiceList*)Control(EPtDlgFlow))->CurrentItem() == 1;
 	iSettings.iNetMode = ((CEikChoiceList*)Control(EPtDlgLink))->CurrentItem() == 1;
 	iSettings.iAutoReconnect = ((CEikChoiceList*)Control(EPtDlgReconnect))->CurrentItem() == 1;
+	TBuf<40> ppp;
+	GetEdwinText(ppp, EPtDlgPppStart);
+	ppp.TrimAll();
+	iSettings.iPppStart = ppp;
 	return ETrue;
 	}
 
@@ -4752,6 +4762,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iBell = 0;
 	aSettings.iStartScreen = 1;
 	aSettings.iTmuxTabs = 1;
+	aSettings.iPppStart.Copy(_L("ATDT777"));   // WiRSa and similar: dial 777 = PPP
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
@@ -4827,6 +4838,12 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 											aSettings.iStartScreen = data[pos + 6] ? 1 : 0;
 										if (pos + 7 < data.Length())   // v11: tmux tabs
 											aSettings.iTmuxTabs = data[pos + 7] ? 1 : 0;
+										if (pos + 8 < data.Length())   // v12: PPP start command
+											{
+											TInt plen = data[pos + 8];
+											if (plen <= 40 && pos + 9 + plen <= data.Length())
+												aSettings.iPppStart.Copy(data.Mid(pos + 9, plen));
+											}
 										}
 									}
 								}
@@ -4875,6 +4892,9 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append((TUint8)(aSettings.iBell ? 1 : 0));
 	data.Append((TUint8)(aSettings.iStartScreen ? 1 : 0));
 	data.Append((TUint8)(aSettings.iTmuxTabs ? 1 : 0));
+	tmp.Copy(aSettings.iPppStart);
+	data.Append((TUint8)tmp.Length());
+	data.Append(tmp);
 	SafeWrite(fs, KIniFile, data);
 	}
 
@@ -5280,7 +5300,8 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			iView->ApplySerialSettings();
 		iView->LocalMessage(s.iNetMode
 			? _L8("\r\n[SSH will use the Psion's own Internet connection (PPP).\r\n"
-				" Set it up in Control panel > Internet: number 777, no login script.]\r\n")
+				" PsiTerm first sends the modem the command set in Connection settings\r\n"
+				" (ATDT777 starts a WiRSa's PPP); set the Internet service to Direct.]\r\n")
 			: _L8("\r\n[SSH will dial through the modem (ATDT host:port).]\r\n"));
 		break;
 	case EPtCmdZoom0:
@@ -5303,7 +5324,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		else if (s.iBaudIndex != old.iBaudIndex || s.iRtsCts != old.iRtsCts || s.iNetMode != old.iNetMode)
 			iEikonEnv->InfoMsg(_L("New settings apply when SSH disconnects"));
 		if (s.iNetMode != old.iNetMode && s.iNetMode)
-			iEikonEnv->InfoMsg(_L("Set up Control panel > Internet (number 777)"));
+			iEikonEnv->InfoMsg(_L("Set the Internet service to Direct"));
 		break;
 		}
 	case EPtCmdBold:

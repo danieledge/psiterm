@@ -38,6 +38,7 @@ extern "C" int pg_net_closed() { return gNetClosed; }
 // pipe, connect a real socket through EPOC's own networking - normally a
 // dial-up (PPP) connection to the WiRSa dialled with "ATDT PPP".
 static int gNet = 0;
+static int gServerOpen = 0;
 static RSocketServ* gSs = 0;
 static int gSsOpen = 0;
 static RSocket* gSock = 0;
@@ -145,6 +146,17 @@ static void Say(const char* aText)
 	pg_out_write(aText, n);
 	}
 
+// Explains the dial-up errors people meet when setting this up
+static void NetHint(TInt aErr)
+	{
+	if (aErr == -2017)                   // KErrEtelModemNotDetected
+		Say(gShared->ppp_start[0]
+			? "  The Psion's dial-up found no modem. PsiTerm has already started PPP,\r\n"
+			  "  so set the Internet service's Connection type to Direct.\r\n"
+			: "  The Psion's dial-up found no modem: check Control panel > Modems\r\n"
+			  "  (speed, flow control, a plain AT init string).\r\n");
+	}
+
 static int NetConnect(char* aResult, int aMax)
 	{
 	if (!gSs) gSs = new RSocketServ;
@@ -194,6 +206,7 @@ static int NetConnect(char* aResult, int aMax)
 		resolver.Close();
 		if (stat.Int() != KErrNone)
 			{
+			NetHint(stat.Int());
 			SetMsgErr(aResult, aMax, "could not look up the host name", stat.Int());
 			return -1;
 			}
@@ -223,6 +236,7 @@ static int NetConnect(char* aResult, int aMax)
 	if (stat.Int() != KErrNone)
 		{
 		gSock->Close();
+		NetHint(stat.Int());
 		SetMsgErr(aResult, aMax, "connection failed", stat.Int());
 		return -1;
 		}
@@ -305,25 +319,11 @@ extern "C" PsiShared* pg_shared()
 	return gShared;
 	}
 
-extern "C" int pg_init()
+// Opens COMM::0 for talking to the modem. 0 = open, else a negative code
+// (-10 - the port is in use, e.g. by the Psion's own dial-up).
+static int OpenSerial()
 	{
-	gChunk = new RChunk;
-	if (!gChunk)
-		return -1;
-	TInt r = gChunk->OpenGlobal(_L(PSI_SHARED_NAME), EFalse);
-	if (r != KErrNone)
-		return -2;
-	gShared = (PsiShared*)gChunk->Base();
-	if (gShared->magic != PSI_SHARED_MAGIC)
-		return -3;
-	if (gShared->mode == 1)
-		return 0;                   // speed test: no serial port needed
-	if (gShared->net_mode)
-		{
-		gNet = 1;                   // Psion TCP/IP: the socket opens in pg_dial
-		return 0;
-		}
-
+	TInt r;
 	r = User::LoadPhysicalDevice(KPddName);
 	if (r != KErrNone && r != KErrAlreadyExists)
 		return -4;
@@ -333,19 +333,23 @@ extern "C" int pg_init()
 	r = StartC32();
 	if (r != KErrNone && r != KErrAlreadyExists)
 		return -6;
-	gServer = new RCommServ;
-	gComm = new RComm;
+	if (!gServer) gServer = new RCommServ;
+	if (!gComm) gComm = new RComm;
 	if (!gServer || !gComm)
 		return -7;
-	r = gServer->Connect();
-	if (r != KErrNone)
-		return -8;
+	if (!gServerOpen)
+		{
+		r = gServer->Connect();
+		if (r != KErrNone)
+			return -8;
+		gServerOpen = 1;
+		}
 	r = gServer->LoadCommModule(KCsyName);
 	if (r != KErrNone && r != KErrAlreadyExists)
 		return -9;
 	r = gComm->Open(*gServer, KPortName, ECommExclusive);
 	if (r != KErrNone)
-		return -10;
+		return r == KErrInUse ? -10 : -12;
 	gCommOpen = 1;
 
 	TCommConfig cfg;
@@ -368,6 +372,28 @@ extern "C" int pg_init()
 	return 0;
 	}
 
+extern "C" int pg_init()
+	{
+	gChunk = new RChunk;
+	if (!gChunk)
+		return -1;
+	TInt r = gChunk->OpenGlobal(_L(PSI_SHARED_NAME), EFalse);
+	if (r != KErrNone)
+		return -2;
+	gShared = (PsiShared*)gChunk->Base();
+	if (gShared->magic != PSI_SHARED_MAGIC)
+		return -3;
+	if (gShared->mode == 1)
+		return 0;                   // speed test: no serial port needed
+	if (gShared->net_mode)
+		{
+		gNet = 1;                   // Psion TCP/IP: the socket opens in pg_dial
+		return 0;
+		}
+
+	return OpenSerial();
+	}
+
 extern "C" void pg_close()
 	{
 	NetClose();
@@ -381,8 +407,11 @@ extern "C" void pg_close()
 		gComm->Close();
 		gCommOpen = 0;
 		}
-	if (gServer)
+	if (gServer && gServerOpen)
+		{
 		gServer->Close();
+		gServerOpen = 0;
+		}
 	}
 
 extern "C" void pg_set_state(int aState)
@@ -643,6 +672,91 @@ static int ModemAnswersAt()
 	return 0;
 	}
 
+// Psion Internet: before the Psion's TCP/IP starts, send the modem the
+// user's "first send" command (e.g. ATDT777, which puts a WiRSa into PPP)
+// and wait for CONNECT. Nothing here is specific to one modem: the command
+// comes from Connection settings, and an empty one skips this step.
+//   - port busy: the Psion's dial-up already has it, so the link is up
+//   - no OK to AT: the modem may already be in PPP; carry on and let the
+//     TCP/IP connection find out
+// Returns 0 to go on, -1 on a definite failure (aResult set).
+static int StartPpp(char* aResult, int aResultMax)
+	{
+	char line[160];
+	const char* cmd = gShared->ppp_start;
+	gNet = 0;                            // the serial helpers below talk to COMM::0
+	int r = OpenSerial();
+	if (r != 0)
+		{
+		if (gCommOpen) { gComm->Close(); gCommOpen = 0; }
+		gNet = 1;
+		gRxPos = gRxLen = 0;
+		if (r == -10)
+			Say("  Serial port busy - the Internet connection is probably up already.\r\n");
+		else
+			Say("  Could not open the serial port to start PPP - trying anyway.\r\n");
+		return 0;
+		}
+	int rc = 0;
+	pg_serial_write("\r", 1);
+	pg_msleep(300);
+	gRxPos = gRxLen = 0;
+	gComm->ResetBuffers();
+	Say("  Checking the modem... ");
+	if (!ModemAnswersAt())
+		Say("no answer - it may already be in PPP; going on.\r\n");
+	else
+		{
+		Say("OK\r\n  Sending ");
+		Say(cmd);
+		Say("\r\n");
+		pg_msleep(100);
+		gRxPos = gRxLen = 0;
+		gComm->ResetBuffers();
+		int clen = 0;
+		while (cmd[clen] && clen < (int)sizeof(gShared->ppp_start)) clen++;
+		pg_serial_write(cmd, clen);
+		pg_serial_write("\r", 1);
+		rc = -1;
+		SetMsg(aResult, aResultMax, "no CONNECT from the modem");
+		for (int i = 0; i < 8; i++)
+			{
+			int n = ReadLine(line, sizeof(line), 20000);
+			if (n < 0)
+				{
+				Say("  No reply from the modem for 20 seconds.\r\n");
+				break;
+				}
+			if (StartsWith(line, "AT") || StartsWith(line, "at"))
+				continue;                // its echo of the command
+			Say("  Modem: ");
+			Say(line);
+			Say("\r\n");
+			if (StartsWith(line, "CONNECT"))
+				{
+				rc = 0;
+				break;
+				}
+			if (StartsWith(line, "ERROR") || StartsWith(line, "NO CARRIER")
+				|| StartsWith(line, "BUSY") || StartsWith(line, "NO ANSWER")
+				|| StartsWith(line, "NO DIAL"))
+				{
+				SetMsg(aResult, aResultMax, "the modem refused the Psion Internet start command (see Connection settings)");
+				break;
+				}
+			}
+		}
+	// hand the port to the Psion's TCP/IP (closing it drops DTR; set the
+	// modem not to hang up on that, e.g. AT&D0, if it is a real modem)
+	gComm->Close();
+	gCommOpen = 0;
+	gNet = 1;
+	gRxPos = gRxLen = 0;
+	if (rc == 0)
+		pg_msleep(200);
+	return rc;
+	}
+
 extern "C" int pg_dial(char* aResult, int aResultMax)
 	{
 	char cmd[220];
@@ -651,7 +765,11 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 	gNetClosed = 0;                      // a fresh connection (update does two)
 	gRxPos = gRxLen = 0;
 	if (gNet)
+		{
+		if (gShared->ppp_start[0] && StartPpp(aResult, aResultMax) != 0)
+			return -1;
 		return NetConnect(aResult, aResultMax);
+		}
 	// quick wake-up so the modem is at a command prompt
 	pg_serial_write("\r", 1);
 	pg_msleep(300);

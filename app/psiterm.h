@@ -58,6 +58,7 @@ struct TPsiSettings
 	TInt iBell;           // 0 = beep, 1 = silent
 	TInt iStartScreen;    // 1 = start screen (host menu) when not connected
 	TInt iTmuxTabs;       // 1 = draw tmux's window list as tabs
+	TBuf<40> iPppStart;   // Psion Internet: sent to the modem first (empty = nothing)
 	};
 
 // ---------------------------------------------------------------------------

@@ -263,6 +263,7 @@ RESOURCE DIALOG r_pt_conn_dialog
 		DLG_LINE { type=EEikCtChoiceList; prompt="Baud rate"; id=EPtDlgBaud; control=CHOICELIST { array_id=r_pt_baud_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Flow control"; id=EPtDlgFlow; control=CHOICELIST { array_id=r_pt_flow_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="SSH connects via"; id=EPtDlgLink; control=CHOICELIST { array_id=r_pt_link_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Psion Internet: first send"; id=EPtDlgPppStart; control=EDWIN { width=14; maxlength=40; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Reconnect if dropped"; id=EPtDlgReconnect; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
 		};
 	}
