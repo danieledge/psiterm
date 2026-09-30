@@ -22,6 +22,7 @@ NAME PSMA
 #include <eikspace.rh>
 #include <eikmnbut.rh>
 #include <eikrted.rh>
+#include <eiklbx.rh>
 
 #include "psimail.hrh"
 
@@ -191,7 +192,8 @@ RESOURCE MENU_PANE r_pm_edit_menu
 		MENU_ITEM { command=EPmCmdMove; txt="Move to folder..."; },
 		MENU_ITEM { command=EPmCmdArchive; txt="Archive"; },
 		MENU_ITEM { command=EPmCmdDelete; txt="Delete"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdSearch; txt="Find..."; }
+		MENU_ITEM { command=EPmCmdSearch; txt="Find..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdAddSender; txt="Add sender to Contacts"; }
 		};
 	}
 
@@ -203,10 +205,20 @@ RESOURCE MENU_PANE r_pm_message_menu
 		MENU_ITEM { command=EPmCmdForward; txt="Forward..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdUnread; txt="Unread"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPmCmdFlag; txt="Flagged"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdSaveAttach; txt="Save attachment..."; },
+		MENU_ITEM { command=EPmCmdAttachMenu; cascade=r_pm_attach_menu; txt="Attachments"; },
 		MENU_ITEM { command=EPmCmdWhole; txt="Get whole message"; },
 		MENU_ITEM { command=EPmCmdWeb; txt="View as web page"; },
 		MENU_ITEM { command=EPmCmdReplyMenu; cascade=r_pm_reply_menu; txt="Reply to"; }
+		};
+	}
+
+// Message > Attachments: open one in its program (Word, Sketch...), or save it
+RESOURCE MENU_PANE r_pm_attach_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdOpenAttach; txt="Open..."; },
+		MENU_ITEM { command=EPmCmdSaveAttach; txt="Save..."; }
 		};
 	}
 
@@ -397,6 +409,22 @@ RESOURCE DIALOG r_pm_choice_dialog
 		};
 	}
 
+// the Contacts picker (the compose dialog's Contacts button, Tab in an
+// address line): type to narrow the list; Space or a tap marks several
+RESOURCE DIALOG r_pm_contacts_dialog
+	{
+	title="Contacts";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Find"; id=EPmDlgFind;
+			control=EDWIN { width=20; maxlength=40; }; },
+		DLG_LINE { type=EEikCtColListBox; id=EPmDlgContactList;
+			control=LISTBOX { flags=EEikListBoxMultipleSelection|EEikListBoxNoExtendedSelection; height=6; width=34; }; }
+		};
+	}
+
 // writing: the whole screen, as the built-in Email program does it - the
 // address lines, the subject, a rule, the text; its buttons on the right
 RESOURCE DLG_BUTTONS r_pm_compose_buttons
@@ -406,6 +434,7 @@ RESOURCE DLG_BUTTONS r_pm_compose_buttons
 		DLG_BUTTON { id=EPmBidSend; button=CMBUT { txt="Send"; }; hotkey='S'; },
 		DLG_BUTTON { id=EPmBidSave; button=CMBUT { txt="Save as\ndraft"; }; hotkey='D'; },
 		DLG_BUTTON { id=EPmBidAttach; button=CMBUT { txt="Attach-\nments"; }; hotkey='A'; },
+		DLG_BUTTON { id=EPmBidContacts; button=CMBUT { txt="Contacts"; }; hotkey='L'; },
 		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Close"; }; hotkey=EEikBidCancel; flags=0; }
 		};
 	}

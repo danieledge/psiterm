@@ -1290,7 +1290,8 @@ static void safe_name(const char *in, char *out, int max)
 	if (!k) pm_copy(out, "attachment", max);
 }
 
-int imap_attach(int acct, const char *folder, unsigned int uid, const char *part, char *why, int whymax)
+/* dir: where to put it (the app's Open folder), else s->attach_dir */
+int imap_attach(int acct, const char *folder, unsigned int uid, const char *part, const char *dir, char *why, int whymax)
 {
 	static BodyCtx b;
 	static AttCtx c;
@@ -1307,17 +1308,18 @@ int imap_attach(int acct, const char *folder, unsigned int uid, const char *part
 	for (i = 0; i < b.st.n; i++) if (!strcmp(b.st.part[i].id, part)) p = &b.st.part[i];
 	if (!p) { set_why(why, whymax, "That attachment is not in the message any more"); return PM_RES_FAILED; }
 
+	if (!dir || !dir[0]) dir = s->attach_dir;
 	safe_name(p->name[0] ? p->name : "attachment", name, sizeof(name));
-	pm_mkdir(s->attach_dir);
+	pm_mkdir(dir);
 	/* don't overwrite: name.ext, name(1).ext ... */
 	{
 		char *dot = strrchr(name, '.');
 		if (dot && strlen(dot) < sizeof(ext)) { strcpy(ext, dot); *dot = 0; } else ext[0] = 0;
 		pm_copy(base, name, sizeof(base));
-		snprintf(path, sizeof(path), "%s%s%s", s->attach_dir, base, ext);
+		snprintf(path, sizeof(path), "%s%s%s", dir, base, ext);
 		for (i = 1; i < 100 && (t = fopen(path, "r")) != 0; i++) {
 			fclose(t);
-			snprintf(path, sizeof(path), "%s%s(%d)%s", s->attach_dir, base, i, ext);
+			snprintf(path, sizeof(path), "%s%s(%d)%s", dir, base, i, ext);
 		}
 	}
 	memset(&c, 0, sizeof(c));

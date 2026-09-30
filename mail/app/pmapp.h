@@ -33,6 +33,7 @@ class CEikScrollBar;
 class CEikLabel;
 class CPmFolderListBox;
 class CPmMsgListBox;
+class CPmContacts;
 
 extern "C" {
 #include <psimail.h>
@@ -177,9 +178,13 @@ public:
 	void SendRecvL();
 	void WholeMessageL();
 	void SaveAttachmentL(TInt aIndex);
+	void OpenAttachmentL(TInt aIndex);       // in its own program (Word, Sketch...), via a cached copy
+	void LaunchFileL(const TDesC& aPath);    // RApaLsSession::StartDocument; says so if no program takes it
+	void ForwardAttachmentsL(TUint aUid);    // download the open message's attachments, then CPmAppUi::ForwardReadyL
 	TInt AttachmentCount() const;
 	void AttachmentsL(CDesCArray& aNames);
 	TBool MessageHeader(const TDesC& aName, TDes& aValue) const;
+	TBool IndexFromL(TUint aUid, TDes& aFrom);   // a message's From as the folder index has it (before it is downloaded)
 	void PlainBodyL(TDes& aOut, TBool aQuote) const;
 	TBool HasHtml() const { return iHtml; }
 	void ViewAsWebPageL();
@@ -418,6 +423,10 @@ private:
 	TInt iSplitX;                    // where the folder list ends
 	TInt iStatusH;
 	TUint iMsgListSum;               // what the message list shows (to skip rebuilds)
+	// forwarding attachments: they are downloaded first (pmcontacts round)
+	TInt iFwdPending;                // attachments still to come
+	TUint iFwdUid;                   // the message they are for
+	CDesCArrayFlat* iFwdFiles;       // where they landed
 	};
 
 class CPmInfoDialog : public CEikDialog
@@ -517,6 +526,8 @@ private:
 	void Collect();
 	void ShowAttachments();
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
+	void ContactsL(TBool aComplete);          // the Contacts button (or Tab: complete what's typed)
+	TInt AddressLine() const;                 // the To, Cc or Bcc line with the focus (To otherwise)
 	CPmDraft& iDraft;
 	TPtrC iTitle;
 	TInt iRuns;                  // formatting runs in the text (Collect)
@@ -609,20 +620,26 @@ public:
 	void ButtonPictureL(TInt aId, TInt aIcon, const TDesC* aText = NULL);
 	void SetTool4L(TBool aClose);
 	CCoeControl* ToolBarButton(TInt aId);          // (NULL when the toolbar is hidden)
+	CPmContacts* Contacts();                       // the Psion's Contacts (pmcontacts.cpp), made when first asked for
+	void MailtoL(const TDesC& aUrl);               // a mailto: link: compose, filled in
+	void ForwardReadyL(TUint aUid, CDesCArray& aFiles);   // the attachments are here: compose the forward
 private:
 	void HandleCommandL(TInt aCommand);
+	void ProcessMessageL(TUid aUid, const TDesC8& aParams);           // PsiWeb's mailto: links
+	TBool ProcessCommandParametersL(TApaCommand aCommand, TFileName& aDocumentName, const TDesC8& aTail);
+	void AttachmentL(TBool aOpen);                 // Message > Attachments > Open / Save
+	void AddSenderL();                             // Edit > Add sender to Contacts
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
 	void HandleSwitchOnEventL(CCoeControl* aDestination);
 	void LoadSettings();
 	TBool EditAccountL(TInt aIndex, TBool aNew);
 	CPmDraft* ReplyDraftL(TBool aAll);
-	CPmDraft* ForwardDraftL();
+	CPmDraft* ForwardDraftL(CDesCArray* aFiles);
 	void ComposeL(CPmDraft* aDraft, const TDesC& aTitle);
 	void NewMessageL();
 	void ReplyL(TBool aAll);
 	void ForwardL();
 	void MoveL();
-	void SaveAttachmentL();
 	void SearchL();
 	void FoldersL();
 	void UpdateL();
@@ -633,6 +650,7 @@ private:
 	void LoadCalSettings();
 	void EditCalendarL();
 	CPmView* iView;
+	CPmContacts* iContacts;
 	TBool iTool4Close;                 // the last toolbar button says Close
 	TPmSettings iSettings;
 	TPmCalSettings iCalSettings;

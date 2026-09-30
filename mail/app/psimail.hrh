@@ -64,7 +64,10 @@ enum TPmCommands
 	EPmCmdPrefs,
 	EPmCmdGoToMenu,          // View > Go to (a cascade)
 	EPmCmdToday,             // Event > Go to today
-	EPmCmdEventDetails       // Event > Details
+	EPmCmdEventDetails,      // Event > Details
+	EPmCmdAttachMenu,        // Message > Attachments (a cascade)
+	EPmCmdOpenAttach,        // Message > Attachments > Open: in its own program
+	EPmCmdAddSender          // Edit > Add sender to Contacts
 	};
 
 enum TPmDialogControls
@@ -125,7 +128,9 @@ enum TPmDialogControls
 	EPmDlgSmooth,
 	EPmDlgUpdSource,
 	EPmDlgUpdHost,
-	EPmDlgUpdPort
+	EPmDlgUpdPort,
+	EPmDlgFind,              // the Contacts picker's Find line
+	EPmDlgContactList
 	};
 
 enum TPmButtons
@@ -133,7 +138,8 @@ enum TPmButtons
 	EPmBidAttach = 0x200,
 	EPmBidSave,
 	EPmBidSend,
-	EPmBidRemove
+	EPmBidRemove,
+	EPmBidContacts           // compose: pick addresses from Contacts
 	};
 
 enum TPmPages

@@ -77,7 +77,7 @@ enum
 	PM_CMD_OLDER,            /* folder: fetch older messages than we have */
 	PM_CMD_BODY,             /* folder, uid: download the message text */
 	PM_CMD_FULLBODY,         /* folder, uid: the whole text, past max_body_kb */
-	PM_CMD_ATTACH,           /* folder, uid, arg = part id: save to attach_dir */
+	PM_CMD_ATTACH,           /* folder, uid, arg = part id: save to attach_dir ("part\tdir": to dir) */
 	PM_CMD_FLAG,             /* folder, uid, arg = "+S" "-S" "+F" "-F" (seen / flagged) */
 	PM_CMD_MOVE,             /* folder, uid, arg = destination folder ("" = Trash) */
 	PM_CMD_SEARCH,           /* folder, arg = words: results in search.idx */
