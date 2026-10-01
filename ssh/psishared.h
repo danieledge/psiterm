@@ -17,6 +17,7 @@
 #define PSI_KBD_SIZE      2048
 #define PSI_OUT_SIZE      16384
 #define PSI_ENTROPY_SIZE  512
+#define PSI_XFER_LIST_SIZE 16384
 
 enum
 	{
@@ -92,6 +93,52 @@ typedef struct
 	   list) and psissh quits instead of holding the serial port and the
 	   chunk for ever. 0 = never beat: PsiMail and PsiWeb have their own. */
 	volatile unsigned int app_beat;
+	/* (0.74) file transfer (SFTP) on a second channel of the SSH session
+	   (sftp.c). PsiTerm fills in the request, then adds 1 to xfer_req;
+	   psissh does it and sets xfer_ack = xfer_req when it has finished,
+	   with xfer_result (PSI_XFER_*) and, for a server refusal, its words
+	   in xfer_msg. Only one request at a time. */
+	volatile unsigned int xfer_req;    /* written by PsiTerm */
+	volatile unsigned int xfer_ack;    /* written by psissh */
+	int xfer_op;                       /* PSI_XOP_* */
+	char xfer_local[256];              /* the Psion file (EPOC path) */
+	char xfer_remote[512];             /* the server's file or folder; "" = home */
+	volatile int xfer_cancel;          /* PsiTerm sets 1: Stop */
+	volatile int xfer_result;          /* PSI_XFER_* */
+	volatile unsigned int xfer_done;   /* bytes so far */
+	volatile unsigned int xfer_total;  /* bytes in all (0 = not known yet) */
+	volatile int xfer_exists;          /* STAT: 1 file, 2 folder, 0 not there */
+	char xfer_msg[96];
+	char xfer_path[512];               /* LIST: the folder's full name */
+	volatile int xfer_list_len;        /* LIST: bytes in xfer_list */
+	volatile int xfer_list_more;       /* LIST: 1 = it did not all fit */
+	/* LIST: one line per entry: 'd' (folder), 'f' (file) or 'l' (other),
+	   the size in decimal, a tab, the name, '\n' */
+	char xfer_list[PSI_XFER_LIST_SIZE];
 	} PsiShared;
+
+/* file transfer: what to do (xfer_op) */
+enum
+	{
+	PSI_XOP_PUT = 1,        /* send xfer_local to xfer_remote (replaces it) */
+	PSI_XOP_GET,            /* fetch xfer_remote into xfer_local */
+	PSI_XOP_LIST,           /* list the folder xfer_remote */
+	PSI_XOP_STAT            /* is xfer_remote there? (xfer_exists, xfer_total) */
+	};
+
+/* ...and how it went (xfer_result) */
+enum
+	{
+	PSI_XFER_OK = 0,
+	PSI_XFER_CANCELLED,     /* Stop */
+	PSI_XFER_NO_SFTP,       /* the server does not offer the sftp subsystem */
+	PSI_XFER_DENIED,        /* permission denied on the server */
+	PSI_XFER_NOT_FOUND,     /* no such file or folder on the server */
+	PSI_XFER_LOCAL_WRITE,   /* writing the Psion file failed (disk full, card out) */
+	PSI_XFER_LOCAL_READ,    /* the Psion file could not be opened or read */
+	PSI_XFER_LINK,          /* not logged in, or the connection went */
+	PSI_XFER_FAILED,        /* the server refused (xfer_msg says why) */
+	PSI_XFER_TIMEOUT        /* the server stopped answering */
+	};
 
 #endif

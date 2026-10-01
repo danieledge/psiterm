@@ -425,12 +425,20 @@ private:
 	TInt iOptKey[2 * KMaxKeys + 2];
 	};
 
+class CPtLog;                     // the session log (ptxfer.h)
+class CPtXferMemory;
+
 // ---------------------------------------------------------------------------
 // Terminal view: draws the libvterm screen and turns key presses into bytes
 // ---------------------------------------------------------------------------
 class CTermView : public CCoeControl, public MSerialObserver
 	{
 public:
+	// 0.74: file transfer and the session log (ptxfer.cpp)
+	PsiShared* XferShared() const { return SshLoggedIn() ? iShared : NULL; }
+	CPtLog* iLog;                 // NULL until File > Log to file... is first used
+	CPtXferMemory* iXferMem;      // NULL until a transfer is first used
+
 	struct TTmuxTab { TInt iIndex; TBuf<20> iName; TBool iCurrent; TInt iX0; TInt iX1; };
 	enum { KMaxTabs = 12 };
 	CTermView();

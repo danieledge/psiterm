@@ -50,6 +50,13 @@ static void cli_algos_initialise(void);
 
 struct clientsession cli_ses; /* GLOBAL */
 
+#ifdef __EPOC32__
+extern void psi_sftp_chanreply(int success);
+extern void psi_sftp_loop(void);
+static void psi_recv_channel_success(void) { psi_sftp_chanreply(1); }
+static void psi_recv_channel_failure(void) { psi_sftp_chanreply(0); }
+#endif
+
 /* Sorted in decreasing frequency will be more efficient - data and window
  * should be first */
 static const packettype cli_packettypes[] = {
@@ -72,8 +79,14 @@ static const packettype cli_packettypes[] = {
 	{SSH_MSG_USERAUTH_BANNER, recv_msg_userauth_banner}, /* client */
 	{SSH_MSG_USERAUTH_SPECIFIC_60, recv_msg_userauth_specific_60}, /* client */
 	{SSH_MSG_GLOBAL_REQUEST, recv_msg_global_request_cli},
+#ifdef __EPOC32__
+	/* PsiTerm: the file transfer channel waits for its subsystem answer (sftp.c) */
+	{SSH_MSG_CHANNEL_SUCCESS, psi_recv_channel_success},
+	{SSH_MSG_CHANNEL_FAILURE, psi_recv_channel_failure},
+#else
 	{SSH_MSG_CHANNEL_SUCCESS, ignore_recv_response},
 	{SSH_MSG_CHANNEL_FAILURE, ignore_recv_response},
+#endif
 #if DROPBEAR_CLI_REMOTETCPFWD
 	{SSH_MSG_REQUEST_SUCCESS, cli_recv_msg_request_success}, /* client */
 	{SSH_MSG_REQUEST_FAILURE, cli_recv_msg_request_failure}, /* client */
@@ -335,6 +348,9 @@ static void cli_sessionloop() {
 			if (cli_ses.winchange) {
 				cli_chansess_winchange();
 			}
+#ifdef __EPOC32__
+			psi_sftp_loop();        /* PsiTerm's file transfer requests */
+#endif
 			return;
 
 		/* XXX more here needed */

@@ -21,6 +21,7 @@ NAME PSIT
 #include <eikmnbut.rh>
 #include <eikspace.rh>
 #include <eikclock.rh>
+#include <eiklbx.rh>
 #include <eikon.rsg>
 
 #include "psiterm.hrh"
@@ -161,7 +162,8 @@ RESOURCE MENU_BAR r_pt_menubar
 		};
 	}
 
-// File: the connection, the login key, Close (as the built-in Email program:
+// File: the connection, file transfer and the session log (0.74), the
+// login key, Close (as the built-in Email program:
 // Close mailbox / Disconnect ... Close)
 RESOURCE MENU_PANE r_pt_term_menu
 	{
@@ -170,6 +172,9 @@ RESOURCE MENU_PANE r_pt_term_menu
 		MENU_ITEM { command=EPtCmdSsh; txt="SSH to..."; },
 		MENU_ITEM { command=EPtCmdSshDisconnect; txt="Disconnect SSH"; },
 		MENU_ITEM { command=EPtCmdHangup; txt="Hang up modem"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdSendFile; txt="Send file..."; },
+		MENU_ITEM { command=EPtCmdGetFile; txt="Get file..."; },
+		MENU_ITEM { command=EPtCmdLog; txt="Log to file..."; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdInstallKey; txt="Install login key on server"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
 		};
@@ -711,4 +716,120 @@ RESOURCE DIALOG r_pt_test_dialog
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgTest4; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=80; txt="-"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgTest5; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=80; txt="-"; }; }
 		};
+	}
+
+// ---------------------------------------------------------------------------
+// 0.74: file transfer (SFTP) and the session log - ptxfer.cpp
+// ---------------------------------------------------------------------------
+
+RESOURCE TBUF r_pt_tbuf_send_title { buf="Send file"; }
+
+// While a file moves: what, how far, and Stop. The window closes itself
+// when the transfer ends; an infoprint then says how it went.
+RESOURCE DIALOG r_pt_xfer_dialog
+	{
+	title="Sending file";
+	flags=EEikDialogFlagWait;
+	buttons=r_pt_xfer_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgXferWhat; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgXferHow; control=LABEL { txt=""; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pt_xfer_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Stop"; }; hotkey=EEikBidCancel; flags=0; }
+		};
+	}
+
+// Get file: the server's folder, folders first. Enter opens a folder or
+// fetches a file; Up (or Backspace) goes to the folder above.
+RESOURCE DIALOG r_pt_remote_get_dialog
+	{
+	title="Get file";
+	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight;
+	buttons=r_pt_remote_get_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; prompt="Folder"; id=EPtDlgRemoteDir; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtColListBox; id=EPtDlgRemoteList;
+			control=LISTBOX { height=6; width=30; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pt_remote_get_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPtBidUp; button=CMBUT { txt="Up"; }; hotkey='U'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Get"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+// Send file, second step: which folder on the server it goes to. Enter
+// sends it to the folder shown; Open (or a second tap) goes into the
+// highlighted folder, Up (or Backspace) to the folder above.
+RESOURCE DIALOG r_pt_remote_send_dialog
+	{
+	title="Send to folder";
+	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight;
+	buttons=r_pt_remote_send_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; prompt="Folder"; id=EPtDlgRemoteDir; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtColListBox; id=EPtDlgRemoteList;
+			control=LISTBOX { height=6; width=30; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pt_remote_send_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPtBidOpen; button=CMBUT { txt="Open"; }; hotkey='O'; },
+		DLG_BUTTON { id=EPtBidUp; button=CMBUT { txt="Up"; }; hotkey='U'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Send"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+// File > Log to file...: where, and how
+RESOURCE DIALOG r_pt_log_dialog
+	{
+	title="Log to file";
+	flags=EEikDialogFlagWait;
+	buttons=r_pt_log_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="File"; id=EPtDlgLogFile;
+			control=EDWIN { width=26; maxlength=200; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Save"; id=EPtDlgLogText;
+			control=CHOICELIST { array_id=r_pt_log_text_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="If the file exists"; id=EPtDlgLogExisting;
+			control=CHOICELIST { array_id=r_pt_log_existing_array; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pt_log_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="OK"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+RESOURCE ARRAY r_pt_log_text_array
+	{
+	items={ LBUF { txt="Plain text"; }, LBUF { txt="Everything received (raw)"; } };
+	}
+
+RESOURCE ARRAY r_pt_log_existing_array
+	{
+	items={ LBUF { txt="Add to the end"; }, LBUF { txt="Replace it"; } };
 	}

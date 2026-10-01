@@ -578,6 +578,17 @@ void encrypt_packet() {
 	/* and an extra cleartext (stripped before transmission) byte for the
 	 * packet type */
 				+ 1;
+#if defined(__EPOC32__) && !defined(DISABLE_ZLIB)
+	/* PsiTerm: with the small zlib window (localoptions.h) a full packet
+	 * of data that does not compress (a file sent by SFTP: zip, jpg...)
+	 * grows by far more than ZLIB_COMPRESS_EXPANSION, and the padding and
+	 * MAC then overran this buffer ("Bad buf_incrlen"). Allow for zlib's
+	 * own worst case, plus the sync flush. */
+	if (is_compress_trans()) {
+		encrypt_buf_size += deflateBound(ses.keys->trans.zstream, ses.writepayload->len)
+			- ses.writepayload->len + 16;
+	}
+#endif
 
 	writebuf = buf_new(encrypt_buf_size);
 	buf_setlen(writebuf, PACKET_PAYLOAD_OFF);
