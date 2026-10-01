@@ -19,6 +19,7 @@
 #include <eikdll.h>
 #include <apgcli.h>
 #include <eikedwin.h>
+#include <eiklabel.h>
 #include <eikcmbut.h>
 #include <eiksbfrm.h>
 #include <eikbtpan.h>
@@ -462,8 +463,8 @@ void CTermView::ApplySerialSettings()
 			msg.Format(_L8("\r\n[PsiTerm: serial port in use - probably by the Psion's dial-up\r\n"
 				" connection. It is freed when the dial-up hangs up.]\r\n"));
 		else
-			msg.Format(_L8("\r\n[PsiTerm: could not open the serial port (%d).\r\n"
-				" Is Remote link switched off?]\r\n"), r);
+			msg.Format(_L8("\r\n[PsiTerm: could not open the serial port (%d) - the Remote link\r\n"
+				" may be on (switch it off from the System screen, Ctrl+L).]\r\n"), r);
 		LocalMessage(msg);
 		}
 	}
@@ -951,8 +952,8 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 		if (iLastSerialErr == 0 || now - iLastSerialErr > 320)
 			{
 			iLastSerialErr = now;
-			LocalMessage(_L8("\r\n[PsiTerm: the serial port is not open, so typing goes nowhere.\r\n"
-				" Is Remote link switched off? Try Tools > Connection settings > OK to reopen it.]\r\n"));
+			LocalMessage(_L8("\r\n[PsiTerm: the serial port is not open, so typing goes nowhere - the\r\n"
+				" Remote link may be on. Tools > Connection settings > OK opens the port again.]\r\n"));
 			}
 		return;
 		}
@@ -1099,7 +1100,7 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 		else aText.Append(_L("Starting SSH..."));
 		}
 	else if (ModemOnline())
-		aText.Format(_L("Modem connected   %d baud   Shift+Ctrl+U: hang up"), BaudValue(iSettings.iBaudIndex));
+		aText.Format(_L("Online   modem, %d baud   Shift+Ctrl+U: hang up"), BaudValue(iSettings.iBaudIndex));
 	else if (iSettings.iNetMode)
 		aText.Copy(_L("Not connected   link: Psion Internet (PPP)"));
 	else
@@ -1539,7 +1540,7 @@ void CTermView::DrawTabs(CWindowGc& aGc) const
 
 void CTermView::CheckTabsL()
 	{
-	BeginDebugL(_L("tmux tabs"));
+	BeginDebugL(_L("Check tmux tabs"));
 	TBuf8<260> m;
 	m.Format(_L8("Logged in: %s   Tabs setting: %s   Terminal %dx%d\r\n"),
 		SshLoggedIn() ? "yes" : "no", iSettings.iTmuxTabs ? "on" : "off", iCols, iRows);
@@ -2256,7 +2257,7 @@ void CTermView::SerialInfo()
 	TBuf8<512> info;
 	if (iSerial)
 		iSerial->Probe(info);
-	TRAPD(err, BeginDebugL(_L("Serial port info")));
+	TRAPD(err, BeginDebugL(_L("Serial port")));
 	if (err != KErrNone)
 		return;
 	LocalMessage(info);
@@ -2994,7 +2995,7 @@ void CTermView::StartUpdateL()
 		}
 	if (iSettings.iUpdSource == 1 && iSettings.iUpdHost.Length() == 0)
 		{
-		LocalMessage(_L8("No local update server set: Tools > Update source.\r\n"));
+		LocalMessage(_L8("No local update server set: Tools > Update PsiTerm.\r\n"));
 		return;
 		}
 	LaunchSshL(2);
@@ -4390,7 +4391,7 @@ TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
 		host.SetLength(100);
 	if (host.Length() == 0)
 		{
-		CEikonEnv::Static()->InfoMsg(_L("No host name entered"));
+		CEikonEnv::Static()->InfoMsg(_L("No address entered"));
 		TryChangeFocusToL(EPtDlgHost);
 		return EFalse;
 		}
@@ -4457,6 +4458,9 @@ void CAboutDialog::PreLayoutDynInitL()
 	{
 	TBuf<32> title(_L("PsiTerm "));
 	title.Append(KPsiTermVersion);
+	// the name and version are the heading: the dialog title font (the
+	// legend font is smaller than the bold line under it)
+	((CEikLabel*)Control(EPtDlgAbout1))->SetFont(iEikonEnv->TitleFont());
 	SetLabelL(EPtDlgAbout1, title);
 	SetLabelL(EPtDlgAboutStatus, iStatus);
 	}
@@ -4589,6 +4593,8 @@ TBool CToolDialog::OkToExitL(TInt /*aButtonId*/)
 
 void CUpdateDialog::PreLayoutDynInitL()
 	{
+	if (iNeedHost)
+		SetTitleL(_L("Send screenshots"));   // Debug > Send screenshots borrows the dialog
 	// choices: GitHub stable, GitHub testing, local server (iSource 0, 2, 1)
 	((CEikChoiceList*)Control(EPtDlgSource))->SetCurrentItem(iSource == 2 ? 1 : (iSource == 1 ? 2 : 0));
 	SetEdwinTextL(EPtDlgHost, &iHost);
@@ -4687,7 +4693,8 @@ TBool CPsiTermAppUi::EditHostL(THostEntry& aEntry)
 	return dlg->ExecuteLD(R_PT_HOST_EDIT_DIALOG) != 0;
 	}
 
-// "SSH to...": the saved host list. Loops until the user connects or cancels.
+// "SSH to...": the saved server list. Loops until the user connects or
+// cancels; the start screen, if showing, is drawn again with any changes.
 void CPsiTermAppUi::SshToL()
 	{
 	if (iView->SshActive())
@@ -4695,6 +4702,7 @@ void CPsiTermAppUi::SshToL()
 		iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
 		return;
 		}
+	TBool changed = EFalse;
 	for (;;)
 		{
 		if (iHosts->Count() == 0)
@@ -4704,11 +4712,12 @@ void CPsiTermAppUi::SshToL()
 			e.iAuth = iKeys->Count() ? 0 : 1;
 			e.iKeyId = 0;
 			if (!EditHostL(e))
-				return;
+				break;
 			iHosts->AddL(e);
 			iHosts->iLast = iHosts->Count() - 1;
 			iHosts->Save();
 			e.iPassword.FillZ();
+			changed = ETrue;
 			continue;
 			}
 		TInt index = iHosts->iLast;
@@ -4716,7 +4725,7 @@ void CPsiTermAppUi::SshToL()
 		CHostListDialog* dlg = new(ELeave) CHostListDialog(*iHosts, index, action);
 		TInt ok = dlg->ExecuteLD(R_PT_HOSTS_DIALOG);
 		if (!ok && action == 0)
-			return;
+			break;
 		if (index < 0 || index >= iHosts->Count())
 			index = 0;
 		switch (action)
@@ -4725,7 +4734,7 @@ void CPsiTermAppUi::SshToL()
 			{
 			if (iHosts->Count() >= KMaxHosts)
 				{
-				iEikonEnv->InfoMsg(_L("Host list is full - delete one first"));
+				iEikonEnv->InfoMsg(_L("Server list is full - delete one first"));
 				break;
 				}
 			THostEntry e;
@@ -4738,6 +4747,7 @@ void CPsiTermAppUi::SshToL()
 				iHosts->AddL(e);
 				iHosts->iLast = iHosts->Count() - 1;
 				iHosts->Save();
+				changed = ETrue;
 				}
 			e.iPassword.FillZ();
 			break;
@@ -4750,6 +4760,7 @@ void CPsiTermAppUi::SshToL()
 				iHosts->At(index) = e;
 				iHosts->iLast = index;
 				iHosts->Save();
+				changed = ETrue;
 				}
 			e.iPassword.FillZ();
 			break;
@@ -4759,10 +4770,11 @@ void CPsiTermAppUi::SshToL()
 			TBuf<60> what;                       // the user's own name, in double quotes
 			TPtrC name(LeftSafe(iHosts->At(index).iName, 40));
 			what.Format(_L("\"%S\""), &name);
-			if (CEikonEnv::QueryWinL(what, _L("Delete this saved host?")))
+			if (CEikonEnv::QueryWinL(what, _L("Delete this saved server?")))
 				{
 				iHosts->Delete(index);
 				iHosts->Save();
+				changed = ETrue;
 				}
 			break;
 			}
@@ -4771,6 +4783,8 @@ void CPsiTermAppUi::SshToL()
 			return;
 			}
 		}
+	if (changed && !iView->SshActive() && !iView->ReconnectWaiting())
+		iView->ShowWelcome();                // the list on the start screen is out of date
 	}
 
 // The link settings (speed, flow control, modem or Psion Internet, the PPP
@@ -5211,7 +5225,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdSpeedTest:
 		if (!ConfirmDisconnectL(aCommand))
 			break;
-		iView->BeginDebugL(_L("SSH speed test"));
+		iView->BeginDebugL(_L("Speed test"));
 		iView->StartSpeedTestL();
 		iView->RunToolDialogL();
 		break;
@@ -5240,19 +5254,17 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPtCmdUpdate:
 	case EPtCmdSendShots:
-	case EPtCmdUpdateServer:
 		{
-		if (aCommand != EPtCmdUpdateServer && !ConfirmDisconnectL(aCommand))
+		if (!ConfirmDisconnectL(aCommand))
 			break;
-		// Updates come from GitHub unless a local server is chosen. Sending
-		// screenshots (a developer feature) always needs the local server.
-		TBool needHost = (aCommand == EPtCmdSendShots) ||
-			(aCommand == EPtCmdUpdate && s.iUpdSource == 1);
-		if (aCommand == EPtCmdUpdateServer || (needHost && s.iUpdHost.Length() == 0))
+		// Tools > Update PsiTerm asks where from every time, then fetches (as
+		// PsiMail and PsiWeb do). Sending screenshots (a developer feature)
+		// always goes to the local server, so it only asks when none is set.
+		if (aCommand == EPtCmdUpdate || s.iUpdHost.Length() == 0)
 			{
 			if (aCommand == EPtCmdSendShots)
 				iEikonEnv->InfoWinL(_L("Screenshots go to a local server"),
-					_L("Run server/psion-update.sh from the PsiTerm source on a computer, then enter its address."));
+					_L("Run server/psion-update.sh from the PsiTerm source on a computer, then enter its address"));
 			TInt source = s.iUpdSource;
 			TBuf<100> host(s.iUpdHost);
 			TInt port = s.iUpdPort > 0 ? s.iUpdPort : 8686;
@@ -5263,8 +5275,6 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			s.iUpdHost = host;
 			s.iUpdPort = port;
 			SaveSettings(s);
-			if (aCommand == EPtCmdUpdateServer)
-				break;
 			}
 		iView->BeginDebugL(aCommand == EPtCmdUpdate ? _L("Update PsiTerm") : _L("Send screenshots"));
 		if (aCommand == EPtCmdUpdate)
@@ -5294,6 +5304,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		break;
 		}
 	case EPtCmdSnippets:    ManageSnippetsL(); break;
+	case EPtCmdHelp:        HelpL(); break;
 	case EPtCmdAppearance:
 		{
 		CAppearanceDialog* dlg = new(ELeave) CAppearanceDialog(s);

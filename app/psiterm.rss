@@ -14,6 +14,7 @@ NAME PSIT
 #include <eikchlst.rh>
 #include <eikcmbut.rh>
 #include <eiklabel.rh>
+#include <eikrted.rh>
 #include <eikctrls.hrh>
 #include <eikon.rsg>
 
@@ -33,7 +34,7 @@ RESOURCE EIK_APP_INFO
 // system (Ctrl+C, Ctrl+D, Ctrl+Z...), so PsiTerm cannot use EIKON's Ctrl+
 // shortcuts at all: its own are all Shift+Ctrl+letter, choosing the standard
 // letter where one exists (E close, S SSH to = "save as", C copy, V paste,
-// M zoom, K preferences, A about) and the built-in Email program's for the
+// M zoom, K preferences, H help, A about) and the built-in Email program's for the
 // connection (D = close mailbox, U = disconnect). Snippets take the letters
 // left over (see KSnippetKeys in psiterm.cpp).
 RESOURCE HOTKEYS r_pt_hotkeys
@@ -50,6 +51,7 @@ RESOURCE HOTKEYS r_pt_hotkeys
 		HOTKEY { command=EPtCmdAppearance; key='k'; },
 		HOTKEY { command=EPtCmdKeyShiftTab; key='t'; },
 		HOTKEY { command=EPtCmdScreenshot; key='p'; },
+		HOTKEY { command=EPtCmdHelp; key='h'; },
 		HOTKEY { command=EPtCmdAbout; key='a'; }
 		};
 	}
@@ -70,8 +72,8 @@ RESOURCE MENU_BAR r_pt_menubar
 		};
 	}
 
-// File: the connection. Update PsiTerm starts at once and then shows its
-// progress, so no "..." (style guide 7.3.6)
+// File: the connection, the login key, Close (as the built-in Email program:
+// Close mailbox / Disconnect ... Close)
 RESOURCE MENU_PANE r_pt_term_menu
 	{
 	items=
@@ -79,38 +81,42 @@ RESOURCE MENU_PANE r_pt_term_menu
 		MENU_ITEM { command=EPtCmdSsh; txt="SSH to..."; },
 		MENU_ITEM { command=EPtCmdSshDisconnect; txt="Disconnect SSH"; },
 		MENU_ITEM { command=EPtCmdHangup; txt="Hang up modem"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdInstallKey; txt="Install login key on server"; },
-		MENU_ITEM { command=EPtCmdUpdate; txt="Update PsiTerm"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdInstallKey; txt="Install login key on server"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
 		};
 	}
 
-// Tools: settings, then the rarely used Debug tools in a cascade, then About
+// Tools: preferences and settings, the terminal, the rarely used Debug
+// tools in a cascade, Update (as PsiMail and PsiWeb: "Update <program>..."
+// asks where from, then fetches), then About last
 RESOURCE MENU_PANE r_pt_tools_menu
 	{
 	items=
 		{
 		MENU_ITEM { command=EPtCmdAppearance; txt="Preferences..."; },
 		MENU_ITEM { command=EPtCmdLoginKey; txt="SSH keys..."; },
-		MENU_ITEM { command=EPtCmdConnSettings; txt="Connection settings..."; },
-		MENU_ITEM { command=EPtCmdUpdateServer; txt="Update source..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdConnSettings; txt="Connection settings..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdReset; txt="Reset terminal"; },
-		MENU_ITEM { cascade=r_pt_debug_menu; txt="Debug"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { cascade=r_pt_debug_menu; txt="Debug"; },
+		MENU_ITEM { command=EPtCmdUpdate; txt="Update PsiTerm..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdHelp; txt="Help on PsiTerm"; },
 		MENU_ITEM { command=EPtCmdAbout; txt="About PsiTerm"; }
 		};
 	}
 
+// (short names: the cascade opens to the left of the Tools pane, which sits
+// at the screen's right edge)
 RESOURCE MENU_PANE r_pt_debug_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPtCmdSpeedTest; txt="SSH speed test"; },
-		MENU_ITEM { command=EPtCmdSerialInfo; txt="Serial port info"; },
-		MENU_ITEM { command=EPtCmdCharInfo; txt="Character codes of selection"; },
+		MENU_ITEM { command=EPtCmdSpeedTest; txt="Speed test"; },
+		MENU_ITEM { command=EPtCmdSerialInfo; txt="Serial port"; },
+		MENU_ITEM { command=EPtCmdCharInfo; txt="Character codes"; },
 		MENU_ITEM { command=EPtCmdCheckTabs; txt="Check tmux tabs"; },
 		MENU_ITEM { command=EPtCmdScreenshot; txt="Screenshot"; },
 		MENU_ITEM { command=EPtCmdSendShots; txt="Send screenshots"; },
-		MENU_ITEM { command=EPtCmdSendSize; txt="Type stty screen size (no SSH)"; }
+		MENU_ITEM { command=EPtCmdSendSize; txt="Type screen size"; }
 		};
 	}
 
@@ -333,8 +339,9 @@ RESOURCE ARRAY r_pt_link_array
 	items={ LBUF { txt="Modem (ATDT host:port)"; }, LBUF { txt="Psion Internet (PPP)"; } };
 	}
 
-// Saved hosts: pick one and Connect, or manage the list. The dialog title
-// matches the command ("SSH to...").
+// Saved servers: pick one and Connect, or manage the list. The dialog title
+// matches the command ("SSH to..."); "server" is the word for the remote
+// machine everywhere (the start screen, the messages, this list).
 RESOURCE DIALOG r_pt_hosts_dialog
 	{
 	title="SSH to";
@@ -342,7 +349,7 @@ RESOURCE DIALOG r_pt_hosts_dialog
 	buttons=r_pt_hosts_buttons;
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="Host"; id=EPtDlgHostList; control=CHOICELIST { maxdisplaychar=28; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Server"; id=EPtDlgHostList; control=CHOICELIST { maxdisplaychar=22; }; }
 		};
 	}
 
@@ -440,7 +447,7 @@ RESOURCE DIALOG r_pt_snippets_dialog
 	buttons=r_pt_snippets_buttons;
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="Snippet"; id=EPtDlgSnipList; control=CHOICELIST { maxdisplaychar=26; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Snippet"; id=EPtDlgSnipList; control=CHOICELIST { maxdisplaychar=18; }; }
 		};
 	}
 
@@ -465,9 +472,9 @@ RESOURCE DIALOG r_pt_snippet_edit_dialog
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgSnipName; control=EDWIN { width=22; maxlength=24; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Text"; id=EPtDlgSnipText; control=EDWIN { width=22; maxlength=120; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgSnipHint; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="\\n presses Enter, \\t Tab, \\e Esc; ^C sends Ctrl+C"; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Then press Enter"; id=EPtDlgSnipEnter; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Shortcut key"; id=EPtDlgSnipKey; control=CHOICELIST { maxdisplaychar=14; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPtDlgSnipHint; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="In Text: \\n Enter  ^C Ctrl+C  \\e Esc  \\t Tab"; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Shortcut key"; id=EPtDlgSnipKey; control=CHOICELIST { maxdisplaychar=14; }; }
 		};
 	}
 
@@ -500,18 +507,39 @@ RESOURCE ARRAY r_pt_cursor_array
 
 RESOURCE DIALOG r_pt_host_edit_dialog
 	{
-	title="SSH host";
+	title="SSH server";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgName; control=EDWIN { width=22; maxlength=24; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Host (host:port)"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=106; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Address (host:port)"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=106; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="User"; id=EPtDlgUser; control=EDWIN { width=22; maxlength=60; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Command on login"; id=EPtDlgStartCmd; control=EDWIN { width=22; maxlength=100; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Log in with"; id=EPtDlgAuth; control=CHOICELIST { maxdisplaychar=26; }; },
 		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPtDlgPassword; control=SECRETED { num_letters=32; }; }
 		};
+	}
+
+// Help on PsiTerm (Shift+Ctrl+H): the topics, and the chosen one's text
+// (pthelp.cpp) - the same dialog as PsiMail's
+RESOURCE DIALOG r_pt_help_dialog
+	{
+	title="Help on PsiTerm";
+	flags=EEikDialogFlagWait|EEikDialogFlagNotifyEsc;
+	buttons=R_EIK_BUTTONS_CONTINUE;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Topic"; id=EPtDlgHelpTopic;
+			control=CHOICELIST { array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EEikCtRichTextEditor; prompt=""; id=EPtDlgHelpText;
+			control=RTXTED { width=520; height=118; numlines=7; textlimit=8000; flags=EEikEdwinNoAutoSelection|EEikEdwinReadOnly; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pt_empty_array
+	{
+	items={ LBUF { txt="-"; } };
 	}
 
 // About box
@@ -539,11 +567,13 @@ RESOURCE ARRAY r_pt_source_array
 	items={ LBUF { txt="GitHub"; }, LBUF { txt="GitHub - test builds (dev)"; }, LBUF { txt="Local server"; } };
 	}
 
-// Where updates come from; the local server is also where Debug >
-// Send screenshots goes (server/psion-update.sh in the source)
+// Tools > Update PsiTerm: where from, then OK fetches (the same dialog as
+// PsiMail's and PsiWeb's). The local server is also where Debug > Send
+// screenshots goes (server/psion-update.sh in the source); that command
+// opens this dialog with its own title.
 RESOURCE DIALOG r_pt_update_dialog
 	{
-	title="Update source";
+	title="Update PsiTerm";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=

@@ -8,5 +8,14 @@
 "psiterm.aif"-"!:\System\Apps\PsiTerm\PsiTerm.aif"
 "psiterm.gdr"-"!:\System\Apps\PsiTerm\PsiTerm.gdr"
 "terminus-licence.txt"-"!:\System\Apps\PsiTerm\Terminus-licence.txt"
+; PsiTerm's own files (settings, saved servers, snippets, the key list, the
+; random seed, the SSH known_hosts): not installed, kept across upgrades,
+; removed with the program so nothing is left behind (makesis FN)
+""-"C:\System\Apps\PsiTerm\PsiTerm.ini",FN
+""-"C:\System\Apps\PsiTerm\Hosts.dat",FN
+""-"C:\System\Apps\PsiTerm\Snippets.dat",FN
+""-"C:\System\Apps\PsiTerm\Keys.dat",FN
+""-"C:\System\Apps\PsiTerm\ssh_seed.bin",FN
+""-"C:\System\Apps\PsiTerm\.ssh\known_hosts",FN
 ; EPOC C standard library (ESTLIB.DLL) - not in the 5mx ROM
 @"STDLIB.SIS",(0x100002c3)

@@ -78,6 +78,8 @@ public:
 	TBool EngineRunning() const { return iRunning; }
 	void StartEngineL();
 	void StopEngine();
+	void StartBusy(const TDesC& aText);      // busy message until the engine draws
+	void StartBusyCancel();
 	void Command(TInt aCmd, const TDesC& aArg);
 	void Key(TUint aCode, TUint aMods);
 	void EngineEnded();
@@ -113,6 +115,8 @@ private:
 	TUint iLastFrame;
 	TUint iLinkSeq;               // last link message shown (PsiShared link_seq)
 	TBool iLinkBusy;              // a link note is up as a busy message
+	TBool iStartBusy;             // "Starting the browser engine..." is up, until its first page loads
+	TUint iStartBusyAt;           // (tick count when it went up)
 	TInt iEntropyPos;
 	TBuf<80> iMsg1;
 	TBuf<120> iMsg2;
@@ -134,6 +138,20 @@ private:
 	void PreLayoutDynInitL();
 	const TPtrC* iLines;
 	TInt iCount;
+	};
+
+// Help on PsiWeb: a topic list over a read-only text (pwhelp.cpp)
+class CPwHelpDialog : public CEikDialog
+	{
+public:
+	CPwHelpDialog(TInt aTopic) : iTopic(aTopic) {}
+private:
+	void PreLayoutDynInitL();
+	void PostLayoutDynInitL();
+	void HandleControlStateChangeL(TInt aControlId);
+	TBool OkToExitL(TInt aButtonId);
+	void ShowTopicL(TInt aTopic);
+	TInt iTopic;
 	};
 
 class CPwAboutDialog : public CEikDialog
@@ -205,6 +223,7 @@ private:
 	void PageInfoL();
 	void AboutL();
 	void UpdateL();
+	void HelpL();                      // Tools > Help on PsiWeb (pwhelp.cpp)
 	void ButtonPictureL(TInt aId, TInt aIcon);
 	void ToolbarPicturesL();
 	void ShowToolBarL(TBool aShow);

@@ -29,6 +29,7 @@ Extras bar.
 | Shift+Ctrl+Q | page information (title, address, free memory) |
 | Ctrl+U | disconnect (hang up and free the serial port) |
 | Ctrl+K | preferences: home page and proxy |
+| Shift+Ctrl+H | help on PsiWeb |
 | Shift+Ctrl+A | about PsiWeb |
 | pen | tap links, buttons, form fields and the scroll bars |
 

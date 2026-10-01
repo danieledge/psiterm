@@ -117,6 +117,7 @@ void CPwWatcher::DoCancel()
 
 CPwView::~CPwView()
 	{
+	StartBusyCancel();
 	StopEngine();
 	delete iStarter;
 	delete iTimer;
@@ -221,16 +222,28 @@ void CPwView::StartEngineL()
 	exe.Append(KEngineExe);
 
 	iLastFrame = 0;
-	iMsg1 = _L("Starting NetSurf...");
+	iMsg1.Zero();                        // a blank page until the engine draws
 	iMsg2.Zero();
 	iShowMsg = ETrue;
 	DrawNow();
+	// Loading the engine (2.6 MB) and its start-up take many seconds, during
+	// which this thread is held in Create(): say so, bottom left, and flush
+	// the window server's buffer so the message and the blank page show now
+	// rather than when Create() returns. Tick takes it down when the first
+	// page starts loading.
+	if (!iStartBusy)
+		StartBusy(_L("Starting the browser engine..."));
+	iCoeEnv->WsSession().Flush();
 
 	TInt r = iProcess.Create(exe, KNullDesC);
 	if (r != KErrNone)
 		{
+		StartBusyCancel();
 		TBuf<80> e;
-		e.Format(_L("Could not start psiweb.exe (%d) - reinstall PsiWeb from its .sis file"), r);
+		if (r == KErrNotFound || r == KErrPathNotFound)
+			e = _L("psiweb.exe is not next to PsiWeb - reinstall PsiWeb from its .sis file");
+		else
+			e.Format(_L("Could not start psiweb.exe (%d) - reinstall PsiWeb from its .sis file"), r);
 		ShowMessage(_L("The browser engine did not start"), e);
 		return;
 		}
@@ -240,6 +253,23 @@ void CPwView::StartEngineL()
 		iWatcher = new(ELeave) CPwWatcher(*this);
 	iWatcher->Watch(iProcess);
 	iProcess.Resume();
+	}
+
+void CPwView::StartBusy(const TDesC& aText)
+	{
+	if (iStartBusy)
+		iEikonEnv->BusyMsgCancel();
+	iStartBusy = EFalse;
+	TRAPD(err, iEikonEnv->BusyMsgL(aText, EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
+	iStartBusy = err == KErrNone;
+	iStartBusyAt = User::TickCount();
+	}
+
+void CPwView::StartBusyCancel()
+	{
+	if (iStartBusy)
+		iEikonEnv->BusyMsgCancel();
+	iStartBusy = EFalse;
 	}
 
 void CPwView::StopEngine()
@@ -274,6 +304,7 @@ void CPwView::RestartL(TBool aSamePage)
 		if (url.Compare(_L("about:blank")) == 0)
 			url.Zero();
 		}
+	StartBusy(_L("Restarting the browser engine..."));
 	StopEngine();
 	if (url.Length())
 		iStartUrl = url;
@@ -291,6 +322,7 @@ void CPwView::SetPageRectL(const TRect& aRect)
 		FromUtf8(url, iShared->url);
 		if (url.Compare(_L("about:blank")) == 0)
 			url.Zero();
+		StartBusy(_L("Restarting the browser engine..."));
 		StopEngine();
 		}
 	SetRectL(aRect);
@@ -316,6 +348,7 @@ void CPwView::EngineEnded()
 	TExitCategoryName cat = iProcess.ExitCategory();
 	iProcess.Close();
 	iRunning = EFalse;
+	StartBusyCancel();
 	if (iShared->quitting)
 		return;
 	TBuf<120> why;
@@ -365,6 +398,11 @@ void CPwView::Tick()
 	PwShared* s = iShared;
 	if (s)
 		s->app_beat++;                   // "still here": see pwepoc.cpp
+	// "Starting the browser engine...": down once the engine starts loading
+	// its first page (its window is up by then; its first frame is only the
+	// blank background, seconds before that), or after a minute regardless
+	if (s && iStartBusy && iRunning && (s->busy || User::TickCount() - iStartBusyAt > 64 * 60))
+		StartBusyCancel();
 	if (s && s->net.link_seq != iLinkSeq)
 		{
 		// what the connection is doing (dialling, looking up, connecting):
@@ -484,6 +522,7 @@ void CPwView::UpdateTickL()
 
 void CPwView::StartInstallerL()
 	{
+	StartBusyCancel();
 	StopEngine();                        // psiweb.exe is one of the files replaced
 	TInt err;
 	RApaLsSession ls;
@@ -576,10 +615,10 @@ TKeyResponse CPwView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 		TUint letter = (code >= 1 && code <= 26) ? 'a' + code - 1 : (code | 0x20);
 		if (mods & EModifierShift)
 			{
-			// Shift+Ctrl+M zoom out, Q page information, A about
+			// Shift+Ctrl+M zoom out, Q page information, H help, A about
 			switch (letter)
 				{
-				case 'm': case 'q': case 'a':
+				case 'm': case 'q': case 'h': case 'a':
 					return EKeyWasNotConsumed;
 				}
 			}
@@ -655,6 +694,12 @@ TBool CPwOpenDialog::OkToExitL(TInt /*aButtonId*/)
 	{
 	((CEikEdwin*)Control(EPwDlgUrl))->GetText(iUrl);
 	iUrl.Trim();
+	if (iUrl.Length() == 0)
+		{
+		iEikonEnv->InfoMsg(_L("No address entered"));
+		TryChangeFocusToL(EPwDlgUrl);
+		return EFalse;
+		}
 	return ETrue;
 	}
 
@@ -682,6 +727,9 @@ void CPwAboutDialog::PreLayoutDynInitL()
 	{
 	TBuf<32> title(_L("PsiWeb "));
 	title.Append(KVersion);
+	// the name and version are the heading: the dialog title font (the
+	// legend font is smaller than the bold line under it)
+	((CEikLabel*)Control(EPwDlgAbout1))->SetFont(iEikonEnv->TitleFont());
 	SetLabelL(EPwDlgAbout1, title);
 	SetLabelL(EPwDlgAboutStatus, iStatus);
 	}
@@ -813,11 +861,13 @@ void CPwAppUi::ShowToolBarL(TBool aShow)
 	{
 	if (!iToolBar)
 		return;
-	iEikonEnv->BusyMsgL(_L("Restarting the browser engine..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0));
 	iToolBar->MakeVisible(aShow);
-	TRAPD(err, iView->SetPageRectL(PageRect(aShow)));
-	iEikonEnv->BusyMsgCancel();
-	User::LeaveIfError(err);
+	if (aShow)
+		{
+		iToolBar->DrawNow();             // whole, before the engine's stop holds the screen up
+		iCoeEnv->WsSession().Flush();
+		}
+	iView->SetPageRectL(PageRect(aShow));
 	}
 
 CPwAppUi::~CPwAppUi()
@@ -933,28 +983,61 @@ void CPwAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		}
 	}
 
+// cuts aText to aWidth pixels of aFont, ending in "..." (one character on
+// the Psion), as the style guide has long names shown
+static void Ellipsis(TDes& aText, const CFont& aFont, TInt aWidth)
+	{
+	if (aFont.TextWidthInPixels(aText) <= aWidth)
+		return;
+	const TText KEllipsis = 0x85;
+	TInt n = aText.Length();
+	while (n > 0)
+		{
+		n--;
+		if (aFont.TextWidthInPixels(aText.Left(n)) + aFont.CharWidthInPixels(KEllipsis) <= aWidth)
+			break;
+		}
+	aText.SetLength(n);
+	aText.Append(KEllipsis);
+	}
+
+// View > Page information: the title, the address, what the engine says,
+// memory, the route. Each line is cut to fit beside its prompt.
 void CPwAppUi::PageInfoL()
 	{
 	PwShared* s = iView->Shared();
-	TBuf<120> lines[5];
+	TBuf<160> lines[5];
 	FromUtf8(lines[0], s->title);
+	lines[0].Trim();
 	if (lines[0].Length() == 0)
 		lines[0] = _L("(no title)");
 	FromUtf8(lines[1], s->url);
+	if (lines[1].Compare(_L("about:blank")) == 0)
+		lines[1] = _L("(no page open)");
 	FromUtf8(lines[2], s->status);
+	lines[2].Trim();
+	if (lines[2].Length() == 0)
+		lines[2] = _L("-");
 	TMemoryInfoV1Buf mem;
 	UserHal::MemoryInfo(mem);
-	lines[3].Format(_L("Free memory: %d KB"), mem().iFreeRamInBytes / 1024);
+	lines[3].Format(_L("%d KB"), mem().iFreeRamInBytes / 1024);
 	if (iView->Settings().iUseProxy)
 		{
 		lines[4] = _L("Via proxy ");
 		lines[4].Append(Clip(iView->Settings().iProxyHost, 60));
+		lines[4].AppendFormat(_L(":%d"), iView->Settings().iProxyPort);
 		}
 	else
-		lines[4] = _L("Direct connection");
+		lines[4] = _L("Direct");
+	// the prompts take about 120 px of the 640, the frame and margins more:
+	// the dialog's labels are bold, which the normal font's widths allow for
+	const CFont* font = iEikonEnv->NormalFont();
 	TPtrC ptrs[5];
 	for (TInt i = 0; i < 5; i++)
+		{
+		Ellipsis(lines[i], *font, 420);
 		ptrs[i].Set(lines[i]);
+		}
 	CPwInfoDialog* dlg = new(ELeave) CPwInfoDialog(ptrs, 5);
 	dlg->ExecuteLD(R_PW_INFO_DIALOG);
 	}
@@ -1161,6 +1244,9 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 	case EPwCmdAbout:
 		AboutL();
 		break;
+	case EPwCmdHelp:
+		HelpL();
+		break;
 	default:
 		break;
 		}
@@ -1170,10 +1256,7 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 // it starts: it takes a few seconds, so say so, bottom left
 void CPwAppUi::RestartEngineL()
 	{
-	iEikonEnv->BusyMsgL(_L("Restarting the browser engine..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0));
-	TRAPD(err, iView->RestartL(ETrue));
-	iEikonEnv->BusyMsgCancel();
-	User::LeaveIfError(err);
+	iView->RestartL(ETrue);              // (it shows "Restarting..." until the engine draws)
 	}
 
 // PsiMail starts PsiWeb with a URL as the command line's tail ...

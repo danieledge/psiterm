@@ -376,6 +376,21 @@ private:
 	TPsiSettings& iSettings;
 	};
 
+// Help on PsiTerm: a topic list over a read-only text (pthelp.cpp)
+class CPtHelpDialog : public CEikDialog
+	{
+public:
+	CPtHelpDialog(TInt aTopic) : iTopic(aTopic) {}
+private:
+	void SetSizeAndPositionL(const TSize& aSize);
+	void PreLayoutDynInitL();
+	void PostLayoutDynInitL();
+	void HandleControlStateChangeL(TInt aControlId);
+	TBool OkToExitL(TInt aButtonId);
+	void ShowTopicL(TInt aTopic);
+	TInt iTopic;
+	};
+
 class CUpdateDialog : public CEikDialog
 	{
 public:
@@ -462,6 +477,7 @@ public:
 	void DisconnectSsh();
 	void SshProcessEnded();
 	TBool SshActive() const { return iSshActive; }
+	TBool ReconnectWaiting() const { return iReconnectWait; }
 	// (0.68) the Psion was switched back on: psissh checks the link is still there
 	void LinkSwitchedOn() { if (iSshActive && iShared) iShared->switch_on++; }
 	TBool ModemOnline() const;
@@ -711,6 +727,7 @@ private:
 	void ManageSnippetsL();
 	void ManageKeysL();
 	void InstallKeyCmdL();
+	void HelpL();                      // Tools > Help on PsiTerm (pthelp.cpp)
 	void ConnectHostL(TInt aIndex);
 	TBool EditSnippetL(TSnippet& aEntry, TInt aSelf);
 	void SendTmux(TUint aKey);
