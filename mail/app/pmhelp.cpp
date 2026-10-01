@@ -155,6 +155,19 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "Everything goes over TLS 1.3 (or STARTTLS, if the account says so); the server's certificate is "
 	  "checked against the key you trusted the first time." },
 
+	{ "The Email icon",
+	  "The Email icon below the screen can open PsiMail instead of the built-in Email program. PsiMail "
+	  "asks once, the first time it opens after it is installed; after that, Tools > Preferences > "
+	  "Email icon opens chooses PsiMail or Built-in Email.\n"
+	  "\n"
+	  "With PsiMail chosen, a tap on the Email icon brings PsiMail to the front, or opens it if it is "
+	  "closed. A small helper program, pmbutton, waits in the background for the tap, taking very "
+	  "little memory and doing nothing until then; the other icons work as they always do. When the "
+	  "Psion restarts, the helper starts again about 30 seconds later.\n"
+	  "\n"
+	  "Choose Built-in Email, or remove PsiMail, and the Email icon opens the built-in Email program "
+	  "again. PsiMail's connections and the built-in Email program are not changed either way." },
+
 	{ "Updating PsiMail",
 	  "Tools > Update PsiMail looks for a newer PsiMail on GitHub (the published releases, or the test "
 	  "builds) or on a local server on your own network, downloads it in pieces to the memory disk, "

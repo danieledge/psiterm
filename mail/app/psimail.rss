@@ -629,7 +629,17 @@ RESOURCE DIALOG r_pm_prefs_dialog
 		DLG_LINE { type=EEikCtChoiceList; prompt="Keep mail on"; id=EPmDlgStore;
 			control=CHOICELIST { array_id=r_pm_store_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Show pictures"; id=EPmDlgPictures;
-			control=CHOICELIST { array_id=r_pm_pictures_array; }; }
+			control=CHOICELIST { array_id=r_pm_pictures_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Email icon opens"; id=EPmDlgEmailButton;
+			control=CHOICELIST { array_id=r_pm_email_button_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_email_button_array
+	{
+	items=
+		{
+		LBUF { txt="PsiMail"; }, LBUF { txt="Built-in Email"; }
 		};
 	}
 

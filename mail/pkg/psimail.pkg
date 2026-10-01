@@ -1,5 +1,7 @@
 ; PsiMail 0.71 installer for Psion Series 5mx (EPOC R5)
 ; PsiMail.app: screen, menus, settings.  psimail.exe: the mail engine.
+; pmbutton.exe: the Email icon below the screen opens PsiMail (a preference);
+; pmbutton.rdl, a recogniser, starts it at boot while that is on.
 &EN
 #{"PsiMail"},(0x01000A7C),0,71,0
 "psimail.app"-"!:\System\Apps\PsiMail\PsiMail.app"
@@ -7,10 +9,15 @@
 "psimail.mbm"-"!:\System\Apps\PsiMail\PsiMail.mbm"
 "psimail.aif"-"!:\System\Apps\PsiMail\PsiMail.aif"
 "psimail.exe"-"!:\System\Apps\PsiMail\psimail.exe"
+"pmbutton.exe"-"!:\System\Apps\PsiMail\pmbutton.exe"
+"pmbutton.rdl"-"!:\System\Recogs\pmbutton.rdl"
 ; the settings PsiMail writes: kept over an upgrade, removed with the program
 ; (the mail itself, in \PsiMail on the memory disk or the internal disk, stays)
 ""-"C:\System\Apps\PsiMail\PsiMail.ini",FN
 ""-"C:\System\Apps\PsiMail\Calendar.ini",FN
 ""-"C:\System\Apps\PsiMail\Update.ini",FN
+; present while the Email icon opens PsiMail: removed with the program, so
+; the icon is the built-in Email's again (and pmbutton.exe stops)
+""-"C:\System\Apps\PsiMail\Button.ini",FN
 ; the EPOC C library (ESTLIB.DLL), which the engine needs and the 5mx ROM lacks
 @"STDLIB.SIS",(0x100002c3)

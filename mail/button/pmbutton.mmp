@@ -1,0 +1,13 @@
+// PMBUTTON.MMP - pmbutton.exe: the Email silkscreen button opens PsiMail
+TARGET        pmbutton.exe
+TARGETTYPE    exe
+UID           0 0x01000A80
+EPOCHEAPSIZE  0x1000 0x40000
+EPOCSTACKSIZE 0x2000
+
+PROJECT       ptproj
+SUBPROJECT    psimailbtn
+SOURCE        pmbutton.cpp
+
+SYSTEMINCLUDE \epoc32\include
+LIBRARY       euser.lib efsrv.lib ws32.lib apgrfx.lib apparc.lib

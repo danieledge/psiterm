@@ -1,0 +1,11 @@
+// PMBTNREC.MMP - pmbutton.rdl: a file recogniser (recognising nothing) that starts pmbutton.exe after boot
+TARGET        pmbutton.rdl
+TARGETTYPE    dll
+UID           0x1000013E 0x01000A81
+
+PROJECT       ptproj
+SUBPROJECT    psimailbtn
+SOURCE        pmbtnrec.cpp
+
+SYSTEMINCLUDE \epoc32\include
+LIBRARY       euser.lib efsrv.lib apparc.lib

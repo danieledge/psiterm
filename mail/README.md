@@ -47,6 +47,11 @@ an emulator; the EIKON app has been driven in an emulator.
 * Search a folder on the server.
 * Work offline: changes and new messages are kept and sent next time.
 * Up to 4 accounts.
+* The Email icon below the screen can open PsiMail instead of the built-in
+  Email program: PsiMail asks once after it is installed, and Tools >
+  Preferences > Email icon opens (PsiMail / Built-in Email) changes it.
+  Built-in Email, or removing PsiMail, gives the icon back to the built-in
+  program (see `button/` below).
 * Calendar: two-way sync between Fastmail's calendars and the Psion's
   Agenda (see below).
 
@@ -183,6 +188,22 @@ Like PsiWeb, two programs share a chunk of memory (`psimail.h`):
   (a message's plain text, for quoting in a reply). PsiMail's earlier
   hand-drawn screens and their built-in fonts are gone; everything is
   drawn with EIKON's own controls and fonts.
+
+* `button/`: the Email icon. The EIKON server turns a tap on the icons
+  below the screen into keys (the Email icon is `EEikAppbarApp5Key`), which
+  the System screen captures to start the built-in programs; the newest
+  capture of a key wins. `pmbutton.exe` captures that one key (again
+  whenever a window group comes or goes, so it stays the newest) and brings
+  PsiMail to the front or opens it; it has no window and sleeps on the
+  window server. It runs only while `C:\System\Apps\PsiMail\Button.ini`
+  exists, and stops when that file goes (Preferences, or the uninstaller's
+  FN line), when PsiMail.app is removed or replaced, or when PsiMail tells
+  it to; with it gone the System screen's capture is the one that counts
+  again. ER5 has no list of programs to start at boot, so `pmbutton.rdl`
+  in `\System\Recogs` is a file recogniser that recognises nothing and
+  starts `pmbutton.exe` 30 s after the app architecture server loads it (a
+  program started while the Psion is still starting stops the System
+  screen from finishing; see `button/pmbtnrec.cpp`).
 
 Everything the engine downloads is decoded as it arrives and written to a
 file, so no message is held whole in memory (peak heap in the emulator:

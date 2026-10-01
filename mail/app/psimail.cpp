@@ -298,6 +298,7 @@ void CPmView::FinishStartL()
 	TRAPD(err, LoadCalendarL());
 	(void)err;
 	Render();
+	((CPmAppUi*)iEikonEnv->EikAppUi())->EmailButtonSoon();
 	}
 
 // Where PsiMail is, for the next start (the style guide: a program reopens
@@ -2821,6 +2822,7 @@ void CPmPrefsDialog::PreLayoutDynInitL()
 	SetNumberEditorValue(EPmDlgPrefetch, PrefetchCount(iSettings));
 	SetChoiceListCurrentItem(EPmDlgStore, iSettings.iStore ? 1 : 0);
 	SetChoiceListCurrentItem(EPmDlgPictures, iSettings.iSpare[0] >= 0 && iSettings.iSpare[0] <= 2 ? iSettings.iSpare[0] : 0);
+	SetChoiceListCurrentItem(EPmDlgEmailButton, (iSettings.iView & KPmViewEmailButton) ? 0 : 1);
 	}
 
 TBool CPmPrefsDialog::OkToExitL(TInt /*aButtonId*/)
@@ -2830,6 +2832,10 @@ TBool CPmPrefsDialog::OkToExitL(TInt /*aButtonId*/)
 	iSettings.iPrefetch = ahead > 0 ? ahead : -1;
 	iSettings.iStore = ChoiceListCurrentItem(EPmDlgStore);
 	iSettings.iSpare[0] = ChoiceListCurrentItem(EPmDlgPictures);   // pictures: 0 shown, 1 only attached files, 2 none
+	if (ChoiceListCurrentItem(EPmDlgEmailButton) == 0)
+		iSettings.iView |= KPmViewEmailButton;
+	else
+		iSettings.iView &= ~KPmViewEmailButton;
 	return ETrue;
 	}
 
@@ -2970,9 +2976,101 @@ void CPmAppUi::ConstructL()
 	iCoeEnv->RootWin().EnableOnEvents(EEventControlAlways);   // (0.68) switch-on events even when in the background
 	if (!iSettings.iAccounts[iSettings.iAcct].used)
 		{
-		if (EditAccountL(iSettings.iAcct, ETrue))
+		iAccountSetup = ETrue;               // (the Email icon question waits for this)
+		TBool done = EFalse;
+		TRAPD(err, done = EditAccountL(iSettings.iAcct, ETrue));
+		iAccountSetup = EFalse;
+		User::LeaveIfError(err);
+		if (done)
 			iView->AccountChangedL();
+		EmailButtonSoon();
 		}
+	}
+
+// ----- the Email icon below the screen ----------------------------------------
+//
+// The System screen opens the built-in Email program when the Email icon
+// below the screen is tapped. With "Email icon opens: PsiMail" in
+// Preferences, pmbutton.exe (mail/button) runs in the background and takes
+// that key instead: PsiMail is brought to the front, or started. The setting
+// is kept in iView, and as the file Button.ini, which is what tells
+// pmbutton.exe after a restart (started by pmbutton.rdl in \System\Recogs)
+// that it is wanted. Turning the setting off removes the file and stops the program:
+// the Email icon is the System screen's again. Uninstalling removes the file
+// too (an FN line in psimail.pkg), and pmbutton.exe stops when it goes.
+
+_LIT(KButtonMarker, "C:\\System\\Apps\\PsiMail\\Button.ini");
+_LIT(KButtonExe, "pmbutton.exe");
+
+void CPmAppUi::ApplyEmailButton()
+	{
+	RFs& fs = iCoeEnv->FsSession();
+	TApaTaskList tasks(iEikonEnv->WsSession());
+	TApaTask helper = tasks.FindApp(KUidPmButton);
+	if (iSettings.iView & KPmViewEmailButton)
+		{
+		fs.MkDirAll(KButtonMarker);
+		RFile file;
+		if (file.Create(fs, KButtonMarker, EFileWrite) == KErrNone)
+			file.Close();                        // (there already: fine)
+		if (!helper.Exists())
+			{
+			// it lives next to the app
+			TParse parse;
+			parse.Set(Application()->AppFullName(), NULL, NULL);
+			TFileName exe(parse.DriveAndPath());
+			exe.Append(KButtonExe);
+			RProcess process;
+			if (process.Create(exe, KNullDesC) == KErrNone)
+				{
+				process.Resume();
+				process.Close();
+				}
+			}
+		}
+	else
+		{
+		fs.Delete(KButtonMarker);
+		if (helper.Exists())
+			helper.SendSystemEvent(EApaSystemEventShutdown);
+		}
+	}
+
+// Once the window is up (CPmView::FinishStartL): the first run after
+// installing asks about the Email icon, once (the answer, either way, is kept;
+// a fresh install, whose settings are gone, asks again); then pmbutton.exe
+// is started or stopped as the setting says. From an idle callback of its
+// own, not the view's tick: a dialog's nested loop inside the tick would
+// hold the tick up, and with it the heartbeat the engine watches. When
+// PsiMail opens with no account, the account dialog comes first and the
+// question when it is closed (ConstructL calls this again).
+void CPmAppUi::EmailButtonSoon()
+	{
+	if (!iSoon)
+		iSoon = CIdle::New(CActive::EPriorityIdle);
+	if (iSoon && !iSoon->IsActive())
+		iSoon->Start(TCallBack(EmailButtonCallback, this));
+	}
+
+TInt CPmAppUi::EmailButtonCallback(TAny* aSelf)
+	{
+	CPmAppUi* self = (CPmAppUi*)aSelf;
+	TRAPD(err, self->EmailButtonStartL());
+	(void)err;
+	return EFalse;                            // (once)
+	}
+
+void CPmAppUi::EmailButtonStartL()
+	{
+	// (not on top of the first account's dialog: asked when that is closed)
+	if (!(iSettings.iView & KPmViewEmailButtonAsked) && !iAccountSetup)
+		{
+		iSettings.iView |= KPmViewEmailButtonAsked;
+		if (iEikonEnv->QueryWinL(_L("The Email icon can open PsiMail instead of Email"), _L("Use the Email icon for PsiMail?")))
+			iSettings.iView |= KPmViewEmailButton;
+		SaveSettings();
+		}
+	ApplyEmailButton();
 	}
 
 // a toolbar button's picture, from PsiMail.mbm (made by tools/mkicons.py)
@@ -3057,6 +3155,7 @@ void CPmAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
 
 CPmAppUi::~CPmAppUi()
 	{
+	delete iSoon;
 	if (iView)
 		{
 		RemoveFromStack(iView);
@@ -4438,6 +4537,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		if (dlg->ExecuteLD(R_PM_PREFS_DIALOG))
 			{
 			SaveSettings();
+			ApplyEmailButton();
 			iView->SettingsChanged();
 			if (sort != iSettings.iSort)
 				iView->SortL(sort);

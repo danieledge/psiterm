@@ -26,7 +26,7 @@ echo "== PsiMail.app"
 export PATH=/usr/bin:/bin:$PSION_SDK/gcc-3.0-psion-98r2-9/bin:$EPOCROOT/epoc32/tools
 export TMP=$EPOCROOT/tmp WINEDEBUG=-all
 mkdir -p "$TMP" "$EPOCROOT/ptproj"
-for l in psimail:mail/app psimailinc:mail psitermssh:ssh; do
+for l in psimail:mail/app psimailinc:mail psitermssh:ssh psimailbtn:mail/button; do
 	name=${l%%:*}; dir=$TOP/${l#*:}
 	if [ -e "$EPOCROOT/ptproj/$name" ] && [ ! -L "$EPOCROOT/ptproj/$name" ]; then
 		echo "$EPOCROOT/ptproj/$name exists and is not a link - move it away"; exit 1
@@ -37,12 +37,22 @@ cd "$EPOCROOT/ptproj/psimail"
 makmake psimail marm > "$TOP/build/psimail-makmake.log" 2>&1
 make -f psimail.marm rel > "$TOP/build/psimail-app.log" 2>&1 \
 	|| { grep -i -B1 -A4 "error\|undefined" "$TOP/build/psimail-app.log" | head -60; exit 1; }
+
+# the Email icon below the screen (mail/button): pmbutton.exe takes the key,
+# pmbutton.rdl starts it at boot
+echo "== pmbutton.exe, pmbutton.rdl"
+cd "$EPOCROOT/ptproj/psimailbtn"
+for t in pmbutton pmbtnrec; do
+	makmake $t marm > "$TOP/build/$t-makmake.log" 2>&1
+	make -f $t.marm rel > "$TOP/build/$t.log" 2>&1 \
+		|| { grep -i -B1 -A4 "error\|undefined" "$TOP/build/$t.log" | grep -v "def file" | head -40; exit 1; }
+done
 )
 
 echo "== package"
 P=$TOP/build/mail-pkg
 rm -rf "$P"; mkdir -p "$P" "$TOP/dist"
-cp "$REL/psimail.app" "$REL/psimail.rsc" "$REL/psimail.exe" "$HERE/pkg/psimail.pkg" "$TOP/build/mail-icons/psimail.mbm" "$P/"
+cp "$REL/psimail.app" "$REL/psimail.rsc" "$REL/psimail.exe" "$REL/pmbutton.exe" "$REL/pmbutton.rdl" "$HERE/pkg/psimail.pkg" "$TOP/build/mail-icons/psimail.mbm" "$P/"
 # psimail.exe needs the EPOC C library (ESTLIB.DLL), which the 5mx ROM
 # lacks: embed the SDK's redistributable stdlib.sis, as PsiTerm does
 cp "$REL/stdlib.sis" "$P/STDLIB.SIS"

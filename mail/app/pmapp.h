@@ -46,6 +46,9 @@ extern "C" {
 #include "psimail.hrh"
 
 const TUid KUidPsiMail = { 0x01000A7C };
+const TUid KUidPmButton = { 0x01000A80 };   // pmbutton.exe (mail/button): the Email icon opens PsiMail
+const TInt KPmViewEmailButton = 0x100;      // TPmSettings::iView bits
+const TInt KPmViewEmailButtonAsked = 0x200;
 
 // app-wide settings (accounts are PmAccount, as the engine uses them)
 struct TPmSettings
@@ -61,7 +64,8 @@ struct TPmSettings
 	TInt iPrefetch;        // download the newest N messages' text ahead: 0 = the default (10), -1 = off
 	TInt iZoom;            // text size: 0 = the default (2), else 1..4
 	TInt iSort;            // the message list's order: 0 newest first (see pmnative.cpp)
-	TInt iView;            // what's hidden: 1 toolbar, 2 title bar, 4 folder list
+	TInt iView;            // what's hidden: 1 toolbar, 2 title bar, 4 folder list;
+	                       // 0x100 the Email icon below the screen opens PsiMail (pmbutton.exe), 0x200 that was asked once
 	TInt iSpare[2];        // (TPmSettings is saved whole: keep its size)
 	                       // iSpare[0]: pictures in messages - 0 shown, 1 only attached files, 2 none (pmnative.cpp)
 	                       // iSpare[1]: where PsiMail was when closed (CPmView::WhereToken)
@@ -668,7 +672,10 @@ public:
 	void MailtoL(const TDesC& aUrl);               // a mailto: link: compose, filled in
 	void ForwardReadyL(TUint aUid, CDesCArray& aFiles);   // the attachments are here: compose the forward
 	CPmMbm* Mbm() { return iMbm; }                 // PsiMail.mbm (NULL if it couldn't be read)
+	void EmailButtonSoon();                        // once the window is up: the first-run question, then pmbutton.exe
 private:
+	static TInt EmailButtonCallback(TAny* aSelf);
+	void EmailButtonStartL();
 	void HandleCommandL(TInt aCommand);
 	void ProcessMessageL(TUid aUid, const TDesC8& aParams);           // PsiWeb's mailto: links
 	TBool ProcessCommandParametersL(TApaCommand aCommand, TFileName& aDocumentName, const TDesC8& aTail);
@@ -677,6 +684,7 @@ private:
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
 	void HandleSwitchOnEventL(CCoeControl* aDestination);
 	void LoadSettings();
+	void ApplyEmailButton();                   // start or stop pmbutton.exe as the setting says
 	TBool EditAccountL(TInt aIndex, TBool aNew);
 	CPmDraft* ReplyDraftL(TBool aAll);
 	CPmDraft* ForwardDraftL(CDesCArray* aFiles);
@@ -702,6 +710,8 @@ private:
 	CPmView* iView;
 	CPmContacts* iContacts;
 	CPmMbm* iMbm;
+	CIdle* iSoon;                      // EmailButtonSoon
+	TBool iAccountSetup;               // the first account's dialog is open (ConstructL)
 	TBool iTool4Close;                 // the last toolbar button says Close
 	TPmSettings iSettings;
 	TPmCalSettings iCalSettings;
