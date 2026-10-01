@@ -90,7 +90,9 @@ static long duration(const char *v)
 	if (*v == '-') { sign = -1; v++; } else if (*v == '+') v++;
 	if (*v++ != 'P') return 0;
 	for (; *v; v++) {
-		if (*v >= '0' && *v <= '9') { n = n * 10 + (*v - '0'); continue; }
+		/* bounded: a long is 32 bits on the Psion, and no reminder is
+		   years away */
+		if (*v >= '0' && *v <= '9') { if (n < 300) n = n * 10 + (*v - '0'); continue; }
 		switch (*v) {
 		case 'T': time = 1; break;
 		case 'W': total += n * 7 * 86400; break;
@@ -99,6 +101,7 @@ static long duration(const char *v)
 		case 'M': if (time) total += n * 60; break;
 		case 'S': total += n; break;
 		}
+		if (total > 1000000000L) total = 1000000000L;
 		n = 0;
 	}
 	return sign * total;
@@ -358,6 +361,9 @@ static int load(Obj *ob, const char *buf, int len, int zone)
 		ob->nlines++;
 	}
 	free(line);
+	/* a VEVENT the text never closed: it ends where the text does (an end
+	   before its start would send ics_change round for ever) */
+	if (cur >= 0) ob->block[cur].end = ob->nlines - 1;
 	return ob->vcal_end >= 0 ? 0 : (free(ob->text), -1);
 }
 
@@ -495,7 +501,7 @@ int ics_change(char *buf, int len, int max, const char *recurid, const IcsChange
 		for (k = 0; k < ob->nblocks; k++)
 			if (k == target && i == ob->block[k].start) {
 				write_event(&o, ob, ob->block[k].start, ob->block[k].end, c, zone, 0, recurid);
-				i = ob->block[k].end;
+				if (ob->block[k].end > i) i = ob->block[k].end;
 				handled = 1;
 			}
 		if (handled) continue;

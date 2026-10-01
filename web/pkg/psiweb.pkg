@@ -9,3 +9,5 @@
 "psiweb.aif"-"!:\System\Apps\PsiWeb\PsiWeb.aif"
 "psiweb.exe"-"!:\System\Apps\PsiWeb\psiweb.exe"
 "COPYING.txt"-"!:\System\Apps\PsiWeb\COPYING.txt"
+; the EPOC C library (ESTLIB.DLL), which the engine needs and the 5mx ROM lacks
+@"STDLIB.SIS",(0x100002c3)

@@ -91,6 +91,7 @@ int cs_utf8_to_cp1252(const char *in, int n, char *out, int max)
 {
 	const unsigned char *s = (const unsigned char *)in;
 	int i = 0, k = 0;
+	if (max <= 0) return 0;
 	while (i < n && k < max - 1) {
 		unsigned int c = s[i++];
 		if (c >= 0x80) {
@@ -112,6 +113,7 @@ int cs_cp1252_to_utf8(const char *in, int n, char *out, int max)
 {
 	const unsigned char *s = (const unsigned char *)in;
 	int i, k = 0;
+	if (max <= 0) return 0;
 	for (i = 0; i < n; i++) {
 		unsigned int u = cs_cp1252_to_ucs(s[i]);
 		if (u < 0x80) { if (k + 1 >= max) break; out[k++] = (char)u; }
@@ -233,9 +235,11 @@ void cs_decode_header(const char *in, char *out, int max)
 			/* whitespace between two encoded-words is dropped */
 			const char *w = p;
 			while (*w == ' ' || *w == '\t' || *w == '\r' || *w == '\n') w++;
-			if (w[0] == '=' && w[1] == '?') { p = w; continue; }
+			/* (only when that moved p: "=?" that is not an encoded-word
+			   would otherwise come round here for ever) */
+			if (w > p && w[0] == '=' && w[1] == '?') { p = w; continue; }
 		}
-		if (rn) { k += cs_to_cp1252(rcs, raw, rn, out + k, max - k); rn = 0; }
+		if (rn) { k += cs_to_cp1252(rcs, raw, rn, out + k, max - k); rn = 0; if (k >= max - 1) break; }
 		last_was_ew = 0;
 		if (*p == '\r' || *p == '\n') { p++; continue; }
 		if (*p == '\t') { out[k++] = ' '; p++; continue; }
@@ -250,6 +254,7 @@ void cs_decode_header(const char *in, char *out, int max)
 		out[k++] = *p++;
 	}
 	if (rn && k < max - 1) k += cs_to_cp1252(rcs, raw, rn, out + k, max - k);
+	if (k > max - 1) k = max - 1;        /* (a converted run can fill out to the brim) */
 	out[k] = 0;
 }
 

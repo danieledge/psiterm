@@ -43,6 +43,9 @@ echo "== package"
 P=$TOP/build/mail-pkg
 rm -rf "$P"; mkdir -p "$P" "$TOP/dist"
 cp "$REL/psimail.app" "$REL/psimail.rsc" "$REL/psimail.exe" "$HERE/pkg/psimail.pkg" "$TOP/build/mail-icons/psimail.mbm" "$P/"
+# psimail.exe needs the EPOC C library (ESTLIB.DLL), which the 5mx ROM
+# lacks: embed the SDK's redistributable stdlib.sis, as PsiTerm does
+cp "$REL/stdlib.sis" "$P/STDLIB.SIS"
 python3 "$HERE/pkg/mkicon.py" "$P/psimail.aif" > /dev/null
 (cd "$P" && WINEDEBUG=-all wine "$EPOCROOT/epoc32/tools/makesis.exe" psimail.pkg "$TOP/dist/PsiMail.sis" > /dev/null)
 ls -la "$TOP/dist/PsiMail.sis"

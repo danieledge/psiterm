@@ -639,6 +639,8 @@ void CPmView::LoadFoldersL()
 		f.iUnread = ToInt(NextField(l));
 		f.iTotal = ToInt(NextField(l));
 		TPtrC imap = NextField(l);
+		if (!imap.Length())
+			continue;                    // a damaged line: not a folder
 		SafeCopy(f.iImap, imap);
 		SafeCopy(f.iName, NextField(l));
 		iFolders->AppendL(f);

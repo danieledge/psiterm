@@ -1262,9 +1262,41 @@ extern "C" void pg_set_exit(int aCode)
 		}
 	}
 
+// (0.69) PsiTerm's heartbeat (app_beat) stopped for KAppGoneTicks: the app
+// has gone, so psissh must stop too (it would otherwise hold the port and
+// the chunk until a reset: an EXE without a window is not in the task list).
+// Apps that never beat (PsiMail, PsiWeb, old PsiTerm) are not watched.
+const TUint KAppGoneTicks = 64 * 45;
+static unsigned int gLastBeat = 0;
+static TUint gBeatSeenAt = 0;
+static int gAppGone = 0;
+
+static int AppGone()
+	{
+	if (gAppGone)
+		return 1;
+	unsigned int beat = gShared->app_beat;
+	if (beat == 0 && gLastBeat == 0)
+		return 0;                       // an app that never beats
+	TUint now = User::TickCount();
+	if (beat != gLastBeat || gBeatSeenAt == 0)
+		{
+		gLastBeat = beat;
+		gBeatSeenAt = now;
+		return 0;
+		}
+	if (now - gBeatSeenAt < KAppGoneTicks)
+		return 0;
+	gAppGone = 1;
+	LinkLog("the app's heartbeat stopped: quitting");
+	return 1;
+	}
+
 extern "C" int pg_quit_requested()
 	{
-	return gShared ? gShared->quit : 1;
+	if (!gShared)
+		return 1;
+	return gShared->quit || AppGone();
 	}
 
 extern "C" void pg_msleep(int aMs)
@@ -1404,7 +1436,7 @@ extern "C" void pg_out_write(const void* aBuf, int aLen)
 		int space = PSI_OUT_SIZE - (int)(head - gShared->out_tail);
 		if (space <= 0)
 			{
-			if (gShared->quit)
+			if (pg_quit_requested())    // (or the app has gone: nobody will drain it)
 				return;
 			User::After(10000);         // PsiTerm will drain it shortly
 			continue;

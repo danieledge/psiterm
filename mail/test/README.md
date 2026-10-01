@@ -156,6 +156,19 @@ at, then fuzzes each one (truncated, bit-flipped, overwritten) for N rounds.
 Any crash, sanitizer report or leak fails it. `imgtest decode|fuzz|time|pmi`
 can also be run by hand; `time` says how long a decode takes on the PC.
 
+## The parsers of network text (no server needed)
+
+`parsefuzz.py [--rounds N] [--seeds N]` builds `parsefuzz.c` with the
+IMAP response parser (`imapparse.c`), MIME (`mime.c`: BODYSTRUCTURE, base64
+and quoted-printable), HTML (`html.c`), the WebDAV XML reader
+(`xmlscan.c`), iCalendar (`ics.c`: reading, editing and EXDATE) and the
+header charsets (`charset.c`) under AddressSanitizer and UBSan, and feeds
+each one N rounds of random and mutated input per seed, split at random
+points. Any crash, sanitizer report or hang fails it (a round over a
+second is reported). It found two hangs and an off-by-one in 0.69; add a
+word list and a target when adding a parser. See also
+`docs/epoc-robustness-best-practices.md`.
+
 The same decoders as ARM code: `psimail-host` and `run_psimail.py` take
 `pictures F UID PARTS` (the parts of `<uid>.pic` to fetch and decode, as
 the app asks with PM_CMD_PICTURES); with `--count` the runner says how many

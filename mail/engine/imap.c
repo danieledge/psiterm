@@ -105,11 +105,14 @@ static int read_response(void)
 			if (*o != '{') { g_resp[g_rlen++] = '\r'; g_resp[g_rlen++] = '\n'; break; }
 			n = strtol(o + 1, 0, 10);
 			if (n < 0) n = 0;
-			if ((g_stream && n > 0) || g_rlen + n + 8 > RESP_MAX) {
+			/* (n is compared on its own: g_rlen + n could wrap round for a
+			   {2147483640}-sized literal and land in the "keep it" branch,
+			   which reads n bytes into g_resp) */
+			if ((g_stream && n > 0) || n > (long)(RESP_MAX - g_rlen - 8)) {
 				/* stream it (or throw it away if too big to keep) */
 				static char chunk[1024];
 				long left = n;
-				StreamFn fn = g_rlen + n + 8 > RESP_MAX && !g_stream ? 0 : g_stream;
+				StreamFn fn = n > (long)(RESP_MAX - g_rlen - 8) && !g_stream ? 0 : g_stream;
 				g_rlen = (int)(o - g_resp);
 				memcpy(g_resp + g_rlen, "{0}\r\n", 5);
 				g_rlen += 5;

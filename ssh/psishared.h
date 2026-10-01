@@ -87,6 +87,11 @@ typedef struct
 	   (HandleSwitchOnEventL): the engine then checks the link is still
 	   there (PPP up? modem carrier?) instead of trusting a dead socket */
 	volatile unsigned int switch_on;
+	/* (0.69) PsiTerm adds 1 every pump tick (1/64 s) while psissh runs. If
+	   it stops for 45 s the app has gone (crashed, or killed from the task
+	   list) and psissh quits instead of holding the serial port and the
+	   chunk for ever. 0 = never beat: PsiMail and PsiWeb have their own. */
+	volatile unsigned int app_beat;
 	} PsiShared;
 
 #endif

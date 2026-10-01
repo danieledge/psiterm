@@ -498,6 +498,8 @@ static int pf_body(struct pf *f, const unsigned char *d, int n)
 			} else if (f->chunk_state == 0) {
 				if (f->linelen == 0) { continue; }
 				f->chunk_left = strtol(f->line, NULL, 16);
+				if (f->chunk_left < 0)       /* "-5", or a size past LONG_MAX */
+					return -1;
 				f->chunk_state = f->chunk_left ? 1 : 3;
 			} else if (f->chunk_state == 3) {
 				if (f->linelen == 0) { f->linelen = 0; return 1; }

@@ -45,6 +45,7 @@ static ImapNode *parse_list(int depth, char close)
 static ImapNode *parse_item(int depth)
 {
 	ImapNode *n;
+again:
 	skip_sp();
 	if (g_p >= g_end || depth > 40) return 0;
 	if (*g_p == '(') { g_p++; return parse_list(depth, ')'); }
@@ -64,7 +65,8 @@ static ImapNode *parse_item(int depth)
 		const char *q = memchr(g_p, '\n', g_end - g_p);
 		if (!q) return 0;
 		q++;
-		if (len < 0 || q + len > g_end) len = g_end - q;
+		/* (compared as lengths: q + len could wrap round for a huge {n}) */
+		if (len < 0 || len > (long)(g_end - q)) len = g_end - q;
 		n = new_node(IT_STRING);
 		if (!n) return 0;
 		n->s = q; n->len = (int)len;
@@ -83,7 +85,8 @@ static ImapNode *parse_item(int depth)
 			else if (!br && (c == ' ' || c == '(' || c == ')' || c == '\r' || c == '\n')) break;
 			g_p++;
 		}
-		if (g_p == s) { g_p++; return parse_item(depth); }   /* stray ')' */
+		if (g_p == s) { g_p++; goto again; }   /* stray ')': a loop, not a recursion - a
+		                                          line of them must not eat the stack */
 		n = new_node(IT_ATOM);
 		if (!n) return 0;
 		n->s = s; n->len = (int)(g_p - s);

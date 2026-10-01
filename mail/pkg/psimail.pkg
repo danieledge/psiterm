@@ -7,3 +7,5 @@
 "psimail.mbm"-"!:\System\Apps\PsiMail\PsiMail.mbm"
 "psimail.aif"-"!:\System\Apps\PsiMail\PsiMail.aif"
 "psimail.exe"-"!:\System\Apps\PsiMail\psimail.exe"
+; the EPOC C library (ESTLIB.DLL), which the engine needs and the 5mx ROM lacks
+@"STDLIB.SIS",(0x100002c3)

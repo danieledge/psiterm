@@ -3385,6 +3385,7 @@ void CTermView::PumpSsh()
 	{
 	if (!iShared)
 		return;
+	iShared->app_beat++;                 // (0.69) "still here": see psishared.h
 	if (iShared->out_tail == iShared->out_head)
 		return;
 	// Feed everything waiting in one paint pass, so libvterm can merge a
