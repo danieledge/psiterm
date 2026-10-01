@@ -28,7 +28,7 @@ an emulator; the EIKON app has been driven in an emulator.
 * Folders with unread counts (bold while there is unread mail, as are the
   unread messages themselves); the newest 50 messages per folder (more with
   File > Folder > Get older messages), kept on the CF card to read offline.
-* File > Folder > New folder / Rename folder / Delete folder (IMAP CREATE,
+* File > Folder > Create new / Rename / Delete (IMAP CREATE,
   RENAME and DELETE, with SUBSCRIBE; names go as modified UTF-7, the local
   files follow a rename). The Inbox and the standard folders stay as they
   are. These need the server, so offline they ask to go online.
@@ -138,9 +138,9 @@ without the `cryptography` package too). The version must go up each time.
 | Ctrl+N / Ctrl+R / Shift+Ctrl+R / Ctrl+W | new / reply / reply to all / forward |
 | Ctrl+D / Ctrl+X / Shift+Ctrl+E | delete / move to folder / archive |
 | Shift+Ctrl+U / Shift+Ctrl+F | unread / flagged |
-| Ctrl+S | save an attachment |
+| Ctrl+S | save an attachment (Message > Attachments > Open / Save) |
 | Ctrl+I / Ctrl+G / Ctrl+B / Ctrl+F | inbox / go to folder / outbox / find |
-| Ctrl+Y / Shift+Ctrl+G | check this folder / get older messages (File > Folder, with New / Rename / Delete folder) |
+| Ctrl+Y / Shift+Ctrl+G | check this folder / get older messages (File > Folder, with Create new / Rename / Delete) |
 | Ctrl+M / Shift+Ctrl+M | zoom in / out (three sizes, going round) |
 | Ctrl+T / Shift+Ctrl+T / Shift+Ctrl+L | show the toolbar / title bar / folder list |
 | Shift+Ctrl+Q / Shift+Ctrl+B | status information / sort |
@@ -148,7 +148,7 @@ without the `cryptography` package too). The version must go up each time.
 | Shift+Ctrl+H / Shift+Ctrl+A / Ctrl+E | help / about PsiMail / close |
 | Tab / Shift+Tab in a message | next / previous link or attachment (Enter opens it) |
 | Ctrl+P | view the message as a web page (PsiWeb) |
-| Shift+Ctrl+N / Ctrl+Q | the calendar / switch its view (week or month) |
+| Shift+Ctrl+N / Ctrl+Q | the calendar / switch its view (week or month; View > Switch view lists them) |
 | Shift+Ctrl+Y / Shift+Ctrl+D | sync the calendar / go to today |
 | In the calendar: Left/Right, PgUp/PgDn, Home | day, week (month), today |
 | In the calendar: Ctrl+N / Enter | new event / the event in full |
