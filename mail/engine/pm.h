@@ -179,6 +179,13 @@ int  imap_delete_folder(int acct, const char *folder, char *why, int whymax);
 int  imap_part_to_file(int acct, const char *folder, unsigned int uid, const char *part, int enc, long size,
                        const char *path, const char *label, char *why, int whymax);
 
+/* Edit > Undo (imap.c): where the last MOVE/COPY put a message (UIDPLUS's
+   COPYUID; 0 = the server didn't say), and the move back */
+void imap_copyuid_clear(void);
+unsigned int imap_copyuid(void);
+int  imap_unmove(int acct, const char *dest, unsigned int uid, const char *msgid, const char *folder,
+                 unsigned int *newuid, char *why, int whymax);
+
 /* ---- pictures in a message (pictures.c): <uid>.pic lists the image parts,
    <uid>_<part>.pmi is one decoded to 16 greys (img/pmimg.h) */
 void pic_write_index(int acct, const char *folder, unsigned int uid, const PmStructure *st);
@@ -233,5 +240,11 @@ const char *pm_stristr(const char *hay, const char *needle);
 void tlsv_set_host(const char *host, int port);
 const char *tlsv_fingerprint(void);
 const char *tlsv_problem(void);            /* why the certificate was not trusted */
+
+/* ---- Edit > Undo (undo.c): the last few moves, and putting one back */
+void undo_note_move(int acct, const char *folder, unsigned int uid, const char *arg);  /* before the move */
+void undo_note_result(int acct, int r, unsigned int destuid);                          /* after it */
+int  undo_run(int acct, const char *folder, unsigned int uid, char *why, int whymax);   /* PM_CMD_UNDO */
+int  undo_replay(int acct, const char *dest, unsigned int destuid, const char *arg, char *why, int whymax);
 
 #endif

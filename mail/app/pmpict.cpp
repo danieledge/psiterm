@@ -346,14 +346,34 @@ static void DrawGlyph(CGraphicsContext& aGc, const TPoint& aAt)
 	aGc.DrawRect(TRect(aAt.iX + 3, aAt.iY + 2, aAt.iX + 5, aAt.iY + 4));
 	}
 
-void CPmPicture::Draw(CGraphicsContext& aGc, const TPoint& aTopLeft, const TRect& aClipRect, MGraphicsDeviceMap* /*aMap*/) const
+void CPmPicture::Draw(CGraphicsContext& aGc, const TPoint& aTopLeft, const TRect& aClipRect, MGraphicsDeviceMap* aMap) const
 	{
 	aGc.SetClippingRect(aClipRect);
+	// printed or in the print preview (File > Printing, pmprint.cpp): the
+	// device isn't the screen the size was worked out for, so the picture
+	// takes its size in twips on that device
+	TSize size(iPixels);
+	if (aMap && iTwips.iWidth > 0 && iTwips.iHeight > 0)
+		{
+		TSize m(aMap->HorizontalTwipsToPixels(iTwips.iWidth), aMap->VerticalTwipsToPixels(iTwips.iHeight));
+		if (m.iWidth > 0 && m.iHeight > 0 && (m.iWidth * 4 > iPixels.iWidth * 5 || m.iWidth * 5 < iPixels.iWidth * 4))
+			size = m;
+		}
 	if (iBitmap)
 		{
 		// (a CGraphicsContext has no BitBlt; DrawBitmap to a rectangle the
 		// bitmap's own size copies it as it is)
-		aGc.DrawBitmap(TRect(aTopLeft, iPixels), iBitmap);
+		aGc.DrawBitmap(TRect(aTopLeft, size), iBitmap);
+		aGc.CancelClippingRect();
+		return;
+		}
+	if (size != iPixels)
+		{
+		// a picture not fetched, on paper: its frame (the screen's font is not the printer's)
+		aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+		aGc.SetPenColor(KRgbBlack);
+		aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+		aGc.DrawRect(TRect(aTopLeft, size));
 		aGc.CancelClippingRect();
 		return;
 		}

@@ -44,6 +44,21 @@ an emulator; the EIKON app has been driven in an emulator.
 * New message, reply, reply to all, forward; files from the Psion attached
   (up to 8). Sent as UTF-8; a copy saved to Sent.
 * Delete (to Trash), archive, move to a folder, read/unread, flag.
+  Edit > Undo (Ctrl+Z) puts back the last few deleted, moved or archived
+  messages, from the server too (moved back from the Trash or the folder;
+  a move still waiting offline is simply taken out of the queue): see
+  `engine/undo.c`.
+* File > Printing: Page setup, Print setup, Print preview and Print
+  (Ctrl+P), with EIKON's own dialogs, so any installed printer driver works
+  (PsiWin's printing via the PC, serial, parallel, infrared). It prints the
+  message as the reader shows it: the header lines, the text and its
+  pictures (`app/pmprint.cpp`).
+* New mail: a beep and an infoprint ("2 new messages", over any program
+  when PsiMail is in the background); an optional timed check of the Inbox
+  every 10, 15, 30 or 60 minutes while PsiMail runs (only while connected,
+  or connecting); messages waiting in the Outbox go when a connection comes
+  up or Work offline is turned off. Tools > Preferences > New mail
+  (`app/pmauto.cpp`).
 * Search a folder on the server.
 * Work offline: changes and new messages are kept and sent next time.
 * Up to 4 accounts.
@@ -142,6 +157,8 @@ without the `cryptography` package too). The version must go up each time.
 | Shift+Ctrl+C / Ctrl+U / Esc | check mail (send & receive) / disconnect / stop |
 | Ctrl+N / Ctrl+R / Shift+Ctrl+R / Ctrl+W | new / reply / reply to all / forward |
 | Ctrl+D / Ctrl+X / Shift+Ctrl+E | delete / move to folder / archive |
+| Ctrl+Z | undo the last delete, move or archive |
+| Ctrl+P / Shift+Ctrl+P / Shift+Ctrl+V | print / print setup / print preview |
 | Shift+Ctrl+U / Shift+Ctrl+F | unread / flagged |
 | Ctrl+S | save an attachment (Message > Attachments > Open / Save) |
 | Ctrl+I / Ctrl+G / Ctrl+B / Ctrl+F | inbox / go to folder / outbox / find |

@@ -116,7 +116,9 @@ RESOURCE HOTKEYS r_pm_hotkeys
 		HOTKEY { command=EPmCmdRefresh; key='y'; },
 		HOTKEY { command=EPmCmdSearch; key='f'; },
 		HOTKEY { command=EPmCmdOutbox; key='b'; },
-		HOTKEY { command=EPmCmdMonth; key='q'; }
+		HOTKEY { command=EPmCmdMonth; key='q'; },
+		HOTKEY { command=EPmCmdUndo; key='z'; },
+		HOTKEY { command=EPmCmdPrint; key='p'; }
 		};
 	shift_control=
 		{
@@ -136,7 +138,9 @@ RESOURCE HOTKEYS r_pm_hotkeys
 		HOTKEY { command=EPmCmdUnread; key='u'; },
 		HOTKEY { command=EPmCmdFlag; key='f'; },
 		HOTKEY { command=EPmCmdToday; key='d'; },
-		HOTKEY { command=EPmCmdHelp; key='h'; }
+		HOTKEY { command=EPmCmdHelp; key='h'; },
+		HOTKEY { command=EPmCmdPrintSetup; key='p'; },
+		HOTKEY { command=EPmCmdPrintPreview; key='v'; }
 		};
 	}
 
@@ -179,7 +183,22 @@ RESOURCE MENU_PANE r_pm_file_menu
 		MENU_ITEM { command=EPmCmdHangup; txt="Disconnect"; },
 		MENU_ITEM { command=EPmCmdStop; txt="Stop"; extratxt="Esc"; },
 		MENU_ITEM { command=EPmCmdOffline; txt="Work offline"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdPrintMenu; cascade=r_pm_print_menu; txt="Printing"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
+		};
+	}
+
+// File > Printing: as Word and the built-in Email program have it (Ctrl+P
+// print, Shift+Ctrl+P print setup, Shift+Ctrl+V print preview; page setup's
+// Shift+Ctrl+U is Unread here). The dialogs are EIKON's own (pmprint.cpp)
+RESOURCE MENU_PANE r_pm_print_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdPageSetup; txt="Page setup..."; },
+		MENU_ITEM { command=EPmCmdPrintSetup; txt="Print setup..."; },
+		MENU_ITEM { command=EPmCmdPrintPreview; txt="Print preview..."; },
+		MENU_ITEM { command=EPmCmdPrint; txt="Print..."; }
 		};
 	}
 
@@ -197,11 +216,13 @@ RESOURCE MENU_PANE r_pm_folder_menu
 		};
 	}
 
-// Edit: what happens to the selected message
+// Edit: Undo (Ctrl+Z: the last delete, move or archive - pmundo.cpp), then
+// what happens to the selected message
 RESOURCE MENU_PANE r_pm_edit_menu
 	{
 	items=
 		{
+		MENU_ITEM { command=EPmCmdUndo; txt="Undo"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdMove; txt="Move to folder..."; },
 		MENU_ITEM { command=EPmCmdArchive; txt="Archive"; },
 		MENU_ITEM { command=EPmCmdDelete; txt="Delete"; flags=EEikMenuItemSeparatorAfter; },
@@ -615,11 +636,74 @@ RESOURCE ARRAY r_pm_options_lines
 		};
 	}
 
+// Preferences: two pages (0.74), General and New mail (pmauto.cpp)
 RESOURCE DIALOG r_pm_prefs_dialog
 	{
 	title="Preferences";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	pages=r_pm_prefs_pages;
+	}
+
+RESOURCE ARRAY r_pm_prefs_pages
+	{
+	items=
+		{
+		PAGE { text="General"; id=EPmPagePrefsGeneral; lines=r_pm_prefs_lines; },
+		PAGE { text="New mail"; id=EPmPagePrefsNewMail; lines=r_pm_prefs_newmail_lines; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_prefs_newmail_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Alert for new mail"; id=EPmDlgAlert;
+			control=CHOICELIST { array_id=r_pm_alert_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Check for new mail"; id=EPmDlgCheckEvery;
+			control=CHOICELIST { array_id=r_pm_check_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="If not connected"; id=EPmDlgCheckConnect;
+			control=CHOICELIST { array_id=r_pm_check_connect_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Send waiting mail when connected"; id=EPmDlgAutoSend;
+			control=CHOICELIST { array_id=r_pm_yes_no_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_alert_array
+	{
+	items=
+		{
+		LBUF { txt="Sound & message"; }, LBUF { txt="Message only"; }, LBUF { txt="Off"; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_check_array
+	{
+	items=
+		{
+		LBUF { txt="Off"; }, LBUF { txt="Every 10 minutes"; }, LBUF { txt="Every 15 minutes"; },
+		LBUF { txt="Every 30 minutes"; }, LBUF { txt="Every hour"; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_check_connect_array
+	{
+	items=
+		{
+		LBUF { txt="Wait for a connection"; }, LBUF { txt="Connect"; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_yes_no_array
+	{
+	items=
+		{
+		LBUF { txt="Yes"; }, LBUF { txt="No"; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_prefs_lines
+	{
 	items=
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Order of messages"; id=EPmDlgSort;

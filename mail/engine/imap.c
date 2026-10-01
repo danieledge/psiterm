@@ -142,6 +142,19 @@ static int read_response(void)
 	return g_rlen;
 }
 
+/* [COPYUID validity from to] in a MOVE's or COPY's reply (UIDPLUS): where a
+   single message went (Edit > Undo, see undo.c) */
+static unsigned int g_copyuid;
+static void note_copyuid(const char *text)
+{
+	const char *p = pm_stristr(text, "[COPYUID ");
+	const char *e = p ? strchr(p, ']') : 0;
+	if (!e) return;
+	while (e > p && e[-1] == ' ') e--;
+	while (e > p && e[-1] >= '0' && e[-1] <= '9') e--;
+	if (e > p && e[-1] == ' ') g_copyuid = (unsigned int)strtoul(e, 0, 10);
+}
+
 static void note_caps(const char *text)
 {
 	const char *p = pm_stristr(text, "[CAPABILITY ");
@@ -176,6 +189,7 @@ static int vcmd(UntaggedFn fn, void *ctx, char *why, int whymax, const char *fmt
 		if (!strncmp(g_resp, tag, strlen(tag)) && g_resp[strlen(tag)] == ' ') {
 			char *s = g_resp + strlen(tag) + 1;
 			note_caps(s);
+			note_copyuid(s);
 			s[strcspn(s, "\r\n")] = 0;
 			if (!pm_strncasecmp(s, "OK", 2)) return PM_RES_OK;
 			/* "NO [ALERT] text" -> text */
@@ -188,6 +202,7 @@ static int vcmd(UntaggedFn fn, void *ctx, char *why, int whymax, const char *fmt
 		if (g_resp[0] == '*') {
 			ImapNode *t;
 			note_caps(g_resp);
+			note_copyuid(g_resp);
 			if (!pm_strncasecmp(g_resp, "* BYE", 5)) {
 				/* the server is closing (maybe after LOGOUT) */
 				continue;
@@ -1686,4 +1701,73 @@ int imap_append(int acct, const char *folder, const char *path, const char *flag
 			return PM_RES_FAILED;
 		}
 	}
+}
+
+/* ------------------------------------------------------------- Edit > Undo */
+
+void imap_copyuid_clear(void) { g_copyuid = 0; }
+unsigned int imap_copyuid(void) { return g_copyuid; }
+
+/* the newest message in the selected folder with this Message-ID (0 none) */
+static unsigned int by_msgid(const char *msgid, char *why, int whymax)
+{
+	UidList l;
+	char q[220];
+	unsigned int best = 0;
+	int i;
+	if (!msgid || !msgid[0]) return 0;
+	memset(&l, 0, sizeof(l));
+	quote(msgid, q, sizeof(q));
+	if (cmd(on_search, &l, why, whymax, "UID SEARCH HEADER Message-ID %s", q) == PM_RES_OK)
+		for (i = 0; i < l.n; i++) if (l.u[i] > best) best = l.u[i];
+	free(l.u);
+	return best;
+}
+
+static void on_uid_seen(ImapNode *r, void *ctx)
+{
+	ImapNode *w = r->child;
+	if (w && w->next && ip_eq(w->next, "FETCH")) *(int *)ctx = 1;
+}
+
+/* Puts a message moved to dest back in folder. uid: its uid in dest (0 =
+   not known: found by its Message-ID). *newuid: the uid it has in folder
+   now (0 if the server didn't say and it can't be found). */
+int imap_unmove(int acct, const char *dest, unsigned int uid, const char *msgid, const char *folder,
+                unsigned int *newuid, char *why, int whymax)
+{
+	char q[160];
+	int r, seen = 0;
+	*newuid = 0;
+	if ((r = imap_open(acct, why, whymax)) != PM_RES_OK) return r;
+	pm_progress("Putting it back in %s...", folder);
+	if ((r = select_folder(dest, 0, 0, why, whymax)) != PM_RES_OK) return r;
+	if (uid) {
+		/* still there? (a UID command on a uid that has gone does nothing, and says OK) */
+		if ((r = cmd(on_uid_seen, &seen, why, whymax, "UID FETCH %u (UID)", uid)) != PM_RES_OK) return r;
+		if (!seen) uid = 0;
+	}
+	if (!uid) uid = by_msgid(msgid, why, whymax);
+	if (!pmn_is_open()) return PM_RES_OFFLINE;
+	if (!uid) {
+		char name[100];
+		cs_mutf7_decode(dest, name, sizeof(name));
+		set_why(why, whymax, "Not undone - the message is no longer in %s", name);
+		return PM_RES_FAILED;
+	}
+	quote(folder, q, sizeof(q));
+	g_copyuid = 0;
+	if (has_cap("MOVE")) r = cmd(0, 0, why, whymax, "UID MOVE %u %s", uid, q);
+	else {
+		r = cmd(0, 0, why, whymax, "UID COPY %u %s", uid, q);
+		if (r == PM_RES_OK) r = cmd(0, 0, why, whymax, "UID STORE %u +FLAGS.SILENT (\\Deleted)", uid);
+		if (r == PM_RES_OK) r = has_cap("UIDPLUS") ? cmd(0, 0, why, whymax, "UID EXPUNGE %u", uid)
+		                                          : cmd(0, 0, why, whymax, "EXPUNGE");
+	}
+	if (r != PM_RES_OK) return r;
+	*newuid = g_copyuid;
+	if (!*newuid && msgid && msgid[0] && select_folder(folder, 0, 0, why, whymax) == PM_RES_OK)
+		*newuid = by_msgid(msgid, why, whymax);
+	why[0] = 0;
+	return PM_RES_OK;
 }

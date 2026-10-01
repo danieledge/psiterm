@@ -421,14 +421,20 @@ static int run(PmCmd *c, char *why, int whymax)
 		}
 		break;
 	case PM_CMD_MOVE:
+		undo_note_move(a, c->folder, c->uid, c->arg);   /* (keeps its line and files for Edit > Undo) */
 		local_update(a, c->folder, c->uid, "", 1);
+		imap_copyuid_clear();
 		r = s->offline ? PM_RES_OFFLINE : imap_move(a, c->folder, c->uid, c->arg, why, whymax);
+		undo_note_result(a, queued(r) ? PM_RES_OFFLINE : r, imap_copyuid());
 		if (queued(r)) {
 			snprintf(line, sizeof(line), "MOVE\t%s\t%u\t%s", c->folder, c->uid, c->arg);
 			st_pending_add(a, line);
 			snprintf(why, whymax, "Moved here; the server will be told next time");
 			r = PM_RES_OFFLINE;
 		}
+		break;
+	case PM_CMD_UNDO:
+		r = undo_run(a, c->folder, c->uid, why, whymax);
 		break;
 	case PM_CMD_EXPUNGE:
 		r = imap_expunge(a, c->folder, why, whymax);

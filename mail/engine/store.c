@@ -263,6 +263,7 @@ int st_pending_replay(int acct, char *why, int whymax)
 		if (!strcmp(op, "FLAG")) r = imap_flag(acct, folder, (unsigned int)strtoul(uid, 0, 10), arg, why, whymax);
 		else if (!strcmp(op, "MOVE")) r = imap_move(acct, folder, (unsigned int)strtoul(uid, 0, 10), arg, why, whymax);
 		else if (!strcmp(op, "EXPUNGE")) r = imap_expunge(acct, folder, why, whymax);
+		else if (!strcmp(op, "UNMOVE")) r = undo_replay(acct, folder, (unsigned int)strtoul(uid, 0, 10), arg, why, whymax);
 		if (r == PM_RES_OFFLINE || r == PM_RES_CANCELLED || !pmn_is_open()) {
 			/* keep it (and the rest) for next time */
 			lost = 1;

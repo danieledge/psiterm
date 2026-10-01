@@ -2,7 +2,7 @@
 """fakeimap.py - a tiny plaintext IMAP server for the modem-mode tests
 
   fakeimap.py PORT [--drop-at N[,N...]] [--drop-every N] [--slow MS_PER_KB]
-              [--mute-noop]
+              [--mute-noop] [--no-uidplus] [--arrive N[,N...]]
 
 Serves an INBOX of a few messages: one whose text has "NO CARRIER" on a
 line of its own (as an email about modems would), one of 30 KB (several
@@ -12,6 +12,14 @@ modem line dropping looks to the client; --drop-every does it every N
 bytes sent on each connection. --mute-noop never answers a NOOP (nor
 anything after it) but keeps the connection open: what an idle connection
 looks like once a router has quietly forgotten it.
+
+Messages can be moved between folders (UID MOVE, or UID COPY + UID STORE
+\\Deleted + UID EXPUNGE / EXPUNGE), with COPYUID in the replies (UIDPLUS),
+and found by UID SEARCH HEADER Message-ID: what Edit > Undo needs (see
+undotest.sh). --no-uidplus leaves MOVE and UIDPLUS out of the capabilities,
+as an older server would: no COPYUID, so the client must search.
+--arrive puts a new message in the INBOX just before the Nth SELECT of it
+(counting from 1, over the whole run): new mail for a later check to find.
 """
 import socket, sys, threading, time
 
@@ -20,6 +28,8 @@ DROP_AT = []
 DROP_EVERY = 0
 SLOW_MS = 0
 MUTE_NOOP = False
+NO_UIDPLUS = False
+ARRIVE = []
 args = sys.argv[2:]
 while args:
     a = args.pop(0)
@@ -27,9 +37,12 @@ while args:
     elif a == '--drop-every': DROP_EVERY = int(args.pop(0))
     elif a == '--slow': SLOW_MS = int(args.pop(0))      # per 1000 bytes (87 = 115200 baud)
     elif a == '--mute-noop': MUTE_NOOP = True
+    elif a == '--no-uidplus': NO_UIDPLUS = True
+    elif a == '--arrive': ARRIVE = [int(x) for x in args.pop(0).split(',')]
+CAPS = 'IMAP4rev1 LITERAL+' + ('' if NO_UIDPLUS else ' UIDPLUS MOVE')
 
 def msg(uid, subject, text):
-    return dict(uid=uid, subject=subject, text=text.replace('\n', '\r\n'))
+    return dict(uid=uid, subject=subject, text=text.replace('\n', '\r\n'), msgid='<%d@example.com>' % uid, deleted=False)
 
 MSGS = [
     msg(101, 'hello', 'Just a short note.\n'),
@@ -38,6 +51,15 @@ MSGS = [
     msg(104, 'another', 'Second short note.\n'),
     msg(105, 'last', 'Third short note.\n'),
 ]
+
+# the messages in each folder (others are made empty when first selected)
+BOXES = {'INBOX': dict(validity=1, next=MSGS[-1]['uid'] + 1, msgs=MSGS)}
+def box(name):
+    if name.upper() == 'INBOX': name = 'INBOX'
+    if name not in BOXES: BOXES[name] = dict(validity=7, next=1, msgs=[])
+    return BOXES[name]
+
+inbox_selects = 0
 
 sent_total = 0
 lock = threading.Lock()
@@ -72,7 +94,7 @@ def list_lines():
 class Drop(Exception): pass
 
 def envelope(m):
-    return '("Mon, 1 Jan 2024 10:00:00 +0000" "%s" (("Ann" NIL "ann" "example.com")) (("Ann" NIL "ann" "example.com")) (("Ann" NIL "ann" "example.com")) (("Dan" NIL "dan" "example.com")) NIL NIL NIL "<%d@example.com>")' % (m['subject'], m['uid'])
+    return '("Mon, 1 Jan 2024 10:00:00 +0000" "%s" (("Ann" NIL "ann" "example.com")) (("Ann" NIL "ann" "example.com")) (("Ann" NIL "ann" "example.com")) (("Dan" NIL "dan" "example.com")) NIL NIL NIL "%s")' % (m['subject'], m['msgid'])
 
 def bodystructure(m):
     return '("TEXT" "PLAIN" ("CHARSET" "us-ascii") NIL NIL "7BIT" %d %d)' % (len(m['text']), m['text'].count('\n'))
@@ -80,7 +102,7 @@ def bodystructure(m):
 def fetch_items(m, seq, items):
     out = []
     if 'UID' in items or True: out.append('UID %d' % m['uid'])
-    if 'FLAGS' in items: out.append('FLAGS ()')
+    if 'FLAGS' in items: out.append('FLAGS (%s)' % ('\\Deleted' if m.get('deleted') else ''))
     if 'INTERNALDATE' in items: out.append('INTERNALDATE "01-Jan-2024 10:00:00 +0000"')
     if 'RFC822.SIZE' in items: out.append('RFC822.SIZE %d' % (len(m['text']) + 200))
     if 'ENVELOPE' in items: out.append('ENVELOPE ' + envelope(m))
@@ -128,8 +150,9 @@ def handle(conn, addr):
             if nc >= 0 and k == nc + 12 - (i - k): time.sleep(0.3)
 
     f = conn.makefile('rb')
+    sel = BOXES['INBOX']
     try:
-        send('* OK [CAPABILITY IMAP4rev1 LITERAL+ UIDPLUS MOVE] fakeimap ready\r\n')
+        send('* OK [CAPABILITY %s] fakeimap ready\r\n' % CAPS)
         while True:
             line = f.readline()
             if not line: break
@@ -139,8 +162,8 @@ def handle(conn, addr):
             if len(parts) < 2: continue
             tag, cmd = parts[0], parts[1].upper()
             rest = parts[2] if len(parts) > 2 else ''
-            if cmd == 'LOGIN': send('%s OK [CAPABILITY IMAP4rev1 LITERAL+ UIDPLUS MOVE] logged in\r\n' % tag)
-            elif cmd == 'CAPABILITY': send('* CAPABILITY IMAP4rev1 LITERAL+ UIDPLUS MOVE\r\n%s OK done\r\n' % tag)
+            if cmd == 'LOGIN': send('%s OK [CAPABILITY %s] logged in\r\n' % (tag, CAPS))
+            elif cmd == 'CAPABILITY': send('* CAPABILITY %s\r\n%s OK done\r\n' % (CAPS, tag))
             elif cmd == 'NOOP':
                 if MUTE_NOOP:
                     log('mute: not answering the NOOP, or anything else')
@@ -152,13 +175,21 @@ def handle(conn, addr):
                 with folders_lock: send(list_lines() + '%s OK done\r\n' % tag)
             elif cmd == 'STATUS':
                 name = unquote(rest[:rest.rindex('(')])
-                n = len(MSGS) if name.upper() == 'INBOX' else 0
+                n = len(box(name)['msgs'])
                 send('* STATUS "%s" (MESSAGES %d UNSEEN 0)\r\n%s OK done\r\n' % (name, n, tag))
             elif cmd == 'SELECT':
-                if unquote(rest).upper() != 'INBOX':
-                    send('* 0 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 7] ok\r\n* OK [UIDNEXT 1] ok\r\n%s OK [READ-WRITE] selected\r\n' % tag)
+                sel = box(unquote(rest))
+                if sel is BOXES['INBOX']:
+                    global inbox_selects
+                    inbox_selects += 1
+                    if inbox_selects in ARRIVE:
+                        n = sel['next']; sel['next'] += 1
+                        MSGS.append(msg(n, 'arrived %d' % n, 'This one came while you were away (%d).\n' % n))
+                        log('a new message arrived: %d' % n)
+                if sel is not BOXES['INBOX']:
+                    send('* %d EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY %d] ok\r\n* OK [UIDNEXT %d] ok\r\n%s OK [READ-WRITE] selected\r\n' % (len(sel['msgs']), sel['validity'], sel['next'], tag))
                 else:
-                    send('* %d EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 1] ok\r\n* OK [UIDNEXT %d] ok\r\n* FLAGS (\\Seen)\r\n%s OK [READ-WRITE] selected\r\n' % (len(MSGS), MSGS[-1]['uid'] + 1, tag))
+                    send('* %d EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 1] ok\r\n* OK [UIDNEXT %d] ok\r\n* FLAGS (\\Seen)\r\n%s OK [READ-WRITE] selected\r\n' % (len(MSGS), sel['next'], tag))
             elif cmd == 'CLOSE': send('%s OK closed\r\n' % tag)
             elif cmd in ('SUBSCRIBE', 'UNSUBSCRIBE'): send('%s OK noted\r\n' % tag)
             elif cmd == 'CREATE':
@@ -197,8 +228,8 @@ def handle(conn, addr):
                 items = items.upper()
                 if 'BODY.PEEK[' in items:
                     uid = int(rng)
-                    m = [x for x in MSGS if x['uid'] == uid][0]
-                    seq = MSGS.index(m) + 1
+                    m = [x for x in sel['msgs'] if x['uid'] == uid][0]
+                    seq = sel['msgs'].index(m) + 1
                     part = items[items.index('<') + 1:items.index('>')]
                     off, ln = [int(x) for x in part.split('.')]
                     data = m['text'][off:off + ln]
@@ -207,14 +238,47 @@ def handle(conn, addr):
                     send(')\r\n%s OK fetched\r\n' % tag)
                 else:
                     lo, hi = rng.split(':') if ':' in rng else (rng, rng)
-                    for seq, m in enumerate(MSGS, 1):
+                    for seq, m in enumerate(sel['msgs'], 1):
                         key = m['uid'] if cmd == 'UID' else seq
                         lo_v = int(lo)
                         hi_v = 10 ** 9 if hi == '*' else int(hi)
                         if lo_v <= key <= hi_v: send(fetch_items(m, seq, items))
                     send('%s OK fetched\r\n' % tag)
             elif cmd == 'UID' and rest.upper().startswith('STORE'):
+                uid = int(rest.split()[1])
+                for m in sel['msgs']:
+                    if m['uid'] == uid and '\\DELETED' in rest.upper(): m['deleted'] = '-FLAGS' not in rest.upper()
                 send('%s OK stored\r\n' % tag)
+            elif cmd == 'UID' and (rest.upper().startswith('MOVE ') or rest.upper().startswith('COPY ')):
+                if NO_UIDPLUS and rest.upper().startswith('MOVE '): send('%s BAD no MOVE here\r\n' % tag); continue
+                op, uid, dest = rest.split(' ', 2)
+                uid = int(uid); dbox = box(unquote(dest))
+                ms = [m for m in sel['msgs'] if m['uid'] == uid]
+                if not ms: send('%s OK nothing to do\r\n' % tag); continue
+                m = ms[0]
+                c = dict(m, uid=dbox['next'], deleted=False)
+                dbox['next'] += 1
+                dbox['msgs'].append(c)
+                code = '' if NO_UIDPLUS else '[COPYUID %d %d %d] ' % (dbox['validity'], uid, c['uid'])
+                log('%s %d -> %s as %d' % (op.upper(), uid, unquote(dest), c['uid']))
+                if op.upper() == 'MOVE':
+                    seq = sel['msgs'].index(m) + 1
+                    sel['msgs'].remove(m)
+                    send('* OK %sMoved\r\n* %d EXPUNGE\r\n%s OK done\r\n' % (code, seq, tag))
+                else:
+                    send('%s OK %scopied\r\n' % (tag, code))
+            elif cmd == 'EXPUNGE' or (cmd == 'UID' and rest.upper().startswith('EXPUNGE')):
+                want = int(rest.split()[1]) if cmd == 'UID' else None
+                out = ''
+                for m in list(sel['msgs']):
+                    if m['deleted'] and (want is None or m['uid'] == want):
+                        out += '* %d EXPUNGE\r\n' % (sel['msgs'].index(m) + 1)
+                        sel['msgs'].remove(m)
+                send(out + '%s OK expunged\r\n' % tag)
+            elif cmd == 'UID' and rest.upper().startswith('SEARCH HEADER MESSAGE-ID '):
+                want = unquote(rest[len('SEARCH HEADER MESSAGE-ID '):])
+                hits = [str(m['uid']) for m in sel['msgs'] if m['msgid'] == want]
+                send('* SEARCH%s\r\n%s OK searched\r\n' % (''.join(' ' + h for h in hits), tag))
             else:
                 send('%s BAD what\r\n' % tag)
     except Drop:
