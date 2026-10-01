@@ -16,6 +16,7 @@ tools/drawtest/fbtest
 tools/shot/host
 pkg/psiterm.app
 pkg/psiterm.rsc
+pkg/psiterm.mbm
 pkg/psissh.exe
 pkg/STDLIB.SIS
 __pycache__/

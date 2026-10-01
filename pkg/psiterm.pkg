@@ -4,6 +4,7 @@
 #{"PsiTerm"},(0x01000A77),0,70,0
 "psiterm.app"-"!:\System\Apps\PsiTerm\PsiTerm.app"
 "psiterm.rsc"-"!:\System\Apps\PsiTerm\PsiTerm.rsc"
+"psiterm.mbm"-"!:\System\Apps\PsiTerm\PsiTerm.mbm"
 "psissh.exe"-"!:\System\Apps\PsiTerm\psissh.exe"
 "psiterm.aif"-"!:\System\Apps\PsiTerm\PsiTerm.aif"
 "psiterm.gdr"-"!:\System\Apps\PsiTerm\PsiTerm.gdr"

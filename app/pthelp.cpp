@@ -48,7 +48,13 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "View > Zoom out (Shift+Ctrl+M) goes round the five sizes - Terminus 12, 14, 16 and 18 and a "
 	  "small Courier - and View > Font picks one. View > Bold text draws bold where the server asks; "
 	  "View > Show status line keeps the connection state and the clock at the bottom. Tools > "
-	  "Preferences (Shift+Ctrl+K) sets the theme, the cursor, the bell and the start screen." },
+	  "Preferences (Shift+Ctrl+K) sets the theme, the cursor, the bell and the start screen.\n"
+	  "\n"
+	  "The toolbar on the right has SSH to (End SSH while connected), Send snippet and Keys (each "
+	  "pops up a list) and Zoom. View > Show toolbar (Shift+Ctrl+B) hides it: the terminal takes "
+	  "its room - 106 columns instead of 95 in Terminus 12, 80 instead of 71 in Terminus 14 and 16, "
+	  "64 instead of 57 in Terminus 18 - and programs on the server reflow, even mid-session. "
+	  "PsiTerm remembers the choice." },
 
 	{ "Keys & snippets",
 	  "The Keys menu types what the Psion's keyboard lacks: Shift+Tab (Shift+Ctrl+T), Insert, Ctrl+\\ "
@@ -118,6 +124,7 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "Shift+Ctrl+S / Shift+Ctrl+D / Shift+Ctrl+U: SSH to / disconnect SSH / hang up the modem\n"
 	  "Shift+Ctrl+C / Shift+Ctrl+V: copy / paste\n"
 	  "Shift+Ctrl+M: zoom (round the five sizes)\n"
+	  "Shift+Ctrl+B: show or hide the toolbar\n"
 	  "Shift+PgUp / Shift+PgDn (Shift+Fn+Up/Down): scroll back / forward\n"
 	  "Shift+Home / Shift+End (Shift+Fn+Left/Right): oldest text / live screen\n"
 	  "Shift+Ctrl+T: Shift+Tab (Claude Code's switch mode)\n"

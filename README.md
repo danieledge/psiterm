@@ -46,6 +46,11 @@ and Claude Code - on a 1999 palmtop.
   optional per-host command on login such as `tmux new -A -s psion` to land back where
   you were
 - Terminus font in four sizes (plus Courier), optional bold, 16 greys
+- The standard EIKON toolbar: SSH to (End SSH while connected), Send snippet
+  and Keys pop-ups, Zoom, and the clock. View > Show toolbar (Shift+Ctrl+B)
+  hides it and the terminal takes the full width - 106 columns instead of 95
+  in Terminus 12, 80 instead of 71 in Terminus 14/16, 64 instead of 57 in
+  Terminus 18 - with the server told to reflow, even mid-session; remembered
 - Stylus as a mouse when a program asks for one (tmux with mouse on, vim,
   htop): tap to click - panes, tmux windows, buttons - and drag up or down to
   scroll. Shift+stylus still selects text

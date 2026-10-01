@@ -16,6 +16,11 @@ NAME PSIT
 #include <eiklabel.rh>
 #include <eikrted.rh>
 #include <eikctrls.hrh>
+#include <eiktbar.rh>
+#include <eiktbar.hrh>
+#include <eikmnbut.rh>
+#include <eikspace.rh>
+#include <eikclock.rh>
 #include <eikon.rsg>
 
 #include "psiterm.hrh"
@@ -28,6 +33,87 @@ RESOURCE EIK_APP_INFO
 	{
 	menubar=r_pt_menubar;
 	hotkeys=r_pt_hotkeys;
+	toolbar=r_pt_toolbar;
+	}
+
+// The standard toolbar: the program's name, four buttons for the pen, the
+// clock. SSH to... (Disconnect while a session is up, as the built-in Email
+// program's Open / Close mailbox), Snippets and Keys (both pop up a choice),
+// and Zoom (cycles the sizes). The pictures come from PsiTerm.mbm
+// (tools/mkicons.py): CPsiTermAppUi::ConstructL puts them on. View > Show
+// toolbar (Shift+Ctrl+B) hides it and the terminal takes its 70 pixels.
+RESOURCE TOOLBAR r_pt_toolbar
+	{
+	breadth=KEikStdToolBarWidth;
+	controls=
+		{
+		TBAR_CTRL
+			{
+			type=EEikCtLabel;
+			flags=EEikToolBarCtrlHasSetMinLength;
+			length=KEikStdFileNameLabelHeight;
+			control=LABEL { txt="PsiTerm"; horiz_align=EEikLabelAlignHCenter; vert_align=EEikLabelAlignVCenter; };
+			},
+		TBAR_BUTTON { id=EPtCmdTbConnect; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="SSH to"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_CTRL
+			{
+			type=EEikCtMenuButton; id=EPtCmdTbSnippets;
+			flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight;
+			control=MNBUT { popout=r_pt_snippets_popup; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Send\nsnippet"; };
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtMenuButton; id=EPtCmdTbKeys;
+			flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight;
+			control=MNBUT { popout=r_pt_keys_popup; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Keys"; };
+			},
+		TBAR_BUTTON { id=EPtCmdZoomIn; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Zoom"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_CTRL
+			{
+			type=EEikCtSpacer;
+			flags=EEikToolBarCtrlHasSetMinLength|EEikToolBarCtrlIsStretchable;
+			length=0;
+			control=SPACER;
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtClock;
+			control=CLOCK { digitalresourceid=R_EIK_DIGITAL_CLOCK; analogresourceid=R_EIK_ANALOG_CLOCK; };
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtSpacer;
+			flags=EEikToolBarCtrlHasSetMinLength;
+			length=KEikStdGapBelowClock;
+			control=SPACER;
+			}
+		};
+	}
+
+// the toolbar's pop-ups (no shortcuts: they're for the pen). Snippets gets
+// your snippets added at run time; Keys has what the 5mx keyboard lacks or
+// what is awkward to press with the pen in hand
+RESOURCE MENU_PANE r_pt_snippets_popup
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdSnippets; txt="Manage snippets..."; flags=EEikMenuItemSeparatorAfter; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_keys_popup
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdKeyEsc; txt="Esc"; },
+		MENU_ITEM { command=EPtCmdKeyTab; txt="Tab"; },
+		MENU_ITEM { command=EPtCmdKeyShiftTab; txt="Shift+Tab"; },
+		MENU_ITEM { command=EPtCmdKeyInsert; txt="Insert"; },
+		MENU_ITEM { command=EPtCmdKeyCtrlC; txt="Ctrl+C"; },
+		MENU_ITEM { command=EPtCmdKeyCtrlBackslash; txt="Ctrl+\\"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { cascade=r_pt_fkeys_menu; txt="F1 to F6"; },
+		MENU_ITEM { cascade=r_pt_fkeys2_menu; txt="F7 to F12"; }
+		};
 	}
 
 // Shortcuts. In a terminal every plain Ctrl+letter must reach the remote
@@ -35,8 +121,10 @@ RESOURCE EIK_APP_INFO
 // shortcuts at all: its own are all Shift+Ctrl+letter, choosing the standard
 // letter where one exists (E close, S SSH to = "save as", C copy, V paste,
 // M zoom, K preferences, H help, A about) and the built-in Email program's for the
-// connection (D = close mailbox, U = disconnect). Snippets take the letters
-// left over (see KSnippetKeys in psiterm.cpp).
+// connection (D = close mailbox, U = disconnect). Show toolbar is on
+// Shift+Ctrl+B ("toolBar"): EIKON's Ctrl+T cannot be used, and Shift+Ctrl+T
+// has typed Shift+Tab (Claude Code's switch mode) since 0.35. Snippets take
+// the letters left over (see KSnippetKeys in psiterm.cpp).
 RESOURCE HOTKEYS r_pt_hotkeys
 	{
 	shift_control=
@@ -50,6 +138,7 @@ RESOURCE HOTKEYS r_pt_hotkeys
 		HOTKEY { command=EPtCmdZoomOut; key='m'; },
 		HOTKEY { command=EPtCmdAppearance; key='k'; },
 		HOTKEY { command=EPtCmdKeyShiftTab; key='t'; },
+		HOTKEY { command=EPtCmdToolbar; key='b'; },
 		HOTKEY { command=EPtCmdScreenshot; key='p'; },
 		HOTKEY { command=EPtCmdHelp; key='h'; },
 		HOTKEY { command=EPtCmdAbout; key='a'; }
@@ -154,19 +243,29 @@ RESOURCE MENU_PANE r_pt_edit_menu
 	}
 
 // View: zoom (Shift+Ctrl+M cycles the sizes; the Font cascade picks one
-// directly), the scrollback, and the tick-box toggles
+// directly), the tick-box toggles, then the cascades: Font, and the
+// scrollback (Scroll > Back / Forward / To live screen)
 RESOURCE MENU_PANE r_pt_view_menu
 	{
 	items=
 		{
 		MENU_ITEM { command=EPtCmdZoomIn; txt="Zoom in"; },
 		MENU_ITEM { command=EPtCmdZoomOut; txt="Zoom out"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdScrollUp; txt="Scroll back"; extratxt="Shift+PgUp"; },
-		MENU_ITEM { command=EPtCmdScrollDown; txt="Scroll forward"; extratxt="Shift+PgDn"; },
-		MENU_ITEM { command=EPtCmdScrollEnd; txt="Go to live screen"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdBold; txt="Bold text"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPtCmdStatusLine; txt="Show status line"; flags=EEikMenuItemCheckBox; },
-		MENU_ITEM { cascade=r_pt_font_menu; txt="Font"; }
+		MENU_ITEM { command=EPtCmdToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { cascade=r_pt_font_menu; txt="Font"; },
+		MENU_ITEM { cascade=r_pt_scroll_menu; txt="Scroll"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_scroll_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdScrollUp; txt="Back"; extratxt="Shift+PgUp"; },
+		MENU_ITEM { command=EPtCmdScrollDown; txt="Forward"; extratxt="Shift+PgDn"; },
+		MENU_ITEM { command=EPtCmdScrollEnd; txt="To live screen"; }
 		};
 	}
 
@@ -284,15 +383,17 @@ RESOURCE MENU_PANE r_pt_fkeys2_menu
 		};
 	}
 
+// (the columns x rows in brackets are filled in by DynInitMenuPaneL: they
+// depend on whether the toolbar is showing - 106x20 or 95x20 for Terminus 12)
 RESOURCE MENU_PANE r_pt_font_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPtCmdZoom0; txt="Courier small (106x30)"; flags=EEikMenuItemRadioStart; },
-		MENU_ITEM { command=EPtCmdZoom1; txt="Terminus 12 (106x20)"; flags=EEikMenuItemRadioMiddle; },
-		MENU_ITEM { command=EPtCmdZoom2; txt="Terminus 14 (80x17)"; flags=EEikMenuItemRadioMiddle; },
-		MENU_ITEM { command=EPtCmdZoom3; txt="Terminus 16 (80x15)"; flags=EEikMenuItemRadioMiddle; },
-		MENU_ITEM { command=EPtCmdZoom4; txt="Terminus 18 (64x13)"; flags=EEikMenuItemRadioEnd; }
+		MENU_ITEM { command=EPtCmdZoom0; txt="Courier small"; flags=EEikMenuItemRadioStart; },
+		MENU_ITEM { command=EPtCmdZoom1; txt="Terminus 12"; flags=EEikMenuItemRadioMiddle; },
+		MENU_ITEM { command=EPtCmdZoom2; txt="Terminus 14"; flags=EEikMenuItemRadioMiddle; },
+		MENU_ITEM { command=EPtCmdZoom3; txt="Terminus 16"; flags=EEikMenuItemRadioMiddle; },
+		MENU_ITEM { command=EPtCmdZoom4; txt="Terminus 18"; flags=EEikMenuItemRadioEnd; }
 		};
 	}
 

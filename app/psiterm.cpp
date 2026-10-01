@@ -23,7 +23,10 @@
 #include <eikcmbut.h>
 #include <eiksbfrm.h>
 #include <eikbtpan.h>
+#include <eiktbar.h>
+#include <eikimage.h>
 #include "psiterm.h"
+#include "pticons.h"
 #include "psilink.h"
 
 static void UseSharedLink(RFs& aFs, TPsiSettings& aSettings);
@@ -48,6 +51,10 @@ const TInt KZoomLevels = 5;
 const TInt KZoomFace[KZoomLevels] = { 1, 0, 0, 0, 0 };
 const TInt KZoomPixels[KZoomLevels] = { 8, 12, 14, 16, 18 };
 const TInt KDefaultZoom = 1;             // Terminus 6x12: 106 x 20
+// each size's cell, for the Font menu's "columns x rows" (SetFontL measures
+// the real font; these are what Courier small and Terminus 12-18 come to)
+const TInt KZoomCellW[KZoomLevels] = { 6, 6, 8, 8, 10 };
+const TInt KZoomCellH[KZoomLevels] = { 8, 12, 14, 16, 18 };
 _LIT(KIniFile, "C:\\System\\Apps\\PsiTerm\\PsiTerm.ini");
 _LIT(KHostsFile, "C:\\System\\Apps\\PsiTerm\\Hosts.dat");
 _LIT(KSnippetsFile, "C:\\System\\Apps\\PsiTerm\\Snippets.dat");
@@ -334,6 +341,7 @@ void CSerialPort::DoCancel()
 
 CTermView::CTermView()
 	{
+	iTbBusy = -1;
 	}
 
 CTermView::~CTermView()
@@ -556,6 +564,49 @@ void CTermView::SetFontL(TInt aZoom)
 	iDamaged = EFalse;
 	if (IsActivated())
 		DrawNow();
+	}
+
+// The toolbar was shown or hidden: the terminal is 570 or 640 pixels wide.
+// SetFontL does the rest - the columns, libvterm's size, the SSH window
+// change (psissh sends it, so programs reflow) and the redraw - exactly as
+// a zoom does. A session stays up throughout.
+void CTermView::SetTermRectL(const TRect& aRect)
+	{
+	if (aRect == Rect())
+		return;
+	SetRectL(aRect);
+	SetFontL(iSettings.iZoom);
+	}
+
+// what the terminal would be at size aZoom in the room it has now (for the
+// Font menu: the counts change with the toolbar)
+void CTermView::SizeAtZoom(TInt aZoom, TInt& aCols, TInt& aRows) const
+	{
+	if (aZoom < 0 || aZoom >= KZoomLevels)
+		aZoom = KDefaultZoom;
+	TInt w = KZoomCellW[aZoom], h = KZoomCellH[aZoom];
+	if (aZoom == iSettings.iZoom && iCellW > 0 && iCellH > 0)
+		{
+		w = iCellW;                          // the real font (Courier if Terminus is missing)
+		h = iCellH;
+		}
+	aCols = Rect().Width() / w;
+	aRows = (Rect().Height() - iStatusH) / h;
+	if (aCols > 160) aCols = 160;
+	if (aRows > 60) aRows = 60;
+	if (aCols < 20) aCols = 20;
+	if (aRows < 5) aRows = 5;
+	}
+
+// the toolbar's first button follows the connection: SSH to... when idle,
+// Disconnect while a session is up or a reconnect is counting down
+void CTermView::SyncToolbar()
+	{
+	TInt busy = (iSshActive || iReconnectWait) ? 1 : 0;
+	if (busy == iTbBusy)
+		return;
+	iTbBusy = busy;
+	((CPsiTermAppUi*)iEikonEnv->EikAppUi())->SetConnectButton(busy);
 	}
 
 // ----- serial data in ------------------------------------------------------
@@ -1162,6 +1213,7 @@ void CTermView::Tick()
 		EndPaint();
 		}
 	iTickCount++;
+	SyncToolbar();
 	TInt state = (iSshActive && iShared) ? iShared->state : -1;
 	if (state != iLastState)
 		{
@@ -3367,6 +3419,7 @@ void CTermView::LaunchSshL(TInt aMode)
 		return;
 		}
 	iSshActive = ETrue;
+	SyncToolbar();
 	if (!iWatcher)
 		iWatcher = new(ELeave) CSshWatcher(*this);
 	iWatcher->Watch(iSshProcess);
@@ -3478,6 +3531,7 @@ void CTermView::CancelReconnect(const TDesC8& aWhy)
 	iReconnectPw.FillZ();
 	iReconnectPw.Zero();
 	LocalMessage(aWhy);
+	SyncToolbar();
 	}
 
 TInt CTermView::ReconnectCallback(TAny* aSelf)
@@ -3517,6 +3571,7 @@ void CTermView::SshProcessEnded()
 		iChunkOpen = EFalse;
 		}
 	iSshActive = EFalse;
+	SyncToolbar();
 	iModemOnline = EFalse;              // psissh hangs up as it ends
 	iMouseMode = VTERM_PROP_MOUSE_NONE;  // whatever asked for the mouse has gone
 	ParseTmuxTabs();                     // no session: no tabs
@@ -4109,8 +4164,9 @@ TInt CSnippetList::Save()
 
 // Shortcut keys: Shift+Ctrl + 1..9, 0, then the letters the menus leave
 // free (H is EIKON's "Help on program" key, so it stays free too). A saved
-// snippet on a letter the menu has since taken loses its key when loaded.
-static const char KSnippetKeys[] = "1234567890BFGIJLNOQRWXYZ";
+// snippet on a letter the menu has since taken loses its key when loaded
+// (0.71 took B for View > Show toolbar).
+static const char KSnippetKeys[] = "1234567890FGIJLNOQRWXYZ";
 
 TInt SnippetKeyCount()
 	{
@@ -4657,12 +4713,116 @@ void CPsiTermAppUi::ConstructL()
 	iKeys->MigrateL();
 	iSnippets = CSnippetList::NewL(iCoeEnv->FsSession());
 	iSnippets->Load();
+	TRAPD(pics, ToolbarPicturesL());
+	(void)pics;                              // (no PsiTerm.mbm: words only)
+	if (iToolBar && !settings.iToolbar)
+		iToolBar->MakeVisible(EFalse);       // remembered from last time
 	iView = new(ELeave) CTermView;
 	iView->SetSnippets(iSnippets);
 	iView->SetHosts(iHosts);
-	iView->ConstructL(ClientRect(), settings);
+	iView->ConstructL(TermRect(settings.iToolbar), settings);
 	AddToStackL(iView);
 	iCoeEnv->RootWin().EnableOnEvents(EEventControlAlways);   // (0.68) switch-on events even when in the background
+	}
+
+// ----- the toolbar ---------------------------------------------------------------
+// The standard EIKON toolbar on the right (psiterm.rss r_pt_toolbar): the
+// name, SSH to... / Disconnect, Snippets and Keys (pop-ups), Zoom, the clock.
+
+// a toolbar button's picture, from PsiTerm.mbm (made by tools/mkicons.py):
+// 24x20, in the middle of its side, the words beside it as the built-in
+// programs' buttons have them
+void CPsiTermAppUi::ButtonPictureL(TInt aId, TInt aIcon, const TDesC* aText)
+	{
+	CEikCommandButton* b = iToolBar ? (CEikCommandButton*)iToolBar->ControlById(aId) : NULL;
+	if (!b)
+		return;
+	if (aText)
+		b->SetTextL(*aText);
+	TFileName mbm = Application()->BitmapStoreName();
+	CFbsBitmap* bmp = iEikonEnv->CreateBitmapL(mbm, aIcon);
+	CleanupStack::PushL(bmp);
+	CFbsBitmap* mask = iEikonEnv->CreateBitmapL(mbm, aIcon + 1);
+	CleanupStack::PushL(mask);
+	b->SetPictureL(bmp, mask);                // (the button owns them now)
+	CleanupStack::Pop(2);
+	if (b->Picture())
+		b->Picture()->SetAlignment(EHCenterVCenter);
+	if (b->Label())
+		b->Label()->SetAlignment(EHLeftVCenter);
+	b->LayoutComponentsL();
+	}
+
+TBool CPsiTermAppUi::ToolbarShown() const
+	{
+	return iToolBar && iToolBar->IsVisible();
+	}
+
+void CPsiTermAppUi::ToolbarPicturesL()
+	{
+	if (!iToolBar)
+		return;
+	ButtonPictureL(EPtCmdTbConnect, EMbmToolSsh);
+	ButtonPictureL(EPtCmdTbSnippets, EMbmToolSnippets);
+	ButtonPictureL(EPtCmdTbKeys, EMbmToolKeys);
+	ButtonPictureL(EPtCmdZoomIn, EMbmToolZoom);
+	}
+
+// the first button: SSH to... when idle, Disconnect while a session is up
+// (as PsiMail's last button, and the built-in Email program's Open / Close
+// mailbox)
+void CPsiTermAppUi::SetConnectButton(TBool aBusy)
+	{
+	if (!iToolBar)
+		return;
+	TPtrC text(aBusy ? _L("End\nSSH") : _L("SSH to"));   // ("Disconnect" is too wide for the dense font)
+	TRAPD(err, ButtonPictureL(EPtCmdTbConnect, aBusy ? EMbmToolDisconnect : EMbmToolSsh, &text));
+	if (err != KErrNone)
+		{
+		CEikCommandButton* b = (CEikCommandButton*)iToolBar->ControlById(EPtCmdTbConnect);
+		if (b)
+			TRAP_IGNORE(b->SetTextL(text));  // (no pictures: the words still change)
+		}
+	CCoeControl* b = iToolBar->ControlById(EPtCmdTbConnect);
+	if (b && iToolBar->IsVisible())
+		b->DrawNow();
+	}
+
+// the terminal's room: ClientRect() keeps the toolbar's width back even when
+// the toolbar is hidden, so give it to the terminal here
+TRect CPsiTermAppUi::TermRect(TBool aToolbar) const
+	{
+	TRect r = ClientRect();
+	if (!aToolbar || !iToolBar)
+		r.iBr.iX = iEikonEnv->ScreenDevice()->SizeInPixels().iWidth;
+	return r;
+	}
+
+// View > Show toolbar (Shift+Ctrl+B): the terminal takes its room, or gives
+// it back. The terminal lays itself out again (new column count, SSH window
+// change) in SetTermRectL.
+void CPsiTermAppUi::ShowToolBarL(TBool aShow)
+	{
+	if (!iToolBar || !iView)
+		return;
+	if (iToolBar->IsVisible() != aShow)
+		iToolBar->MakeVisible(aShow);
+	if (aShow)
+		{
+		iToolBar->DrawNow();
+		iCoeEnv->WsSession().Flush();
+		}
+	iView->SetTermRectL(TermRect(aShow));
+	}
+
+// the Snippets and Keys buttons pop their menu up beside the button
+void CPsiTermAppUi::ToolbarPopupL(TInt aCommand)
+	{
+	CCoeControl* b = iToolBar ? iToolBar->ControlById(aCommand) : NULL;
+	TPoint pos = b ? b->PositionRelativeToScreen()
+		: TPoint(iEikonEnv->ScreenDevice()->SizeInPixels().iWidth, 20);
+	LaunchPopupMenuL(aCommand == EPtCmdTbSnippets ? R_PT_SNIPPETS_POPUP : R_PT_KEYS_POPUP,
+		pos, EPopupTargetTopRight);
 	}
 
 // The Psion was switched back on (0.68): the modem or the ISP may have hung
@@ -4841,6 +5001,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iStartScreen = 1;
 	aSettings.iTmuxTabs = 1;
 	aSettings.iPppStart.Copy(_L("ATDT777"));   // WiRSa and similar: dial 777 = PPP
+	aSettings.iToolbar = 1;       // shown the first time, as the style guide expects
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
@@ -4923,7 +5084,11 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 											{
 											TInt plen = data[pos + 8];
 											if (plen <= 40 && pos + 9 + plen <= data.Length())
+												{
 												aSettings.iPppStart.Copy(data.Mid(pos + 9, plen));
+												if (pos + 9 + plen < data.Length())   // v13: toolbar
+													aSettings.iToolbar = data[pos + 9 + plen] ? 1 : 0;
+												}
 											}
 										}
 									}
@@ -4978,6 +5143,7 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	tmp.Copy(aSettings.iPppStart);
 	data.Append((TUint8)tmp.Length());
 	data.Append(tmp);
+	data.Append((TUint8)(aSettings.iToolbar ? 1 : 0));   // v13 (older PsiTerms ignore it)
 	SafeWrite(fs, KIniFile, data);
 	}
 
@@ -5124,9 +5290,10 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemDimmed(EPtCmdInstallKey, !iView->SshLoggedIn() || iKeys->Count() == 0);
 		return;
 		}
-	if (aMenuId == R_PT_SNIPPETS_MENU)
+	if (aMenuId == R_PT_SNIPPETS_MENU || aMenuId == R_PT_SNIPPETS_POPUP)
 		{
-		// your snippets, each with its hotkey shown on the right
+		// your snippets, each with its hotkey shown on the right (not on the
+		// toolbar's pop-up: it is for the pen)
 		for (TInt i = 0; i < iSnippets->Count() && i < KMaxSnippets; i++)
 			{
 			const TSnippet& sn = iSnippets->At(i);
@@ -5136,7 +5303,7 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 			item.iFlags = 0;
 			item.iText = sn.iName;
 			item.iExtraText.Zero();
-			if (sn.iKey)
+			if (sn.iKey && aMenuId == R_PT_SNIPPETS_MENU)
 				{
 				item.iExtraText.Append(_L("Shift+Ctrl+"));
 				item.iExtraText.Append((TChar)sn.iKey);
@@ -5179,11 +5346,25 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		}
 	TPsiSettings& s = iView->Settings();
 	if (aMenuId == R_PT_FONT_MENU)
+		{
+		// "Terminus 12 (95x20)": the counts depend on the toolbar
+		static const TText* const KFace[KZoomLevels] =
+			{ _S("Courier small"), _S("Terminus 12"), _S("Terminus 14"), _S("Terminus 16"), _S("Terminus 18") };
+		for (TInt z = 0; z < KZoomLevels; z++)
+			{
+			TInt cols, rows;
+			iView->SizeAtZoom(z, cols, rows);
+			TBuf<40> text(KFace[z]);
+			text.AppendFormat(_L(" (%dx%d)"), cols, rows);
+			aMenuPane->SetItemTextL(EPtCmdZoom0 + z, text);
+			}
 		aMenuPane->SetItemButtonState(EPtCmdZoom0 + s.iZoom, EEikMenuItemSymbolOn);
+		}
 	else if (aMenuId == R_PT_VIEW_MENU)
 		{
 		aMenuPane->SetItemButtonState(EPtCmdBold, s.iBold ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPtCmdStatusLine, s.iStatus ? EEikMenuItemSymbolOn : 0);
+		aMenuPane->SetItemButtonState(EPtCmdToolbar, s.iToolbar ? EEikMenuItemSymbolOn : 0);
 		}
 	}
 
@@ -5215,6 +5396,21 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EEikCmdExit:
 		Exit();
 		return;
+	case EPtCmdToolbar:                       // View > Show toolbar (tick box)
+		s.iToolbar = !s.iToolbar;
+		SaveSettings(s);
+		ShowToolBarL(s.iToolbar);
+		break;
+	case EPtCmdTbConnect:                     // the toolbar's first button
+		if (iView->SshActive() || iView->ReconnectWaiting())
+			iView->DisconnectSsh();
+		else
+			SshToL();
+		break;
+	case EPtCmdTbSnippets:
+	case EPtCmdTbKeys:
+		ToolbarPopupL(aCommand);
+		break;
 	case EPtCmdSsh:     SshToL(); break;
 	case EPtCmdSshDisconnect:
 		if (!iView->SshActive())

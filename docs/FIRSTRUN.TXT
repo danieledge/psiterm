@@ -110,11 +110,18 @@ SCROLL BACK, SELECT, COPY AND PASTE (new in 0.10)
 
 TEXT SIZE AND FONTS (Terminus since 0.12)
    The sidebar zoom buttons (+ / -) step through 5 sizes:
-     Courier small  (106 x 30)  for apps needing 24+ rows (btop)
-     Terminus 12    (106 x 20)  <- default
-     Terminus 14    ( 80 x 17)
-     Terminus 16    ( 80 x 15)
-     Terminus 18    ( 64 x 13)
+                   toolbar hidden / shown
+     Courier small  (106 x 30 /  95 x 30)  for apps needing 24+ rows (btop)
+     Terminus 12    (106 x 20 /  95 x 20)  <- default
+     Terminus 14    ( 80 x 17 /  71 x 17)
+     Terminus 16    ( 80 x 15 /  71 x 15)
+     Terminus 18    ( 64 x 13 /  57 x 13)
+   (one or two rows fewer with the status line on; View > Font shows
+   the live counts)
+   The toolbar on the right (SSH to / End SSH, Send snippet, Keys,
+   Zoom, clock) is shown at first. View > Show toolbar or
+   Shift+Ctrl+B hides it and the terminal takes the full width,
+   even mid-session (the server reflows); remembered.
    Menu > Settings > Bold text makes every letter thicker
    (easier to read on the 5mx screen; remembered).
    Also Menu > Settings. Terminus is a popular terminal font,
@@ -187,6 +194,7 @@ MENUS (tidied in 0.21)
 KEYS
    Menu key: all options      Shift+Ctrl+E: close
    Shift+Ctrl+S: SSH          Shift+Ctrl+T: Shift+Tab
+   Shift+Ctrl+B: show/hide the toolbar
    Shift+Ctrl+P: screenshot
    Plain Ctrl+letter goes to the server (Ctrl+C etc.)
    Menu > Terminal > Disconnect SSH ends a session.

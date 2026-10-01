@@ -26,8 +26,13 @@ ln -sfn "$HERE/app" "$EPOCROOT/ptproj/psiterm"
   && make -f psiterm.marm rel > "$HERE/build/psiterm.log" 2>&1 ) \
   || { grep -i -B1 -A4 "error\|undefined" "$HERE/build/psiterm.log" | head -40; exit 1; }
 
+echo "== pictures (PsiTerm.mbm)"
+# the toolbar's pictures: tools/mkicons.py draws them, bmconv packs them
+python3 "$HERE/tools/mkicons.py" "$HERE/build/icons" "$HERE/app/pticons.h"
+( cd "$HERE/build/icons" && wine "$EPOCROOT/epoc32/tools/bmconv.exe" /q psiterm.mbm $(tr '\n' ' ' < files.txt) > /dev/null 2>&1 )
+
 echo "== package"
-cp "$REL/psiterm.app" "$REL/psiterm.rsc" "$REL/psissh.exe" "$HERE/pkg/"
+cp "$REL/psiterm.app" "$REL/psiterm.rsc" "$REL/psissh.exe" "$HERE/build/icons/psiterm.mbm" "$HERE/pkg/"
 # the EPOC C library (ESTLIB.DLL) is not in the 5mx ROM: embed the SDK's
 # redistributable stdlib.sis so a fresh Psion gets it too
 cp "$REL/stdlib.sis" "$HERE/pkg/STDLIB.SIS"

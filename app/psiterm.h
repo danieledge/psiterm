@@ -59,6 +59,7 @@ struct TPsiSettings
 	TInt iStartScreen;    // 1 = start screen (host menu) when not connected
 	TInt iTmuxTabs;       // 1 = draw tmux's window list as tabs
 	TBuf<40> iPppStart;   // Psion Internet: sent to the modem first (empty = nothing)
+	TInt iToolbar;        // 1 = the toolbar is showing (0.71: saved as one more byte, v13)
 	};
 
 // ---------------------------------------------------------------------------
@@ -451,6 +452,8 @@ public:
 	void ApplySerialSettings();
 	void SetFontL(TInt aZoom);
 	void ZoomBy(TInt aStep);
+	void SetTermRectL(const TRect& aRect);   // the toolbar came or went: lay out again
+	void SizeAtZoom(TInt aZoom, TInt& aCols, TInt& aRows) const;   // for the Font menu
 	void LocalMessage(const TDesC8& aText);
 	// Debug screen: output goes to a text window instead of the terminal
 	void BeginDebugL(const TDesC& aTitle);
@@ -598,6 +601,8 @@ private:
 	void Tick();
 	static TInt TickCallback(TAny* aSelf);
 	void StartTick();
+	void SyncToolbar();       // the first toolbar button: SSH to..., or Disconnect
+	TInt iTbBusy;             // what it shows now (-1 = not yet set)
 	short* iSbCols;
 	TInt iLinesPushed;    // absolute number of the top screen row
 	TInt iScrollOffset;   // 0 = live; N = viewing N lines back
@@ -719,7 +724,16 @@ private:
 	void SshToL();
 	TBool EditHostL(THostEntry& aEntry);
 	void SaveSettings(const TPsiSettings& aSettings);
+public:
+	// the toolbar (View > Show toolbar hides it: the terminal takes its room)
+	void ShowToolBarL(TBool aShow);
+	void SetConnectButton(TBool aBusy);     // SSH to... <-> Disconnect
+	TBool ToolbarShown() const;
 private:
+	void ToolbarPicturesL();
+	void ButtonPictureL(TInt aId, TInt aIcon, const TDesC* aText = NULL);
+	TRect TermRect(TBool aToolbar) const;
+	void ToolbarPopupL(TInt aCommand);
 	CTermView* iView;
 	CHostList* iHosts;
 	CSnippetList* iSnippets;
