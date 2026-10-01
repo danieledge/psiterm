@@ -107,7 +107,6 @@ RESOURCE HOTKEYS r_pm_hotkeys
 		HOTKEY { command=EPmCmdDelete; key='d'; },
 		HOTKEY { command=EPmCmdMove; key='x'; },
 		HOTKEY { command=EPmCmdHangup; key='u'; },
-		HOTKEY { command=EPmCmdStop; key='z'; },
 		HOTKEY { command=EPmCmdZoomIn; key='m'; },
 		HOTKEY { command=EPmCmdToggleToolbar; key='t'; },
 		HOTKEY { command=EPmCmdPrefs; key='k'; },
@@ -117,7 +116,6 @@ RESOURCE HOTKEYS r_pm_hotkeys
 		HOTKEY { command=EPmCmdRefresh; key='y'; },
 		HOTKEY { command=EPmCmdSearch; key='f'; },
 		HOTKEY { command=EPmCmdOutbox; key='b'; },
-		HOTKEY { command=EPmCmdWeb; key='p'; },
 		HOTKEY { command=EPmCmdMonth; key='q'; }
 		};
 	shift_control=
@@ -179,7 +177,7 @@ RESOURCE MENU_PANE r_pm_file_menu
 		MENU_ITEM { command=EPmCmdCalendar; txt="Sync calendar"; },
 		MENU_ITEM { command=EPmCmdFolderMenu; cascade=r_pm_folder_menu; txt="Folder"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdHangup; txt="Disconnect"; },
-		MENU_ITEM { command=EPmCmdStop; txt="Stop"; },
+		MENU_ITEM { command=EPmCmdStop; txt="Stop"; extratxt="Esc"; },
 		MENU_ITEM { command=EPmCmdOffline; txt="Work offline"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
 		};

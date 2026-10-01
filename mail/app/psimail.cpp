@@ -76,7 +76,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.70");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.71");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -2300,11 +2300,12 @@ TKeyResponse CPmView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 	AddEntropy(code);
 	if (aKeyEvent.iModifiers & EModifierCtrl)
 		return EKeyWasNotConsumed;         // the menu's hotkeys
-	// Esc stops the engine when there is nothing to go back from (or the
-	// message being waited for is the thing it's fetching); otherwise it goes
-	// back, even while mail downloads ahead in the background
+	// Esc stops what the engine is doing (File > Stop shows Esc, as in the
+	// built-in programs) in the lists and the calendar, and in the reader
+	// while the message is still coming; otherwise it goes back. Download
+	// ahead in the background isn't stopped by it
 	TBool escStops = (iMode == EMessage && iWaitingBody) ||
-		((iMode == EList || iMode == EOutbox || iMode == ECalendar) && iSidebar) || iMode == ENoAccount ||
+		iMode == EList || iMode == EOutbox || iMode == ECalendar || iMode == ENoAccount ||
 		(iShared->busy && !iShared->online);   // still connecting: nothing to go back from
 	if (code == EKeyEscape && Busy() && escStops && !DownloadingAhead())
 		{
@@ -2349,9 +2350,16 @@ const TInt PM_WEB_URL_MAX = 500;      // PsiWeb takes up to 511 bytes
 
 void CPmView::OpenWebL(const TDesC& aUrl)
 	{
-	// PsiWeb needs the serial port for web addresses (not for our own files)
-	if (Clip(aUrl, 5).CompareF(_L("file:")) != 0)
+	// On the modem only one program can have the serial line, so PsiWeb
+	// needs it for a web address (not for our own files). Over Psion
+	// Internet both share the connection: nothing to hang up.
+	if (Clip(aUrl, 5).CompareF(_L("file:")) != 0 && !iSettings->iNetMode && iShared->online)
+		{
+		if (Busy() && !DownloadingAhead() &&
+			!iEikonEnv->QueryWinL(_L("PsiMail is using the modem"), _L("Stop and give the line to PsiWeb?")))
+			return;
 		Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
+		}
 	TBuf8<PM_WEB_URL_MAX> url8;
 	url8.Copy(Clip(aUrl, PM_WEB_URL_MAX));
 	// already running? then hand it the address (CPwAppUi::ProcessMessageL)

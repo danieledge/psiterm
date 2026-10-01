@@ -37,7 +37,7 @@ an emulator; the EIKON app has been driven in an emulator.
 * Message text downloaded when opened, up to 64 KB (the rest on request).
   HTML mail is shown as rich text - headings, bold and italic, lists,
   quotes, links you can move to with Tab and open with Enter - and
-  Message > View as web page (Ctrl+P) opens the original in PsiWeb
+  Message > View as web page opens the original in PsiWeb
   (NetSurf), as do links. Plain text gets its quotes and links shown the
   same way.
 * Attachments listed, saved to `D:\PsiMail\Attachments\` when asked for.
@@ -134,7 +134,7 @@ without the `cryptography` package too). The version must go up each time.
 | Esc or Left | back (Esc stops a download while one is running) |
 | Left/Right in a message | previous / next message |
 | Del (and Backspace in a list) | delete |
-| Shift+Ctrl+C / Ctrl+U / Ctrl+Z | check mail (send & receive) / disconnect / stop |
+| Shift+Ctrl+C / Ctrl+U / Esc | check mail (send & receive) / disconnect / stop |
 | Ctrl+N / Ctrl+R / Shift+Ctrl+R / Ctrl+W | new / reply / reply to all / forward |
 | Ctrl+D / Ctrl+X / Shift+Ctrl+E | delete / move to folder / archive |
 | Shift+Ctrl+U / Shift+Ctrl+F | unread / flagged |
@@ -147,7 +147,6 @@ without the `cryptography` package too). The version must go up each time.
 | Ctrl+K / Shift+Ctrl+W | preferences / work offline |
 | Shift+Ctrl+H / Shift+Ctrl+A / Ctrl+E | help / about PsiMail / close |
 | Tab / Shift+Tab in a message | next / previous link or attachment (Enter opens it) |
-| Ctrl+P | view the message as a web page (PsiWeb) |
 | Shift+Ctrl+N / Ctrl+Q | the calendar / switch its view (week or month; View > Switch view lists them) |
 | Shift+Ctrl+Y / Shift+Ctrl+D | sync the calendar / go to today |
 | In the calendar: Left/Right, PgUp/PgDn, Home | day, week (month), today |

@@ -46,7 +46,7 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "\n"
 	  "A message's text is downloaded when you open it (up to 64 KB - Message > Get whole message "
 	  "fetches the rest). Left and Right step to the previous and next message. Tab moves between the "
-	  "links and attachments in a message and Enter opens one; Message > View as web page (Ctrl+P) "
+	  "links and attachments in a message and Enter opens one; Message > View as web page "
 	  "shows the message in PsiWeb.\n"
 	  "\n"
 	  "Message > Attachments > Open opens an attached file in its own program (Word, Sketch and so on); "
@@ -124,7 +124,7 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "moving, flagging, sending - is kept and done the next time you check mail. Making, renaming and "
 	  "deleting folders needs the server, so PsiMail asks to go online for those.\n"
 	  "\n"
-	  "What PsiMail is doing is shown at the bottom left of the screen. Esc, or File > Stop (Ctrl+Z), "
+	  "What PsiMail is doing is shown at the bottom left of the screen. Esc, or File > Stop, "
 	  "stops a download that is running; File > Disconnect (Ctrl+U) hangs up." },
 
 	{ "The calendar",
@@ -172,11 +172,11 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "\n"
 	  "Shift+Ctrl+C: check mail (send & receive)\n"
 	  "Ctrl+Y / Shift+Ctrl+G: check this folder / get older messages\n"
-	  "Ctrl+U / Ctrl+Z / Shift+Ctrl+W: disconnect / stop / work offline\n"
+	  "Ctrl+U / Esc / Shift+Ctrl+W: disconnect / stop / work offline\n"
 	  "Ctrl+N / Ctrl+R / Shift+Ctrl+R / Ctrl+W: create new / reply / reply to all / forward\n"
 	  "Ctrl+D / Ctrl+X / Shift+Ctrl+E: delete / move to folder / archive\n"
 	  "Shift+Ctrl+U / Shift+Ctrl+F: unread / flagged\n"
-	  "Ctrl+S: save an attachment; Ctrl+P: view as a web page\n"
+	  "Ctrl+S: save an attachment\n"
 	  "Ctrl+I / Ctrl+G / Ctrl+B / Ctrl+F: Inbox / go to folder / Outbox / find\n"
 	  "Ctrl+M / Shift+Ctrl+M: zoom in / out\n"
 	  "Ctrl+T / Shift+Ctrl+T / Shift+Ctrl+L: toolbar / title bar / folder list\n"
