@@ -25,12 +25,18 @@ long pm_time(void) { return emu_hc(HM_TIME, 0, 0, 0, 0); }
 int pm_mkdir(const char *p) { return emu_hc(HM_MKDIR, (int)p, 0, 0, 0); }
 void pm_rmtree(const char *p) { emu_hc(HM_RMTREE, (int)p, 0, 0, 0); }
 void pm_idle(int ms) { (void)ms; }
+void pm_cpu_low(int low) { (void)low; }
+void pm_beat_reset(void) { }
 int unlink(const char *p);
 int pm_replace(const char *tmp, const char *path) { unlink(path); return rename(tmp, path); }
 long pm_free_kb(const char *path) { (void)path; return -1; }
+/* (estlib's stdio, declared here: emu objects are built without its headers) */
+void *fopen(const char *path, const char *mode);
+unsigned int fwrite(const void *p, unsigned int sz, unsigned int n, void *f);
+int fclose(void *f);
 int pm_write_whole(const char *path, const void *data, long n)
 {
-	FILE *f = fopen(path, "wb");
+	void *f = fopen(path, "wb");
 	int ok;
 	if (!f) return -1;
 	ok = (long)fwrite(data, 1, n, f) == n;

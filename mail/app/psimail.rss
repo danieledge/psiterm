@@ -267,8 +267,19 @@ RESOURCE MENU_PANE r_pm_message_menu
 		MENU_ITEM { command=EPmCmdFlag; txt="Flagged"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdAttachMenu; cascade=r_pm_attach_menu; txt="Attachments"; },
 		MENU_ITEM { command=EPmCmdWhole; txt="Get whole message"; },
-		MENU_ITEM { command=EPmCmdWeb; txt="View as web page"; },
+		MENU_ITEM { command=EPmCmdWebMenu; cascade=r_pm_web_menu; txt="Web"; },
 		MENU_ITEM { command=EPmCmdReplyMenu; cascade=r_pm_reply_menu; txt="Reply to"; }
+		};
+	}
+
+// Message > Web (0.75): the message as a web page in PsiWeb, or its
+// pictures from the web fetched and shown here (pmwebpic.cpp)
+RESOURCE MENU_PANE r_pm_web_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdWeb; txt="View as web page"; },
+		MENU_ITEM { command=EPmCmdWebPictures; txt="Show web pictures"; }
 		};
 	}
 
@@ -741,6 +752,8 @@ RESOURCE ARRAY r_pm_prefs_lines
 			control=CHOICELIST { array_id=r_pm_store_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Show pictures"; id=EPmDlgPictures;
 			control=CHOICELIST { array_id=r_pm_pictures_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Web pictures"; id=EPmDlgWebPictures;
+			control=CHOICELIST { array_id=r_pm_web_pictures_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Email icon opens"; id=EPmDlgEmailButton;
 			control=CHOICELIST { array_id=r_pm_email_button_array; }; }
 		};
@@ -751,6 +764,14 @@ RESOURCE ARRAY r_pm_email_button_array
 	items=
 		{
 		LBUF { txt="PsiMail"; }, LBUF { txt="Built-in Email"; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_web_pictures_array
+	{
+	items=
+		{
+		LBUF { txt="Ask"; }, LBUF { txt="Always"; }, LBUF { txt="Never"; }
 		};
 	}
 

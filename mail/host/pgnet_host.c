@@ -47,7 +47,24 @@ int pg_dial(char *why, int max)
 	hints.ai_family = AF_INET;
 	snprintf(port, sizeof(port), "%d", s->port);
 	fprintf(stderr, "[net] dial %s:%d\n", s->host, s->port);
-	if (getaddrinfo(s->host, port, &hints, &ai) != 0 || !ai) {
+	{
+		/* PM_HOSTMAP=name=ip:port (tests): a made-up host (a newsletter's
+		   picture server, say) reached at a local one */
+		const char *m = getenv("PM_HOSTMAP");
+		size_t hl = strlen(s->host);
+		if (m && !strncmp(m, s->host, hl) && m[hl] == '=') {
+			static char h2[64];
+			const char *c = strchr(m + hl + 1, ':');
+			snprintf(h2, sizeof(h2), "%.*s", c ? (int)(c - m - hl - 1) : 60, m + hl + 1);
+			if (c) snprintf(port, sizeof(port), "%s", c + 1);
+			fprintf(stderr, "[net] (PM_HOSTMAP: %s:%s)\n", h2, port);
+			if (getaddrinfo(h2, port, &hints, &ai) != 0) ai = NULL;
+			goto mapped;
+		}
+	}
+	if (getaddrinfo(s->host, port, &hints, &ai) != 0) ai = NULL;
+mapped:
+	if (!ai) {
 		snprintf(why, max, "could not look up the host name");
 		return -1;
 	}

@@ -195,10 +195,33 @@ extern "C" long pm_free_kb(const char* aPath)
 	return kb.High() ? 0x7fffffff : (long)kb.Low();
 	}
 
-// ----- log: psimail.log next to the app, at most 32 KB --------------------
+// ----- log: psimail.log next to the app ------------------------------------
+// At most 32 KB, then it starts again with the last 32 KB kept as
+// psimail.old; a new engine (a restart after a crash too) moves the last
+// one's log there first, so what led up to a crash is still there to read.
 
 static FILE* gLog = 0;
 static long gLogLen = 0;
+
+static void LogPath(char* aOut, int aMax, const char* aName)
+	{
+	PsiShared* s = pg_shared();
+	snprintf(aOut, aMax, "%s\\%s", s && s->home[0] ? s->home : "C:\\System\\Apps\\PsiMail", aName);
+	}
+
+static void LogKeepOld()
+	{
+	if (!gFs && (Fs(), !gFs))
+		return;
+	char a[160], b[160];
+	LogPath(a, sizeof(a), "psimail.log");
+	LogPath(b, sizeof(b), "psimail.old");
+	TFileName from, to;
+	ToName(from, a);
+	ToName(to, b);
+	Fs().Delete(to);
+	Fs().Rename(from, to);
+	}
 
 extern "C" void pm_log(const char* aFmt, ...)
 	{
@@ -211,26 +234,34 @@ extern "C" void pm_log(const char* aFmt, ...)
 	if (n > (int)sizeof(b) - 2) n = sizeof(b) - 2;
 	b[n++] = '\n';
 	b[n] = 0;
+	if (gLog && gLogLen + n > 32 * 1024)
+		{
+		fclose(gLog);
+		gLog = 0;
+		LogKeepOld();
+		}
 	if (!gLog)
 		{
 		if (gLogLen < 0)
 			return;
 		char path[160];
-		PsiShared* s = pg_shared();
-		snprintf(path, sizeof(path), "%s\\psimail.log",
-			s && s->home[0] ? s->home : "C:\\System\\Apps\\PsiMail");
+		LogPath(path, sizeof(path), "psimail.log");
 		gLog = fopen(path, "w");
 		if (!gLog)
 			{
 			gLogLen = -1;
 			return;
 			}
+		gLogLen = 0;
 		}
-	if (gLogLen + n > 32 * 1024)
-		return;
+	// the time, so a long gap (a decode, a stall) shows
+	char t[16];
+	TUint ms = (TUint)pm_ms();
+	int tn = snprintf(t, sizeof(t), "%02u:%02u.%01u ", (ms / 60000) % 60, (ms / 1000) % 60, (ms / 100) % 10);
+	fwrite(t, 1, tn, gLog);
 	fwrite(b, 1, n, gLog);
 	fflush(gLog);
-	gLogLen += n;
+	gLogLen += n + tn;
 	}
 
 extern "C" void pm_idle(int aMs)
@@ -243,6 +274,41 @@ extern "C" void pm_idle(int aMs)
 static TUint gLastCheck = 0;
 static TUint gLastBeat = 0;
 static TUint gBeatSeen = 0;
+static TBool gAppBusyLogged = EFalse;
+
+// (0.75) while the engine works - a command, a download ahead - the app's
+// heartbeat may not have been seen (the engine runs above it): only time the
+// engine spends idle counts towards "PsiMail.app has gone"
+extern "C" void pm_beat_reset()
+	{
+	gBeatSeen = User::TickCount();
+	gLastBeat = pm_shared()->app_beat;
+	}
+
+// below the app while a picture is set out (see pm.h)
+extern "C" void pm_cpu_low(int aLow)
+	{
+	RThread().SetPriority(aLow ? EPriorityAbsoluteBackground : EPriorityNormal);
+	}
+
+// Is PsiMail.app still there? Only a process that has gone (or ended) is
+// "gone": a busy app (a long dialog, printing) is not.
+static TBool AppGone(PmShared* s)
+	{
+	if (!s->app_pid)
+		return ETrue;                         // (an older app: the heartbeat alone)
+	TProcessId id;
+	Mem::Copy(&id, (const void*)&s->app_pid, sizeof(id));
+	RProcess p;
+	TInt r = p.Open(id);
+	if (r == KErrNotFound)
+		return ETrue;
+	if (r != KErrNone)
+		return EFalse;
+	TBool gone = p.ExitType() != EExitPending;
+	p.Close();
+	return gone;
+	}
 
 static int Housekeeping()
 	{
@@ -261,9 +327,19 @@ static int Housekeeping()
 		{
 		gLastBeat = s->app_beat;
 		gBeatSeen = now;
+		gAppBusyLogged = EFalse;
 		}
 	else if (now - gBeatSeen > 64 * 20)
-		return 1;
+		{
+		if (AppGone(s))
+			{
+			pm_log("PsiMail.app has gone (no heartbeat for %u s): the engine quits", (now - gBeatSeen) / 64);
+			return 1;
+			}
+		if (!gAppBusyLogged)
+			pm_log("no heartbeat from PsiMail.app for %u s, but it is still there: carrying on", (now - gBeatSeen) / 64);
+		gAppBusyLogged = ETrue;
+		}
 	return 0;
 	}
 
@@ -281,9 +357,16 @@ int main(int, char**)
 		delete cleanup;
 		return 1;
 		}
-	pm_log("psimail.exe started");
+	LogKeepOld();                            // (the last engine's log: psimail.old)
+	{
+	TMemoryInfoV1Buf mi;
+	TInt freeRam = UserHal::MemoryInfo(mi) == KErrNone ? mi().iFreeRamInBytes : 0;
+	pm_log("psimail.exe %s started (RAM free %d KB)", gPm->net.version, freeRam / 1024);
+	}
+	if (gPm->app_note[0])
+		pm_log("the last mail engine ended: %s", gPm->app_note);
 	pm_loop(housekeeping_c);
-	pm_log("psimail.exe ends");
+	pm_log("psimail.exe ends (%s)", gPm->quitting ? "PsiMail asked" : "PsiMail.app has gone or said quit");
 	if (gLog)
 		fclose(gLog);
 	if (gFs)

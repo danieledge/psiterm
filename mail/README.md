@@ -58,7 +58,15 @@ an emulator; the EIKON app has been driven in an emulator.
   file (header, text, bold/italic/underline, headings, lists), through the
   Word engine itself (CWordModel), so the built-in Word opens it.
 * Pictures in messages, JPEG (baseline and progressive), PNG and GIF,
-  decoded on the Psion to 16 greys.
+  decoded on the Psion to 16 greys (in the background: the screen stays
+  live while a big one is set out). Pictures on the web are fetched only
+  when asked for: "Pictures from the web are not shown - Show them" at the
+  top of the message, or Message > Web > Show web pictures; Tools >
+  Preferences > Web pictures: Ask, Always or Never (`engine/webpics.c`,
+  `app/pmwebpic.cpp`). Tracking pixels and spacers are never fetched.
+* HTML newsletters without the empty space: hidden preheaders, spacer
+  cells and pictures, empty paragraphs and cells are left out, and blank
+  lines come one at a time (`engine/html.c`).
 * New message, reply, reply to all, forward; files from the Psion attached
   (up to 8). Sent as UTF-8; a copy saved to Sent.
 * Delete (to Trash), archive, move to a folder, read/unread, flag.

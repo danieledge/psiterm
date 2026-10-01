@@ -215,3 +215,41 @@ The same decoders as ARM code: `psimail-host` and `run_psimail.py` take
 the app asks with PM_CMD_PICTURES); with `--count` the runner says how many
 instructions a decode took - roughly 46 million for an 800x600 baseline
 JPEG shown at half size, 12 million for a 320x120 PNG.
+`--armclock` makes `pm_ms()` the Psion's time (instructions at ~15 MIPS),
+so the decode time limits act as on the device: a 1600x1200 progressive
+JPEG takes about 23 s there (340 million instructions), a 5 MP baseline 6 s
+at 1/8. (`make TARGET=epoc emu` builds the runner's image again; 0.75 mended
+it, and `pictures` sends PM_CMD_PICTURES, 21, not QUIT.)
+
+## Newsletters, web pictures and the engine staying up (0.75)
+
+`htmltest.py` runs `engine/html.c` over the newsletters in `test/html/`
+(made up for these tests: a shop's offer, a news digest, an order receipt
+with cid: pictures, a product update, a Gmail reply) whole and in odd-sized
+pieces, and fails on two blank lines in a row, a blank line at the start or
+end, a line with nothing to show, hidden text (each fixture's hidden text
+says HIDDEN), spacer or tracking pictures, lost words or pictures, or a
+picture without the width and height its HTML gave; with git at hand it
+prints the 0.73 converter's line counts beside the new ones. `--show NAME`
+prints one as the reader gets it.
+
+`newspics.py DIR` makes photo-like pictures, and `fakeimap.py PORT --news
+DIR` serves the fixtures as messages 201-206 with them: inline cid:
+pictures (203, 205: a 1600x1200 progressive JPEG, 23 s on a 5mx), attached
+photos (206, one a 5 MP picture too big to fetch unasked), and pictures on
+the web at `http://pics.example/` (201, 202). Serve `DIR/web` with `python3
+-m http.server -d DIR/web 8388` and map the name with `PM_HOSTMAP`:
+
+    PM_HOST=127.0.0.1 PM_PORT=1343 PM_TLS=0 PM_USER=x PM_PASS=x \
+    PM_HOSTMAP=pics.example=127.0.0.1:8388 psimail-host -s /tmp/st \
+        sync INBOX , body INBOX 201 , webpics INBOX 201 , body INBOX 205 , pictures INBOX 205 2
+
+Expected: "7 web pictures" (the 1x1 tracking picture and the spacers are
+never fetched), "1 picture", and `201_W<hash>.pmi` / `205_2.pmi` in the store.
+
+The engine's heartbeat (engine/pmepoc.cpp): it quits on a silent heartbeat
+only once PsiMail.app's process has gone, and time spent on a command does
+not count. To see the 0.73 failure in the emulator, starve PsiMail.app for
+30 s (a busy thread above it, as a busy foreground program would) and then
+open a message: 0.73's engine has quit ("The mail engine is not running",
+the reader at "Downloading the message..." for ever); 0.75's carries on.

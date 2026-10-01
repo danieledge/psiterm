@@ -90,7 +90,10 @@ enum TPmCommands
 	EPmCmdTentative,
 	EPmCmdDecline,
 	EPmCmdRemoveEvent,       // Edit > Invitation > Remove from Agenda
-	EPmCmdSaveWord           // File > Save as Word file
+	EPmCmdSaveWord,          // File > Save as Word file
+	// 0.75 (meng)
+	EPmCmdWebMenu,           // Message > Web (a cascade)
+	EPmCmdWebPictures        // Message > Web > Show web pictures (pmwebpic.cpp)
 	};
 
 enum TPmDialogControls
@@ -163,7 +166,8 @@ enum TPmDialogControls
 	EPmDlgAlert,             // Preferences > New mail: Alert for new mail (0.74)
 	EPmDlgCheckEvery,        // Check for new mail
 	EPmDlgCheckConnect,      // If not connected
-	EPmDlgAutoSend           // Send waiting mail when connected
+	EPmDlgAutoSend,          // Send waiting mail when connected
+	EPmDlgWebPictures        // Preferences: Web pictures (0.75: Ask / Always / Never)
 	};
 
 enum TPmButtons

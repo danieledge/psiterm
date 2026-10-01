@@ -24,7 +24,8 @@ from unicorn.arm_const import *
 HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.environ.get("PM_BUILD", os.path.join(HERE, "../../build/mail-epoc"))
 args = sys.argv[1:]
-COUNT = "--count" in args
+ARMCLOCK = "--armclock" in args
+COUNT = "--count" in args or ARMCLOCK
 OPTVALS = [args[i + 1] for i, a in enumerate(args) if a in ("--trace",) and i + 1 < len(args)]
 WORDS = [a for a in args if not a.startswith("--") and a not in OPTVALS]
 
@@ -70,7 +71,7 @@ mem = {"in_use": 0, "peak": 0, "arena": 0, "n": 0}
 RES = ["OK", "FAILED", "OFFLINE", "CANCELLED", "UNTRUSTED", "NEED_PASS", "LOGIN_FAILED"]
 OPS = {"folders": 1, "sync": 2, "older": 3, "body": 4, "full": 5, "attach": 6, "flag": 7, "move": 8,
        "search": 9, "send": 10, "sendrecv": 11, "hangup": 12, "trust": 13, "trustlast": 13, "expunge": 14,
-       "cal": 15, "calendars": 15, "update": 16, "pictures": 17}
+       "cal": 15, "calendars": 15, "update": 16, "pictures": 21, "undo": 22, "webpics": 23}
 cmds, cur = [], []
 for w in WORDS + [","]:
     if w == ",":
@@ -119,6 +120,10 @@ def pg_dial(host, port, why, maxlen):
         net["sock"].close()
     net.update(sock=None, rx=bytearray(), closed=False)
     log("dial %s:%d" % (host, port))
+    hm = os.environ.get("PM_HOSTMAP", "")            # name=ip:port, as psimail-host has it
+    if hm.startswith(host + "="):
+        host, _, p = hm[len(host) + 1:].partition(":")
+        port = int(p or port)
     try:
         net["sock"] = socket.create_connection((host, port), timeout=15)
         net["sock"].settimeout(None)
@@ -200,7 +205,9 @@ def hc(op, a, b, c, d):
         log("%s: %s %s" % (state["cmd"][0], RES[a] if a < len(RES) else a, msg))
         if a == 4: log("  untrusted %s key %s" % (cstr(c), cstr(d)))
         results.append(a); return 0
-    if op == 403: return int((time.time() - T0) * 1000) & 0xffffffff
+    if op == 403:                                    # pm_ms
+        if ARMCLOCK: return int(insns[0] / 15000) & 0xffffffff   # (--armclock: the Psion's time, at ~15 MIPS)
+        return int((time.time() - T0) * 1000) & 0xffffffff
     if op == 404: return int(os.environ.get("PM_NOW", time.time())) & 0xffffffff
     if op == 405:                                    # list dir
         dirp, suf = host_path(cstr(a)), cstr(b)

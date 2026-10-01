@@ -410,6 +410,9 @@ static int run(PmCmd *c, char *why, int whymax)
 	case PM_CMD_PICTURES:
 		r = pic_fetch(a, c->folder, c->uid, c->arg, why, whymax);
 		break;
+	case PM_CMD_WEBPICS:
+		r = web_fetch(a, c->folder, c->uid, why, whymax);
+		break;
 	case PM_CMD_FLAG:
 		local_update(a, c->folder, c->uid, c->arg, 0);
 		r = s->offline ? PM_RES_OFFLINE : imap_flag(a, c->folder, c->uid, c->arg, why, whymax);
@@ -489,12 +492,14 @@ void pm_do_command(PmCmd *c)
 	PmShared *s = pm_shared();
 	static char why[160];
 	int r;
+	unsigned long t0 = pm_ms();
 	s->cur_op = c->op;
 	s->busy = 1;
 	s->progress[0] = 0;
 	r = run(c, why, sizeof(why));
 	if (pm_cancelled() && r != PM_RES_OK) { r = PM_RES_CANCELLED; if (!why[0]) pm_copy(why, "Stopped", sizeof(why)); }
-	pm_log("cmd %d acct %d %s uid %u -> %d %s", c->op, c->acct, c->folder, c->uid, r, why);
+	pm_log("cmd %d acct %d %s uid %u -> %d %s (%lu ms, heap %u KB)", c->op, c->acct, c->folder, c->uid, r, why,
+		pm_ms() - t0, s->heap_used / 1024);
 	s->last_op = c->op;
 	s->last_acct = c->acct;
 	s->last_uid = c->uid;
@@ -505,6 +510,7 @@ void pm_do_command(PmCmd *c)
 	s->net.quit = 0;
 	s->busy = 0;
 	s->done_seq++;
+	pm_beat_reset();                     /* (the time it took isn't the app's silence) */
 }
 
 /* The engine's loop: returns when the app says quit (or has gone away). */
@@ -521,7 +527,7 @@ void pm_loop(int (*housekeeping)(void))
 			continue;
 		}
 		if (housekeeping && housekeeping()) break;
-		if (pf_step()) continue;
+		if (pf_step()) { pm_beat_reset(); continue; }
 		pm_idle(100);
 	}
 	pm_log("net: quitting: releasing the line");

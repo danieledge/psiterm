@@ -94,7 +94,8 @@ enum
 	PM_CMD_RENFOLDER,        /* folder, arg = its new name */
 	PM_CMD_DELFOLDER,        /* folder (not the Inbox or a standard folder) */
 	PM_CMD_PICTURES,         /* folder, uid, arg = part ids to fetch and decode ("1.2 1.3"; "!2" = however big): see engine/pictures.c */
-	PM_CMD_UNDO              /* folder, uid: put back the message moved from there (Edit > Undo: engine/undo.c); last_file = its uid now */
+	PM_CMD_UNDO,             /* folder, uid: put back the message moved from there (Edit > Undo: engine/undo.c); last_file = its uid now */
+	PM_CMD_WEBPICS           /* folder, uid: fetch and set out the message's pictures from the web (engine/webpics.c) */
 	};
 
 /* pictures in a message (engine/pictures.c, app/pmpict.cpp): a part this
@@ -183,6 +184,10 @@ typedef struct
 	/* Tools > Update PsiMail (the version running is in net.version) */
 	volatile int update_ready;      /* 1: last_file is a checked, newer PsiMail.sis */
 	char update_version[16];        /* what the server has */
+
+	/* (0.75) the heartbeat's other half, and the log (app) */
+	volatile unsigned int app_pid;  /* PsiMail.app's process id: the engine quits on a silent heartbeat only once that has gone */
+	char app_note[96];              /* why the last engine ended ("panic KERN-EXEC 3"), for psimail.log */
 	} PmShared;
 
 #endif

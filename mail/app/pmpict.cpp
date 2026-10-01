@@ -160,6 +160,8 @@ void CPmPictures::LoadIndexL(RFs& aFs, const TDesC& aFolderDir, TUint aUid)
 		e.iSrcW = e.iSrcH = 0;
 		e.iPartial = EFalse;
 		e.iInline = EFalse;
+		e.iWeb = EFalse;
+		e.iHintW = e.iHintH = 0;
 		e.iWhy.Zero();
 		if (!e.iPart.Length())
 			continue;

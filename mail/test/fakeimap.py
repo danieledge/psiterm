@@ -24,6 +24,11 @@ looks like once a router has quietly forgotten it. --invite adds two
 multipart messages: 106, an invitation (text/plain and a base64
 text/calendar METHOD:REQUEST part, as Google sends), and 107 with a vCard
 attached (invite.h).
+--news DIR adds the newsletters in test/html/ as messages 201-206, with
+pictures from DIR (made by newspics.py): 201 and 202 point at pictures on
+the web (http://pics.example/..., for a local web server: see newspics.py),
+203 and 205 have inline cid: pictures, 206 three attached photos (one a
+5 MP camera picture, too big to fetch unasked).
 """
 import socket, sys, threading, time, base64
 
@@ -35,6 +40,7 @@ MUTE_NOOP = False
 NO_UIDPLUS = False
 ARRIVE = []
 INVITE = False
+NEWS = None
 args = sys.argv[2:]
 while args:
     a = args.pop(0)
@@ -45,6 +51,7 @@ while args:
     elif a == '--no-uidplus': NO_UIDPLUS = True
     elif a == '--arrive': ARRIVE = [int(x) for x in args.pop(0).split(',')]
     elif a == '--invite': INVITE = True
+    elif a == '--news': NEWS = args.pop(0)
 CAPS = 'IMAP4rev1 LITERAL+' + ('' if NO_UIDPLUS else ' UIDPLUS MOVE')
 
 def msg(uid, subject, text):
@@ -92,6 +99,38 @@ if INVITE:
     MSGS.append(dict(uid=107, subject='My card', text='', msgid='<107@example.com>', deleted=False, parts=[
         ('("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" %d 1 NIL NIL NIL NIL)', 'Here is my card.\r\n'),
         ('("TEXT" "VCARD" ("CHARSET" "utf-8" "NAME" "bob.vcf") NIL NIL "7BIT" %d 8 NIL ("attachment" ("FILENAME" "bob.vcf")) NIL NIL)', VCF)]))
+
+if NEWS:
+    import os
+    HT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'html')
+    def html(name, web=False):
+        t = open(os.path.join(HT, name), encoding='latin-1').read()
+        if web:
+            t = t.replace('https://img.example-mail.com', 'http://pics.example').replace('https://cdn.weeklybyte.example', 'http://pics.example')
+        return t.replace('\r\n', '\n').replace('\n', '\r\n')
+    def pic(name):
+        return base64.encodebytes(open(os.path.join(NEWS, name), 'rb').read()).decode().replace('\n', '\r\n')
+    HTMLP = '("TEXT" "HTML" ("CHARSET" "utf-8") NIL NIL "8BIT" %d 40 NIL NIL NIL NIL)'
+    def inline(sub, name, cid):
+        return '("IMAGE" "%s" ("NAME" "%s") "<%s>" NIL "BASE64" %%d NIL ("INLINE" ("FILENAME" "%s")) NIL NIL)' % (sub, name, cid, name)
+    def attached(sub, name):
+        return '("IMAGE" "%s" ("NAME" "%s") NIL NIL "BASE64" %%d NIL ("ATTACHMENT" ("FILENAME" "%s")) NIL NIL)' % (sub, name, name)
+    def nmsg(uid, subject, parts):
+        return dict(uid=uid, subject=subject, text='', msgid='<%d@example.com>' % uid, deleted=False, parts=parts)
+    MSGS += [
+        nmsg(201, 'Autumn at Hartley & Finch', [(HTMLP, html('retail.html', True))]),
+        nmsg(202, 'The Weekly Byte #112', [(HTMLP, html('digest.html', True))]),
+        nmsg(203, 'Your Pennywhistle Books order', [(HTMLP, html('receipt.html')),
+            (inline('PNG', 'shoplogo.png', 'logo@shop.example'), pic('shoplogo.png')),
+            (inline('JPEG', 'map.jpg', 'map@shop.example'), pic('map.jpg'))]),
+        nmsg(204, "What's new in Tasklet 4.2", [(HTMLP, html('update.html'))]),
+        nmsg(205, 'Re: Photos from the weekend', [(HTMLP, html('personal.html')),
+            (inline('JPEG', 'harbour.jpg', 'ii_harbour01'), pic('harbour.jpg'))]),
+        nmsg(206, 'Holiday photos', [('("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" %d 3 NIL NIL NIL NIL)',
+                'Here are three from the holiday.\r\n\r\nDan\r\n'),
+            (attached('JPEG', 'beach.jpg'), pic('beach.jpg')), (attached('PNG', 'garden.png'), pic('garden.png')),
+            (attached('JPEG', 'cliffs.jpg'), pic('cliffs.jpg'))]),
+    ]
 
 # the messages in each folder (others are made empty when first selected)
 BOXES = {'INBOX': dict(validity=1, next=MSGS[-1]['uid'] + 1, msgs=MSGS)}
