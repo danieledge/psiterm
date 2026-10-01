@@ -602,6 +602,7 @@ public:
 private:
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
+	void TestL();             // the Test button (0.74)
 	TPmSettings& iSettings;
 	TDes& iPppStart;          // kept in the shared PsiLink.ini, not in TPmSettings
 	};

@@ -29,6 +29,7 @@
 #include "pmapp.h"
 #include "pmcontacts.h"
 #include "psilink.h"
+#include "pglinktest.h"
 
 // how many of the newest messages to download ahead after a sync
 static TInt PrefetchCount(const TPmSettings& aSettings)
@@ -2945,8 +2946,24 @@ void CPmConnDialog::PreLayoutDynInitL()
 	SetEdwinTextL(EPmDlgPppStart, &iPppStart);
 	}
 
-TBool CPmConnDialog::OkToExitL(TInt /*aButtonId*/)
+// Test: tries the values shown (not yet saved). If the mail engine has the
+// port (mid-connection), the test says the port is in use.
+void CPmConnDialog::TestL()
 	{
+	TBuf<40> ppp;
+	GetEdwinText(ppp, EPmDlgPppStart);
+	ppp.TrimAll();
+	PgLinkTestL(ChoiceListCurrentItem(EPmDlgBaud), ChoiceListCurrentItem(EPmDlgFlow) == 1,
+		ChoiceListCurrentItem(EPmDlgLink) == 1, ppp, R_PM_TEST_DIALOG, EPmDlgTest1);
+	}
+
+TBool CPmConnDialog::OkToExitL(TInt aButtonId)
+	{
+	if (aButtonId == EPmBidTest)
+		{
+		TestL();
+		return EFalse;
+		}
 	iSettings.iNetMode = ChoiceListCurrentItem(EPmDlgLink) == 1;
 	iSettings.iBaudIndex = ChoiceListCurrentItem(EPmDlgBaud);
 	iSettings.iRtsCts = ChoiceListCurrentItem(EPmDlgFlow) == 1;

@@ -194,6 +194,7 @@ public:
 private:
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
+	void TestL();             // the Test button (0.74)
 	TPwSettings& iSettings;
 	};
 

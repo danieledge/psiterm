@@ -20,3 +20,7 @@ hobj/psiglue_host.o: test/psiglue_host.c
 	@mkdir -p hobj; gcc -c -O1 -g -w $< -o $@
 hobj/bench.o: bench/bench.c
 	@mkdir -p hobj; gcc -c $(CF) $< -o $@
+
+# Connection settings > Test: the pure part of pg_link_test (no EPOC calls)
+linktest: test/linktest.cpp psiglue.cpp pglinktest.h
+	g++ -Wall -O1 -g -DPG_LINK_TEST_ONLY -DPG_LINK_TEST_HOST -I test/stubinc -I . test/linktest.cpp -o $@

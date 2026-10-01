@@ -53,3 +53,10 @@ enum TPwDialogControls
 	EPwDlgHelpTopic,         // Help on PsiWeb
 	EPwDlgHelpText
 	};
+
+// Connection settings > Test (0.74): the button, and the result dialog's lines
+enum TPwLinkTest
+	{
+	EPwBidTest = 0x7400,
+	EPwDlgTest1, EPwDlgTest2, EPwDlgTest3, EPwDlgTest4, EPwDlgTest5
+	};

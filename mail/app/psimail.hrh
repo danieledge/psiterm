@@ -165,3 +165,10 @@ enum TPmPages
 	EPmPageCalServer,
 	EPmPageCalAgenda
 	};
+
+// Connection settings > Test (0.74): the button, and the result dialog's lines
+enum TPmLinkTest
+	{
+	EPmBidTest = 0x7400,
+	EPmDlgTest1, EPmDlgTest2, EPmDlgTest3, EPmDlgTest4, EPmDlgTest5
+	};

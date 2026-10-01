@@ -173,3 +173,10 @@ enum TPsiTermDialogButtons
 	EPtBidImport,
 	EPtBidShow
 	};
+
+// Connection settings > Test (0.74): the button, and the result dialog's lines
+enum TPtLinkTest
+	{
+	EPtBidTest = 0x7400,
+	EPtDlgTest1, EPtDlgTest2, EPtDlgTest3, EPtDlgTest4, EPtDlgTest5
+	};

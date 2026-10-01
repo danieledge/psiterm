@@ -674,7 +674,7 @@ RESOURCE DIALOG r_pm_conn_dialog
 	{
 	title="Connection settings";
 	flags=EEikDialogFlagWait;
-	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	buttons=r_pm_conn_buttons;
 	items=
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Baud rate"; id=EPmDlgBaud; control=CHOICELIST { array_id=r_pm_baud_array; }; },
@@ -849,5 +849,33 @@ RESOURCE DIALOG r_pm_event_dialog
 			control=TIME_EDITOR { minTime=TIME { }; maxTime=TIME { hour=23; minute=59; second=59; }; flags=EEikTimeWithoutSecondsField; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Alarm"; id=EPmDlgEvAlarm;
 			control=CHOICELIST { array_id=r_pm_alarm_array; }; }
+		};
+	}
+
+// Connection settings > Test (0.74), the same in PsiTerm, PsiMail and PsiWeb:
+// tries the settings shown (before OK) and says what it found, one plain
+// sentence per line (ssh/pglinktest.cpp fills them; unused lines are hidden)
+RESOURCE DLG_BUTTONS r_pm_conn_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPmBidTest; button=CMBUT { txt="Test"; }; hotkey='T'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="OK"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+RESOURCE DIALOG r_pm_test_dialog
+	{
+	title="Test connection";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CONTINUE;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgTest1; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=80; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgTest2; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=80; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgTest3; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=80; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgTest4; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=80; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgTest5; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=80; txt="-"; }; }
 		};
 	}

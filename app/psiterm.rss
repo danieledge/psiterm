@@ -403,7 +403,7 @@ RESOURCE DIALOG r_pt_conn_dialog
 	{
 	title="Connection settings";
 	flags=EEikDialogFlagWait;
-	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	buttons=r_pt_conn_buttons;
 	items=
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Baud rate"; id=EPtDlgBaud; control=CHOICELIST { array_id=r_pt_baud_array; }; },
@@ -682,5 +682,33 @@ RESOURCE DIALOG r_pt_update_dialog
 		DLG_LINE { type=EEikCtChoiceList; prompt="Updates from"; id=EPtDlgSource; control=CHOICELIST { array_id=r_pt_source_array; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Local server"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=100; }; },
 		DLG_LINE { type=EEikCtNumberEditor; prompt="Port"; id=EPtDlgPort; control=NUMBER_EDITOR { min=1; max=65535; }; }
+		};
+	}
+
+// Connection settings > Test (0.74), the same in PsiTerm, PsiMail and PsiWeb:
+// tries the settings shown (before OK) and says what it found, one plain
+// sentence per line (ssh/pglinktest.cpp fills them; unused lines are hidden)
+RESOURCE DLG_BUTTONS r_pt_conn_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPtBidTest; button=CMBUT { txt="Test"; }; hotkey='T'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="OK"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+RESOURCE DIALOG r_pt_test_dialog
+	{
+	title="Test connection";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CONTINUE;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgTest1; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=80; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgTest2; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=80; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgTest3; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=80; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgTest4; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=80; txt="-"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgTest5; control=LABEL { horiz_align=EEikLabelAlignHLeft; reserve_length=80; txt="-"; }; }
 		};
 	}

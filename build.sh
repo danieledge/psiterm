@@ -22,6 +22,7 @@ if [ -e "$EPOCROOT/ptproj/psiterm" ] && [ ! -L "$EPOCROOT/ptproj/psiterm" ]; the
 fi
 mkdir -p "$EPOCROOT/ptproj"
 ln -sfn "$HERE/app" "$EPOCROOT/ptproj/psiterm"
+ln -sfn "$HERE/ssh" "$EPOCROOT/ptproj/psitermssh"   # Connection settings > Test (pglinktest.cpp)
 ( cd "$EPOCROOT/ptproj/psiterm" && makmake psiterm marm > "$HERE/build/makmake.log" 2>&1 \
   && make -f psiterm.marm rel > "$HERE/build/psiterm.log" 2>&1 ) \
   || { grep -i -B1 -A4 "error\|undefined" "$HERE/build/psiterm.log" | head -40; exit 1; }

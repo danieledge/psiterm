@@ -23,6 +23,11 @@ _LIT(KLddName, "ECOMM");
 _LIT(KCsyName, "ECUART");
 _LIT(KPortName, "COMM::0");
 
+// The apps compile only the Connection settings test (at the end) from this
+// file, through pglinktest.cpp: an .app is a DLL and may not have the
+// engine's writable statics below.
+#ifndef PG_LINK_TEST_ONLY
+
 // EXEs may have writable static data on EPOC R5 (unlike .app DLLs), but
 // global objects with constructors are avoided: handles live on the heap.
 static RChunk* gChunk = 0;
@@ -1945,3 +1950,825 @@ extern "C" const char* pg_home()
 	{
 	return (gShared && gShared->home[0]) ? gShared->home : "C:\\System\\Apps\\PsiTerm";
 	}
+
+#endif // PG_LINK_TEST_ONLY
+
+// ----- Connection settings > Test (0.74) ------------------------------------
+// Shared by the three apps' Connection settings dialogs (pglinktest.h). Runs
+// in the app's own thread, with the settings shown in the dialog: no
+// writable statics (an .app is a DLL), no leaves, and every port, session
+// and request is closed or completed before it returns.
+#ifdef PG_LINK_TEST_ONLY
+#include "pglinktest.h"
+
+// --- the pure part: classify replies and word the result (host-tested) ---
+
+static int LtLen(const char* aS)
+	{
+	int n = 0;
+	while (aS[n]) n++;
+	return n;
+	}
+
+static void LtCat(char* aDst, int aMax, const char* aSrc)
+	{
+	int n = LtLen(aDst);
+	while (*aSrc && n < aMax - 1)
+		aDst[n++] = *aSrc++;
+	aDst[n] = 0;
+	}
+
+static void LtCatNum(char* aDst, int aMax, long aNum)
+	{
+	char t[16];
+	int k = 0, neg = aNum < 0;
+	unsigned long v = neg ? (unsigned long)(-aNum) : (unsigned long)aNum;
+	do { t[k++] = (char)('0' + v % 10); v /= 10; } while (v && k < 14);
+	char o[18];
+	int j = 0;
+	if (neg) o[j++] = '-';
+	while (k) o[j++] = t[--k];
+	o[j] = 0;
+	LtCat(aDst, aMax, o);
+	}
+
+static const char* LtBaudName(int aIndex)
+	{
+	switch (aIndex)
+		{
+	case 0: return "9600";
+	case 1: return "19200";
+	case 2: return "38400";
+	case 3: return "57600";
+	default: return "115200";
+		}
+	}
+
+static int LtStarts(const char* aS, const char* aP)
+	{
+	while (*aP)
+		{
+		char a = *aS++, b = *aP++;
+		if (a >= 'a' && a <= 'z') a = (char)(a - 32);
+		if (a != b)
+			return 0;
+		}
+	return 1;
+	}
+
+// Calls aFn for each non-empty line (CR or LF ends one); stops when it
+// returns non-zero, and returns that.
+typedef int (*TLtLineFn)(const char* aLine, void* aCtx);
+static int LtLines(const unsigned char* aData, int aLen, TLtLineFn aFn, void* aCtx)
+	{
+	char line[80];
+	int n = 0;
+	for (int i = 0; i <= aLen; i++)
+		{
+		int c = i < aLen ? aData[i] : '\n';
+		if (c == '\r' || c == '\n')
+			{
+			while (n > 0 && line[n - 1] == ' ') n--;
+			line[n] = 0;
+			int s = 0;
+			while (line[s] == ' ') s++;
+			if (line[s])
+				{
+				int r = aFn(line + s, aCtx);
+				if (r)
+					return r;
+				}
+			n = 0;
+			continue;
+			}
+		if (n < (int)sizeof(line) - 1)
+			line[n++] = (char)c;
+		}
+	return 0;
+	}
+
+static int LtIsText(int aC)
+	{
+	return (aC >= 0x20 && aC < 0x7f) || aC == '\r' || aC == '\n' || aC == '\t';
+	}
+
+struct TLtFirst { const char* iSkip; char* iOut; int iMax; };
+
+static int LtFirstFn(const char* aLine, void* aCtx)
+	{
+	TLtFirst* f = (TLtFirst*)aCtx;
+	if (f->iSkip && LtStarts(aLine, f->iSkip))
+		return 0;                         // the modem's echo of our command
+	if (LtStarts(aLine, "OK") && aLine[2] == 0)
+		return 0;
+	int k = 0;
+	while (aLine[k] && k < f->iMax - 1)
+		{
+		f->iOut[k] = LtIsText((unsigned char)aLine[k]) ? aLine[k] : '?';
+		k++;
+		}
+	f->iOut[k] = 0;
+	return 1;
+	}
+
+// The first line of a reply that is not the echo of aSkip and not "OK"
+extern "C" void pg_lt_first_line(const unsigned char* aData, int aLen, const char* aSkip, char* aOut, int aMax)
+	{
+	aOut[0] = 0;
+	TLtFirst f;
+	f.iSkip = aSkip;
+	f.iOut = aOut;
+	f.iMax = aMax;
+	LtLines(aData, aLen, LtFirstFn, &f);
+	}
+
+static int LtAnswerFn(const char* aLine, void* /*aCtx*/)
+	{
+	if (LtStarts(aLine, "OK") && (aLine[2] == 0 || aLine[2] == ' '))
+		return PG_AT_OK;
+	if (LtStarts(aLine, "ERROR"))
+		return PG_AT_ERROR;
+	return 0;
+	}
+
+static int LtEchoFn(const char* aLine, void* /*aCtx*/)
+	{
+	return (LtStarts(aLine, "AT") && aLine[2] == 0) ? 0 : 1;   // 1 = not only echo
+	}
+
+// What came back after "AT\r"
+extern "C" int pg_lt_classify(const unsigned char* aData, int aLen, char* aFirst, int aFirstMax)
+	{
+	if (aFirst && aFirstMax > 0)
+		aFirst[0] = 0;
+	if (aLen <= 0)
+		return PG_AT_NOTHING;
+	int r = LtLines(aData, aLen, LtAnswerFn, 0);
+	if (r)
+		return r;
+	int bad = 0, text = 0;
+	for (int i = 0; i < aLen; i++)
+		{
+		if (!LtIsText(aData[i]))
+			bad++;
+		else if (aData[i] > ' ')
+			text++;
+		}
+	// a wrong speed gives mostly bytes that are not text (a stray one in a
+	// readable reply is noise); nothing but CR/LF is not an answer either
+	if (bad * 4 > aLen || (bad && text < 2))
+		return PG_AT_GARBAGE;
+	if (text == 0)
+		return PG_AT_NOTHING;
+	if (!LtLines(aData, aLen, LtEchoFn, 0))
+		return PG_AT_ECHO;
+	if (aFirst)
+		pg_lt_first_line(aData, aLen, "AT", aFirst, aFirstMax);
+	return PG_AT_TEXT;
+	}
+
+static char* LtNewLine(PgLinkTest* aT)
+	{
+	if (aT->nlines >= PG_LT_LINES)
+		return 0;
+	char* l = aT->line[aT->nlines++];
+	l[0] = 0;
+	return l;
+	}
+
+static void LtSay1(PgLinkTest* aT, const char* aA, const char* aB = 0, const char* aC = 0,
+	const char* aD = 0, const char* aE = 0)
+	{
+	char* l = LtNewLine(aT);
+	if (!l)
+		return;
+	LtCat(l, PG_LT_LINE, aA);
+	if (aB) LtCat(l, PG_LT_LINE, aB);
+	if (aC) LtCat(l, PG_LT_LINE, aC);
+	if (aD) LtCat(l, PG_LT_LINE, aD);
+	if (aE) LtCat(l, PG_LT_LINE, aE);
+	}
+
+static void LtReportPort(PgLinkTest* aT)
+	{
+	if (aT->port == PG_PORT_BUSY || aT->port == PG_PORT_REMOTE)
+		{
+		// (C32 says "access denied" both for the Remote link and for a port
+		// another program holds - seen in the emulator with PsiWeb's engine
+		// mid-dial - so one wording covers both)
+		LtSay1(aT, "The serial port is in use by another program or connection");
+		LtSay1(aT, "Disconnect it, or close that program, then test again");
+		if (aT->port == PG_PORT_REMOTE)
+			LtSay1(aT, "Or switch the Remote link off (Ctrl+L on the System screen)");
+		}
+	else
+		{
+		char* l = LtNewLine(aT);
+		if (l)
+			{
+			LtCat(l, PG_LT_LINE, "Could not open the serial port (");
+			LtCatNum(l, PG_LT_LINE, aT->port_err);
+			LtCat(l, PG_LT_LINE, ")");
+			}
+		}
+	}
+
+static void LtReportModem(PgLinkTest* aT)
+	{
+	const char* baud = LtBaudName(aT->baud_index);
+	int at = aT->cts_blocked ? aT->at_noflow : aT->at;
+	switch (at)
+		{
+	case PG_AT_OK:
+		if (aT->cts_blocked)
+			LtSay1(aT, "The modem answered OK at ", baud, " baud with Flow control None");
+		else
+			LtSay1(aT, "The modem answered OK at ", baud, " baud");
+		if (aT->escaped)
+			LtSay1(aT, "It was still in a call - +++ and ATH ended it");
+		break;
+	case PG_AT_ERROR:
+		LtSay1(aT, "A modem is there at ", baud, " baud, but it answered ERROR to AT");
+		break;
+	case PG_AT_ECHO:
+		LtSay1(aT, "Only an echo came back - TX and RX may be joined together");
+		break;
+	case PG_AT_GARBAGE:
+		LtSay1(aT, "Garbled reply at ", baud, " baud - wrong baud rate, or TX and RX swapped");
+		break;
+	case PG_AT_TEXT:
+		LtSay1(aT, "The modem replied '", aT->reply, "' instead of OK");
+		break;
+	case PG_AT_NOTSENT:
+		LtSay1(aT, "Could not send to the modem - CTS is low");
+		break;
+	default:
+		if (aT->found_baud < 0)
+			LtSay1(aT, "Nothing came back - check the cable, or try swapping TX and RX");
+		else
+			LtSay1(aT, "Nothing came back at ", baud, " baud");
+		break;
+		}
+	if (at != PG_AT_OK && at != PG_AT_ERROR && aT->found_baud >= 0)
+		{
+		const char* f = LtBaudName(aT->found_baud);
+		LtSay1(aT, "The modem answers at ", f, " baud - set Baud rate to ", f);
+		}
+	if (aT->signals)
+		{
+		const char* cts = aT->cts ? "high" : "low";
+		const char* dcd = aT->dcd ? "on" : "off";
+		if (aT->rtscts && !aT->cts)
+			{
+			LtSay1(aT, "CTS is low - set Flow control to None");
+			LtSay1(aT, "The modem may not support flow control (DCD is ", dcd, ")");
+			}
+		else
+			LtSay1(aT, "CTS is ", cts, ", DCD is ", dcd);
+		}
+	if (aT->modem[0])
+		LtSay1(aT, "Modem: ", aT->modem);
+	}
+
+static void LtReportNet(PgLinkTest* aT)
+	{
+	if (aT->need_dial)
+		{
+		LtSay1(aT, "The Psion's Internet connection is not up");
+		LtSay1(aT, "It starts when the program next connects");
+		return;
+		}
+	if (aT->dial)
+		{
+		const char* cmd = aT->ppp_start;
+		switch (aT->ppp)
+			{
+		case 1: LtSay1(aT, "Sent ", cmd, " - the modem answered CONNECT"); break;
+		case 2: LtSay1(aT, "Sent ", cmd, " - no CONNECT from the modem"); break;
+		case 3: LtSay1(aT, "Did not send ", cmd, " - the serial port is in use"); break;
+		case 4: LtSay1(aT, "Did not send ", cmd, " - the modem does not answer AT"); break;
+		default: break;
+			}
+		if (aT->net_after == 1)
+			LtSay1(aT, "The Psion's Internet connection is up now");
+		else if (aT->net_after == 0)
+			LtSay1(aT, "The Psion's Internet connection did not start");
+		}
+	else if (aT->net_up == 1)
+		LtSay1(aT, "The Psion's Internet connection is up");
+	else if (aT->net_up < 0)
+		LtSay1(aT, "The Psion would not say whether its Internet connection is up");
+	if (aT->dns == 0)
+		{
+		char a[20];
+		a[0] = 0;
+		for (int i = 3; i >= 0; i--)
+			{
+			LtCatNum(a, sizeof(a), (long)((aT->addr >> (i * 8)) & 0xff));
+			if (i) LtCat(a, sizeof(a), ".");
+			}
+		LtSay1(aT, "Looked up ", aT->host, ": ", a, " - DNS works");
+		}
+	else if (aT->dns != 1)
+		{
+		char* l = LtNewLine(aT);
+		if (l)
+			{
+			LtCat(l, PG_LT_LINE, "Could not look up ");
+			LtCat(l, PG_LT_LINE, aT->host);
+			LtCat(l, PG_LT_LINE, " (");
+			LtCatNum(l, PG_LT_LINE, aT->dns);
+			LtCat(l, PG_LT_LINE, ")");
+			}
+		if (aT->dns == -33)
+			LtSay1(aT, "No answer in time - the connection may be slow or down");
+		else if (aT->dial && aT->net_after != 1)
+			LtSay1(aT, "The connection did not come up - the Internet settings may be wrong");
+		else
+			LtSay1(aT, "The name servers (DNS) in the Internet settings may be wrong");
+		}
+	}
+
+extern "C" void pg_lt_report(PgLinkTest* aT)
+	{
+	aT->nlines = 0;
+	if (aT->net_mode)
+		LtReportNet(aT);
+	else if (aT->port != PG_PORT_OK)
+		LtReportPort(aT);
+	else
+		LtReportModem(aT);
+	}
+
+// --- the EPOC part ---
+#ifndef PG_LINK_TEST_HOST
+
+static void LtProgress(PgLinkTest* aT, const char* aText)
+	{
+	if (aT->progress)
+		aT->progress(aT->ctx, aText);
+	}
+
+static TBps LtBps(int aIndex)
+	{
+	switch (aIndex)
+		{
+	case 0: return EBps9600;
+	case 1: return EBps19200;
+	case 2: return EBps38400;
+	case 3: return EBps57600;
+	default: return EBps115200;
+		}
+	}
+
+static TInt LtSetConfig(RComm& aComm, int aBaud, int aRtsCts)
+	{
+	TCommConfig cfg;
+	aComm.Config(cfg);
+	cfg().iRate = LtBps(aBaud);
+	cfg().iDataBits = EData8;
+	cfg().iStopBits = EStop1;
+	cfg().iParity = EParityNone;
+	cfg().iFifo = EFifoEnable;
+	cfg().iTerminatorCount = 0;
+	cfg().iHandshake = aRtsCts ? KConfigObeyCTS : 0;   // as the engines (OpenSerial)
+	aComm.Cancel();                          // never SetConfig with I/O pending
+	return aComm.SetConfig(cfg);
+	}
+
+// Has a line that ends the modem's answer arrived?
+static int LtDoneFn(const char* aLine, void* /*aCtx*/)
+	{
+	return LtStarts(aLine, "OK") || LtStarts(aLine, "ERROR") || LtStarts(aLine, "CONNECT")
+		|| LtStarts(aLine, "NO CARRIER") || LtStarts(aLine, "BUSY") || LtStarts(aLine, "NO ANSWER")
+		|| LtStarts(aLine, "NO DIAL");
+	}
+
+// Sends aCmd and collects the reply in aBuf until a final result line, or
+// aWaitMs. KErrNone, KErrTimedOut if the write stalled (CTS low), or the
+// write's error. Line errors (framing, overrun: a wrong speed) are kept in
+// the reply as a 0xFF byte so they count as garbage.
+static TInt LtCommand(RComm& aComm, const TDesC8& aCmd, TDes8& aBuf, TInt aWaitMs)
+	{
+	aBuf.Zero();
+	aComm.ResetBuffers();
+	TRequestStatus s;
+	aComm.Write(s, TTimeIntervalMicroSeconds32(2000000), aCmd);
+	User::WaitForRequest(s);
+	if (s.Int() != KErrNone)
+		{
+		aComm.ResetBuffers();
+		return s.Int();
+		}
+	// One timer for the whole wait: a read's own timeout cannot be trusted
+	// to end the loop (in the emulator a timed read can run far over)
+	RTimer timer;
+	if (timer.CreateLocal() != KErrNone)
+		return KErrNoMemory;
+	TRequestStatus deadline;
+	timer.After(deadline, TTimeIntervalMicroSeconds32(aWaitMs * 1000));
+	// (each request's signal is taken exactly once: a stray one would panic
+	// the app's active scheduler later)
+	TInt deadlineDone = 0;
+	TBuf8<64> chunk;
+	for (;;)
+		{
+		chunk.Zero();
+		aComm.Read(s, TTimeIntervalMicroSeconds32(150000), chunk);
+		User::WaitForRequest(s, deadline);
+		if (s == KRequestPending)
+			{
+			deadlineDone = 1;                // its signal was the one taken
+			aComm.ReadCancel();
+			User::WaitForRequest(s);
+			}
+		else if (deadline != KRequestPending)
+			{
+			deadlineDone = 1;                // both done: take the second signal
+			User::WaitForRequest(deadline);
+			}
+		TInt room = aBuf.MaxLength() - aBuf.Length();
+		aBuf.Append(chunk.Left(chunk.Length() < room ? chunk.Length() : room));
+		if (s.Int() != KErrNone && s.Int() != KErrTimedOut && s.Int() != KErrCancel
+			&& aBuf.Length() < aBuf.MaxLength())
+			aBuf.Append(0xff);
+		if (deadlineDone)
+			break;
+		if (LtLines(aBuf.Ptr(), aBuf.Length(), LtDoneFn, 0))
+			break;
+		}
+	if (!deadlineDone)
+		{
+		timer.Cancel();
+		User::WaitForRequest(deadline);
+		}
+	timer.Close();
+	return KErrNone;
+	}
+
+static int LtAt(RComm& aComm, TDes8& aBuf, PgLinkTest* aT, TInt aWaitMs)
+	{
+	TInt r = LtCommand(aComm, _L8("AT\r"), aBuf, aWaitMs);
+	if (r == KErrTimedOut)
+		return PG_AT_NOTSENT;
+	if (r != KErrNone)
+		return PG_AT_NOTHING;
+	return pg_lt_classify(aBuf.Ptr(), aBuf.Length(), aT->reply, sizeof(aT->reply));
+	}
+
+// Leave a call the modem may still be in: guard time, +++, guard time, ATH
+static void LtEscape(RComm& aComm)
+	{
+	TRequestStatus s;
+	User::After(1100000);
+	aComm.Write(s, TTimeIntervalMicroSeconds32(2000000), _L8("+++"));
+	User::WaitForRequest(s);
+	User::After(1100000);
+	aComm.Write(s, TTimeIntervalMicroSeconds32(2000000), _L8("ATH\r"));
+	User::WaitForRequest(s);
+	User::After(500000);
+	aComm.ResetBuffers();
+	}
+
+// Opens COMM::0 exclusively, as the engines do. PG_PORT_*.
+static int LtOpen(RCommServ& aServer, RComm& aComm, int& aServerOpen, PgLinkTest* aT)
+	{
+	TInt r = User::LoadPhysicalDevice(KPddName);
+	if (r == KErrNone || r == KErrAlreadyExists)
+		r = User::LoadLogicalDevice(KLddName);
+	if (r == KErrNone || r == KErrAlreadyExists)
+		r = StartC32();
+	if (r == KErrNone || r == KErrAlreadyExists)
+		{
+		r = aServer.Connect();
+		if (r == KErrNone)
+			{
+			aServerOpen = 1;
+			r = aServer.LoadCommModule(KCsyName);
+			}
+		}
+	if (r == KErrNone || r == KErrAlreadyExists)
+		r = aComm.Open(aServer, KPortName, ECommExclusive);
+	if (r == KErrInUse)
+		return PG_PORT_BUSY;
+	if (r == KErrAccessDenied)
+		return PG_PORT_REMOTE;
+	if (r != KErrNone)
+		{
+		aT->port_err = r;
+		return PG_PORT_FAIL;
+		}
+	return PG_PORT_OK;
+	}
+
+// Powers the UART (a zero-length read: DTR is not really raised until the
+// first read or write) and lets the lines settle
+static void LtWake(RComm& aComm)
+	{
+	aComm.SetReceiveBufferLength(4096);
+	aComm.SetSignals(KSignalDTR | KSignalRTS, 0);
+	TRequestStatus s;
+	TBuf8<4> none;
+	aComm.Read(s, none, 0);
+	User::WaitForRequest(s);
+	User::After(150000);
+	}
+
+static void LtModem(RComm& aComm, PgLinkTest* aT)
+	{
+	TBuf8<256> buf;
+	LtWake(aComm);
+	TUint sig = aComm.Signals();
+	aT->signals = 1;
+	aT->cts = (sig & KSignalCTS) ? 1 : 0;
+	aT->dcd = (sig & KSignalDCD) ? 1 : 0;
+
+	// a bare CR first ends any half-typed command line, then AT
+	TRequestStatus s;
+	aComm.Write(s, TTimeIntervalMicroSeconds32(1000000), _L8("\r"));
+	User::WaitForRequest(s);
+	User::After(200000);
+	int at = LtAt(aComm, buf, aT, 1500);
+	if (aT->cts_blocked)
+		aT->at_noflow = at;
+	else
+		aT->at = at;
+	if (at == PG_AT_NOTSENT && !aT->cts_blocked)
+		{
+		// the write stalled although CTS read high: try without flow control
+		aT->cts_blocked = 1;
+		LtSetConfig(aComm, aT->baud_index, 0);
+		aT->at_noflow = at = LtAt(aComm, buf, aT, 1500);
+		}
+	if (at == PG_AT_ECHO || at == PG_AT_NOTHING || at == PG_AT_TEXT)
+		{
+		// still in a call from an old connection? (as pg_dial does)
+		LtProgress(aT, "Testing the modem - ending an old call...");
+		LtEscape(aComm);
+		int again = LtAt(aComm, buf, aT, 1500);
+		if (again == PG_AT_OK || again == PG_AT_ERROR)
+			{
+			aT->escaped = 1;
+			at = again;
+			if (aT->cts_blocked) aT->at_noflow = at; else aT->at = at;
+			}
+		}
+	if (at == PG_AT_NOTHING || at == PG_AT_GARBAGE || at == PG_AT_TEXT || at == PG_AT_ECHO)
+		{
+		// the other speeds, flow control off: does the modem answer at one?
+		LtProgress(aT, "Testing the modem at other baud rates...");
+		for (int b = 4; b >= 0 && aT->found_baud < 0; b--)
+			{
+			if (b == aT->baud_index)
+				continue;
+			if (LtSetConfig(aComm, b, 0) != KErrNone)
+				continue;
+			User::After(50000);
+			TBuf8<256> other;
+			char dummy[8];
+			TInt r = LtCommand(aComm, _L8("\rAT\r"), other, 700);
+			if (r == KErrNone && pg_lt_classify(other.Ptr(), other.Length(), dummy, sizeof(dummy)) == PG_AT_OK)
+				aT->found_baud = b;
+			}
+		LtSetConfig(aComm, aT->baud_index, aT->cts_blocked ? 0 : aT->rtscts);
+		}
+	if (at == PG_AT_OK)
+		{
+		// its name, for the result
+		if (LtCommand(aComm, _L8("ATI\r"), buf, 1500) == KErrNone)
+			pg_lt_first_line(buf.Ptr(), buf.Length(), "ATI", aT->modem, sizeof(aT->modem));
+		}
+	// signals again: some modems raise CTS only once they have been spoken to
+	sig = aComm.Signals();
+	aT->cts = (sig & KSignalCTS) ? 1 : 0;
+	aT->dcd = (sig & KSignalDCD) ? 1 : 0;
+	}
+
+// Psion Internet, with consent: the user's "first send" command to the modem
+// (e.g. ATDT777 puts a WiRSa into PPP), as the engines' StartPpp does
+static void LtPppStart(PgLinkTest* aT)
+	{
+	if (!aT->ppp_start[0])
+		return;
+	RCommServ server;
+	RComm comm;
+	int serverOpen = 0;
+	int p = LtOpen(server, comm, serverOpen, aT);
+	if (p == PG_PORT_OK)
+		{
+		LtSetConfig(comm, aT->baud_index, aT->rtscts);
+		LtWake(comm);
+		TRequestStatus s;
+		comm.Write(s, TTimeIntervalMicroSeconds32(1000000), _L8("\r"));
+		User::WaitForRequest(s);
+		User::After(200000);
+		TBuf8<256> buf;
+		int at = LtAt(comm, buf, aT, 1500);
+		if (at != PG_AT_OK)
+			{
+			LtEscape(comm);
+			at = LtAt(comm, buf, aT, 1500);
+			}
+		if (at != PG_AT_OK)
+			aT->ppp = 4;
+		else
+			{
+			TBuf8<48> cmd;
+			cmd.Copy(TPtrC8((const TUint8*)aT->ppp_start));
+			cmd.Append('\r');
+			aT->ppp = 2;
+			if (LtCommand(comm, cmd, buf, 30000) == KErrNone)
+				{
+				char first[24];
+				pg_lt_first_line(buf.Ptr(), buf.Length(), "AT", first, sizeof(first));
+				if (LtStarts(first, "CONNECT"))
+					aT->ppp = 1;
+				}
+			}
+		comm.Close();                        // hand the port to the Psion's TCP/IP
+		}
+	else
+		aT->ppp = 3;
+	if (serverOpen)
+		server.Close();
+	}
+
+// 1 up, 0 down, -1 NIFMAN would not say. Never dials.
+static int LtNifActive()
+	{
+	RNif nif;
+	if (nif.Open() != KErrNone)
+		return -1;
+	TBool active = EFalse;
+	TInt r = nif.NetworkActive(active);
+	nif.Close();
+	if (r != KErrNone)
+		return -1;
+	return active ? 1 : 0;
+	}
+
+// Looks aT->host up (this is what starts the dial-up when the link is
+// down). Every request is completed before it returns: a cancelled lookup
+// that does not finish is ended by closing its sessions, then waited for.
+static void LtLookup(PgLinkTest* aT, TInt aTimeoutUs)
+	{
+	RSocketServ ss;
+	TInt r = ss.Connect();
+	if (r != KErrNone)
+		{
+		aT->dns = r;
+		return;
+		}
+	RHostResolver res;
+	r = res.Open(ss, KAfInet, KProtocolInetUdp);
+	if (r != KErrNone)
+		{
+		ss.Close();
+		aT->dns = r;
+		return;
+		}
+	RTimer timer;
+	if (timer.CreateLocal() != KErrNone)
+		{
+		res.Close();
+		ss.Close();
+		aT->dns = KErrNoMemory;
+		return;
+		}
+	TBuf<64> name;
+	name.Copy(TPtrC8((const TUint8*)aT->host));
+	TNameEntry entry;
+	TRequestStatus look, tick;
+	res.GetByName(name, entry, look);
+	timer.After(tick, aTimeoutUs);
+	User::WaitForRequest(look, tick);
+	if (look == KRequestPending)
+		{
+		res.Cancel();
+		timer.After(tick, 10000000);
+		User::WaitForRequest(look, tick);
+		if (look == KRequestPending)
+			{
+			res.Close();
+			ss.Close();
+			User::WaitForRequest(look);
+			}
+		else
+			{
+			timer.Cancel();
+			User::WaitForRequest(tick);
+			}
+		aT->dns = KErrTimedOut;
+		}
+	else
+		{
+		timer.Cancel();
+		User::WaitForRequest(tick);
+		aT->dns = look.Int();
+		if (look.Int() == KErrNone)
+			aT->addr = TInetAddr(entry().iAddr).Address();
+		}
+	timer.Close();
+	res.Close();                             // (harmless if closed above)
+	ss.Close();
+	}
+
+extern "C" int pg_link_test(PgLinkTest* aT)
+	{
+	aT->port = PG_PORT_OK;
+	aT->port_err = 0;
+	aT->at = aT->at_noflow = PG_AT_NOTHING;
+	aT->escaped = aT->cts_blocked = 0;
+	aT->found_baud = -1;
+	aT->signals = aT->cts = aT->dcd = 0;
+	aT->reply[0] = aT->modem[0] = 0;
+	aT->net_up = -1;
+	aT->need_dial = 0;
+	aT->ppp = 0;
+	aT->dns = 1;
+	aT->addr = 0;
+	aT->net_after = -1;
+	if (!aT->host[0])
+		{
+		const char* h = "raw.githubusercontent.com";
+		int i = 0;
+		while (h[i] && i < (int)sizeof(aT->host) - 1) { aT->host[i] = h[i]; i++; }
+		aT->host[i] = 0;
+		}
+	if (aT->net_mode)
+		{
+		LtProgress(aT, "Checking the Internet connection...");
+		aT->net_up = LtNifActive();
+		if (aT->net_up == 1)
+			{
+			LtProgress(aT, "Looking up a name...");
+			LtLookup(aT, 20000000);
+			}
+		else if (!aT->dial)
+			aT->need_dial = 1;
+		else
+			{
+			LtProgress(aT, "Connecting...");
+			LtPppStart(aT);
+			// (no OK to AT: the modem may be in PPP already - go on, as
+			// StartPpp does; a refused command is a definite failure)
+			if (aT->ppp != 2)
+				LtLookup(aT, 90000000);          // starts the Psion's dial-up
+			aT->net_after = LtNifActive();
+			}
+		}
+	else
+		{
+		LtProgress(aT, "Testing the modem...");
+		RCommServ server;
+		RComm comm;
+		int serverOpen = 0;
+		aT->port = LtOpen(server, comm, serverOpen, aT);
+		if (aT->port == PG_PORT_OK)
+			{
+			int commOpen = 1;
+			TInt r = LtSetConfig(comm, aT->baud_index, aT->rtscts);
+			if (r == KErrNone && aT->rtscts)
+				{
+				LtWake(comm);
+				if (!(comm.Signals() & KSignalCTS))
+					{
+					// RTS/CTS on, but the modem holds CTS low: every write
+					// would stall, and changing the handshake on the open
+					// port did not free it (emulator). Open it again without.
+					aT->cts_blocked = 1;
+					comm.Close();
+					r = comm.Open(server, KPortName, ECommExclusive);
+					if (r == KErrNone)
+						r = LtSetConfig(comm, aT->baud_index, 0);
+					else
+						{
+						commOpen = 0;
+						aT->port = PG_PORT_BUSY;   // (taken in between)
+						}
+					}
+				}
+			if (aT->port != PG_PORT_OK)
+				;
+			else if (r != KErrNone)
+				{
+				aT->port = PG_PORT_FAIL;
+				aT->port_err = r;
+				}
+			else
+				LtModem(comm, aT);
+			if (commOpen)
+				{
+				comm.Cancel();
+				comm.Close();
+				}
+			}
+		if (serverOpen)
+			server.Close();
+		}
+	pg_lt_report(aT);
+	return 0;
+	}
+
+#endif // PG_LINK_TEST_HOST
+#endif // PG_LINK_TEST_ONLY

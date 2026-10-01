@@ -144,6 +144,10 @@ static const TPmHelpTopic KHelpTopics[] =
 	{ "Connections",
 	  "Tools > Connection settings chooses how PsiMail reaches the Internet, the same way as PsiTerm.\n"
 	  "\n"
+	  "Test (Ctrl+T) tries the settings shown, before OK: whether the modem answers and at what "
+	  "speed, and whether CTS allows RTS/CTS flow control; for Psion Internet, whether the "
+	  "connection is up and names can be looked up (it asks before dialling).\n"
+	  "\n"
 	  "Modem: a serial WiFi modem (such as a WiRSa or a WiFi232) on the Psion's serial port. PsiMail "
 	  "dials the server with ATDT host:port. Set the baud rate to the modem's; 115200 with RTS/CTS "
 	  "flow control is fastest if the cable carries those lines.\n"

@@ -28,6 +28,7 @@
 #include "psiterm.h"
 #include "pticons.h"
 #include "psilink.h"
+#include "pglinktest.h"
 
 static void UseSharedLink(RFs& aFs, TPsiSettings& aSettings);
 static void SaveSharedLink(RFs& aFs, const TPsiSettings& aSettings);
@@ -4532,8 +4533,34 @@ void CConnDialog::PreLayoutDynInitL()
 	SetEdwinTextL(EPtDlgPppStart, &iSettings.iPppStart);
 	}
 
-TBool CConnDialog::OkToExitL(TInt /*aButtonId*/)
+// Test: tries the values shown (not yet saved). PsiTerm's own terminal
+// holds the port while SSH is not running: it lets go for the test and
+// opens it again with the saved settings. While SSH runs, its engine has
+// the port, and the test says the port is in use.
+void CConnDialog::TestL()
 	{
+	TBuf<40> ppp;
+	GetEdwinText(ppp, EPtDlgPppStart);
+	ppp.TrimAll();
+	TBool freed = iView && !iView->SshActive();
+	if (freed)
+		iView->SerialClose();
+	TRAPD(err, PgLinkTestL(((CEikChoiceList*)Control(EPtDlgBaud))->CurrentItem(),
+		((CEikChoiceList*)Control(EPtDlgFlow))->CurrentItem() == 1,
+		((CEikChoiceList*)Control(EPtDlgLink))->CurrentItem() == 1,
+		ppp, R_PT_TEST_DIALOG, EPtDlgTest1));
+	if (freed)
+		iView->ApplySerialSettings();
+	User::LeaveIfError(err);
+	}
+
+TBool CConnDialog::OkToExitL(TInt aButtonId)
+	{
+	if (aButtonId == EPtBidTest)
+		{
+		TestL();
+		return EFalse;
+		}
 	iSettings.iBaudIndex = ((CEikChoiceList*)Control(EPtDlgBaud))->CurrentItem();
 	iSettings.iRtsCts = ((CEikChoiceList*)Control(EPtDlgFlow))->CurrentItem() == 1;
 	iSettings.iNetMode = ((CEikChoiceList*)Control(EPtDlgLink))->CurrentItem() == 1;
@@ -5612,7 +5639,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdConnSettings:
 		{
 		TPsiSettings old = s;
-		CConnDialog* dlg = new(ELeave) CConnDialog(s);
+		CConnDialog* dlg = new(ELeave) CConnDialog(s, iView);
 		if (!dlg->ExecuteLD(R_PT_CONN_DIALOG))
 			break;
 		SaveSettings(s);

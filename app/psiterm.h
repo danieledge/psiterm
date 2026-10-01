@@ -369,12 +369,14 @@ private:
 class CConnDialog : public CEikDialog
 	{
 public:
-	CConnDialog(TPsiSettings& aSettings) : iSettings(aSettings) {}
+	CConnDialog(TPsiSettings& aSettings, CTermView* aView = 0) : iSettings(aSettings), iView(aView) {}
 private:
 	void SetSizeAndPositionL(const TSize& aSize);
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
+	void TestL();                      // the Test button (0.74)
 	TPsiSettings& iSettings;
+	CTermView* iView;                  // its terminal holds the port when SSH is not running
 	};
 
 // Help on PsiTerm: a topic list over a read-only text (pthelp.cpp)
@@ -450,6 +452,7 @@ public:
 	void HangUp();
 	void ResetTerminal();
 	void ApplySerialSettings();
+	void SerialClose() { if (iSerial) iSerial->Close(); }   // Connection settings > Test
 	void SetFontL(TInt aZoom);
 	void ZoomBy(TInt aStep);
 	void SetTermRectL(const TRect& aRect);   // the toolbar came or went: lay out again

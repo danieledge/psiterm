@@ -9,6 +9,7 @@
 ssh/obj/
 ssh/hobj/
 ssh/psissh-host
+ssh/linktest
 ssh/emu/*.pe
 ssh/test/gf/gftest
 tools/sbtest/sbtest

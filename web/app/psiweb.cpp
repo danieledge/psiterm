@@ -14,6 +14,7 @@
 #include "pwapp.h"
 #include "pwicons.h"
 #include "psilink.h"
+#include "pglinktest.h"
 
 // The link settings are shared with PsiTerm and PsiMail (psilink.h)
 static void UseSharedLink(RFs& aFs, TPwSettings& aSettings)
@@ -413,9 +414,12 @@ void CPwView::Tick()
 		TBuf<80> m;
 		FromUtf8(m, s->net.link_msg);
 		m.Trim();
-		if (m.Length() && m[m.Length() - 1] == '.' && m.Right(3).Compare(_L("...")) != 0)
+		// (Right(3) of a shorter text panics USER 22: a one- or two-letter
+		// note, e.g. after NO CARRIER, closed PsiWeb up to 0.56)
+		TBool dots = m.Length() >= 3 && m.Right(3).Compare(_L("...")) == 0;
+		if (m.Length() && m[m.Length() - 1] == '.' && !dots)
 			m.SetLength(m.Length() - 1);     // no full stop at the end of a message
-		if (m.Length() && m.Right(3).Compare(_L("...")) == 0)
+		if (dots)
 			{
 			TRAPD(err, iEikonEnv->BusyMsgL(m, EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
 			iLinkBusy = err == KErrNone;
@@ -711,8 +715,26 @@ void CPwConnDialog::PreLayoutDynInitL()
 	SetEdwinTextL(EPwDlgPppStart, &iSettings.iPppStart);
 	}
 
-TBool CPwConnDialog::OkToExitL(TInt /*aButtonId*/)
+// Test: tries the values shown (not yet saved). If the browser engine has
+// the port (mid-connection), the test says the port is in use.
+void CPwConnDialog::TestL()
 	{
+	TBuf<40> ppp;
+	GetEdwinText(ppp, EPwDlgPppStart);
+	ppp.TrimAll();
+	PgLinkTestL(((CEikChoiceList*)Control(EPwDlgBaud))->CurrentItem(),
+		((CEikChoiceList*)Control(EPwDlgFlow))->CurrentItem() == 1,
+		((CEikChoiceList*)Control(EPwDlgLink))->CurrentItem() == 1,
+		ppp, R_PW_TEST_DIALOG, EPwDlgTest1);
+	}
+
+TBool CPwConnDialog::OkToExitL(TInt aButtonId)
+	{
+	if (aButtonId == EPwBidTest)
+		{
+		TestL();
+		return EFalse;
+		}
 	iSettings.iNetMode = ((CEikChoiceList*)Control(EPwDlgLink))->CurrentItem() == 1;
 	iSettings.iBaudIndex = ((CEikChoiceList*)Control(EPwDlgBaud))->CurrentItem();
 	iSettings.iRtsCts = ((CEikChoiceList*)Control(EPwDlgFlow))->CurrentItem() == 1;

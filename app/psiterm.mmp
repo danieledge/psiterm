@@ -8,11 +8,15 @@ PROJECT       ptproj
 SUBPROJECT    psiterm
 
 SOURCE        psiterm.cpp pthelp.cpp glyphs.cpp termsb.cpp
+SUBPROJECT    psitermssh
+SOURCE        pglinktest.cpp
+SUBPROJECT    psiterm
 RESOURCE      psiterm.rss
 
 USERINCLUDE   \ptproj\psiterm \ptproj\psiterm\vterm
-SYSTEMINCLUDE \ptproj\psiterm\vterm \epoc32\include\libc \epoc32\include
+SYSTEMINCLUDE \ptproj\psiterm\vterm \ptproj\psitermssh \epoc32\include\libc \epoc32\include
 
 LIBRARY       psivterm.lib
 LIBRARY       euser.lib efsrv.lib apparc.lib apgrfx.lib cone.lib eikon.lib ws32.lib gdi.lib
 LIBRARY       c32.lib bafl.lib estlib.lib etext.lib estor.lib fbscli.lib nifman.lib
+LIBRARY       esock.lib insock.lib
