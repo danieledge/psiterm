@@ -440,7 +440,7 @@ public:
 	CPtXferMemory* iXferMem;      // NULL until a transfer is first used
 
 	struct TTmuxTab { TInt iIndex; TBuf<20> iName; TBool iCurrent; TInt iX0; TInt iX1; };
-	enum { KMaxTabs = 12 };
+	enum { KMaxTabs = 20 };
 	CTermView();
 	~CTermView();
 	void ConstructL(const TRect& aRect, const TPsiSettings& aSettings);
@@ -629,11 +629,30 @@ private:
 	TInt iTabCount;
 	TInt iTabRow;             // the screen row tmux's status line is on; -1 = no tmux seen
 	TBool iTabsDrawn;         // PsiTerm draws its tab bar over that row
-	TBuf<200> iTabSig;        // what was parsed last, to notice changes
+	TBuf<320> iTabSig;        // what was parsed last, to notice changes
 	TBool iPenOnTabs;
-	TBool iTabsTop;           // tab strip moved to the top (tmux's bar hidden at the bottom)
-	TInt iOriginY0;           // iOriginY without the strip
+	TBool iTabsTop;           // the tab strip is up, at the top (tmux's bar row hidden)
+	TInt iOriginY0;           // the top of the terminal (and of the strip, when up)
 	void SetTabsTop(TBool aTop);
+	// 0.75: the strip is drawn as EIKON's dialog page tabs (pttabs.cpp). It
+	// sits over the terminal and takes the place of tmux's status line, which
+	// is hidden under it: the terminal has room for (height - strip) / cell
+	// rows plus that one, and the SSH window size says so.
+	TInt iTabStripH;          // its height in pixels (0 = no strip)
+	TInt iTabHideRow;         // tmux's bar row (the last or the first)
+	TBool iTabMsg;            // the bar is showing something else (a tmux prompt or
+	                          // message): the strip shows that row as text instead
+	TInt iTabMiss;            // reads in a row without a tab list, while the strip is up
+	enum { KTabMissLimit = 6 };   // that many (3 s of ticks): tmux has gone, the strip goes
+	TInt iTabFirst;           // first tab shown when they don't all fit
+	TInt iTabLastCur;         // the current window when they were last laid out
+	TInt iTabArrowL, iTabArrowR;   // the scroll arrows' left edges (-1 = none)
+	void Layout();            // rows, columns and origin for the font and the strip
+	TInt TabStripHeight() const;
+	TInt RowY(TInt aRow) const;     // the pixel row a terminal row is drawn at
+	TBool RowHidden(TInt aRow) const { return iTabsTop && !iTabMsg && aRow == iTabHideRow; }
+	void LayoutTabs(const CFont& aFont, TInt aLeft, TInt aRight);
+	TBool TabPenDownL(TInt aX);
 	TBuf8<240> iTitle;         // the terminal title as it arrives (OSC 0/2)
 	TTmuxTab iTitleTabs[KMaxTabs];   // tmux's window list from a PSITABS title
 	TInt iTitleTabCount;

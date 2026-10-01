@@ -39,8 +39,10 @@ RESOURCE EIK_APP_INFO
 
 // The standard toolbar: the program's name, four buttons for the pen, the
 // clock. SSH to... (Disconnect while a session is up, as the built-in Email
-// program's Open / Close mailbox), Snippets and Keys (both pop up a choice),
-// and Zoom (cycles the sizes). The pictures come from PsiTerm.mbm
+// program's Open / Close mailbox), and Snippets, Keys and Files (each pops up
+// a choice). Files has the File menu's transfer commands for the pen; it
+// replaced Zoom in 0.75, as the sidebar's zoom icons zoom PsiTerm (they send
+// EEikCmdZoomIn / EEikCmdZoomOut). The pictures come from PsiTerm.mbm
 // (tools/mkicons.py): CPsiTermAppUi::ConstructL puts them on. View > Show
 // toolbar (Shift+Ctrl+B) hides it and the terminal takes its 70 pixels.
 RESOURCE TOOLBAR r_pt_toolbar
@@ -68,7 +70,12 @@ RESOURCE TOOLBAR r_pt_toolbar
 			flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight;
 			control=MNBUT { popout=r_pt_keys_popup; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Keys"; };
 			},
-		TBAR_BUTTON { id=EPtCmdZoomIn; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Zoom"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_CTRL
+			{
+			type=EEikCtMenuButton; id=EPtCmdTbFiles;
+			flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight;
+			control=MNBUT { popout=r_pt_files_popup; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Files"; };
+			},
 		TBAR_CTRL
 			{
 			type=EEikCtSpacer;
@@ -114,6 +121,18 @@ RESOURCE MENU_PANE r_pt_keys_popup
 		MENU_ITEM { command=EPtCmdKeyCtrlBackslash; txt="Ctrl+\\"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { cascade=r_pt_fkeys_menu; txt="F1 to F6"; },
 		MENU_ITEM { cascade=r_pt_fkeys2_menu; txt="F7 to F12"; }
+		};
+	}
+
+// Files: the File menu's transfer commands, dimmed as there (Send and Get
+// need a logged-in SSH session)
+RESOURCE MENU_PANE r_pt_files_popup
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdSendFile; txt="Send file..."; },
+		MENU_ITEM { command=EPtCmdGetFile; txt="Get file..."; },
+		MENU_ITEM { command=EPtCmdLog; txt="Log to file..."; flags=EEikMenuItemCheckBox; }
 		};
 	}
 

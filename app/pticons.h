@@ -7,7 +7,7 @@ enum TPtIconId
 	EMbmToolDisconnect = 2, EMbmToolDisconnectMask = 3,
 	EMbmToolSnippets = 4, EMbmToolSnippetsMask = 5,
 	EMbmToolKeys = 6, EMbmToolKeysMask = 7,
-	EMbmToolZoom = 8, EMbmToolZoomMask = 9,
+	EMbmToolFiles = 8, EMbmToolFilesMask = 9,
 	EMbmCount = 10
 	};
 #endif

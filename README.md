@@ -44,9 +44,11 @@ and Claude Code - on a 1999 palmtop.
   status line while it runs
 - Snippets: your own commands and prompts on a menu and on Shift+Ctrl
   hotkeys, with escapes for any key sequence (`\n`, `^C`, `\e`)
-- tmux windows shown as tabs: tap one to switch, Ctrl+Tab / Shift+Ctrl+Tab
-  for the next / previous. Read from tmux's status line, or exactly from
-  tmux itself after tmux > Set up tabs on this server
+- tmux windows shown as tabs, drawn as EIKON's dialog page tabs at the top of
+  the screen in place of tmux's status line: tap one to switch, Ctrl+Tab /
+  Shift+Ctrl+Tab for the next / previous, arrows at the ends when there are
+  many. Read from tmux's status line, or exactly from tmux itself after
+  tmux > Set up tabs on this server
 - Claude Code keys (interrupt, rewind, switch mode, /clear, /compact...) and a
   tmux menu (windows, splits, panes, zoom, scroll mode, detach)
 - Themes (classic, inverted, high contrast, soft), cursor styles, and a status
@@ -55,8 +57,10 @@ and Claude Code - on a 1999 palmtop.
   optional per-host command on login such as `tmux new -A -s psion` to land back where
   you were
 - Terminus font in four sizes (plus Courier), optional bold, 16 greys
-- The standard EIKON toolbar: SSH to (End SSH while connected), Send snippet
-  and Keys pop-ups, Zoom, and the clock. View > Show toolbar (Shift+Ctrl+B)
+- The standard EIKON toolbar: SSH to (End SSH while connected), then the Send
+  snippet, Keys and Files pop-ups (Files: Send file, Get file, Log to file),
+  and the clock. The sidebar's zoom icons zoom the terminal (as View > Zoom
+  in / Zoom out). View > Show toolbar (Shift+Ctrl+B)
   hides it and the terminal takes the full width - 106 columns instead of 95
   in Terminus 12, 80 instead of 71 in Terminus 14/16, 64 instead of 57 in
   Terminus 18 - with the server told to reflow, even mid-session; remembered

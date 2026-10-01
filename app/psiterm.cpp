@@ -535,7 +535,14 @@ void CTermView::SetFontL(TInt aZoom)
 		if (iFont->CharWidthInPixels((TChar)g) != iCellW)
 			iMono = EFalse;
 		}
+	Layout();
+	}
 
+// Rows, columns and where they go, for the font, the room and the tab strip.
+// With the strip up, tmux's status row is hidden under it, so the terminal
+// is one row more than fits below the strip.
+void CTermView::Layout()
+	{
 	TSize size = Rect().Size();
 	// the status line takes a slim strip at the bottom
 	iStatusH = 0;
@@ -544,15 +551,26 @@ void CTermView::SetFontL(TInt aZoom)
 		iStatusH = iEikonEnv->AnnotationFont()->HeightInPixels() + 4;
 		size.iHeight -= iStatusH;
 		}
+	iTabStripH = iTabsTop ? TabStripHeight() : 0;
 	iCols = size.iWidth / iCellW;
-	iRows = size.iHeight / iCellH;
+	iRows = iTabsTop ? (size.iHeight - iTabStripH) / iCellH + 1 : size.iHeight / iCellH;
 	if (iCols > 160) iCols = 160;
 	if (iRows > 60) iRows = 60;
 	if (iCols < 20) iCols = 20;
 	if (iRows < 5) iRows = 5;
 	iOriginX = (size.iWidth - iCols * iCellW) / 2;
-	iOriginY0 = (size.iHeight - iRows * iCellH) / 2;
-	iOriginY = iOriginY0 + (iTabsTop ? iCellH : 0);
+	if (iTabsTop)
+		{
+		if (iTabHideRow != 0)
+			iTabHideRow = iRows - 1;          // (the bar follows the bottom)
+		iOriginY0 = 0;                        // the strip at the top, as a dialog's
+		iOriginY = iOriginY0 + iTabStripH - (iTabHideRow == 0 ? iCellH : 0);
+		}
+	else
+		{
+		iOriginY0 = (size.iHeight - iRows * iCellH) / 2;
+		iOriginY = iOriginY0;
+		}
 
 	iScrollOffset = 0;                       // back to the live screen
 	iSelActive = EFalse;
@@ -859,6 +877,9 @@ int CTermView::CbMoveRect(VTermRect aDest, VTermRect aSrc, void* aUser)
 		}
 	if (!self->iPaintGc)
 		return 0;                     // not painting: libvterm marks it damaged
+	TInt top = Min(aSrc.start_row, aDest.start_row), end = Max(aSrc.end_row, aDest.end_row);
+	if (self->iTabsTop && self->iTabHideRow >= top && self->iTabHideRow < end)
+		return 0;                     // tmux's bar is under the tab strip: redraw instead
 	TInt w = self->iCellW, h = self->iCellH;
 	TRect src(TPoint(self->iOriginX + aSrc.start_col * w, self->iOriginY + aSrc.start_row * h),
 		TPoint(self->iOriginX + aSrc.end_col * w, self->iOriginY + aSrc.end_row * h));
@@ -1092,7 +1113,7 @@ void CTermView::Draw(const TRect& /*aRect*/) const
 	CONST_CAST(CTermView*, this)->iDamaged = EFalse;
 	DrawAll(gc);
 	if (iTabsTop)
-		DrawTabs(gc);
+		DrawTabs(gc);                // (over the hidden row, when that is the first)
 	DrawCursor(gc);
 	DrawStatus(gc);
 	gc.UseFont(iFont);
@@ -1319,6 +1340,12 @@ TInt CTermView::ParseTabList(const TDesC& aText, TTmuxTab* aTabs, TInt& aCurrent
 		while (i < line.Length() && line[i] != ' ')
 			i++;
 		TInt e = i;
+		// tmux cuts a list too long for its bar with ">", and the right-hand
+		// part ("host" 12:00) can follow straight on: 7:ed>"vm"
+		TInt quote = line.Mid(s, e - s).Locate('"');
+		if (quote > 0)
+			e = s + quote;
+		TBool cut = (e > s && line[e - 1] == '>');
 		// decorations around an entry
 		while (s < e && (line[s] == '<' || line[s] == '>' || line[s] == '[' || line[s] == '(' || line[s] == '|'))
 			s++;
@@ -1344,7 +1371,9 @@ TInt CTermView::ParseTabList(const TDesC& aText, TTmuxTab* aTabs, TInt& aCurrent
 		if (end <= nameStart || line.Mid(nameStart, end - nameStart).Locate(':') >= 0)
 			continue;
 		aTabs[n].iIndex = idx;
-		aTabs[n].iName.Copy(line.Mid(nameStart, end - nameStart > 20 ? 20 : end - nameStart));
+		aTabs[n].iName.Copy(line.Mid(nameStart, end - nameStart > 19 ? 19 : end - nameStart));
+		if (cut)
+			aTabs[n].iName.Append((TChar)0x85);  // ("..." - tmux showed only the start)
 		aTabs[n].iCurrent = cur;
 		aTabs[n].iX0 = s;                  // its column, until DrawTabs sets pixels
 		aTabs[n].iX1 = 0;
@@ -1463,141 +1492,64 @@ void CTermView::ParseTmuxTabs()
 				}
 			}
 		}
-	TBuf<200> sig;
+	// The strip goes up when a tab list is found, and comes down only when
+	// none has been seen for a few seconds (tmux gone), so a tmux prompt or
+	// message in the bar (shown in the strip meanwhile) does not change the
+	// terminal's size, which would make every program redraw.
+	TBool found = iSettings.iTmuxTabs && row >= 0;
+	if (!SshLoggedIn() || !iSettings.iTmuxTabs)
+		iTabMiss = KTabMissLimit;            // no session or tabs off: no strip
+	else if (found || (iTabsTop && RowIsBar(iTabHideRow)))
+		iTabMiss = 0;                        // (a prompt or message: tmux is still there)
+	else if (iTabsTop && iTabMiss < KTabMissLimit)
+		iTabMiss++;
+	TBool strip = found || (iTabsTop && iTabMiss < KTabMissLimit);
+	TInt hide = found ? row : iTabHideRow;
+	TBuf<320> sig;
 	sig.AppendNum(row);
-	for (TInt t = 0; t < count && sig.Length() < 170; t++)
+	for (TInt t = 0; t < count && sig.Length() < 300; t++)
 		{
 		sig.Append(tabs[t].iCurrent ? '*' : ' ');
 		sig.AppendNum(tabs[t].iIndex);
 		sig.Append(LeftSafe(tabs[t].iName, 8));
 		}
-	TBool drawn = iSettings.iTmuxTabs && row >= 0;
-	if (sig == iTabSig && drawn == iTabsDrawn)
+	if (found && sig != iTabSig)
+		{
+		iTabCount = count;                   // (DrawTabs then places them)
+		for (TInt t = 0; t < count; t++)
+			iTabs[t] = tabs[t];
+		}
+	if (!strip)
+		{
+		iTabRow = row;                       // (Ctrl+Tab still works with tabs off)
+		iTabsDrawn = EFalse;
+		iTabSig = sig;
+		if (iTabsTop)
+			SetTabsTop(EFalse);
 		return;
-	TInt oldRow = iTabsDrawn ? iTabRow : -1;
+		}
+	iTabRow = hide;
+	iTabsDrawn = found;
+	if (!iTabsTop || hide != iTabHideRow)
+		{
+		iTabSig = sig;
+		iTabHideRow = hide;
+		iTabMsg = !found;
+		SetTabsTop(ETrue);
+		return;
+		}
+	if (sig == iTabSig && iTabMsg == !found)
+		return;
 	iTabSig = sig;
-	iTabRow = row;
-	iTabCount = count;
-	for (TInt t = 0; t < count; t++)
-		iTabs[t] = tabs[t];
-	iTabsDrawn = drawn;
-	// tmux's bar at the bottom: the tabs go to the top of the screen instead
-	TBool top = drawn && row == iRows - 1;
-	if (top != iTabsTop)
+	iTabMsg = !found;
+	if (iPaintGc || iScrollOffset > 0 || !IsActivated())
 		{
-		SetTabsTop(top);
+		iNeedFull = ETrue;
 		return;
 		}
-	if (iPaintGc || iScrollOffset > 0)
-		return;
-	if (iTabsTop)
-		{
-		if (IsActivated())
-			{
-			BeginPaint();
-			DrawTabs(*iPaintGc);
-			EndPaint();
-			}
-		return;
-		}
-	if (oldRow >= 0 && oldRow != row)
-		RepaintRows(oldRow, oldRow);
-	if (drawn)
-		RepaintRows(row, row);
-	}
-
-// Tabs in the modern style: the current tab is the colour of the terminal
-// and joins onto it, with rounded corners and bold text; the others sit
-// back in a darker strip with a separator between them. At the bottom of the
-// screen (where tmux's status line usually is) the tabs hang down from the
-// terminal; at the top they stand up from it.
-void CTermView::DrawTabs(CWindowGc& aGc) const
-	{
-	TInt y0 = iTabsTop ? iOriginY - iCellH : iOriginY + iTabRow * iCellH;
-	TInt h = iCellH;
-	TBool bottom = !iTabsTop && iTabRow > 0;
-	TRect bar(Rect().iTl.iX, y0, Rect().iBr.iX, y0 + h);
-	TInt edgeY = bottom ? y0 : y0 + h - 1;         // the line along the terminal side
-	TInt farY = bottom ? y0 + h - 1 : y0;          // the tabs' free edge
-	aGc.SetPenStyle(CGraphicsContext::ENullPen);
-	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	// strong contrast: the 5mx's LCD washes out neighbouring light greys, so
-	// a dark bar, black outlines and black text
-	aGc.SetBrushColor(Grey(6));
-	aGc.DrawRect(bar);
-	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-	aGc.SetPenColor(Grey(0));
-	aGc.DrawLine(TPoint(bar.iTl.iX, edgeY), TPoint(bar.iBr.iX, edgeY));
-
-	TInt x = bar.iTl.iX + 4;
-	CTermView* self = CONST_CAST(CTermView*, this);
-	TInt base = y0 + iAscent - (h - iAscent > 3 ? 0 : 1);
-	for (TInt i = 0; i < iTabCount; i++)
-		{
-		TBuf<6> num;
-		num.AppendNum(iTabs[i].iIndex);
-		TPtrC name(iTabs[i].iName);
-		TInt numW = iFont->TextWidthInPixels(num);
-		TInt w = numW + 5 + iFont->TextWidthInPixels(name) + 14;
-		if (x + w > bar.iBr.iX - 4)
-			w = bar.iBr.iX - 4 - x;
-		if (w < 20)
-			break;
-		TBool cur = iTabs[i].iCurrent;
-		// the current tab spans the whole row; the others are inset from
-		// the terminal edge so the current one stands in front
-		TInt top = bottom ? y0 : y0 + 1;
-		TInt bot = bottom ? y0 + h - 1 : y0 + h;
-		if (!cur)
-			{
-			if (bottom) top++; else bot--;
-			}
-		TRect t(x, top, x + w, bot);
-		aGc.SetPenStyle(cur ? CGraphicsContext::ENullPen : CGraphicsContext::ESolidPen);
-		aGc.SetPenColor(Grey(0));
-		aGc.SetBrushColor(cur ? Grey(15) : Grey(11));
-		aGc.DrawRect(t);                         // back tabs: filled, black outline
-		aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-		if (cur)
-			{
-			// outline on the three free sides, rounded corners on the free edge
-			aGc.SetPenColor(Grey(0));
-			TInt yIn = bottom ? top : bot - 1;      // terminal side: open
-			TInt yOut = farY;
-			aGc.DrawLine(TPoint(x, yIn), TPoint(x, yOut + (bottom ? -1 : 1)));
-			aGc.DrawLine(TPoint(x + w - 1, yIn), TPoint(x + w - 1, yOut + (bottom ? -1 : 1)));
-			aGc.DrawLine(TPoint(x + 2, yOut), TPoint(x + w - 2, yOut));
-			aGc.Plot(TPoint(x + 1, yOut + (bottom ? -1 : 1)));
-			aGc.Plot(TPoint(x + w - 2, yOut + (bottom ? -1 : 1)));
-			aGc.SetPenColor(Grey(6));              // clear the outer corner pixels
-			aGc.Plot(TPoint(x, yOut));
-			aGc.Plot(TPoint(x + w - 1, yOut));
-			// joins the terminal: no line along that side
-			aGc.SetPenColor(Grey(15));
-			aGc.DrawLine(TPoint(x + 1, edgeY), TPoint(x + w - 1, edgeY));
-			}
-		// "3 VirtualTeam": the number quiet, the name bold on the current tab
-		aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
-		TInt tx = x + 7;
-		aGc.SetPenColor(Grey(3));
-		aGc.DrawText(num, TPoint(tx, base));
-		tx += numW + 5;
-		TInt room = x + w - 5 - tx;
-		TPtrC shown(name);
-		while (shown.Length() > 1 && iFont->TextWidthInPixels(shown) > room)
-			shown.Set(shown.Left(shown.Length() - 1));
-		aGc.SetPenColor(Grey(0));
-		aGc.DrawText(shown, TPoint(tx, base));
-		if (cur)
-			aGc.DrawText(shown, TPoint(tx + 1, base));   // bold
-		aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-		self->iTabs[i].iX0 = x;
-		self->iTabs[i].iX1 = x + w;
-		x += w + 3;
-		}
-	for (TInt j = 0; j < iTabCount; j++)       // tabs that did not fit: not tappable
-		if (iTabs[j].iX1 > bar.iBr.iX || iTabs[j].iX0 >= x)
-			self->iTabs[j].iX0 = self->iTabs[j].iX1 = 0;
+	BeginPaint();
+	DrawTabs(*iPaintGc);
+	EndPaint();
 	}
 
 void CTermView::CheckTabsL()
@@ -1641,17 +1593,6 @@ void CTermView::CheckTabsL()
 	m.Append(_L8("\r\n"));
 	LocalMessage(m);
 	ShowDebugL();
-	}
-
-void CTermView::SetTabsTop(TBool aTop)
-	{
-	iTabsTop = aTop;
-	iOriginY = iOriginY0 + (aTop ? iCellH : 0);
-	iCacheValid = EFalse;
-	if (!iPaintGc)
-		DrawNow();
-	else
-		iNeedFull = ETrue;
 	}
 
 void CTermView::SelectTmuxWindow(TInt aIndex)
@@ -1772,7 +1713,8 @@ void CTermView::DrawScrollIndicator(CWindowGc& aGc) const
 	text.Format(_L(" history -%d/%d "), iScrollOffset, iSb.iCount);
 	TInt w = iFont->TextWidthInPixels(text);
 	TInt x = Rect().iBr.iX - w - 2;
-	TRect box(TPoint(x, iOriginY), TSize(w, iCellH));
+	TInt y = iOriginY0 + iTabStripH;             // (below the tab strip)
+	TRect box(TPoint(x, y), TSize(w, iCellH));
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 	aGc.SetBrushColor(Grey(0));
@@ -1780,7 +1722,7 @@ void CTermView::DrawScrollIndicator(CWindowGc& aGc) const
 	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
 	aGc.SetPenColor(Grey(15));
-	aGc.DrawText(text, TPoint(x, iOriginY + iAscent));
+	aGc.DrawText(text, TPoint(x, y + iAscent));
 	}
 
 // Draws a rectangle of cells. Runs of ordinary text that share colours and
@@ -1796,13 +1738,8 @@ void CTermView::DrawCells(CWindowGc& aGc, TInt aRow0, TInt aCol0, TInt aRow1, TI
 	const TUint KRunFlags = KSbBold | KSbUnderline | KSbStrike;
 	for (TInt r = aRow0; r < aRow1; r++)
 		{
-		if (iTabsTop && r == iRows - 1)
+		if (RowHidden(r))
 			continue;                     // tmux's bar: shown as tabs at the top
-		if (iTabsDrawn && r == iTabRow && iScrollOffset == 0)
-			{
-			DrawTabs(aGc);                // tmux's status line, drawn as tabs
-			continue;
-			}
 		TInt c = aCol0;
 		TLook look;
 		TInt byte = -1;
@@ -1852,7 +1789,7 @@ void CTermView::DrawCells(CWindowGc& aGc, TInt aRow0, TInt aCol0, TInt aRow1, TI
 			TBool ul = (flags & KSbUnderline) != 0;
 			TBool st = (flags & KSbStrike) != 0;
 			TInt x0 = iOriginX + start * iCellW;
-			TInt y0 = iOriginY + r * iCellH;
+			TInt y0 = RowY(r);
 			TInt x1 = x0 + run.Length() * iCellW;
 			aGc.SetPenStyle(CGraphicsContext::ENullPen);
 			aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
@@ -2051,7 +1988,7 @@ void CTermView::DrawOneCell(CWindowGc& aGc, TInt aRow, TInt aCol, const TLook& a
 	{
 	TInt fg = aLook.iFg, bg = aLook.iBg;
 
-	TRect box(TPoint(iOriginX + aCol * iCellW, iOriginY + aRow * iCellH),
+	TRect box(TPoint(iOriginX + aCol * iCellW, RowY(aRow)),
 		TSize(iCellW, iCellH));
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
@@ -2229,9 +2166,11 @@ void CTermView::DrawCursor(CWindowGc& aGc) const
 	self->iDrawnCurVisible = iCurVisible && !iBlinkHidden;
 	if (iScrollOffset > 0)
 		self->iDrawnCurVisible = EFalse;
-	if (!iCurVisible || iBlinkHidden || iScrollOffset > 0 || iCurRow >= iRows || iCurCol >= iCols)
+	if (RowHidden(iCurRow))
+		self->iDrawnCurVisible = EFalse;
+	if (!iDrawnCurVisible || iCurRow >= iRows || iCurCol >= iCols)
 		return;
-	TRect box(TPoint(iOriginX + iCurCol * iCellW, iOriginY + iCurRow * iCellH),
+	TRect box(TPoint(iOriginX + iCurCol * iCellW, RowY(iCurRow)),
 		TSize(iCellW, iCellH));
 	if (iSettings.iCursor == 1)                        // underline
 		box.iTl.iY = box.iBr.iY - (iCellH >= 12 ? 2 : 1) - iCellH / 12;
@@ -2621,20 +2560,16 @@ void CTermView::HandlePointerEventL(const TPointerEvent& aEvent)
 	if (p.iY < iOriginY) row = -1;
 	if (col < 0) col = 0;
 	if (col >= iCols) col = iCols - 1;
+	if (iTabsTop && row == iTabHideRow)
+		row = iTabHideRow == 0 ? 1 : iTabHideRow - 1;   // (tmux's bar is under the strip)
 	TInt rowC = row < 0 ? 0 : (row >= iRows ? iRows - 1 : row);
 
 	// a tap on a tab switches to that tmux window
-	TBool onTabs = iTabsTop ? (p.iY >= iOriginY - iCellH && p.iY < iOriginY)
-		: (iTabsDrawn && row == iTabRow && iScrollOffset == 0);
+	TBool onTabs = iTabsTop && p.iY >= iOriginY0 && p.iY < iOriginY0 + iTabStripH;
 	if (onTabs && aEvent.iType == TPointerEvent::EButton1Down)
 		{
 		iPenOnTabs = ETrue;
-		for (TInt i = 0; i < iTabCount; i++)
-			if (p.iX >= iTabs[i].iX0 && p.iX < iTabs[i].iX1)
-				{
-				SelectTmuxWindow(iTabs[i].iIndex);
-				break;
-				}
+		TabPenDownL(p.iX);                // (pttabs.cpp)
 		return;
 		}
 	if (iPenOnTabs)
@@ -4767,7 +4702,7 @@ void CPsiTermAppUi::ConstructL()
 
 // ----- the toolbar ---------------------------------------------------------------
 // The standard EIKON toolbar on the right (psiterm.rss r_pt_toolbar): the
-// name, SSH to... / Disconnect, Snippets and Keys (pop-ups), Zoom, the clock.
+// name, SSH to... / Disconnect, Snippets, Keys and Files (pop-ups), the clock.
 
 // a toolbar button's picture, from PsiTerm.mbm (made by tools/mkicons.py):
 // 24x20, in the middle of its side, the words beside it as the built-in
@@ -4805,7 +4740,7 @@ void CPsiTermAppUi::ToolbarPicturesL()
 	ButtonPictureL(EPtCmdTbConnect, EMbmToolSsh);
 	ButtonPictureL(EPtCmdTbSnippets, EMbmToolSnippets);
 	ButtonPictureL(EPtCmdTbKeys, EMbmToolKeys);
-	ButtonPictureL(EPtCmdZoomIn, EMbmToolZoom);
+	ButtonPictureL(EPtCmdTbFiles, EMbmToolFiles);
 	}
 
 // the first button: SSH to... when idle, Disconnect while a session is up
@@ -4855,14 +4790,18 @@ void CPsiTermAppUi::ShowToolBarL(TBool aShow)
 	iView->SetTermRectL(TermRect(aShow));
 	}
 
-// the Snippets and Keys buttons pop their menu up beside the button
+// the Snippets, Keys and Files buttons pop their menu up beside the button
 void CPsiTermAppUi::ToolbarPopupL(TInt aCommand)
 	{
 	CCoeControl* b = iToolBar ? iToolBar->ControlById(aCommand) : NULL;
 	TPoint pos = b ? b->PositionRelativeToScreen()
 		: TPoint(iEikonEnv->ScreenDevice()->SizeInPixels().iWidth, 20);
-	LaunchPopupMenuL(aCommand == EPtCmdTbSnippets ? R_PT_SNIPPETS_POPUP : R_PT_KEYS_POPUP,
-		pos, EPopupTargetTopRight);
+	TInt menu = R_PT_KEYS_POPUP;
+	if (aCommand == EPtCmdTbSnippets)
+		menu = R_PT_SNIPPETS_POPUP;
+	else if (aCommand == EPtCmdTbFiles)
+		menu = R_PT_FILES_POPUP;
+	LaunchPopupMenuL(menu, pos, EPopupTargetTopRight);
 	}
 
 // The Psion was switched back on (0.68): the modem or the ISP may have hung
@@ -5333,6 +5272,13 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPtCmdLog, PtLogging(*iView) ? EEikMenuItemSymbolOn : 0);
 		return;
 		}
+	if (aMenuId == R_PT_FILES_POPUP)          // the toolbar's Files: as the File menu
+		{
+		aMenuPane->SetItemDimmed(EPtCmdSendFile, !iView->SshLoggedIn());
+		aMenuPane->SetItemDimmed(EPtCmdGetFile, !iView->SshLoggedIn());
+		aMenuPane->SetItemButtonState(EPtCmdLog, PtLogging(*iView) ? EEikMenuItemSymbolOn : 0);
+		return;
+		}
 	if (aMenuId == R_PT_SNIPPETS_MENU || aMenuId == R_PT_SNIPPETS_POPUP)
 		{
 		// your snippets, each with its hotkey shown on the right (not on the
@@ -5452,6 +5398,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPtCmdTbSnippets:
 	case EPtCmdTbKeys:
+	case EPtCmdTbFiles:
 		ToolbarPopupL(aCommand);
 		break;
 	case EPtCmdSsh:     SshToL(); break;
