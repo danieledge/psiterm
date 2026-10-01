@@ -10,6 +10,7 @@ enum TPsiTermCommands
 	EPtCmdSendSize,
 	EPtCmdReset,
 	EPtCmdAbout,
+	EPtCmdHelp,           // Tools > Help on PsiTerm
 
 	EPtCmdKeyEsc,
 	EPtCmdKeyTab,
@@ -68,7 +69,7 @@ enum TPsiTermCommands
 	EPtCmdCharInfo,
 	EPtCmdScreenshot,
 	EPtCmdSendShots,
-	EPtCmdUpdateServer,
+	EPtCmdUpdateServer,      // (0.70: no longer on a menu - Update PsiTerm... asks where from)
 	EPtCmdBold,
 	EPtCmdConnSettings,
 
@@ -152,7 +153,9 @@ enum TPsiTermDialogControls
 	EPtDlgBell,
 	EPtDlgStartScreen,
 	EPtDlgBold,
-	EPtDlgSnipHint
+	EPtDlgSnipHint,
+	EPtDlgHelpTopic,         // Help on PsiTerm
+	EPtDlgHelpText
 	};
 
 enum TPsiTermDialogButtons

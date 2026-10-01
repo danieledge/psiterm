@@ -21,7 +21,8 @@ enum TPwCommands
 	EPwCmdAbout,
 	EPwCmdUpdate,
 	EPwCmdHangup,
-	EPwCmdToggleToolbar
+	EPwCmdToggleToolbar,
+	EPwCmdHelp               // Tools > Help on PsiWeb
 	};
 
 enum TPwDialogControls
@@ -48,5 +49,7 @@ enum TPwDialogControls
 	EPwDlgAboutStatus,
 	EPwDlgAbout4,
 	EPwDlgAbout5,
-	EPwDlgAbout6
+	EPwDlgAbout6,
+	EPwDlgHelpTopic,         // Help on PsiWeb
+	EPwDlgHelpText
 	};

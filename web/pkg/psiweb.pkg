@@ -10,5 +10,10 @@
 "psiweb.mbm"-"!:\System\Apps\PsiWeb\PsiWeb.mbm"
 "psiweb.exe"-"!:\System\Apps\PsiWeb\psiweb.exe"
 "COPYING.txt"-"!:\System\Apps\PsiWeb\COPYING.txt"
+; PsiWeb's own files (settings, the update source, cookies): not installed,
+; kept across upgrades, removed with the program (makesis FN)
+""-"C:\System\Apps\PsiWeb\PsiWeb.ini",FN
+""-"C:\System\Apps\PsiWeb\Update.ini",FN
+""-"!:\System\Apps\PsiWeb\Cookies",FN
 ; the EPOC C library (ESTLIB.DLL), which the engine needs and the 5mx ROM lacks
 @"STDLIB.SIS",(0x100002c3)
