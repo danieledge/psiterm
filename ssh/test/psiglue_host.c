@@ -102,7 +102,58 @@ static void pump_stdin(int timeout_ms)
 		for (i = 0; i < n; i++) { g.kbd[g.kbd_head % PSI_KBD_SIZE] = buf[i]; g.kbd_head++; }
 	}
 }
-int pg_kbd_avail(void) { pump_stdin(0); return (int)(g.kbd_head - g.kbd_tail); }
+/* file transfer test hook (0.74): PSI_XFER names a script, run once logged
+   in, one request at a time, as PsiTerm would post them. Results go to
+   PSI_XFER_OUT (default /tmp/psixfer.out). Lines:
+     put <psion file> <server file>     get <server file> <psion file>
+     list <server folder|.>             stat <server file>
+     cancel <bytes>   (Stop the next request once this much has moved)
+     quit             (as Disconnect) */
+static FILE* gXferIn;
+static FILE* gXferOut;
+static int gXferBusy, gXferCancelAt = -1, gXferEnd;
+static char gXferCmd[600];
+static void xfer_tick(void)
+{
+	char line[1200], a[600], b[600];
+	if (!gXferIn) {
+		static int tried;
+		if (tried || !getenv("PSI_XFER")) return;
+		tried = 1;
+		gXferIn = fopen(getenv("PSI_XFER"), "r");
+		gXferOut = fopen(getenv("PSI_XFER_OUT") ? getenv("PSI_XFER_OUT") : "/tmp/psixfer.out", "w");
+		if (!gXferIn || !gXferOut) return;
+	}
+	if (g.state != PSI_STATE_CONNECTED || gXferEnd) return;
+	if (gXferBusy) {
+		if (gXferCancelAt >= 0 && g.xfer_done >= (unsigned)gXferCancelAt) { g.xfer_cancel = 1; gXferCancelAt = -1; }
+		if (g.xfer_ack != g.xfer_req) return;
+		fprintf(gXferOut, "RESULT %s rc=%d done=%u total=%u exists=%d msg=%s path=%s more=%d\n", gXferCmd,
+			g.xfer_result, g.xfer_done, g.xfer_total, g.xfer_exists, g.xfer_msg, g.xfer_path, g.xfer_list_more);
+		if (g.xfer_op == PSI_XOP_LIST && g.xfer_result == 0) fwrite(g.xfer_list, 1, g.xfer_list_len, gXferOut);
+		fflush(gXferOut);
+		gXferBusy = 0;
+	}
+	for (;;) {
+		if (!fgets(line, sizeof(line), gXferIn)) { fprintf(gXferOut, "END\n"); fflush(gXferOut); gXferEnd = 1; return; }
+		line[strcspn(line, "\r\n")] = 0;
+		a[0] = b[0] = 0;
+		if (sscanf(line, "cancel %d", &gXferCancelAt) == 1) continue;
+		if (!strcmp(line, "quit")) { g.quit = 1; return; }
+		if (sscanf(line, "put %599s %599s", a, b) == 2) { g.xfer_op = PSI_XOP_PUT; strcpy(g.xfer_local, a); strcpy(g.xfer_remote, b); }
+		else if (sscanf(line, "get %599s %599s", a, b) == 2) { g.xfer_op = PSI_XOP_GET; strcpy(g.xfer_remote, a); strcpy(g.xfer_local, b); }
+		else if (sscanf(line, "list %599s", a) == 1) { g.xfer_op = PSI_XOP_LIST; strcpy(g.xfer_remote, strcmp(a, ".") ? a : ""); }
+		else if (sscanf(line, "stat %599s", a) == 1) { g.xfer_op = PSI_XOP_STAT; strcpy(g.xfer_remote, a); }
+		else continue;
+		snprintf(gXferCmd, sizeof(gXferCmd), "%s", line);
+		g.xfer_cancel = 0;
+		g.xfer_done = 0;
+		g.xfer_req++;
+		gXferBusy = 1;
+		return;
+	}
+}
+int pg_kbd_avail(void) { xfer_tick(); pump_stdin(0); return (int)(g.kbd_head - g.kbd_tail); }
 int pg_kbd_read(void* b, int m) { int n = 0; unsigned char* o = b; pump_stdin(0); while (n < m && g.kbd_tail != g.kbd_head) { o[n++] = g.kbd[g.kbd_tail % PSI_KBD_SIZE]; g.kbd_tail++; } return n; }
 void pg_out_write(const void* b, int n) { fwrite(b, 1, n, stdout); fflush(stdout); }
 void pg_winsize(int* r, int* c) { *r = g.rows; *c = g.cols; }
@@ -118,6 +169,7 @@ int pg_wait(int ms, int wantNet, int wantKbd)
 		if (g.resized) mask |= 4;
 		if (g.quit) mask |= 8;
 		if (mask) return mask;
+		xfer_tick();
 		{
 			int slice = 30000;
 			if (ms >= 0) { long long left = ms * 1000LL - (now_us() - start); if (left <= 0) return 0; if (left < slice) slice = (int)left; if (slice < 1000) slice = 1000; }

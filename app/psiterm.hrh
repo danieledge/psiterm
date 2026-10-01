@@ -116,6 +116,11 @@ enum TPsiTermCommands
 	EPtCmdTbSnippets,
 	EPtCmdTbKeys,
 
+	// 0.74: file transfer (SFTP) and the session log (ptxfer.cpp)
+	EPtCmdSendFile,           // File > Send file...
+	EPtCmdGetFile,            // File > Get file...
+	EPtCmdLog,                // File > Log to file... (tick box)
+
 	EPtCmdSnippet0 = 0x1400,  // ... EPtCmdSnippet0 + KMaxSnippets - 1: send snippet N
 	EPtCmdHost0 = 0x1500      // ... + KMaxHosts - 1: connect to saved host N (welcome screen)
 	};
@@ -162,7 +167,14 @@ enum TPsiTermDialogControls
 	EPtDlgBold,
 	EPtDlgSnipHint,
 	EPtDlgHelpTopic,         // Help on PsiTerm
-	EPtDlgHelpText
+	EPtDlgHelpText,
+	EPtDlgXferWhat,          // 0.74: transfer progress
+	EPtDlgXferHow,
+	EPtDlgRemoteDir,         // the server's folder list
+	EPtDlgRemoteList,
+	EPtDlgLogFile,           // Log to file
+	EPtDlgLogText,
+	EPtDlgLogExisting
 	};
 
 enum TPsiTermDialogButtons
@@ -171,5 +183,8 @@ enum TPsiTermDialogButtons
 	EPtBidEdit,
 	EPtBidDelete,
 	EPtBidImport,
-	EPtBidShow
+	EPtBidShow,
+	EPtBidUp,                // 0.74: the server's folder list
+	EPtBidOpen,
+	EPtBidXferDone           // the progress window closes itself
 	};

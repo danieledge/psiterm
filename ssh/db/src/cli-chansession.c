@@ -85,6 +85,13 @@ out:
 /* If the main session goes, we close it up */
 static void cli_closechansess(const struct Channel *UNUSED(channel)) {
 	cli_tty_cleanup(); /* Restore tty modes etc */
+#ifdef __EPOC32__
+	{
+		/* PsiTerm: the file transfer channel must not keep the session open */
+		extern void psi_sftp_shell_closed(void);
+		psi_sftp_shell_closed();
+	}
+#endif
 
 	/* This channel hasn't gone yet, so we have > 1 */
 	if (ses.chancount > 1) {

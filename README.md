@@ -33,6 +33,15 @@ and Claude Code - on a 1999 palmtop.
   fingerprint; show, rename, regenerate or delete them. File > Install
   login key on server adds one to a server, and each saved host chooses its
   key, a saved password, or to ask
+- File transfer over the logged-in connection (SFTP, no second login):
+  File > Send file picks a Psion file with the standard Open file dialog,
+  then a folder on the server; File > Get file browses the server's
+  folders (names and sizes) and saves with the standard Save as dialog.
+  Progress with Stop; works over a 57600 baud modem; a stopped or failed
+  download leaves no half file. Servers without SFTP are told apart
+- Session log (File > Log to file): everything received, as plain text
+  (escape sequences taken out) or raw, to a file you choose; "Log" on the
+  status line while it runs
 - Snippets: your own commands and prompts on a menu and on Shift+Ctrl
   hotkeys, with escapes for any key sequence (`\n`, `^C`, `\e`)
 - tmux windows shown as tabs: tap one to switch, Ctrl+Tab / Shift+Ctrl+Tab
@@ -100,11 +109,12 @@ PsiTerm app, and packages `dist/PsiTerm.sis`.
 | `app/` | PsiTerm.app - EIKON UI, terminal drawing, settings, dialogs |
 | `ssh/` | psissh.exe - Dropbear client plus the EPOC glue (`psiglue.cpp`, `psishim.c`) |
 | `ssh/psishared.h` | the shared-memory interface between the two |
+| `ssh/sftp.c` | the SFTP v3 client for file transfer, on a second channel of the SSH session (`app/ptxfer.cpp` is its UI and the session log) |
 | `libvterm/` | terminal emulation |
 | `pkg/` | installer definition, font and icon files |
 | `server/` | optional local update/debug server (plain HTTP) |
 | `tools/` | font and icon converters, screenshot renderer, test harnesses |
-| `ssh/test/` | host-side tests (build `ssh/test/Makefile.host`; `update-test.key` is a throwaway key only the host test build trusts) |
+| `ssh/test/` | host-side tests (build `ssh/test/Makefile.host`; `update-test.key` is a throwaway key only the host test build trusts; `sftp_test.py` tests file transfer against a local OpenSSH server) |
 | `mail/` | PsiMail - an email client (IMAP/SMTP over TLS, made for Fastmail): see `mail/README.md` |
 
 ## Updates

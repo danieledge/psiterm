@@ -26,6 +26,7 @@
 #include <eiktbar.h>
 #include <eikimage.h>
 #include "psiterm.h"
+#include "ptxfer.h"
 #include "pticons.h"
 #include "psilink.h"
 
@@ -346,6 +347,8 @@ CTermView::CTermView()
 
 CTermView::~CTermView()
 	{
+	delete iLog;                         // (flushes and closes the log file)
+	delete iXferMem;
 	if (iSshActive && iShared)
 		{
 		iShared->quit = 1;
@@ -640,6 +643,8 @@ void CTermView::SerialDataL(const TDesC8& aData)
 		iModemOnline = (on > off);
 	iRxTail = look.Right(look.Length() < 12 ? look.Length() : 12);
 	FeedTerminal(aData.Ptr(), aData.Length());
+	if (iLog)
+		iLog->Write(aData.Ptr(), aData.Length());   // File > Log to file
 	}
 
 // Online as far as we can tell: CONNECT seen, or data still arriving
@@ -1157,6 +1162,8 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 	else
 		aText.Format(_L("Not connected   %d baud"), BaudValue(iSettings.iBaudIndex));
 	aSplit = aText.Length();
+	if (PtLogging(*this))
+		aText.Append(_L("Log   "));        // File > Log to file is on
 	TTime now;
 	now.HomeTime();
 	TDateTime t = now.DateTime();
@@ -1214,6 +1221,8 @@ void CTermView::Tick()
 		}
 	iTickCount++;
 	SyncToolbar();
+	if (iLog)
+		iLog->Flush();                   // the log reaches the disk within half a second
 	TInt state = (iSshActive && iShared) ? iShared->state : -1;
 	if (state != iLastState)
 		{
@@ -3473,7 +3482,11 @@ void CTermView::PumpSsh()
 		if (iCapture)
 			AppendDebug(TPtrC8(buf, n));
 		else
+			{
 			FeedTerminal(buf, n);
+			if (iLog)
+				iLog->Write(buf, n);           // File > Log to file
+			}
 		}
 	if (paint)
 		EndPaint();
@@ -5288,6 +5301,9 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemDimmed(EPtCmdSshDisconnect, !ssh);
 		aMenuPane->SetItemDimmed(EPtCmdHangup, ssh || !iView->ModemOnline());
 		aMenuPane->SetItemDimmed(EPtCmdInstallKey, !iView->SshLoggedIn() || iKeys->Count() == 0);
+		aMenuPane->SetItemDimmed(EPtCmdSendFile, !iView->SshLoggedIn());
+		aMenuPane->SetItemDimmed(EPtCmdGetFile, !iView->SshLoggedIn());
+		aMenuPane->SetItemButtonState(EPtCmdLog, PtLogging(*iView) ? EEikMenuItemSymbolOn : 0);
 		return;
 		}
 	if (aMenuId == R_PT_SNIPPETS_MENU || aMenuId == R_PT_SNIPPETS_POPUP)
@@ -5443,6 +5459,15 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPtCmdInstallKey:
 		InstallKeyCmdL();                 // says what to do next itself, only when it did install
+		break;
+	case EPtCmdSendFile:                  // 0.74: file transfer and the log (ptxfer.cpp)
+		PtSendFileL(*iView);
+		break;
+	case EPtCmdGetFile:
+		PtGetFileL(*iView);
+		break;
+	case EPtCmdLog:
+		PtLogCommandL(*iView);
 		break;
 	case EPtCmdSerialInfo:
 		if (ConfirmDisconnectL(aCommand))

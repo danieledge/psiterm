@@ -92,6 +92,25 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "the server's ~/.ssh/authorized_keys. Then choose that key under Log in with in File > SSH to > "
 	  "Edit, and the server stops asking for the password." },
 
+	{ "Files & logs",
+	  "While logged in, PsiTerm can copy files to and from the server over the same connection - no "
+	  "second login. It uses SFTP, which almost every SSH server offers.\n"
+	  "\n"
+	  "File > Send file: choose the file on the Psion, then the server folder it goes to (Enter sends "
+	  "it to the folder shown; Open, or a second tap, goes into a folder; Up or Backspace goes back). "
+	  "If the server already has a file of that name, PsiTerm asks before replacing it.\n"
+	  "\n"
+	  "File > Get file: choose the file in the server's folders (Enter opens a folder or fetches a "
+	  "file), then where it goes on the Psion. A file that arrives only in part - Stop, a full disk, "
+	  "a lost connection - is not kept, and an older Psion file of the same name is left as it was.\n"
+	  "\n"
+	  "A window shows how much has moved; Stop (Esc) ends the transfer. Over a 57600 baud modem a "
+	  "100 KB file takes about 20 seconds.\n"
+	  "\n"
+	  "File > Log to file writes everything the server sends to a file, as plain text (colours and "
+	  "cursor movements taken out) or exactly as received. Log shows on the status line while it "
+	  "runs; choose the command again to stop. If the disk fills up, the log stops and says so." },
+
 	{ "Connections",
 	  "Tools > Connection settings chooses how PsiTerm reaches the server, the same way as PsiMail "
 	  "and PsiWeb.\n"

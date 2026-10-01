@@ -4,7 +4,7 @@ DB_SRCS := dbutil buffer dbhelpers signkey rsa dbrandom queue atomicio compat lt
            list chachapoly kex-x25519 cli-main cli-auth cli-authpasswd cli-kex cli-session \
            cli-runopts cli-chansession cli-channel cli-authinteract cli-readconf bignum dh_groups \
            signkey_ossh netio listener fake-rfc2553 cli-authpubkey gened25519 keyimport psi-keygen
-OBJS := $(addprefix hobj/,$(addsuffix .o,$(DB_SRCS))) hobj/psishim.o hobj/tls13.o hobj/psiglue_host.o hobj/bench.o
+OBJS := $(addprefix hobj/,$(addsuffix .o,$(DB_SRCS))) hobj/psishim.o hobj/tls13.o hobj/psiglue_host.o hobj/bench.o hobj/sftp.o
 CF := -O1 -g -std=gnu99 -w -DLOCALOPTIONS_H_EXISTS -D__EPOC32__ -DPSI_HOST_TEST -DDROPBEAR_CLIENT -include compat/psicompat.h \
       -I test/hostcfg -I db -I db/src -I db/libtomcrypt/src/headers -I db/libtommath
 DS := /home/claude/dropbear-src
@@ -13,6 +13,8 @@ psissh-host: $(OBJS)
 hobj/%.o: db/src/%.c
 	@mkdir -p hobj; gcc -c $(CF) $< -o $@
 hobj/tls13.o: tls13.c
+	@mkdir -p hobj; gcc -c $(CF) $< -o $@
+hobj/sftp.o: sftp.c psishared.h
 	@mkdir -p hobj; gcc -c $(CF) $< -o $@
 hobj/psishim.o: psishim.c
 	@mkdir -p hobj; gcc -c $(CF) $< -o $@
