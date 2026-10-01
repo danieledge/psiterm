@@ -47,6 +47,10 @@ int main(int argc, char **argv)
 	int r;
 	memset(&o, 0, sizeof(o));
 	o.abort = abort_never;
+	/* IMG_MAX_FULL=bytes: the whole-picture limit (progressive JPEGs keep
+	   their coefficients within it), IMG_NO_DITHER=1: plain rounding */
+	if (getenv("IMG_MAX_FULL")) o.max_full_bytes = atol(getenv("IMG_MAX_FULL"));
+	if (getenv("IMG_NO_DITHER")) o.no_dither = 1;
 	if (argc >= 4 && !strcmp(argv[1], "decode")) {
 		if (argc >= 5) o.max_w = atoi(argv[4]);
 		if (argc >= 6) o.max_h = atoi(argv[5]);

@@ -13,7 +13,10 @@
  * times faster on a 36 MHz ARM, and the screen is only 240 pixels tall.
  * Choosing needs the size first, so the header is read once at full size
  * and the stream rewound (when it can be; else it is decoded whole).
- * Progressive and arithmetic-coded JPEGs are refused.
+ * Progressive JPEGs (and the kinds picojpeg refuses that are still
+ * Huffman-coded: SOF1, odd sampling factors, 16-bit tables) go to
+ * pmjprog.c, which keeps every block's coefficients until the last scan.
+ * Arithmetic-coded JPEGs are refused.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -93,6 +96,11 @@ int pmimg_decode_jpeg(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *er
 	pjpeg_grey_only(1);
 	pjpeg_set_shrink(0);
 	status = pjpeg_decode_init(&info, need_bytes, in, 0);
+	if (status && (status == PJPG_UNSUPPORTED_MODE || status == PJPG_UNSUPPORTED_MARKER ||
+	               status == PJPG_UNSUPPORTED_SAMP_FACTORS || status == PJPG_UNSUPPORTED_QUANT_TABLE) &&
+	    pmimg_in_rewind(in))
+		/* progressive, extended (SOF1), odd sampling, 16-bit tables: pmjprog.c */
+		return pmimg_decode_jpeg_prog(in, from, out, err, errmax);
 	if (status) {
 		pmimg_err(err, errmax, reason(status));
 		return status == PJPG_STREAM_READ_ERROR ? PMIMG_E_READ : unsupported(status) ? PMIMG_E_UNSUPPORTED : PMIMG_E_FORMAT;

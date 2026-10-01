@@ -101,7 +101,7 @@ static long duration(const char *v)
 		case 'M': if (time) total += n * 60; break;
 		case 'S': total += n; break;
 		}
-		if (total > 1000000000L) total = 1000000000L;
+		if (total > 400L * 86400L) total = 400L * 86400L;    /* (and start + it stays in a 32-bit long) */
 		n = 0;
 	}
 	return sign * total;
@@ -185,6 +185,11 @@ int ics_each(const char *text, int len, void (*fn)(const IcsEvent *e, void *ctx)
 	}
 	return count;
 }
+
+/* the readers above, for invite.c (invitations in messages) */
+int ics_line(const char *text, int len, int *pos, char *line, int max) { return next_line(text, len, pos, line, max); }
+const char *ics_prop(const char *line, char *name, int nmax, char *params, int pmax) { return split_prop(line, name, nmax, params, pmax); }
+void ics_text(const char *v, char *out, int max) { text_value(v, out, max); }
 
 /* ------------------------------------------------------------ writing */
 
@@ -464,7 +469,11 @@ static void write_event(Out *o, Obj *ob, int a, int b, const IcsChange *c, int z
 		}
 		if (is_prop(s, "DTEND") || is_prop(s, "DURATION") || is_prop(s, "DTSTAMP") ||
 		    is_prop(s, "LAST-MODIFIED")) continue;
-		if (is_prop(s, "SEQUENCE")) { seq = atoi(strchr(s, ':') ? strchr(s, ':') + 1 : "0"); continue; }
+		if (is_prop(s, "SEQUENCE")) {
+			long v = atol(strchr(s, ':') ? strchr(s, ':') + 1 : "0");
+			seq = v < 0 ? 0 : v > 1000000L ? 1000000 : (int)v;     /* (a hostile one can't overflow + 1) */
+			continue;
+		}
 		if (as_exception && (is_prop(s, "RRULE") || is_prop(s, "RDATE") || is_prop(s, "EXDATE") ||
 		                     is_prop(s, "RECURRENCE-ID"))) continue;
 		if (is_prop(s, "SUMMARY")) { out_text(o, "SUMMARY", c->summary); continue; }

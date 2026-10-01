@@ -12,6 +12,10 @@
  *     Reply-Folder: INBOX                    (mark the original answered)
  *     Reply-Uid: 1234
  *     Format: rich                           (the text has bold/italic/underline)
+ *     Itip: ACCEPTED                         (a reply to an invitation: also
+ *     Itip-Uid: ... Itip-Seq: ... Itip-Organizer: ... Itip-Attendee: ...
+ *     Itip-Name: ... Itip-Summary: ... Itip-Recur: ... Itip-Start/End: ...
+ *                                             - see invite.h)
  *     <blank line>
  *     the text...
  * and this writes <id>.eml: UTF-8, quoted-printable, attachments in base64.
@@ -26,6 +30,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include "pm.h"
+#include "invite.h"
 
 static void set_why(char *why, int whymax, const char *fmt, ...)
 {
@@ -125,6 +130,7 @@ static const char *mime_type(const char *name)
 		{ ".zip", "application/zip" }, { ".csv", "text/csv" }, { ".rtf", "application/rtf" },
 		{ ".doc", "application/msword" }, { ".xls", "application/vnd.ms-excel" },
 		{ ".wav", "audio/wav" }, { ".sis", "application/vnd.symbian.install" },
+		{ ".vcf", "text/vcard" }, { ".ics", "text/calendar" },
 		{ 0, 0 } };
 	const char *dot = strrchr(name, '.');
 	int i;
@@ -237,6 +243,24 @@ static char *read_rest(FILE *in, int *len)
 	return b;
 }
 
+static void write_b64_buf(FILE *f, const char *data, int n)
+{
+	static const char t[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	int i, col = 0;
+	for (i = 0; i < n; i += 3) {
+		unsigned v = (unsigned char)data[i] << 16;
+		int k = n - i;
+		if (k > 1) v |= (unsigned char)data[i + 1] << 8;
+		if (k > 2) v |= (unsigned char)data[i + 2];
+		fputc(t[(v >> 18) & 63], f);
+		fputc(t[(v >> 12) & 63], f);
+		fputc(k > 1 ? t[(v >> 6) & 63] : '=', f);
+		fputc(k > 2 ? t[v & 63] : '=', f);
+		if ((col += 4) >= 76) { fputs("\r\n", f); col = 0; }
+	}
+	if (col) fputs("\r\n", f);
+}
+
 static int write_b64_file(FILE *f, const char *path)
 {
 	static const char t[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -289,6 +313,7 @@ int compose_mime(int acct, const char *outbox_path, const char *mime_path,
 	PmAccount *a = &pm_shared()->acct[acct];
 	static char line[1100], to[1100], cc[1100], bcc[1100], subject[400], irt[200], refs[1000];
 	static char attach[8][150];
+	static ItipReply itip;
 	int natt = 0, i, rich = 0, blen = 0;
 	char *body;
 	FILE *in, *f;
@@ -297,6 +322,7 @@ int compose_mime(int acct, const char *outbox_path, const char *mime_path,
 	unsigned char rnd[12];
 
 	to[0] = cc[0] = bcc[0] = subject[0] = irt[0] = refs[0] = 0;
+	memset(&itip, 0, sizeof(itip));
 	if (!(in = fopen(outbox_path, "r"))) { set_why(why, whymax, "Could not read %s", outbox_path); return PM_RES_FAILED; }
 	while (fgets(line, sizeof(line), in)) {
 		char *v;
@@ -315,6 +341,7 @@ int compose_mime(int acct, const char *outbox_path, const char *mime_path,
 		else if (!pm_strcasecmp(line, "References")) pm_copy(refs, v, sizeof(refs));
 		else if (!pm_strcasecmp(line, "Attach") && natt < 8 && *v) pm_copy(attach[natt++], v, sizeof(attach[0]));
 		else if (!pm_strcasecmp(line, "Format")) rich = !pm_strcasecmp(v, "rich");
+		else itip_header(&itip, line, v);
 	}
 	rcpts[0] = 0;
 	if (collect_addrs(to, rcpts, rmax) + collect_addrs(cc, rcpts, rmax) + collect_addrs(bcc, rcpts, rmax) == 0) {
@@ -355,7 +382,23 @@ int compose_mime(int acct, const char *outbox_path, const char *mime_path,
 	body = read_rest(in, &blen);
 	fclose(in);
 	if (!body) { fclose(f); remove(mime_path); set_why(why, whymax, "Not enough memory for the message"); return PM_RES_FAILED; }
-	if (rich) {
+	if (itip.partstat[0]) {
+		/* a reply to an invitation: the words, and the iTIP REPLY that
+		   calendar programs act on (RFC 6047), as alternatives */
+		static char ics[4096];
+		int ilen = itip_build(&itip, pm_time(), ics, sizeof(ics));
+		char alt[56];
+		if (ilen < 0) { free(body); fclose(f); remove(mime_path); set_why(why, whymax, "The reply to the invitation is damaged"); return PM_RES_FAILED; }
+		sprintf(alt, "%s_alt", boundary);
+		blen = strip_marks(body, blen);
+		fprintf(f, "Content-Type: multipart/alternative; boundary=\"%s\"\r\n\r\n", alt);
+		if (!natt) fprintf(f, "This is a message in MIME format.\r\n\r\n");
+		fprintf(f, "--%s\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n", alt);
+		write_qp_buf(f, body, blen);
+		fprintf(f, "\r\n--%s\r\nContent-Type: text/calendar; charset=UTF-8; method=REPLY\r\nContent-Transfer-Encoding: base64\r\n\r\n", alt);
+		write_b64_buf(f, ics, ilen);
+		fprintf(f, "\r\n--%s--\r\n", alt);
+	} else if (rich) {
 		/* the plain text and HTML, as alternatives */
 		int hlen = 0;
 		char *html = to_html(body, blen, &hlen);

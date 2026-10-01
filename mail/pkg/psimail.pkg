@@ -11,7 +11,8 @@
 "psimail.exe"-"!:\System\Apps\PsiMail\psimail.exe"
 "pmbutton.exe"-"!:\System\Apps\PsiMail\pmbutton.exe"
 ; the settings PsiMail writes: kept over an upgrade, removed with the program
-; (the mail itself, in \PsiMail on the memory disk or the internal disk, stays)
+; (the mail itself, in \System\Data\PsiMail on the memory disk or the internal
+; disk, is the user's and stays; so does Store.log, should a store move have failed)
 ""-"C:\System\Apps\PsiMail\PsiMail.ini",FN
 ""-"C:\System\Apps\PsiMail\Calendar.ini",FN
 ""-"C:\System\Apps\PsiMail\Update.ini",FN

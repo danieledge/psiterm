@@ -141,7 +141,7 @@ typedef struct
 	char exit_msg[128];             /* (engine) why it stopped */
 
 	/* settings (app) */
-	char store_dir[96];             /* e.g. "D:\\PsiMail\\" (ends with \) */
+	char store_dir[96];             /* e.g. "D:\\System\\Data\\PsiMail\\" (ends with \) */
 	char attach_dir[96];            /* where attachments are saved */
 	int offline;                    /* 1 = never dial: queue changes */
 	int prefetch;                   /* after a sync, download the text of the newest N (0 = off) */

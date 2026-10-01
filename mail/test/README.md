@@ -148,11 +148,17 @@ Let's Encrypt YR2 via ISRG Root YR, cross-signed by ISRG Root X1) passes
 
 `imgtest.py [OUTDIR] [--rounds N] [--pictures DIR]` builds `imgtest.c` with
 the decoders in `mail/engine/img` under AddressSanitizer and UBSan, makes
-sample pictures with Pillow (baseline JPEG in every subsampling and a
-progressive one that must be refused, PNG in every colour type and
-interlaced, GIF plain, interlaced and transparent, a 3000-pixel banner and a
-5-megapixel photo for the 1/8 path), decodes each to `OUTDIR/*.pgm` to look
-at, then fuzzes each one (truncated, bit-flipped, overwritten) for N rounds.
+sample pictures with Pillow (baseline JPEG in every subsampling;
+progressive JPEG in 4:2:0, 4:4:4 and grey, with restart markers, cut short,
+and at each shrink - full size, 1/2, 1/4 and the DC-only 1/8 - for
+`pmjprog.c`; PNG in every colour type and interlaced, GIF plain, interlaced
+and transparent, a 3000-pixel banner and a 5-megapixel photo for the 1/8
+path), decodes each to `OUTDIR/*.pgm` to look at, checks the progressive
+ones against Pillow's own decoding (within 10 grey levels of 255 after a
+small blur to take out the dithering; they come out within 1) and against
+the same picture saved as baseline, checks that a memory limit too small
+for the coefficients makes it shrink more (`IMG_MAX_FULL=bytes`) or refuse,
+then fuzzes each one (truncated, bit-flipped, overwritten) for N rounds.
 Any crash, sanitizer report or leak fails it. `imgtest decode|fuzz|time|pmi`
 can also be run by hand; `time` says how long a decode takes on the PC.
 
@@ -161,13 +167,33 @@ can also be run by hand; `time` says how long a decode takes on the PC.
 `parsefuzz.py [--rounds N] [--seeds N]` builds `parsefuzz.c` with the
 IMAP response parser (`imapparse.c`), MIME (`mime.c`: BODYSTRUCTURE, base64
 and quoted-printable), HTML (`html.c`), the WebDAV XML reader
-(`xmlscan.c`), iCalendar (`ics.c`: reading, editing and EXDATE) and the
-header charsets (`charset.c`) under AddressSanitizer and UBSan, and feeds
-each one N rounds of random and mutated input per seed, split at random
-points. Any crash, sanitizer report or hang fails it (a round over a
+(`xmlscan.c`), iCalendar (`ics.c`: reading, editing and EXDATE), the
+header charsets (`charset.c`), and invitations and contact cards
+(`invite.c`: VTIMEZONE rules, the iTIP reply built from what was found,
+vCard 2.1/3.0/4.0) under AddressSanitizer and UBSan, and feeds each one N
+rounds of random and mutated input per seed, split at random points; then
+again built with `-m32` (UBSan), where a `long` is 32 bits as on the Psion,
+which caught times past 2038 and durations overflowing in 0.74. Any crash, sanitizer report or hang fails it (a round over a
 second is reported). It found two hangs and an off-by-one in 0.69; add a
 word list and a target when adding a parser. See also
 `docs/epoc-robustness-best-practices.md`.
+
+## Invitations, contact cards and the store's place (no server needed)
+
+`invtest.py` checks `invite.c` on sample files as Google Calendar,
+Outlook/Exchange, Apple and phones send them: times on the Psion's clock
+from a described time zone, a named one, UTC and all-day; the organiser and
+which attendee is us; the master of a repeating event; a cancellation; a
+reply from someone else; the iTIP REPLY PsiMail would send (and that it
+refuses headers that aren't a proper reply); vCard 2.1 quoted-printable and
+charsets, Apple's 3.0 item groups and photos, 4.0 `tel:` URIs.
+
+`invitehost.py` runs the host engine against `fakeimap.py --invite`: the
+invitation and the card are fetched with their messages and summed up, the
+Accept reply goes out through `smtp` as multipart/alternative with a
+`text/calendar; method=REPLY` part, and a store moved from `PsiMail/` to
+`System/Data/PsiMail/` (as PsiMail.app moves it) is used from there with
+nothing fetched again.
 
 The same decoders as ARM code: `psimail-host` and `run_psimail.py` take
 `pictures F UID PARTS` (the parts of `<uid>.pic` to fetch and decode, as

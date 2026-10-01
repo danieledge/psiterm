@@ -10,7 +10,9 @@
  *   html (html_feed / html_end),
  *   xmlscan (xs_feed),
  *   ics (ics_each, ics_change, ics_exclude),
- *   charset (cs_decode_header, cs_to_cp1252, cs_mutf7_decode).
+ *   charset (cs_decode_header, cs_to_cp1252, cs_mutf7_decode),
+ *   invite (inv_parse with time zones, the iTIP reply built from what it
+ *   found, vcf_parse for vCard 2.1/3.0/4.0).
  * A crash or sanitizer report fails the run. Only the engine files are
  * linked: the few pmmain.c helpers the parsers use are copied below.
  */
@@ -21,6 +23,7 @@
 #include <time.h>
 #include "../engine/pm.h"
 #include "../engine/cal.h"
+#include "../engine/invite.h"
 
 /* ---- stand-ins for pmmain.c / the platform */
 void pm_copy(char *dst, const char *src, int max)
@@ -88,7 +91,21 @@ static const char *k_ics_words[] = {
 	"DURATION:-PT15M\r\n", "DURATION:P99999999999W\r\n", "TRIGGER:-PT15M\r\n", "TRIGGER;VALUE=DATE-TIME:20260930T101500Z\r\n",
 	"RRULE:FREQ=DAILY\r\n", "RECURRENCE-ID:20260930T101500Z\r\n", "RECURRENCE-ID;TZID=X:20260930T101500\r\n", "STATUS:CANCELLED\r\n",
 	"SEQUENCE:5\r\n", "SEQUENCE:99999999999\r\n", "EXDATE:20260930\r\n", "X-LONG:", "\r\n ", "\r\n\t", "\r\n", "\n", ":", ";", "\"", "=",
-	"DTSTART:99999999T999999Z\r\n", "DTSTART:0000000\r\n", "END:VEVENT\r\nEND:VEVENT\r\n", 0 };
+	"DTSTART:99999999T999999Z\r\n", "DTSTART:0000000\r\n", "END:VEVENT\r\nEND:VEVENT\r\n",
+	/* invitations */
+	"METHOD:REQUEST\r\n", "METHOD:CANCEL\r\n", "METHOD:REPLY\r\n", "METHOD:", "TZID:Europe/London\r\n", "TZID:X\r\n",
+	"BEGIN:STANDARD\r\n", "END:STANDARD\r\n", "BEGIN:DAYLIGHT\r\n", "END:DAYLIGHT\r\n", "TZOFFSETTO:+0100\r\n",
+	"TZOFFSETTO:-9999\r\n", "TZOFFSETTO:+\r\n", "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU\r\n", "RRULE:FREQ=YEARLY;BYMONTH=99;BYDAY=-9XX\r\n",
+	"RRULE:BYMONTH=10;BYDAY=5SU\r\n", "DTSTART:16010101T020000\r\n", "DTSTART;TZID=X:20261007T100000\r\n",
+	"DTSTART;TZID=\"America/New_York\":20261007T1000\r\n", "DTSTART;TZID=GMT Standard Time:20260329T013000\r\n",
+	"ORGANIZER;CN=\"A, B\":mailto:a@b\r\n", "ORGANIZER;CN=\"unterminated:mailto:x\r\n", "ATTENDEE;PARTSTAT=ACCEPTED;CN=Me:mailto:me@x\r\n",
+	"ATTENDEE:mailto:\r\n", "SEQUENCE:-5\r\n", "DURATION:PT99999999H\r\n", "TRIGGER:-P1W\r\n", "DTSTART:2026\r\n", "DTSTART:20261007T\r\n",
+	"DTSTART:20261007T10\r\n", "DTSTART:20261007T1000Z\r\n", "DTSTART:19001231T000000Z\r\n", "DTSTART:20351231T235959Z\r\n", "DTSTART:20371231T235959Z\r\n",
+	/* vCards */
+	"BEGIN:VCARD\r\n", "END:VCARD\r\n", "VERSION:2.1\r\n", "VERSION:4.0\r\n", "N:Smith;Alice;;Dr;\r\n", "N:;;;;;;;;;\r\n",
+	"FN:Alice\r\n", "item1.EMAIL;type=INTERNET:a@b.c\r\n", "EMAIL:noat\r\n", "TEL;CELL:+44 1\r\n", "TEL;VALUE=uri;TYPE=work:tel:+1\r\n",
+	"ADR;WORK:;;1 St;Town;;PC;UK\r\n", "ADR:;;;;;;;;;;;\r\n", "ORG:A;B\r\n", "NOTE:x\\ny\\,z\r\n", "PHOTO;ENCODING=b:AAAA\r\n",
+	"FN;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:J=C3=BC=\r\n", "=\r\n", "=C3", ";CHARSET=iso-8859-15:", 0 };
 
 static int build(char *out, int max, const char **words, int nwords)
 {
@@ -230,6 +247,34 @@ static void fuzz_ics(const char *buf, int n)
 	ics_new(&c, 0, "uid@x", work, max);
 }
 
+static void fuzz_invite(const char *buf, int n)
+{
+	static PmInvite iv;
+	static PmCard cards[8];
+	static ItipReply r;
+	static char out[4096];
+	char t[24];
+	if (inv_parse(buf, n, rnd_n(22) - 1, rnd_n(2) ? "me@x" : "", &iv) == 0) {
+		/* the reply the app would ask for, from what was found */
+		memset(&r, 0, sizeof(r));
+		itip_header(&r, "Itip", rnd_n(4) ? "ACCEPTED" : "maybe");
+		itip_header(&r, "Itip-Uid", iv.uid);
+		snprintf(t, sizeof(t), "%d", iv.seq);
+		itip_header(&r, "Itip-Seq", t);
+		itip_header(&r, "Itip-Recur", iv.recur_line);
+		itip_header(&r, "Itip-Organizer", iv.org_line);
+		itip_header(&r, "Itip-Attendee", iv.me[0] ? iv.me : "me@x");
+		itip_header(&r, "Itip-Name", iv.org_name);
+		itip_header(&r, "Itip-Summary", iv.summary);
+		cal_fmt_utc(iv.ustart, t);
+		itip_header(&r, "Itip-Start", t);
+		cal_fmt_utc(iv.uend, t);
+		itip_header(&r, "Itip-End", t);
+		itip_build(&r, 1790000000L, out, rnd_n(3) ? (int)sizeof(out) : 200);
+	}
+	vcf_parse(buf, n, cards, 1 + rnd_n(8));
+}
+
 static void fuzz_charset(const char *buf, int n)
 {
 	static char out[4000], in[70000];
@@ -256,13 +301,14 @@ int main(int argc, char **argv)
 		int which, n;
 		clock_t t0 = clock();
 		g_seed = seed * 7919UL + (unsigned long)r * 104729UL;
-		which = rnd_n(6);
+		which = rnd_n(7);
 		switch (which) {
 		case 0: n = build(buf, sizeof(buf), k_imap_words, nwords(k_imap_words)); mutate(buf, n); fuzz_imap(buf, n); break;
 		case 1: n = build(buf, sizeof(buf), k_imap_words, nwords(k_imap_words)); mutate(buf, n); fuzz_dec(buf, n); break;
 		case 2: n = build(buf, sizeof(buf), k_html_words, nwords(k_html_words)); mutate(buf, n); fuzz_html(buf, n); break;
 		case 3: n = build(buf, sizeof(buf), k_xml_words, nwords(k_xml_words)); mutate(buf, n); fuzz_xml(buf, n); break;
 		case 4: n = build(buf, sizeof(buf), k_ics_words, nwords(k_ics_words)); mutate(buf, n); fuzz_ics(buf, n); break;
+		case 5: n = build(buf, sizeof(buf), k_ics_words, nwords(k_ics_words)); mutate(buf, n); fuzz_invite(buf, n); break;
 		default: n = build(buf, sizeof(buf), k_imap_words, nwords(k_imap_words)); mutate(buf, n); fuzz_charset(buf, n); break;
 		}
 		if (clock() - t0 > CLOCKS_PER_SEC) fprintf(stderr, "slow: seed %lu round %d target %d (%d bytes): %ld ms\n", seed, r, which, n, (long)((clock() - t0) * 1000 / CLOCKS_PER_SEC));

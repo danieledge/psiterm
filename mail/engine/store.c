@@ -1,5 +1,6 @@
 /* store.c - PsiMail's files on the Psion (normally on the CF card)
  *
+ *   <store> is <disk>:\System\Data\PsiMail\ (app/pmstore.cpp; \PsiMail\ before 0.74)
  *   <store>\pins.txt                 trusted certificates: host:port TAB sha256
  *   <store>\A<n>\account.txt         whose files these are (user@host)
  *   <store>\A<n>\folders.txt         folder list (see imap.c)

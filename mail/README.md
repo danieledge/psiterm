@@ -40,7 +40,25 @@ an emulator; the EIKON app has been driven in an emulator.
   Message > View as web page opens the original in PsiWeb
   (NetSurf), as do links. Plain text gets its quotes and links shown the
   same way.
-* Attachments listed, saved to `D:\PsiMail\Attachments\` when asked for.
+* Attachments listed, saved to `D:\Documents\Attachments\` when asked for
+  (your files, so in your Documents).
+* Invitations (`text/calendar` or an `.ics` file, iTIP `METHOD:REQUEST`):
+  the reader shows what, when (on the Psion's clock, whatever time zone the
+  invitation was written in), where and who from at the top, with Accept,
+  Tentative and Decline as links (Tab, Enter or a tap; also Edit >
+  Invitation). Accept and Tentative put the event in the Agenda (and so on
+  the CalDAV server, with calendar sync on); each answer goes to the
+  organiser as an iTIP `METHOD:REPLY` through the outbox. A cancellation
+  (`METHOD:CANCEL`) offers Remove from Agenda.
+* Contact cards (`text/vcard` / `.vcf`, vCard 2.1, 3.0 and 4.0): Add to
+  Contacts puts the name, company, job title, phone numbers, email
+  addresses, address and web page into the Contacts program's own fields
+  (as its template labels them). Attach > Add my contact card sends yours.
+* File > Save as Word file (Shift+Ctrl+S): the open message as a Psion Word
+  file (header, text, bold/italic/underline, headings, lists), through the
+  Word engine itself (CWordModel), so the built-in Word opens it.
+* Pictures in messages, JPEG (baseline and progressive), PNG and GIF,
+  decoded on the Psion to 16 greys.
 * New message, reply, reply to all, forward; files from the Psion attached
   (up to 8). Sent as UTF-8; a copy saved to Sent.
 * Delete (to Trash), archive, move to a folder, read/unread, flag.
@@ -144,6 +162,7 @@ without the `cryptography` package too). The version must go up each time.
 | Ctrl+D / Ctrl+X / Shift+Ctrl+E | delete / move to folder / archive |
 | Shift+Ctrl+U / Shift+Ctrl+F | unread / flagged |
 | Ctrl+S | save an attachment (Message > Attachments > Open / Save) |
+| Shift+Ctrl+S | save the open message as a Word file (File > Save as Word file) |
 | Ctrl+I / Ctrl+G / Ctrl+B / Ctrl+F | inbox / go to folder / outbox / find |
 | Ctrl+Y / Shift+Ctrl+G | check this folder / get older messages (File > Folder, with Create new / Rename / Delete) |
 | Ctrl+M / Shift+Ctrl+M | zoom in / out (three sizes, going round) |
@@ -179,7 +198,10 @@ Like PsiWeb, two programs share a chunk of memory (`psimail.h`):
   `TLS_VERIFY`). `pmepoc.cpp` is its EPOC side.
   The calendar is `caldav.c` (CalDAV over `http.c`, with `xmlscan.c`),
   `ics.c` (iCalendar) and `caltz.c` (time zones: servers send UTC, the
-  Agenda wants wall-clock times).
+  Agenda wants wall-clock times). Invitations and contact cards in
+  messages are `invite.c` (parsing, the iTIP reply) and `invmsg.c`
+  (fetching the parts when a message is read). Pictures are `pictures.c`
+  over `img/` (picojpeg for baseline JPEG, `pmjprog.c` for progressive).
 * `PsiMail.app` (`app/`, EIKON C++): keys, menus, dialogs, and the Agenda
   side of the calendar (`pmcal.cpp`). It reads the store's text files
   directly and sends the engine commands.
@@ -236,11 +258,29 @@ the PC version of the engine). The SDK is
 
 ## Files on the card
 
-See the top of `engine/store.c`. In short `D:\PsiMail\A0\` holds the first
-account: `folders.txt`, a folder per mail folder with `index.txt` (one line
-per message), `<uid>.txt` for each downloaded message (and `<uid>.htm`, the
-HTML original), and `outbox\`. The calendar's files are in
-`D:\PsiMail\cal\` (see `engine/caldav.c` and `app/pmcal.h`).
+See the top of `engine/store.c`. In short `D:\System\Data\PsiMail\A0\`
+holds the first account: `folders.txt`, a folder per mail folder with
+`index.txt` (one line per message), `<uid>.txt` for each downloaded message
+(and `<uid>.htm`, the HTML original; `<uid>.inv` / `.vcd`, an invitation or
+contact card summed up - see `engine/invite.h`), and `outbox\`. The
+calendar's files are in `D:\System\Data\PsiMail\cal\` (see
+`engine/caldav.c` and `app/pmcal.h`). Without a card (or with
+Tools > Preferences > Keep mail on set to the internal disk) it is the same
+on C:.
+
+The store is the program's working data, so it is under `\System\` as the
+style guide asks (10.2.1), in `\System\Data\` - EPOC's folder for programs'
+data - rather than `\System\Mail\`, which belongs to the Message Server (it
+rebuilds its index there, and can move the whole folder to another disk when
+the built-in Email's messages are moved). Before 0.74 it was `\PsiMail\` at the
+top of the disk: the first start of a newer PsiMail renames that folder into
+place (one rename on the same disk; saved attachments go on to
+`\Documents\Attachments\`). If the rename fails PsiMail keeps using
+`\PsiMail\`, says so, and writes why to `Store.log` beside PsiMail.app
+(`app/pmstore.cpp`). View > Status information shows where the mail is.
+
+Removing PsiMail removes the program and its settings but leaves the mail:
+it is the user's.
 
 ## Not yet
 

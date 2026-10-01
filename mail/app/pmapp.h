@@ -440,7 +440,49 @@ private:
 	TInt iFwdPending;                // attachments still to come
 	TUint iFwdUid;                   // the message they are for
 	CDesCArrayFlat* iFwdFiles;       // where they landed
+	// 0.74 (mail2): the store's place, invitations, contact cards, Word files
+public:
+	void StoreRoot(TChar aDrive, TDes& aRoot);   // <disk>:\System\Data\PsiMail\, an old \PsiMail\ moved there (pmstore.cpp)
+	void AttachRoot(TChar aDrive, TDes& aDir);   // <disk>:\Documents\Attachments\ (saved attachments)
+	// invitations (pminvite.cpp): the box at the top of the reader, Edit > Invitation
+	void InviteBannerL(TDes& aText, CArrayFixFlat<TInt>& aStyles);   // (pmnative.cpp's UpdateReaderL)
+	void InviteLinkL(TInt aLink);                // a KPmLink* link in the box
+	TBool HasInvite() const;
+	TBool InviteIs(const TDesC& aMethod) const;  // "request", "cancel", "reply", "publish"
+	void AnswerInviteL(TInt aChoice);            // 0 accept, 1 tentative, 2 decline
+	void RemoveInvitedL();                       // a cancellation: out of the Agenda
+	// contact cards (pmvcard.cpp)
+	TBool HasCard() const;
+	void AddCardsL();                            // Edit > Add to Contacts > Contact card
+	void MyCardFileL(TDes& aPath);               // your own card as a .vcf, to attach
+	// File > Save as Word file (pmsaveword.cpp)
+	void SaveAsWordL();
+private:
+	void LoadInviteL();
+	TPtrC InviteField(const TDesC& aKey) const;
+	TBool ServerHasEventL(const TDesC& aTitle, const TDesC& aStart);
+	void RememberAnswerL(const TDesC& aAnswer);
+	void SendInviteReplyL(const TDesC& aStatus, TInt aChoice, const TDesC& aMe);
+	void CardBannerL(TDes& aText, CArrayFixFlat<TInt>& aStyles);
+	TInt iStoreTried;                // StoreRoot: moving the old store was tried (1 C:, 2 D:)
+	HBufC* iInvText;                 // the open message's <uid>.inv (../engine/invite.h), or NULL
+	HBufC* iCardText;                // ... its <uid>.vcd
+	TBuf<16> iInvAnswer;             // ... and what was answered (<uid>.inr)
 	};
+
+// the links in the reader's invitation / card box (TPmLinkRange::iLink):
+// Accept, Tentative (-3001) and Decline (-3002); below -2000, the pictures' range
+const TInt KPmLinkAccept = -3000;
+const TInt KPmLinkRemove = -3010;
+const TInt KPmLinkAddCard = -3020;
+// a contact card line's kind bits, as ../engine/invite.h has them
+const TInt VCF_HOME = 1;
+const TInt VCF_WORK = 2;
+const TInt VCF_CELL = 4;
+const TInt VCF_FAX = 8;
+const TInt VCF_PAGER = 16;
+const TInt VCF_LINES = 8;
+void PmWhenText(TDes& aOut, const TTime& aStart, const TTime& aEnd, TBool aAllDay);   // "Wed 7 Oct 2026, 10:00-11:30" (pminvite.cpp)
 
 class CPmInfoDialog : public CEikDialog
 	{
@@ -715,6 +757,12 @@ private:
 	TBool iTool4Close;                 // the last toolbar button says Close
 	TPmSettings iSettings;
 	TPmCalSettings iCalSettings;
+	// 0.74 (mail2): invitations, contact cards, Word files (pminvite.cpp, pmvcard.cpp)
+public:
+	void MyCardL(TDes& aPath);                     // your contact card as a .vcf (compose's Attach)
+private:
+	TBool HandleMail2CommandL(TInt aCommand);
+	void DynInitMail2L(TInt aMenuId, CEikMenuPane* aMenuPane);
 	};
 
 class CPmDocument : public CEikDocument

@@ -81,7 +81,7 @@ for w in WORDS + [","]:
 results = []
 env = os.environ.get
 CONFIG = {
-    "store_dir": "C:\\PsiMail\\", "attach_dir": "C:\\PsiMail\\Attachments\\",
+    "store_dir": "C:\\System\\Data\\PsiMail\\", "attach_dir": "C:\\Documents\\Attachments\\",
     "offline": env("PM_OFFLINE", "0"), "name": "Test", "fullname": env("PM_NAME", "Test User"),
     "email": env("PM_EMAIL", env("PM_USER", "test@example.com")),
     "imap_host": env("PM_HOST", "127.0.0.1"), "imap_port": env("PM_PORT", "993"), "imap_tls": env("PM_TLS", "1"),

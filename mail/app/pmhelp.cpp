@@ -50,7 +50,8 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "shows the message in PsiWeb.\n"
 	  "\n"
 	  "Message > Attachments > Open opens an attached file in its own program (Word, Sketch and so on); "
-	  "Message > Attachments > Save (Ctrl+S) saves it in PsiMail's Attachments folder. Delete moves a "
+	  "Message > Attachments > Save (Ctrl+S) saves it in the Attachments folder in Documents, on the "
+	  "disk the mail is on. Delete moves a "
 	  "message to the Trash; Edit > Archive puts it in the Archive folder; Message > Unread and Flagged "
 	  "mark it.\n"
 	  "\n"
@@ -94,8 +95,37 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "(Ctrl+L) opens the same list: type to narrow it, press Space or tap to mark several people, and "
 	  "press Enter to add them.\n"
 	  "\n"
-	  "Edit > Add sender to Contacts adds the sender of the selected message to Contacts - as a new "
+	  "Edit > Add to Contacts > Sender adds the sender of the selected message to Contacts - as a new "
 	  "entry, or as another address for the entry with the same name." },
+
+	{ "Invitations and contact cards",
+	  "An invitation to a meeting (a calendar file sent by Google Calendar, Outlook, Fastmail and the "
+	  "like) is shown at the top of the message: what, when, where and who sent it, with Accept, "
+	  "Tentative and Decline under it. Tab to one and press Enter, or tap it; Edit > Invitation has the "
+	  "same commands.\n"
+	  "\n"
+	  "Accept and Tentative put the event in the Agenda (the file in Tools > Calendar settings), with "
+	  "an alarm; with calendar sync on it then goes to your calendar on the server too. Each answer is "
+	  "sent to the organiser, through the Outbox like any message, so their calendar shows it. Decline "
+	  "takes an accepted event out of the Agenda again, if you say so. An event that repeats is put in "
+	  "the Agenda for its first time only.\n"
+	  "\n"
+	  "When an event is cancelled, Remove from Agenda (in the message, or Edit > Invitation) takes it "
+	  "out. An event sent only for your information has Add to Agenda instead.\n"
+	  "\n"
+	  "A contact card (a .vcf file) in a message is shown the same way, with Add to Contacts (also "
+	  "Edit > Add to Contacts > Contact card): the name, company, job title, phone numbers, email "
+	  "addresses, address and web page go into the Contacts program's own fields. A card whose email "
+	  "address is in Contacts already is left as it is.\n"
+	  "\n"
+	  "To send your own card, press the Attachments button when writing a message and choose Add my "
+	  "contact card: your name and address go with the message as a .vcf file." },
+
+	{ "Saving a message as a Word file",
+	  "File > Save as Word file (Shift+Ctrl+S) saves the open message as a file the Psion's Word "
+	  "program opens: the subject, From, To, Cc and Date, then the text with its bold, italic and "
+	  "underlining, headings, lists and quotes as PsiMail shows them. It goes in the Documents folder "
+	  "to begin with, named after the subject. Pictures are shown in the file as [Picture]." },
 
 	{ "Folders",
 	  "Every folder on the server is in the list on the left, with the number of unread messages after "
@@ -126,6 +156,20 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "\n"
 	  "What PsiMail is doing is shown at the bottom left of the screen. Esc, or File > Stop, "
 	  "stops a download that is running; File > Disconnect (Ctrl+U) hangs up." },
+
+	{ "Where the mail is kept",
+	  "PsiMail keeps your mail in the System folder, out of the way of your own files: "
+	  "\\System\\Data\\PsiMail on the memory disk (the CF card), or on the internal disk if there is no "
+	  "card or Tools > Preferences > Keep mail on says so. View > Status information shows which.\n"
+	  "\n"
+	  "Before version 0.74 the mail was in a PsiMail folder at the top of the disk. The first time a "
+	  "newer PsiMail opens, it moves that folder into the System folder - one quick step - and the "
+	  "attachments you had saved go to the Attachments folder in Documents. If the move can't be done "
+	  "(the disk is full or a file is in use, say) PsiMail says so and goes on using the old folder, "
+	  "and tries again next time.\n"
+	  "\n"
+	  "Removing PsiMail removes the program and its settings, but not your mail: that stays in "
+	  "\\System\\Data\\PsiMail until you delete that folder yourself." },
 
 	{ "The calendar",
 	  "PsiMail can keep the Psion's Agenda in step with a CalDAV calendar such as Fastmail's. Turn it on "

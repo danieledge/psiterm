@@ -225,6 +225,8 @@ void CPmWatcher::DoCancel()
 CPmView::~CPmView()
 	{
 	delete iFwdFiles;
+	delete iInvText;
+	delete iCardText;
 	StopEngine();
 	DestroyNative();
 	delete iCalSync;
@@ -389,13 +391,12 @@ void CPmView::CopySettingsToShared()
 	// the mail goes on the CF card (D:) if there is one
 	TVolumeInfo vol;
 	TBool card = iSettings->iStore == 0 && iCoeEnv->FsSession().Volume(vol, EDriveD) == KErrNone;
-	const char* root = card ? "D:\\PsiMail\\" : "C:\\PsiMail\\";
-	TInt i = 0;
-	while (root[i]) { s->store_dir[i] = root[i]; i++; }
-	s->store_dir[i] = 0;
+	// in \System\Data\PsiMail\, an old \PsiMail\ moved there first (pmstore.cpp)
+	TBuf<60> root;
+	StoreRoot(card ? 'D' : 'C', root);
+	CopyToC(s->store_dir, sizeof(s->store_dir), root);
 	TBuf<96> att;
-	att.Copy(TPtrC8((const TUint8*)root));
-	att.Append(_L("Attachments\\"));
+	AttachRoot(card ? 'D' : 'C', att);
 	CopyToC(s->attach_dir, sizeof(s->attach_dir), att);
 	TBuf<100> dir;
 	StoreDir(dir);
@@ -1397,7 +1398,7 @@ static void SafeFileName(TDes& aOut, const TDesC& aName)
 	}
 
 // where opened attachments are kept: beside the message, on the mail's
-// disk (D:\PsiMail\A0\F...\Open\uid\name), so opening one again is instant
+// disk (D:\System\Data\PsiMail\A0\F...\Open\uid\name), so opening one again is instant
 static void AttachCacheDir(TDes& aDir, TUint aUid)
 	{
 	aDir.Append(_L("Open\\"));
@@ -2551,7 +2552,11 @@ void CPmComposeDialog::PreLayoutDynInitL()
 	if (spans->Count())
 		ed->HandleTextChangedL();
 	CleanupStack::PopAndDestroy(2);           // spans, b
-	ShowAttachments();
+	// the label is laid out as wide as its text now: wide, so the names put
+	// in after the layout (PostLayoutDynInitL) fit ("Dan Edge.vcf" showed
+	// as "Dan I" when it was laid out round "none")
+	TRAPD(lerr, SetLabelL(EPmDlgAttachments, _L("MMMMMMMMMMMMMMMMMMMMMMMMMM")));
+	(void)lerr;
 	}
 
 // Ctrl+B, Ctrl+I, Ctrl+U: bold, italic, underline in the text (EIKON's
@@ -2592,6 +2597,7 @@ TKeyResponse CPmComposeDialog::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEvent
 
 void CPmComposeDialog::PostLayoutDynInitL()
 	{
+	ShowAttachments();
 	// replies start in the text; new messages at To
 	((CEikEdwin*)Control(EPmDlgBody))->SetCursorPosL(0, EFalse);
 	if (iDraft.iTo.Length())
@@ -2754,11 +2760,13 @@ TBool CPmComposeDialog::OkToExitL(TInt aButtonId)
 		// with some attached already: add another, or take one off
 		TInt choice = 0;
 		TInt n = iDraft.iAttach->Count();
-		if (n)
+		// (0.74: Add my contact card is always offered, so the choice is too)
+		if (ETrue)
 			{
-			CDesCArrayFlat* items = new(ELeave) CDesCArrayFlat(n + 1);
+			CDesCArrayFlat* items = new(ELeave) CDesCArrayFlat(n + 2);
 			CleanupStack::PushL(items);
 			items->AppendL(_L("Add a file..."));
+			items->AppendL(_L("Add my contact card"));
 			for (TInt i = 0; i < n; i++)
 				{
 				TParsePtrC parse((*iDraft.iAttach)[i]);
@@ -2771,8 +2779,26 @@ TBool CPmComposeDialog::OkToExitL(TInt aButtonId)
 			if (!cd->ExecuteLD(R_PM_CHOICE_DIALOG))
 				return EFalse;
 			}
-		if (choice > 0)
-			iDraft.iAttach->Delete(choice - 1);
+		if (choice == 1)
+			{
+			// your own card, as <name>.vcf (pmvcard.cpp)
+			TFileName card;
+			TRAPD(err, ((CPmAppUi*)iEikonEnv->EikAppUi())->MyCardL(card));
+			if (err != KErrNone)
+				iEikonEnv->InfoMsg(_L("No contact card - the account has no address"));
+			else if (iDraft.iAttach->Count() >= 8)
+				iEikonEnv->InfoMsg(_L("At most 8 attachments"));
+			else
+				{
+				TBool there = EFalse;
+				for (TInt k = 0; k < iDraft.iAttach->Count(); k++)
+					if ((*iDraft.iAttach)[k].CompareF(card) == 0) there = ETrue;
+				if (!there)
+					iDraft.iAttach->AppendL(card);
+				}
+			}
+		else if (choice > 1)
+			iDraft.iAttach->Delete(choice - 2);
 		else
 			{
 			TFileName name;
@@ -4384,7 +4410,7 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemDimmed(EPmCmdMove, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdArchive, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdSearch, m == CPmView::ECalendar || m == CPmView::ENoAccount);
-		aMenuPane->SetItemDimmed(EPmCmdAddSender, !msg);
+		// (Add sender is in the Add to Contacts cascade now: DynInitMail2L)
 		}
 	else if (aMenuId == R_PM_ATTACH_MENU)
 		{
@@ -4437,6 +4463,7 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		if (aMenuId == R_PM_REPLY_POPUP)
 			aMenuPane->SetItemDimmed(EPmCmdForward, !msg);
 		}
+	DynInitMail2L(aMenuId, aMenuPane);           // invitations, cards, Word (pminvite.cpp)
 	}
 
 void CPmAppUi::HandleCommandL(TInt aCommand)
@@ -4465,6 +4492,8 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		iView->Toast(_L("No account - add one with Tools > Accounts"));
 		return;
 		}
+	if (HandleMail2CommandL(aCommand))           // invitations, cards, Word (pminvite.cpp)
+		return;
 	switch (aCommand)
 		{
 	case EEikCmdExit:

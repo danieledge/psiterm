@@ -2,7 +2,7 @@
 """fakeimap.py - a tiny plaintext IMAP server for the modem-mode tests
 
   fakeimap.py PORT [--drop-at N[,N...]] [--drop-every N] [--slow MS_PER_KB]
-              [--mute-noop]
+              [--mute-noop] [--invite]
 
 Serves an INBOX of a few messages: one whose text has "NO CARRIER" on a
 line of its own (as an email about modems would), one of 30 KB (several
@@ -11,15 +11,19 @@ once the given byte counts have been sent (over the whole run), the way a
 modem line dropping looks to the client; --drop-every does it every N
 bytes sent on each connection. --mute-noop never answers a NOOP (nor
 anything after it) but keeps the connection open: what an idle connection
-looks like once a router has quietly forgotten it.
+looks like once a router has quietly forgotten it. --invite adds two
+multipart messages: 106, an invitation (text/plain and a base64
+text/calendar METHOD:REQUEST part, as Google sends), and 107 with a vCard
+attached (invite.h).
 """
-import socket, sys, threading, time
+import socket, sys, threading, time, base64
 
 PORT = int(sys.argv[1])
 DROP_AT = []
 DROP_EVERY = 0
 SLOW_MS = 0
 MUTE_NOOP = False
+INVITE = False
 args = sys.argv[2:]
 while args:
     a = args.pop(0)
@@ -27,6 +31,7 @@ while args:
     elif a == '--drop-every': DROP_EVERY = int(args.pop(0))
     elif a == '--slow': SLOW_MS = int(args.pop(0))      # per 1000 bytes (87 = 115200 baud)
     elif a == '--mute-noop': MUTE_NOOP = True
+    elif a == '--invite': INVITE = True
 
 def msg(uid, subject, text):
     return dict(uid=uid, subject=subject, text=text.replace('\n', '\r\n'))
@@ -38,6 +43,41 @@ MSGS = [
     msg(104, 'another', 'Second short note.\n'),
     msg(105, 'last', 'Third short note.\n'),
 ]
+
+ICS = """BEGIN:VCALENDAR
+PRODID:-//Google Inc//Google Calendar 70.9054//EN
+VERSION:2.0
+METHOD:REQUEST
+BEGIN:VEVENT
+DTSTART:20261007T090000Z
+DTEND:20261007T103000Z
+DTSTAMP:20260930T120000Z
+ORGANIZER;CN=Ann:mailto:ann@example.com
+UID:fake-invite-1@example.com
+ATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:dan@example.com
+SUMMARY:Design review
+LOCATION:Room 2
+SEQUENCE:0
+END:VEVENT
+END:VCALENDAR
+""".replace('\n', '\r\n')
+VCF = """BEGIN:VCARD
+VERSION:3.0
+N:Jones;Bob;;;
+FN:Bob Jones
+ORG:Example Ltd
+EMAIL;TYPE=WORK:bob@example.org
+TEL;TYPE=CELL:07700 900456
+END:VCARD
+""".replace('\n', '\r\n')
+if INVITE:
+    b64 = base64.encodebytes(ICS.encode()).decode().replace('\n', '\r\n')
+    MSGS.append(dict(uid=106, subject='Invitation: Design review', text='', parts=[
+        ('("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" %d 2 NIL NIL NIL NIL)', 'You are invited to Design review.\r\n'),
+        ('("TEXT" "CALENDAR" ("CHARSET" "UTF-8" "METHOD" "REQUEST") NIL NIL "BASE64" %d 10 NIL NIL NIL NIL)', b64)]))
+    MSGS.append(dict(uid=107, subject='My card', text='', parts=[
+        ('("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" %d 1 NIL NIL NIL NIL)', 'Here is my card.\r\n'),
+        ('("TEXT" "VCARD" ("CHARSET" "utf-8" "NAME" "bob.vcf") NIL NIL "7BIT" %d 8 NIL ("attachment" ("FILENAME" "bob.vcf")) NIL NIL)', VCF)]))
 
 sent_total = 0
 lock = threading.Lock()
@@ -75,6 +115,8 @@ def envelope(m):
     return '("Mon, 1 Jan 2024 10:00:00 +0000" "%s" (("Ann" NIL "ann" "example.com")) (("Ann" NIL "ann" "example.com")) (("Ann" NIL "ann" "example.com")) (("Dan" NIL "dan" "example.com")) NIL NIL NIL "<%d@example.com>")' % (m['subject'], m['uid'])
 
 def bodystructure(m):
+    if m.get('parts'):
+        return '(' + ''.join(bs % len(t) for bs, t in m['parts']) + ' "MIXED" ("BOUNDARY" "b") NIL NIL NIL)'
     return '("TEXT" "PLAIN" ("CHARSET" "us-ascii") NIL NIL "7BIT" %d %d)' % (len(m['text']), m['text'].count('\n'))
 
 def fetch_items(m, seq, items):
@@ -201,8 +243,10 @@ def handle(conn, addr):
                     seq = MSGS.index(m) + 1
                     part = items[items.index('<') + 1:items.index('>')]
                     off, ln = [int(x) for x in part.split('.')]
-                    data = m['text'][off:off + ln]
-                    send('* %d FETCH (UID %d BODY[1]<%d> {%d}\r\n' % (seq, uid, off, len(data)))
+                    pid = items[items.index('BODY.PEEK[') + 10:items.index(']')]
+                    text = m['parts'][int(pid) - 1][1] if m.get('parts') else m['text']
+                    data = text[off:off + ln]
+                    send('* %d FETCH (UID %d BODY[%s]<%d> {%d}\r\n' % (seq, uid, pid, off, len(data)))
                     send(data)
                     send(')\r\n%s OK fetched\r\n' % tag)
                 else:
