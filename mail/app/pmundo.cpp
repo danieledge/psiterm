@@ -79,11 +79,11 @@ void CPmView::UndoResultL(const PmCmd& aCmd)
 	TBuf<160> msg;
 	UndoFromC(msg, s->last_msg);
 	TInt res = s->last_res;
-	if (iBusyShown && !Busy())
+	if (!Busy())
 		{
-		iEikonEnv->BusyMsgCancel();
-		iBusyShown = EFalse;
+		iWorkText.Zero();                    // (pmstatus.cpp)
 		iWorkingSince = 0;
+		HideBusy();
 		}
 	TPtrC8 folder((const TUint8*)aCmd.folder);
 	if (res != PM_RES_OK && res != PM_RES_OFFLINE)

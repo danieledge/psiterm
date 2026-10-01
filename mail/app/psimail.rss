@@ -548,8 +548,8 @@ RESOURCE DIALOG r_pm_help_dialog
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Topic"; id=EPmDlgHelpTopic;
 			control=CHOICELIST { array_id=r_pm_empty_array; }; },
-		DLG_LINE { type=EEikCtRichTextEditor; prompt=""; id=EPmDlgHelpText;
-			control=RTXTED { width=520; height=118; numlines=7; textlimit=8000; flags=EEikEdwinNoAutoSelection|EEikEdwinReadOnly; }; }
+		DLG_LINE { type=EPmCtHelpText; prompt=""; id=EPmDlgHelpText;
+			control=RTXTED { width=495; height=116; numlines=7; textlimit=8000; flags=EEikEdwinNoAutoSelection|EEikEdwinReadOnly; }; }
 		};
 	}
 
@@ -703,6 +703,8 @@ RESOURCE ARRAY r_pm_prefs_newmail_lines
 		DLG_LINE { type=EEikCtChoiceList; prompt="If not connected"; id=EPmDlgCheckConnect;
 			control=CHOICELIST { array_id=r_pm_check_connect_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Send waiting mail when connected"; id=EPmDlgAutoSend;
+			control=CHOICELIST { array_id=r_pm_yes_no_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Show detailed progress"; id=EPmDlgDetailed;
 			control=CHOICELIST { array_id=r_pm_yes_no_array; }; }
 		};
 	}
