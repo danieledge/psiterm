@@ -117,6 +117,8 @@ void pm_log(const char *fmt, ...)
 }
 
 void pm_idle(int ms) { usleep(ms * 1000); }
+void pm_cpu_low(int low) { (void)low; }
+void pm_beat_reset(void) { }
 
 static const char *env(const char *k, const char *d) { const char *v = getenv(k); return v ? v : d; }
 
@@ -209,6 +211,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(op, "full")) c.op = PM_CMD_FULLBODY;
 		else if (!strcmp(op, "attach")) { c.op = PM_CMD_ATTACH; pm_copy(c.arg, args[2], sizeof(c.arg)); }
 		else if (!strcmp(op, "pictures")) { c.op = PM_CMD_PICTURES; pm_copy(c.arg, args[2], sizeof(c.arg)); }
+		else if (!strcmp(op, "webpics")) c.op = PM_CMD_WEBPICS;
 		else if (!strcmp(op, "flag")) { c.op = PM_CMD_FLAG; pm_copy(c.arg, args[2], sizeof(c.arg)); }
 		else if (!strcmp(op, "move")) { c.op = PM_CMD_MOVE; pm_copy(c.arg, args[2], sizeof(c.arg)); }
 		else if (!strcmp(op, "undo")) c.op = PM_CMD_UNDO;     /* undo FOLDER UID: where it was moved from */

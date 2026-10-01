@@ -76,7 +76,13 @@ static const char *k_html_words[] = {
 	"<b>", "</b>", "<i>", "</i>", "<a href=\"http://x/y\">", "<a href='mailto:a@b'>", "</a>", "<img src=\"cid:a\" alt=\"pic\">",
 	"<img width=1 height=1 src=x>", "<script>", "</script>", "<style>", "</style>", "<!--", "-->", "&amp;", "&#x41;", "&#65;",
 	"&#xFFFFFFFF;", "&#99999999999999999999;", "&nbsp;", "&bogus;", "&", ";", "<hr>", "text ", "\n", "\t", "  ",
-	"<a href=\"", "\">", "<img alt=\"", "<td", "=\"", "'", "\"", "<h", "1>", "</", "<x", 0 };
+	"<a href=\"", "\">", "<img alt=\"", "<td", "=\"", "'", "\"", "<h", "1>", "</", "<x",
+	/* (0.75) hidden content, spacers, sizes, entities in addresses */
+	"<div style=\"display:none\">", "</div>", "<span style=\"max-height:0;overflow:hidden\">", "</span>",
+	"<td style=\"mso-hide:all\">", "<div style=\"font-size:0\">", "<p style=\"opacity:0.0\">", "<div hidden>",
+	"<div style=\"display:none\"/>", " style=\"", "max-height:", "font-size: 0px;", "opacity:0.5", "<img src=\"http://x/spacer.gif\">",
+	"<img src=\"https://x/a.png?a=1&amp;b=2\" width=\"600\" height=\"400\" alt=\"A &amp; B\">",
+	"<img style=\"width:3px;height:300px\" src=x>", "width=\"100%\"", "height=\"0\"", "&#8199;", "&#x2192;", "&zwnj;", 0 };
 
 static const char *k_xml_words[] = {
 	"<", ">", "</", "<?xml version=\"1.0\"?>", "<D:multistatus xmlns:D=\"DAV:\">", "</D:multistatus>",

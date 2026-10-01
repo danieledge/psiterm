@@ -34,6 +34,9 @@ struct TPmPicEntry
 	TInt iSrcW, iSrcH;       // the picture's own size
 	TBool iPartial;          // the file was cut short: the rest is grey
 	TBool iInline;           // the HTML puts it somewhere (else it goes after the text)
+	// (0.75) a picture from the web (engine/webpics.c), and the size the HTML gives
+	TBool iWeb;              // iPart is "W" + the address's hash
+	TInt iHintW, iHintH;     // the HTML's width and height (0: not given)
 	};
 
 // where a picture sits in the reader's text
@@ -56,6 +59,9 @@ public:
 	TPmPicEntry& At(TInt aIndex) { return (*iEntries)[aIndex]; }
 	TInt FindCid(const TDesC& aCid) const;              // the part with this Content-ID, -1 if none
 	TInt FindPart(const TDesC8& aPart) const;
+	// (0.75) a picture from the web at this address: its entry, added if new (pmwebpic.cpp)
+	TInt AddWebL(const TDesC& aSrc, TInt aHintW, TInt aHintH);
+	static TUint32 WebHash(const TDesC& aSrc);         // as engine/webpics.c names its files
 	// the decoded file, if it is there now: ETrue if the entry's state changed
 	TBool LoadReadyL(RFs& aFs, TInt aIndex);
 	// places in the text

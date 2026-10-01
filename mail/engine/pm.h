@@ -22,6 +22,15 @@ long pm_free_kb(const char *path);         /* free space on the drive path is on
    rather than stdio's 512-byte pieces, which the emulator's card does not
    like); path is made afresh. 0 ok */
 int  pm_write_whole(const char *path, const void *data, long n);
+/* (0.75) work that needs no line and may take seconds - setting out a
+   picture - runs below PsiMail.app (1), then back at the engine's working
+   priority (0): the app stays responsive and its heartbeat goes on. On the
+   Psion the engine otherwise runs above the app (to drain the serial port),
+   and a long decode there starved the app of every tick. */
+void pm_cpu_low(int low);
+/* the engine has just been working (a command, a download ahead): the time
+   since the app's last heartbeat starts again (see pmepoc.cpp Housekeeping) */
+void pm_beat_reset(void);
 
 /* ---- files (pmmain.c) */
 int  pm_fclose(FILE *f);                   /* fclose that also checks the error flag: 0 = all written */
@@ -191,6 +200,12 @@ int  imap_unmove(int acct, const char *dest, unsigned int uid, const char *msgid
 void pic_write_index(int acct, const char *folder, unsigned int uid, const PmStructure *st);
 void pic_remove(int acct, const char *folder, unsigned int uid);   /* all of a message's picture files */
 int  pic_fetch(int acct, const char *folder, unsigned int uid, const char *parts, char *why, int whymax);
+/* one picture file to its .pmi, below the app (0 shown, 1 not: the .pmi says why, -1 could not write) */
+int  pic_decode_file(const char *img_path, const char *pmi_path, const char *label, long budget_left, char *note, int notemax);
+/* ---- pictures from the web, when asked for (webpics.c) */
+int  web_fetch(int acct, const char *folder, unsigned int uid, char *why, int whymax);
+unsigned long web_hash(const char *url);   /* <uid>_W<hash>.pmi: FNV-1a of the address */
+int  web_is_spacer(const char *url, int w, int h);
 
 /* ---- SMTP (smtp.c) */
 int  smtp_send(int acct, const char *mime_path, const char *from, const char *rcpts, char *why, int whymax);

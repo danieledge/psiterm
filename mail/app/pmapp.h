@@ -78,7 +78,8 @@ struct TPmSettings
 	                       // 0x100 the Email icon below the screen opens PsiMail (pmbutton.exe), 0x200 that was asked once
 	                       // 0x3000, 0x1C000, 0x20000, 0x40000: new mail alert, timed check, sending (KPmView* above)
 	TInt iSpare[2];        // (TPmSettings is saved whole: keep its size)
-	                       // iSpare[0]: pictures in messages - 0 shown, 1 only attached files, 2 none (pmnative.cpp)
+	                       // iSpare[0]: pictures in messages - 0 shown, 1 only attached files, 2 none (pmnative.cpp);
+	                       //   bits 8-9 (0x300, 0.75): pictures from the web - 0 ask, 1 always, 2 never (pmwebpic.cpp)
 	                       // iSpare[1]: where PsiMail was when closed (CPmView::WhereToken)
 	PmAccount iAccounts[PM_MAX_ACCOUNTS];
 	};
@@ -238,7 +239,7 @@ public:
 	void ZoomL(TInt aStep);                  // the sidebar's zoom buttons
 	TBool NativeMode() const;                // shown with EIKON controls (every mode now)
 	void RefreshPicturesL();                 // pictures the engine has decoded since: into the reader (pmnative.cpp)
-	TInt PicturesPref() const { return iSettings->iSpare[0]; }   // 0 shown, 1 only attached files, 2 none
+	TInt PicturesPref() const { return iSettings->iSpare[0] & 3; }   // 0 shown, 1 only attached files, 2 none (bits 8-9: web pictures)
 	TInt WhereToken() const;                  // where PsiMail is, for iSpare[1] (reopened there next time)
 	void ReopenL();
 	// MEikListBoxObserver
@@ -515,6 +516,28 @@ private:
 	HBufC* iInvText;                 // the open message's <uid>.inv (../engine/invite.h), or NULL
 	HBufC* iCardText;                // ... its <uid>.vcd
 	TBuf<16> iInvAnswer;             // ... and what was answered (<uid>.inr)
+	// 0.75 (meng): when the engine stops (pmrecover.cpp), pictures from the web (pmwebpic.cpp)
+public:
+	void EngineStoppedL(const TDesC& aWhy);  // from EngineEnded: the reader stops waiting, the engine starts again
+	TBool EngineBackL();                     // from Cmd with no engine: start it again, ETrue if it is running
+	void PicturesDoneL(const PmCmd& aCmd);   // a PICTURES / WEBPICS command ended: frames still waiting say so
+	TInt WebPicturesPref() const;            // 0 ask, 1 always, 2 never
+	TBool WebPicturesOn() const;             // this message's web pictures are shown (asked for, or Always)
+	TInt WebPictureCount() const { return iWebCount; }   // in the message shown (UpdateReaderL counts them)
+	TBool CanShowWebPictures() const;        // Message > Web > Show web pictures
+	void ShowWebPicturesL();                 // ... and the reader's line
+	void AskForWebPicturesL();               // UpdateReaderL: Always, once a message
+	void WebPicturesLineL(TDes& aText, CArrayFixFlat<TPmLinkRange>& aLinks, TInt& aPos, TInt& aLen);   // "not shown - Show them"
+	static TInt ParsePictureSize(const TDesC& aText, TInt& aW, TInt& aH);   // "600x400"
+private:
+	void CountWebPicturesL();
+	TBuf<100> iEngineNote;           // why the last engine ended (for its successor's log)
+	TUint iEngineStops[3];           // tick counts of the last stops: three in 10 minutes and it isn't restarted
+	TBool iRestarting;
+	TUint iWebUid;                   // the message whose web pictures were asked for (0 none)
+	TInt iWebCount;                  // web pictures in the message shown
+	TInt iWebHosts;                  // ... on how many web sites
+	TUint iWebCountUid;
 	};
 
 // the links in the reader's invitation / card box (TPmLinkRange::iLink):
@@ -522,6 +545,7 @@ private:
 const TInt KPmLinkAccept = -3000;
 const TInt KPmLinkRemove = -3010;
 const TInt KPmLinkAddCard = -3020;
+const TInt KPmLinkWebPictures = -4000;     // "Pictures from the web are not shown - Show them" (pmwebpic.cpp)
 // a contact card line's kind bits, as ../engine/invite.h has them
 const TInt VCF_HOME = 1;
 const TInt VCF_WORK = 2;

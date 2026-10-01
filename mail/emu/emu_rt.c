@@ -262,6 +262,7 @@ size_t fread(void *b, size_t s, size_t n, FILE *f) { int r = emu_hc(HC_FREAD, f-
 size_t fwrite(const void *b, size_t s, size_t n, FILE *f) { int r = emu_hc(HC_FWRITE, f->fd, (int)b, s * n, 0); return r < 0 ? 0 : r / s; }
 int fseek(FILE *f, long off, int wh) { f->eof = 0; f->back = -1; return emu_hc(HC_FSEEK, f->fd, off, wh, 0); }
 long ftell(FILE *f) { return emu_hc(HC_FTELL, f->fd, 0, 0, 0); }
+void rewind(FILE *f) { fseek(f, 0, 0); }
 int fgetc(FILE *f) { int c; if (f->back >= 0) { c = f->back; f->back = -1; return c; } c = emu_hc(HC_FGETC, f->fd, 0, 0, 0); if (c < 0) f->eof = 1; return c; }
 int ungetc(int c, FILE *f) { f->back = c & 255; f->eof = 0; return c; }
 int getc(FILE *f) { return fgetc(f); }

@@ -419,6 +419,16 @@ void CPmView::StartEngineL()
 	s->net.dial_prefix[2] = 'D'; s->net.dial_prefix[3] = 'T'; s->net.dial_prefix[4] = 0;
 	CopySettingsToShared();
 	iDoneSeen = 0;
+	// (0.75) who the app is, so the engine quits only once it has really gone,
+	// and why the last engine ended, for psimail.log (engine/pmepoc.cpp)
+	{
+	TProcessId me = RProcess().Id();
+	Mem::Copy((TAny*)&s->app_pid, &me, sizeof(s->app_pid));
+	TPtr8 note((TUint8*)s->app_note, sizeof(s->app_note) - 1);
+	note.Copy(iEngineNote.Left(iEngineNote.Length() < note.MaxLength() ? iEngineNote.Length() : note.MaxLength()));
+	s->app_note[note.Length()] = 0;
+	iEngineNote.Zero();
+	}
 
 	// the engine lives next to the app
 	TParse parse;
@@ -494,6 +504,14 @@ void CPmView::EngineEnded()
 	else
 		why.Format(_L("The mail engine closed (%d) - use Tools > Restart mail engine"), reason);
 	SetStatus(why);
+	// (0.75) the reader stops waiting, and the engine starts again (pmrecover.cpp)
+	TBuf<60> note;
+	if (type == EExitPanic)
+		note.Format(_L("panic %S %d"), &cat, reason);
+	else
+		note.Format(_L("it closed, %d"), reason);
+	TRAPD(err, EngineStoppedL(note));
+	(void)err;
 	}
 
 void CPmView::SettingsChanged()
@@ -544,7 +562,7 @@ void CPmView::StopEngineWork(const TDesC& aToast)
 void CPmView::Cmd(TInt aOp, const TDesC8& aFolder, TUint aUid, const TDesC8& aArg)
 	{
 	PmShared* s = iShared;
-	if (!iRunning)
+	if (!iRunning && !EngineBackL())         // (0.75: started again if it can be - pmrecover.cpp)
 		{
 		Toast(_L("The mail engine is not running"));
 		return;
@@ -1923,6 +1941,8 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		UndoResultL(aCmd);                   // (pmundo.cpp)
 		return;
 		}
+	if (aCmd.op == PM_CMD_PICTURES || aCmd.op == PM_CMD_WEBPICS)
+		PicturesDoneL(aCmd);                 // (pmrecover.cpp: no frame left saying "Getting the picture...")
 	if (AutoResultL(aCmd))                   // a timed check: quiet but for new mail (pmauto.cpp)
 		return;
 	PmShared* s = iShared;
@@ -2863,7 +2883,8 @@ void CPmPrefsDialog::PreLayoutDynInitL()
 	SetChoiceListCurrentItem(EPmDlgSort, iSettings.iSort >= 0 && iSettings.iSort <= 6 ? iSettings.iSort : 0);
 	SetNumberEditorValue(EPmDlgPrefetch, PrefetchCount(iSettings));
 	SetChoiceListCurrentItem(EPmDlgStore, iSettings.iStore ? 1 : 0);
-	SetChoiceListCurrentItem(EPmDlgPictures, iSettings.iSpare[0] >= 0 && iSettings.iSpare[0] <= 2 ? iSettings.iSpare[0] : 0);
+	SetChoiceListCurrentItem(EPmDlgPictures, (iSettings.iSpare[0] & 3) <= 2 ? (iSettings.iSpare[0] & 3) : 0);
+	SetChoiceListCurrentItem(EPmDlgWebPictures, ((iSettings.iSpare[0] >> 8) & 3) <= 2 ? ((iSettings.iSpare[0] >> 8) & 3) : 0);
 	SetChoiceListCurrentItem(EPmDlgEmailButton, (iSettings.iView & KPmViewEmailButton) ? 0 : 1);
 	NewMailInitL();                           // the New mail page (pmauto.cpp)
 	}
@@ -2874,7 +2895,9 @@ TBool CPmPrefsDialog::OkToExitL(TInt /*aButtonId*/)
 	TInt ahead = NumberEditorValue(EPmDlgPrefetch);
 	iSettings.iPrefetch = ahead > 0 ? ahead : -1;
 	iSettings.iStore = ChoiceListCurrentItem(EPmDlgStore);
-	iSettings.iSpare[0] = ChoiceListCurrentItem(EPmDlgPictures);   // pictures: 0 shown, 1 only attached files, 2 none
+	// pictures: 0 shown, 1 only attached files, 2 none; bits 8-9 web pictures: 0 ask, 1 always, 2 never
+	iSettings.iSpare[0] = (iSettings.iSpare[0] & ~0x303) | ChoiceListCurrentItem(EPmDlgPictures) |
+		(ChoiceListCurrentItem(EPmDlgWebPictures) << 8);
 	if (ChoiceListCurrentItem(EPmDlgEmailButton) == 0)
 		iSettings.iView |= KPmViewEmailButton;
 	else
@@ -4466,8 +4489,13 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPmCmdUnread, row && row->iFlags.Locate('S') < 0 ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPmCmdFlag, row && row->iFlags.Locate('F') >= 0 ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemDimmed(EPmCmdWhole, m != CPmView::EMessage);
-		aMenuPane->SetItemDimmed(EPmCmdWeb, m != CPmView::EMessage || !iView->HasHtml());
 		aMenuPane->SetItemDimmed(EPmCmdNew, m == CPmView::ENoAccount);
+		}
+	else if (aMenuId == R_PM_WEB_MENU)
+		{
+		// Message > Web (0.75): the page in PsiWeb, the pictures here (pmwebpic.cpp)
+		aMenuPane->SetItemDimmed(EPmCmdWeb, m != CPmView::EMessage || !iView->HasHtml());
+		aMenuPane->SetItemDimmed(EPmCmdWebPictures, !iView->CanShowWebPictures());
 		}
 	else if (aMenuId == R_PM_EVENT_MENU)
 		{
@@ -4721,6 +4749,9 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPmCmdWeb:
 		iView->ViewAsWebPageL();
+		break;
+	case EPmCmdWebPictures:
+		iView->ShowWebPicturesL();
 		break;
 	case EPmCmdCalendar:
 		iView->CalendarSyncL();

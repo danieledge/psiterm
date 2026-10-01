@@ -10,6 +10,7 @@ SUBPROJECT    psimail
 SOURCE        psimail.cpp pmcal.cpp pmcalview.cpp pmwrite.cpp pmnative.cpp pmcontacts.cpp pmhelp.cpp pmpict.cpp
 SOURCE        pmundo.cpp pmauto.cpp pmprint.cpp
 SOURCE        pmstore.cpp pminvite.cpp pmvcard.cpp pmsaveword.cpp
+SOURCE        pmrecover.cpp pmwebpic.cpp
 SUBPROJECT    psimailinc\ui
 SOURCE        pmquote.cpp pmcalmodel.cpp
 SUBPROJECT    psitermssh

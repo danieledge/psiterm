@@ -1018,6 +1018,18 @@ void CPmView::UpdateReaderL()
 	CleanupStack::PopAndDestroy();           // st
 	}
 
+	// (0.75) pictures from the web: not fetched unless asked for (pmwebpic.cpp)
+	if (!waiting)
+		{
+		TInt wl, wk;
+		WebPicturesLineL(t, *iLinks, wl, wk);
+		if (wl >= 0)
+			{
+			AddSpan(*spans, wl, t.Length() - 1 - wl, ESpanItalic);
+			AddSpan(*spans, t.Length() - 1 - wk, wk, ESpanUnder);
+			}
+		}
+
 	if (waiting)
 		{
 		if (iBodyError.Length())
@@ -1044,6 +1056,7 @@ void CPmView::UpdateReaderL()
 				break;
 			}
 		TInt bold = -1, ital = -1, link = -1, linkNo = 0;
+		TBool lastEmpty = ETrue;                  // (0.75) one empty line at a time, none at the start
 		while (rest.Length() && t.Length() < t.MaxLength() - 400)
 			{
 			TInt nl = rest.Locate('\n');
@@ -1097,9 +1110,43 @@ void CPmView::UpdateReaderL()
 					TPtrC alt = sep >= 0 ? body.Left(sep) : body;
 					TPtrC src = sep >= 0 ? body.Mid(sep + 1) : TPtrC();
 					while (alt.Length() && alt[0] == ' ') alt.Set(alt.Mid(1));
+					// (0.75) the HTML's width and height: "src \x02 WxH"
+					TInt hintW = 0, hintH = 0;
+					TInt sep2 = src.Locate(0x02);
+					if (sep2 >= 0)
+						{
+						ParsePictureSize(src.Mid(sep2 + 1), hintW, hintH);
+						src.Set(src.Left(sep2));
+						}
 					TInt e = -1;
 					if (picPref == 0 && src.Length() > 4 && src.Left(4).CompareF(_L("cid:")) == 0)
 						e = iPictures->FindCid(src.Mid(4));
+					else if (picPref == 0 && src.Length() > 7 && src.Left(4).CompareF(_L("http")) == 0)
+						{
+						// from the web: shown once asked for (pmwebpic.cpp); till
+						// then the line at the top says so, and a picture with no
+						// words of its own takes no room
+						if (WebPicturesOn())
+							{
+							e = iPictures->AddWebL(src, hintW, hintH);
+							if (e >= 0 && iPictures->At(e).iState == TPmPicEntry::EUnknown)
+								{
+								TRAPD(le, iPictures->LoadReadyL(iCoeEnv->FsSession(), e));
+								(void)le;
+								if (iPictures->At(e).iState == TPmPicEntry::EUnknown && OpInFlight(PM_CMD_WEBPICS))
+									iPictures->At(e).iState = TPmPicEntry::EWaiting;
+								}
+							if (e >= 0 && iPictures->At(e).iState == TPmPicEntry::EFailed && iPictures->At(e).iWhy == _L("spacer"))
+								continue;          // (a spacer after all: nothing)
+							}
+						else if (!alt.Length())
+							continue;
+						}
+					if (e >= 0 && hintW + hintH > 0 && !iPictures->At(e).iHintW && !iPictures->At(e).iHintH)
+						{
+						iPictures->At(e).iHintW = hintW;
+						iPictures->At(e).iHintH = hintH;
+						}
 					if (e >= 0 && t.Length() < t.MaxLength() - 4)
 						{
 						// the picture on a line of its own (a space stands
@@ -1180,8 +1227,18 @@ void CPmView::UpdateReaderL()
 				break;
 			default: break;
 				}
+			if (plen == 0 && kind == 0)
+				{
+				if (lastEmpty)
+					continue;
+				lastEmpty = ETrue;
+				}
+			else
+				lastEmpty = EFalse;
 			t.Append(KPara);
 			}
+		if (lastEmpty && t.Length() >= 2 && t[t.Length() - 1] == KPara && t[t.Length() - 2] == KPara)
+			t.SetLength(t.Length() - 1);          // (no empty line at the end)
 		// pictures that came as files (not placed by the HTML): after the
 		// text, each with its name; a big one waits for a tap
 		for (TInt e = 0; picPref != 2 && e < iPictures->Count() && t.Length() < t.MaxLength() - 300; e++)
@@ -1242,7 +1299,10 @@ void CPmView::UpdateReaderL()
 	// the pictures not decoded yet: asked for now, so their frames say so
 	// (the engine's answer comes through TickL and RefreshPicturesL)
 	if (!waiting)
+		{
 		AskForPicturesL();
+		AskForWebPicturesL();                 // (Web pictures: Always - pmwebpic.cpp)
+		}
 
 	// into the editor, then the styles
 	CRichText* rt = iReader->RichText();
@@ -1342,6 +1402,17 @@ static void PictureLook(CPmPicture& aPic, const TPmPicEntry& aEntry, const CFont
 		{
 		TSize bs = aEntry.iBitmap->SizeInPixels();
 		TSize shown = bs;
+		// (0.75) no bigger than the HTML says (a 600-pixel picture shown at 300)
+		if (aEntry.iHintW > 0 && aEntry.iHintW < shown.iWidth && bs.iWidth > 0)
+			{
+			shown.iHeight = bs.iHeight * aEntry.iHintW / bs.iWidth;
+			shown.iWidth = aEntry.iHintW;
+			}
+		else if (aEntry.iHintW <= 0 && aEntry.iHintH > 0 && aEntry.iHintH < shown.iHeight && bs.iHeight > 0)
+			{
+			shown.iWidth = bs.iWidth * aEntry.iHintH / bs.iHeight;
+			shown.iHeight = aEntry.iHintH;
+			}
 		if (shown.iWidth > aRoom.iWidth && aRoom.iWidth > 16)
 			{
 			shown.iWidth = aRoom.iWidth;
@@ -1371,7 +1442,18 @@ static void PictureLook(CPmPicture& aPic, const TPmPicEntry& aEntry, const CFont
 		text = _L("Picture not downloaded - you are working offline");
 	else
 		text = _L("Picture not downloaded");
-	aPic.Set(NULL, CPmPicture::FrameSize(aFont, text, aRoom.iWidth), text, failed, aMap);
+	TSize frame = CPmPicture::FrameSize(aFont, text, aRoom.iWidth);
+	if (aEntry.iState == TPmPicEntry::EWaiting && aEntry.iHintW > 0 && aEntry.iHintH > 0)
+		{
+		// (0.75) on its way: the room the HTML says it takes, so the text
+		// doesn't jump when it comes
+		TSize hs(aEntry.iHintW, aEntry.iHintH);
+		if (hs.iWidth > aRoom.iWidth && aRoom.iWidth > 16) { hs.iHeight = hs.iHeight * aRoom.iWidth / hs.iWidth; hs.iWidth = aRoom.iWidth; }
+		if (hs.iHeight > aRoom.iHeight && aRoom.iHeight > 16) { hs.iWidth = hs.iWidth * aRoom.iHeight / hs.iHeight; hs.iHeight = aRoom.iHeight; }
+		if (hs.iWidth > frame.iWidth) frame.iWidth = hs.iWidth;
+		if (hs.iHeight > frame.iHeight) frame.iHeight = hs.iHeight;
+		}
+	aPic.Set(NULL, frame, text, failed, aMap);
 	}
 
 // the room a picture has in the reader: across it, and down it less a line
@@ -1422,7 +1504,7 @@ void CPmView::AskForPicturesL()
 		{
 		TInt ei = iPictures->Place(pl).iEntry;
 		TPmPicEntry& e = iPictures->At(ei);
-		if (e.iState != TPmPicEntry::EUnknown || e.iSize > PM_PIC_AUTO_KB * 1024)
+		if (e.iWeb || e.iState != TPmPicEntry::EUnknown || e.iSize > PM_PIC_AUTO_KB * 1024)
 			continue;
 		if (total + e.iSize > PM_PIC_AUTO_TOTAL_KB * 1024)
 			continue;
@@ -1700,6 +1782,11 @@ void CPmView::NativeActivateLinkL()
 	if (iLinkSel < 0 || iLinkSel >= iLinks->Count())
 		return;
 	TInt link = (*iLinks)[iLinkSel].iLink;
+	if (link == KPmLinkWebPictures)
+		{
+		ShowWebPicturesL();                   // "Show them" (pmwebpic.cpp)
+		return;
+		}
 	if (link <= -3000)
 		{
 		InviteLinkL(link);                    // the invitation's or card's box (pminvite.cpp)

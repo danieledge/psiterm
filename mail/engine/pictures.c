@@ -20,7 +20,17 @@
  *
  * Limits (psimail.h): a part bigger than PM_PIC_MAX_KB is never fetched;
  * the decoded pictures of one message stop at PM_PIC_BUDGET_KB; a decode
- * that takes over PIC_TIME_MS is given up (a slow ARM on a huge picture).
+ * that takes over PIC_TIME_MS is given up (a slow ARM on a huge picture),
+ * and one command sets out pictures for at most PIC_CMD_MS (the rest wait
+ * for the next reading).
+ *
+ * (0.75) A decode runs below PsiMail.app (pm_cpu_low): on the Psion the
+ * engine otherwise runs above the app, and a picture taking 20 s or more
+ * starved the app of every tick - the screen froze and the engine took the
+ * silent heartbeat for the app having gone, and quit ("the mail engine is
+ * not running"). <uid>_<part>.dec is there while a part is being set out:
+ * if it is still there next time, the engine stopped in the middle (a crash),
+ * and that picture is not tried again.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +39,7 @@
 #include "img/pmimg.h"
 
 #define PIC_TIME_MS 90000L
+#define PIC_CMD_MS 150000L
 #define PIC_MAX_PARTS 24
 
 /* the .pmi file: this header, then (status 0 or 1) h rows of stride bytes,
@@ -53,11 +64,24 @@ typedef struct
 	char name[80];
 	} PicEntry;
 
-static int is_picture_type(const char *type)
+static int has_ext(const char *name, const char *ext)
 {
-	return !pm_strcasecmp(type, "image/jpeg") || !pm_strcasecmp(type, "image/pjpeg") ||
-	       !pm_strcasecmp(type, "image/png") || !pm_strcasecmp(type, "image/x-png") ||
-	       !pm_strcasecmp(type, "image/gif");
+	int n = (int)strlen(name), k = (int)strlen(ext);
+	return n > k && !pm_strcasecmp(name + n - k, ext);
+}
+
+/* (0.75) "image/jpg" too (common, though not a real type), and pictures
+   sent as application/octet-stream with a picture's name */
+static int is_picture(const PmPart *p)
+{
+	const char *type = p->type;
+	if (!pm_strcasecmp(type, "image/jpeg") || !pm_strcasecmp(type, "image/pjpeg") || !pm_strcasecmp(type, "image/jpg") ||
+	    !pm_strcasecmp(type, "image/png") || !pm_strcasecmp(type, "image/x-png") ||
+	    !pm_strcasecmp(type, "image/gif"))
+		return 1;
+	if (!pm_strcasecmp(type, "application/octet-stream") || !pm_strncasecmp(type, "image/", 6))
+		return has_ext(p->name, ".jpg") || has_ext(p->name, ".jpeg") || has_ext(p->name, ".png") || has_ext(p->name, ".gif");
+	return 0;
 }
 
 static void pic_path(int acct, const char *folder, unsigned int uid, const char *part, const char *ext, char *out, int max)
@@ -77,14 +101,14 @@ void pic_write_index(int acct, const char *folder, unsigned int uid, const PmStr
 	int i, n = 0;
 	st_msg_path(acct, folder, uid, "pic", path, sizeof(path));
 	for (i = 0; i < st->n; i++)
-		if (i != st->text && is_picture_type(st->part[i].type)) n++;
+		if (i != st->text && is_picture(&st->part[i])) n++;
 	if (!n) { remove(path); return; }
 	snprintf(tmp, sizeof(tmp), "%s.new", path);
 	if (!(f = fopen(tmp, "w"))) return;
 	fputs("#PSIMAIL1\n", f);
 	for (i = 0; i < st->n; i++) {
 		const PmPart *p = &st->part[i];
-		if (i == st->text || !is_picture_type(p->type)) continue;
+		if (i == st->text || !is_picture(p)) continue;
 		fprintf(f, "%s\t%ld\t%s\t%d\t%s\t%s\n", p->id, p->size, p->type, p->enc, p->cid, p->name);
 	}
 	if (pm_fclose(f) != 0 || pm_replace(tmp, path) != 0) { remove(tmp); remove(path); }
@@ -140,6 +164,7 @@ void pic_remove(int acct, const char *folder, unsigned int uid)
 	snprintf(c.prefix, sizeof(c.prefix), "%u_", uid);
 	pm_list_dir(c.dir, ".pmi", rm_cb, &c);
 	pm_list_dir(c.dir, ".img", rm_cb, &c);
+	pm_list_dir(c.dir, ".dec", rm_cb, &c);
 }
 
 /* ---------------------------------------------------------- decoding */
@@ -214,9 +239,52 @@ static int pmi_read_header(const char *path, PmiHeader *h)
 	return ok ? 0 : -1;
 }
 
+/* the crash marker for a .pmi: <uid>_<part>.dec */
+static void dec_path(const char *pmi_path, char *out, int max)
+{
+	int n;
+	pm_copy(out, pmi_path, max);
+	n = (int)strlen(out);
+	if (n > 4) strcpy(out + n - 4, ".dec");
+}
+
+static int decode_part2(const char *img_path, const char *pmi_path, const char *label, long budget_left, char *note, int notemax);
+
 /* decodes <uid>_<part>.img to .pmi; the .img goes either way. 0 ok, 1 not
-   shown (a .pmi says why), -1 could not write */
-static int decode_part(const char *img_path, const char *pmi_path, const char *label, long budget_left, char *note, int notemax)
+   shown (a .pmi says why), -1 could not write. (webpics.c too) */
+int pic_decode_file(const char *img_path, const char *pmi_path, const char *label, long budget_left, char *note, int notemax)
+{
+	char dec[210];
+	FILE *f;
+	int r;
+	long bytes = file_size(img_path);
+	unsigned long t0 = pm_ms();
+	dec_path(pmi_path, dec, sizeof(dec));
+	if ((f = fopen(dec, "w")) != 0) { fputs(label, f); fclose(f); }
+	pm_log("picture %s: setting out %ld bytes", label, bytes);
+	pm_cpu_low(1);
+	r = decode_part2(img_path, pmi_path, label, budget_left, note, notemax);
+	pm_cpu_low(0);
+	remove(dec);
+	pm_log("picture %s: done (%d) in %lu ms", label, r, pm_ms() - t0);
+	return r;
+}
+
+/* a part whose last decode never finished (the engine stopped in it): not
+   again. 1 if so (a .pmi now says why) */
+static int crashed_before(const char *img_path, const char *pmi_path, const char *label)
+{
+	char dec[210];
+	dec_path(pmi_path, dec, sizeof(dec));
+	if (file_size(dec) < 0) return 0;
+	pm_log("picture %s: the engine stopped while setting it out last time - not tried again", label);
+	remove(img_path);
+	write_pmi(pmi_path, 0, "PsiMail stopped while setting it out");
+	remove(dec);
+	return 1;
+}
+
+static int decode_part2(const char *img_path, const char *pmi_path, const char *label, long budget_left, char *note, int notemax)
 {
 	PmImgOpts o;
 	PmImage img;
@@ -241,6 +309,7 @@ static int decode_part(const char *img_path, const char *pmi_path, const char *l
 		int n = f ? (int)fread(head, 1, sizeof(head), f) : 0, sw, sh;
 		if (f) fclose(f);
 		if (n > 0 && pmimg_size(head, n, &sw, &sh) == 0 && sw > 0 && sh > 0) {
+			pm_log("picture %s: %dx%d", label, sw, sh);
 			int fw = (sw + o.max_w - 1) / o.max_w, fh = (sh + o.max_h - 1) / o.max_h, fs = fw > fh ? fw : fh;
 			long ow = (sw + fs - 1) / fs, oh = (sh + fs - 1) / fs;
 			if (((ow + 7) / 8) * 4L * oh > budget_left) {
@@ -286,6 +355,8 @@ int pic_fetch(int acct, const char *folder, unsigned int uid, const char *parts,
 	char want[PIC_MAX_PARTS][16];
 	int force[PIC_MAX_PARTS], nwant = 0;
 	char note[80], label[40];
+	unsigned long t_cmd = pm_ms();
+	int late = 0;
 
 	n = read_index(acct, folder, uid, e, PIC_MAX_PARTS);
 	if (!n) { snprintf(why, whymax, "No pictures in the message"); return PM_RES_FAILED; }
@@ -318,6 +389,13 @@ int pic_fetch(int acct, const char *folder, unsigned int uid, const char *parts,
 		pic_path(acct, folder, uid, pe->part, "img", img, sizeof(img));
 		if (file_size(pmi) >= (long)sizeof(PmiHeader)) { done++; continue; }     /* the cache */
 		snprintf(label, sizeof(label), "picture %d of %d", k + 1, nwant);
+		if (crashed_before(img, pmi, label)) { notshown++; done++; st_changed(); continue; }
+		if ((long)(pm_ms() - t_cmd) > PIC_CMD_MS) {
+			/* enough for one go: the rest next time the message is read */
+			if (!late) pm_log("pictures: %lu ms so far - the rest wait", pm_ms() - t_cmd);
+			late++;
+			continue;
+		}
 		if (file_size(img) <= 0) {
 			/* not here yet: fetch it */
 			long kb = (pe->size + 1023) / 1024;
@@ -342,7 +420,7 @@ int pic_fetch(int acct, const char *folder, unsigned int uid, const char *parts,
 			d = imap_part_to_file(acct, folder, uid, pe->part, pe->enc, pe->size, img, label, why, whymax);
 			if (d != PM_RES_OK) { r = d; break; }
 		}
-		d = decode_part(img, pmi, label, budget, note, sizeof(note));
+		d = pic_decode_file(img, pmi, label, budget, note, sizeof(note));
 		if (d < 0) { pm_write_why(why, whymax, "the picture", pmi); r = PM_RES_FAILED; break; }
 		if (d == 0) {
 			PmiHeader h;
