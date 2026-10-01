@@ -23,6 +23,10 @@ for t in epoc ${1:+$1}; do
 		|| { grep -E "error|undefined" "$TOP/build/web-$t.log" | head -30; exit 1; }
 done
 
+echo "== pictures (PsiWeb.mbm)"
+python3 "$HERE/tools/mkicons.py" "$TOP/build/web-icons" "$HERE/app/pwicons.h"
+(cd "$TOP/build/web-icons" && WINEDEBUG=-all wine "$EPOCROOT/epoc32/tools/bmconv.exe" /q psiweb.mbm $(tr '\n' ' ' < files.txt) > /dev/null 2>&1)
+
 echo "== PsiWeb.app"
 (
 export PATH=/usr/bin:/bin:$PSION_SDK/gcc-3.0-psion-98r2-9/bin:$EPOCROOT/epoc32/tools
@@ -44,7 +48,7 @@ make -f psiweb.marm rel > "$TOP/build/psiweb-app.log" 2>&1 \
 echo "== package"
 P=$TOP/build/web-pkg
 rm -rf "$P"; mkdir -p "$P" "$TOP/dist"
-cp "$REL/psiweb.app" "$REL/psiweb.rsc" "$REL/psiweb.exe" "$HERE/pkg/psiweb.pkg" "$P/"
+cp "$REL/psiweb.app" "$REL/psiweb.rsc" "$REL/psiweb.exe" "$HERE/pkg/psiweb.pkg" "$TOP/build/web-icons/psiweb.mbm" "$P/"
 cp "$REL/stdlib.sis" "$P/STDLIB.SIS"       # ESTLIB.DLL for psiweb.exe (not in the 5mx ROM)
 python3 "$HERE/pkg/mkicon.py" "$P/psiweb.aif" > /dev/null
 { echo "PsiWeb is NetSurf (https://www.netsurf-browser.org/), GNU GPL v2,"

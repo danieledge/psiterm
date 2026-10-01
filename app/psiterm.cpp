@@ -462,7 +462,7 @@ void CTermView::ApplySerialSettings()
 			msg.Format(_L8("\r\n[PsiTerm: serial port in use - probably by the Psion's dial-up\r\n"
 				" connection. It is freed when the dial-up hangs up.]\r\n"));
 		else
-			msg.Format(_L8("\r\n[PsiTerm: could not open serial port, error %d.\r\n"
+			msg.Format(_L8("\r\n[PsiTerm: could not open the serial port (%d).\r\n"
 				" Is Remote link switched off?]\r\n"), r);
 		LocalMessage(msg);
 		}
@@ -602,7 +602,7 @@ TBool CTermView::ModemOnline() const
 void CTermView::SerialError(TInt aError)
 	{
 	TBuf8<64> msg;
-	msg.Format(_L8("\r\n[PsiTerm: serial error %d]\r\n"), aError);
+	msg.Format(_L8("\r\n[PsiTerm: serial port problem %d]\r\n"), aError);
 	LocalMessage(msg);
 	}
 
@@ -952,7 +952,7 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 			{
 			iLastSerialErr = now;
 			LocalMessage(_L8("\r\n[PsiTerm: the serial port is not open, so typing goes nowhere.\r\n"
-				" Is Remote link switched off? Try Menu > Connection settings > OK to reopen it.]\r\n"));
+				" Is Remote link switched off? Try Tools > Connection settings > OK to reopen it.]\r\n"));
 			}
 		return;
 		}
@@ -967,7 +967,7 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 				msg.Format(_L8("\r\n[PsiTerm: the modem is not accepting data (CTS is off).\r\n"
 					" Set Flow control to None, or send AT&K1 then AT&W to the WiRSa.]\r\n"));
 			else
-				msg.Format(_L8("\r\n[PsiTerm: could not send to the modem (error %d).]\r\n"), r);
+				msg.Format(_L8("\r\n[PsiTerm: could not send to the modem (%d).]\r\n"), r);
 			LocalMessage(msg);
 			}
 		return;
@@ -1560,7 +1560,10 @@ void CTermView::CheckTabsL()
 		m.Append(_L8("\r\n"));
 		LocalMessage(m);
 		}
-	m.Format(_L8("\r\nFound: row %d, %d window(s):"), iTabRow + 1, iTabCount);
+	if (iTabCount == 1)
+		m.Format(_L8("\r\nFound: row %d, 1 window:"), iTabRow + 1);
+	else
+		m.Format(_L8("\r\nFound: row %d, %d windows:"), iTabRow + 1, iTabCount);
 	for (TInt t = 0; t < iTabCount && m.Length() < 220; t++)
 		{
 		m.Append(' ');
@@ -2902,7 +2905,7 @@ static void AppendKeyHelp(RFs& aFs, TDes8& aOut, const TDesC& aBase, const TDesC
 	aOut.Append(_L8("\r\n\r\nPublic key (for a server's ~/.ssh/authorized_keys):\r\n\r\n"));
 	aOut.Append(k);
 	delete key;
-	aOut.Append(_L8("\r\n\r\nTo use it: connect with your password, choose Terminal > "
+	aOut.Append(_L8("\r\n\r\nTo use it: connect with your password, choose File > "
 		"Install login key on server (at a shell prompt), then SSH to... > Edit > "
 		"Log in with. If this Psion is lost, remove the line from the server's "
 		"~/.ssh/authorized_keys.\r\n"));
@@ -2976,7 +2979,7 @@ void CTermView::StartSpeedTestL()
 	{
 	if (iSshActive || iGatheringEntropy)
 		{
-		LocalMessage(_L8("Busy - finish typing the random keys (or press Esc) first.\r\n"));
+		LocalMessage(_L8("Not available while the random keys are being typed - finish them or press Esc.\r\n"));
 		return;
 		}
 	LaunchSshL(1);
@@ -2986,7 +2989,7 @@ void CTermView::StartUpdateL()
 	{
 	if (iSshActive || iGatheringEntropy)
 		{
-		LocalMessage(_L8("Busy - finish typing the random keys (or press Esc) first.\r\n"));
+		LocalMessage(_L8("Not available while the random keys are being typed - finish them or press Esc.\r\n"));
 		return;
 		}
 	if (iSettings.iUpdSource == 1 && iSettings.iUpdHost.Length() == 0)
@@ -3208,7 +3211,7 @@ void CTermView::LaunchSshL(TInt aMode)
 	if (r != KErrNone)
 		{
 		TBuf8<64> msg;
-		msg.Format(_L8("\r\n[SSH: shared memory error %d]\r\n"), r);
+		msg.Format(_L8("\r\n[SSH: could not set up shared memory (%d)]\r\n"), r);
 		LocalMessage(msg);
 		ApplySerialSettings();
 		return;
@@ -3354,7 +3357,7 @@ void CTermView::LaunchSshL(TInt aMode)
 			msg.Format(_L8("\r\n[PsiTerm's SSH program (psissh.exe) is missing or cannot load.\r\n"
 				" Reinstall PsiTerm from its .sis file.]\r\n"));
 		else
-			msg.Format(_L8("\r\n[SSH: could not start psissh.exe, error %d]\r\n"), r);
+			msg.Format(_L8("\r\n[SSH: could not start psissh.exe (%d)]\r\n"), r);
 		LocalMessage(msg);
 		iChunk.Close();
 		iChunkOpen = EFalse;
@@ -3541,7 +3544,11 @@ void CTermView::SshProcessEnded()
 		if (type != EExitPanic && exitCode == 11)
 			{
 			TBuf8<64> m;
-			m.Format(_L8("[%d screenshot(s) sent]\r\n"), DeleteShots());
+			TInt sent = DeleteShots();
+			if (sent == 1)
+				m.Copy(_L8("[1 screenshot sent]\r\n"));
+			else
+				m.Format(_L8("[%d screenshots sent]\r\n"), sent);
 			LocalMessage(m);
 			}
 		}
@@ -5225,8 +5232,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		ManageKeysL();
 		break;
 	case EPtCmdInstallKey:
-		InstallKeyCmdL();
-		iEikonEnv->InfoMsg(_L("To log in with it: File > SSH to > Edit > Log in with"));
+		InstallKeyCmdL();                 // says what to do next itself, only when it did install
 		break;
 	case EPtCmdSerialInfo:
 		if (ConfirmDisconnectL(aCommand))

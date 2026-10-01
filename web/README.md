@@ -18,21 +18,28 @@ Extras bar.
 
 | Key | |
 |---|---|
-| Ctrl+L (or Ctrl+O) | open an address, or type words to search |
+| Ctrl+O (or Ctrl+L) | open an address, or type words to search for |
 | Ctrl+B / Ctrl+F | back / forward |
 | Esc | stop loading |
 | Ctrl+R, Ctrl+H | reload, home page |
 | Fn+Up / Fn+Down | page up / down |
-| Ctrl+M, Shift+Ctrl+M | zoom in / out |
-| Ctrl+I | images on/off |
-| Ctrl+G | page info (address, title, free memory) |
+| Ctrl+M, Shift+Ctrl+M | zoom in / out (they cycle round the sizes) |
+| Ctrl+T | show or hide the toolbar (the page takes its room) |
+| Ctrl+I | show pictures on/off |
+| Shift+Ctrl+Q | page information (title, address, free memory) |
+| Ctrl+U | disconnect (hang up and free the serial port) |
+| Ctrl+K | preferences: home page and proxy |
+| Shift+Ctrl+A | about PsiWeb |
 | pen | tap links, buttons, form fields and the scroll bars |
+
+The toolbar (Open, Back, Home, Zoom) and the menus (File, View, Go, Tools)
+follow the EIKON style guide, as PsiTerm's and PsiMail's do.
 
 **Tools > Connection settings**: modem (`ATDT host:port`, as PsiTerm) or the
 Psion's own TCP/IP (dial-up), baud rate and flow control. The serial port
 can only be used by one program at a time, so disconnect PsiTerm first.
 
-**Tools > Proxy and home page**: strongly recommended - point PsiWeb at a
+**Tools > Preferences**: the home page, and a proxy - strongly recommended - point PsiWeb at a
 [WebOne](https://github.com/atauenis/webone) proxy on your network (for
 example on the Mac: `WebOne/webone`, port 8080). The proxy fetches HTTPS
 sites for the Psion (no TLS handshake on a 36 MHz CPU), and keeps one
@@ -43,7 +50,9 @@ PsiTerm's TLS 1.3 client (X25519 + ChaCha20-Poly1305; certificates are
 
 ### Updating
 
-**Tools > Update PsiWeb** works like PsiTerm's updater: it reads
+**Tools > Update PsiWeb...** asks where from (GitHub, GitHub's dev branch,
+or a local server: the same choice as PsiMail's, kept in
+`C:\System\Apps\PsiWeb\Update.ini`) and then works like PsiTerm's updater: it reads
 `dist/PsiWeb-version.txt` from GitHub, downloads `dist/PsiWeb.sis` in
 64 KB pieces (retrying a piece that breaks off) to D: (or C:), checks the
 Ed25519 signature in `dist/PsiWeb.sis.sig` against PsiTerm's release key

@@ -15,12 +15,13 @@ enum TPwCommands
 	EPwCmdZoomNormal,
 	EPwCmdImages,
 	EPwCmdConnSettings,
-	EPwCmdBrowserSettings,
+	EPwCmdPrefs,
 	EPwCmdPageInfo,
 	EPwCmdRestart,
 	EPwCmdAbout,
 	EPwCmdUpdate,
-	EPwCmdHangup
+	EPwCmdHangup,
+	EPwCmdToggleToolbar
 	};
 
 enum TPwDialogControls
@@ -38,5 +39,14 @@ enum TPwDialogControls
 	EPwDlgInfo2,
 	EPwDlgInfo3,
 	EPwDlgInfo4,
-	EPwDlgInfo5
+	EPwDlgInfo5,
+	EPwDlgUpdSource,
+	EPwDlgUpdHost,
+	EPwDlgUpdPort,
+	EPwDlgAbout1,
+	EPwDlgAbout2,
+	EPwDlgAboutStatus,
+	EPwDlgAbout4,
+	EPwDlgAbout5,
+	EPwDlgAbout6
 	};

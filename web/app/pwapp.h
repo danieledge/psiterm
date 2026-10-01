@@ -50,6 +50,7 @@ struct TPwSettings
 	TBuf<200> iHome;
 	TInt iImages;
 	TInt iZoom;            // percent
+	TInt iToolbar;         // View > Show toolbar
 	};
 
 class CPwView;
@@ -83,6 +84,9 @@ public:
 	void ShowMessage(const TDesC& aLine1, const TDesC& aLine2);
 	void StartUpdateL();
 	void OpenUrlL(const TDesC& aUrl);
+	void RestartL(TBool aSamePage);
+	void SetPageRectL(const TRect& aRect);
+	TBool Updating() const { return iUpdState == PW_UPD_RUNNING; }
 private:
 	static TInt StartCallback(TAny* aSelf);
 	void Draw(const TRect& aRect) const;
@@ -108,6 +112,7 @@ private:
 	TBuf<PW_URL_MAX> iStartUrl;
 	TUint iLastFrame;
 	TUint iLinkSeq;               // last link message shown (PsiShared link_seq)
+	TBool iLinkBusy;              // a link note is up as a busy message
 	TInt iEntropyPos;
 	TBuf<80> iMsg1;
 	TBuf<120> iMsg2;
@@ -117,16 +122,41 @@ private:
 	TFileName iUpdateFile;
 	};
 
+// Page information: up to five lines of text (the title is the resource's)
 class CPwInfoDialog : public CEikDialog
 	{
 public:
-	CPwInfoDialog(const TDesC& aTitle, const TDesC* aLines, TInt aCount)
-		: iTitle(aTitle), iLines(aLines), iCount(aCount) {}
+	// aLines: an array of TPtrC (not TBufs: a TDesC* would step by the
+	// wrong size - the old Page info said "Not enough memory" for that)
+	CPwInfoDialog(const TPtrC* aLines, TInt aCount)
+		: iLines(aLines), iCount(aCount) {}
 private:
 	void PreLayoutDynInitL();
-	const TDesC& iTitle;
-	const TDesC* iLines;
+	const TPtrC* iLines;
 	TInt iCount;
+	};
+
+class CPwAboutDialog : public CEikDialog
+	{
+public:
+	CPwAboutDialog(const TDesC& aStatus) : iStatus(aStatus) {}
+private:
+	void PreLayoutDynInitL();
+	const TDesC& iStatus;
+	};
+
+// Update PsiWeb: where from (as PsiMail's)
+class CPwUpdateDialog : public CEikDialog
+	{
+public:
+	CPwUpdateDialog(TInt& aSource, TDes& aHost, TInt& aPort)
+		: iSource(aSource), iHost(aHost), iPort(aPort) {}
+private:
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	TInt& iSource;
+	TDes& iHost;
+	TInt& iPort;
 	};
 
 class CPwOpenDialog : public CEikDialog
@@ -149,10 +179,10 @@ private:
 	TPwSettings& iSettings;
 	};
 
-class CPwBrowserDialog : public CEikDialog
+class CPwPrefsDialog : public CEikDialog
 	{
 public:
-	CPwBrowserDialog(TPwSettings& aSettings) : iSettings(aSettings) {}
+	CPwPrefsDialog(TPwSettings& aSettings) : iSettings(aSettings) {}
 private:
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
@@ -173,6 +203,13 @@ private:
 	void LoadSettings(TPwSettings& aSettings);
 	void SaveSettings(const TPwSettings& aSettings);
 	void PageInfoL();
+	void AboutL();
+	void UpdateL();
+	void ButtonPictureL(TInt aId, TInt aIcon);
+	void ToolbarPicturesL();
+	void ShowToolBarL(TBool aShow);
+	void RestartEngineL();
+	TRect PageRect(TBool aToolbar) const;
 	CPwView* iView;
 	};
 
