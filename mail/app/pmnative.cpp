@@ -2020,23 +2020,25 @@ void CPmView::DrawNative(const TRect& /*aRect*/) const
 		gc.UseFont(iListFont);
 		gc.SetBrushStyle(CGraphicsContext::ENullBrush);
 		TRect area(iHeadX[1], top, r.iBr.iX, r.iBr.iY);
-		TBuf<120> a, b;
+		TBuf<120> line[3];
 		if (iMode == ENoAccount)
 			{
-			a = _L("Set up your mail with Tools > Accounts > Add");
-			b = _L("Most providers want an app password for this");
+			line[0] = _L("No mail account yet");
+			line[1] = _L("Tools > Accounts > Add sets one up");
+			line[2] = _L("Most providers want an app password");
 			}
-		else if (iMode == EOutbox) a = _L("Nothing waiting to be sent");
-		else if (iSearch) a = _L("Nothing found");
-		else a = Busy() ? _L("Looking for messages...") : _L("No messages");
+		else if (iMode == EOutbox) line[0] = _L("Nothing waiting to be sent");
+		else if (iSearch) line[0] = _L("Nothing found");
+		else line[0] = Busy() ? _L("Looking for messages...") : _L("No messages");
+		TInt n = 0;
+		while (n < 3 && line[n].Length()) n++;
 		TInt lh = iListFont->HeightInPixels() + 4;
-		TInt y = area.iTl.iY + area.Height() / 2 - lh;
-		TInt w1 = iListFont->TextWidthInPixels(a);
-		gc.DrawText(a, TPoint(area.iTl.iX + (area.Width() - w1) / 2, y + iListFont->AscentInPixels()));
-		if (b.Length())
+		TInt y = area.iTl.iY + (area.Height() - n * lh) / 2;
+		for (TInt i = 0; i < n; i++)
 			{
-			TInt w2 = iListFont->TextWidthInPixels(b);
-			gc.DrawText(b, TPoint(area.iTl.iX + (area.Width() - w2) / 2, y + lh + iListFont->AscentInPixels()));
+			TextUtils::ClipToFit(line[i], *iListFont, area.Width() - 8);   // "..." if it still won't fit
+			TInt w = iListFont->TextWidthInPixels(line[i]);
+			gc.DrawText(line[i], TPoint(area.iTl.iX + (area.Width() - w) / 2, y + i * lh + iListFont->AscentInPixels()));
 			}
 		gc.DiscardFont();
 		}

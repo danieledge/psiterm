@@ -76,7 +76,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.69");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.70");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -4236,6 +4236,7 @@ void CPmAboutDialog::PreLayoutDynInitL()
 	TBuf<32> title(_L("PsiMail "));
 	title.Append(KVersion);
 	SetLabelL(EPmDlgInfo1, title);
+	((CEikLabel*)Control(EPmDlgInfo1))->SetFont(iEikonEnv->TitleFont());   // as PsiTerm's and PsiWeb's
 	TBuf<80> who(_L("Email & calendar for the Psion Series 5mx - "));
 	who.Append(TChar(0xa9));                  // (c), as the Psion's fonts have it
 	who.Append(_L(" 2026 Dan Edge"));
