@@ -9,6 +9,7 @@
 #include "pmicons.h"
 #include <eiktxlbx.h>
 #include <eikmenub.h>
+#include <eiktxtut.h>
 
 static const TInt KScrollBarW = 23;      // EIKON's scroll bar width
 static const TInt KNavButtonW = 24;      // the < and > buttons
@@ -30,14 +31,13 @@ static void Copy8(TDes& aOut, const char* aText, TInt aLen)
 	aOut.Copy(Clip(TPtrC8((const TUint8*)aText, aLen < 0 ? 0 : aLen), aOut.MaxLength()));
 	}
 
-// the text fitted to a width, with "..." if it had to be cut
+// the text fitted to a width, ending in "..." if it had to be cut (EIKON's
+// own clipping, as the lists use)
 static void Fit(const CFont* aFont, TDes& aText, TInt aWidth)
 	{
-	if (aFont->TextWidthInPixels(aText) <= aWidth)
+	if (aWidth <= 0 || aFont->TextWidthInPixels(aText) <= aWidth)
 		return;
-	while (aText.Length() > 1 && aFont->TextWidthInPixels(aText) + aFont->TextWidthInPixels(_L("...")) > aWidth)
-		aText.SetLength(aText.Length() - 1);
-	aText.Append(_L("..."));
+	TextUtils::ClipToFit(aText, *aFont, aWidth);
 	}
 
 static TInt Baseline(const CFont* aFont, const TRect& aRect)

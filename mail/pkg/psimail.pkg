@@ -7,5 +7,10 @@
 "psimail.mbm"-"!:\System\Apps\PsiMail\PsiMail.mbm"
 "psimail.aif"-"!:\System\Apps\PsiMail\PsiMail.aif"
 "psimail.exe"-"!:\System\Apps\PsiMail\psimail.exe"
+; the settings PsiMail writes: kept over an upgrade, removed with the program
+; (the mail itself, in \PsiMail on the memory disk or the internal disk, stays)
+""-"C:\System\Apps\PsiMail\PsiMail.ini",FN
+""-"C:\System\Apps\PsiMail\Calendar.ini",FN
+""-"C:\System\Apps\PsiMail\Update.ini",FN
 ; the EPOC C library (ESTLIB.DLL), which the engine needs and the 5mx ROM lacks
 @"STDLIB.SIS",(0x100002c3)

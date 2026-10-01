@@ -365,12 +365,12 @@ RESOURCE DIALOG r_pm_info_dialog
 	buttons=R_EIK_BUTTONS_CONTINUE;
 	items=
 		{
-		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1; control=LABEL { txt=""; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo2; control=LABEL { txt=""; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo3; control=LABEL { txt=""; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo4; control=LABEL { txt=""; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo5; control=LABEL { txt=""; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo6; control=LABEL { txt=""; }; }
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1; control=LABEL { horiz_align=EEikLabelAlignHLeft; txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo2; control=LABEL { horiz_align=EEikLabelAlignHLeft; txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo3; control=LABEL { horiz_align=EEikLabelAlignHLeft; txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo4; control=LABEL { horiz_align=EEikLabelAlignHLeft; txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo5; control=LABEL { horiz_align=EEikLabelAlignHLeft; txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo6; control=LABEL { horiz_align=EEikLabelAlignHLeft; txt=""; }; }
 		};
 	}
 
@@ -382,12 +382,13 @@ RESOURCE DIALOG r_pm_text_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Search for"; id=EPmDlgWords;
-			control=EDWIN { width=30; maxlength=60; }; }
+			control=EDWIN { width=24; maxlength=60; }; }
 		};
 	}
 
-// Update: where to fetch PsiMail-version.txt and PsiMail.sis from (as
-// PsiTerm's Update source dialog)
+// Update: where to fetch PsiMail-version.txt and PsiMail.sis from (the same
+// dialog in PsiTerm and PsiWeb). The Local server and Port lines are dimmed
+// unless "Local server" is chosen (CPmUpdateDialog)
 RESOURCE DIALOG r_pm_update_dialog
 	{
 	title="Update PsiMail";
@@ -542,7 +543,7 @@ RESOURCE ARRAY r_pm_yesno_array
 
 RESOURCE ARRAY r_pm_store_array
 	{
-	items={ LBUF { txt="Memory disk (CF) if there is one"; }, LBUF { txt="Internal disk (C:)"; } };
+	items={ LBUF { txt="Memory disk, if there is one"; }, LBUF { txt="Internal disk"; } };
 	}
 
 RESOURCE ARRAY r_pm_account_pages
@@ -583,8 +584,10 @@ RESOURCE ARRAY r_pm_incoming_lines
 			control=CHOICELIST { array_id=r_pm_security_array; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="User name"; id=EPmDlgUser;
 			control=EDWIN { width=24; maxlength=94; }; },
-		DLG_LINE { type=EEikCtSecretEd; prompt="(App) password"; id=EPmDlgPass;
-			control=SECRETED { num_letters=32; }; }
+		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPmDlgPass;
+			control=SECRETED { num_letters=32; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1;
+			control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Most providers want an app password here, not the normal one"; }; }
 		};
 	}
 
@@ -623,7 +626,7 @@ RESOURCE DIALOG r_pm_prefs_dialog
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Order of messages"; id=EPmDlgSort;
 			control=CHOICELIST { array_id=r_pm_sort_array; }; },
-		DLG_LINE { type=EEikCtNumberEditor; prompt="Download ahead (newest)"; id=EPmDlgPrefetch;
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Download ahead"; id=EPmDlgPrefetch; trailer="newest messages";
 			control=NUMBER_EDITOR { min=0; max=50; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Keep mail on"; id=EPmDlgStore;
 			control=CHOICELIST { array_id=r_pm_store_array; }; },
@@ -683,7 +686,7 @@ RESOURCE DIALOG r_pm_about_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1; control=LABEL { standard_font=EEikLabelFontLegend; reserve_length=24; txt="PsiMail"; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo2; control=LABEL { txt="Email & calendar for the Psion Series 5mx - (c) 2026 Dan Edge"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo2; control=LABEL { reserve_length=60; txt="Email & calendar for the Psion Series 5mx"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo3; control=LABEL { standard_font=EEikLabelFontAnnotation; reserve_length=60; txt="-"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo4; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="IMAP, SMTP & CalDAV over TLS 1.3 - networking from PsiTerm"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo5; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="LibTomCrypt, LibTomMath - public domain"; }; },
@@ -729,13 +732,15 @@ RESOURCE ARRAY r_pm_cal_server_lines
 	{
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="Sync with the Agenda"; id=EPmDlgCalOn;
+		DLG_LINE { type=EEikCtChoiceList; prompt="Sync with Agenda"; id=EPmDlgCalOn;
 			control=CHOICELIST { array_id=r_pm_yesno_array; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="CalDAV server"; id=EPmDlgCalHost;
-			control=EDWIN { width=24; maxlength=190; }; },
-		DLG_LINE { type=EEikCtSecretEd; prompt="Password (if not the mail one)"; id=EPmDlgCalPass;
+			control=EDWIN { width=20; maxlength=190; }; },
+		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPmDlgCalPass;
 			control=SECRETED { num_letters=32; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="New Psion entries go to"; id=EPmDlgCalDefault;
+		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1;
+			control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Leave it blank to use the mail account's password"; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="New entries go to"; id=EPmDlgCalDefault;
 			control=CHOICELIST { array_id=r_pm_cal_none_array; }; }
 		};
 	}
@@ -745,7 +750,7 @@ RESOURCE ARRAY r_pm_cal_agenda_lines
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Agenda file"; id=EPmDlgCalFile;
-			control=EDWIN { width=24; maxlength=120; }; },
+			control=EDWIN { width=20; maxlength=120; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Time zone"; id=EPmDlgCalZone;
 			control=CHOICELIST { array_id=r_pm_zones; }; },
 		DLG_LINE { type=EEikCtNumberEditor; prompt="Days back"; id=EPmDlgCalBack;
@@ -754,7 +759,7 @@ RESOURCE ARRAY r_pm_cal_agenda_lines
 			control=NUMBER_EDITOR { min=7; max=730; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Alarms"; id=EPmDlgCalAlarms;
 			control=CHOICELIST { array_id=r_pm_cal_alarm_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Entries already on the Psion"; id=EPmDlgCalExisting;
+		DLG_LINE { type=EEikCtChoiceList; prompt="Existing Psion entries"; id=EPmDlgCalExisting;
 			control=CHOICELIST { array_id=r_pm_cal_existing_array; }; }
 		};
 	}
@@ -835,8 +840,6 @@ RESOURCE DIALOG r_pm_event_dialog
 		DLG_LINE { type=EEikCtTimeEditor; prompt="End"; id=EPmDlgEvEnd;
 			control=TIME_EDITOR { minTime=TIME { }; maxTime=TIME { hour=23; minute=59; second=59; }; flags=EEikTimeWithoutSecondsField; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Alarm"; id=EPmDlgEvAlarm;
-			control=CHOICELIST { array_id=r_pm_alarm_array; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPmDlgInfo1;
-			control=LABEL { standard_font=EEikLabelFontAnnotation; txt=""; }; }
+			control=CHOICELIST { array_id=r_pm_alarm_array; }; }
 		};
 	}

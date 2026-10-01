@@ -64,6 +64,7 @@ struct TPmSettings
 	TInt iView;            // what's hidden: 1 toolbar, 2 title bar, 4 folder list
 	TInt iSpare[2];        // (TPmSettings is saved whole: keep its size)
 	                       // iSpare[0]: pictures in messages - 0 shown, 1 only attached files, 2 none (pmnative.cpp)
+	                       // iSpare[1]: where PsiMail was when closed (CPmView::WhereToken)
 	PmAccount iAccounts[PM_MAX_ACCOUNTS];
 	};
 
@@ -223,6 +224,8 @@ public:
 	TBool NativeMode() const;                // shown with EIKON controls (every mode now)
 	void RefreshPicturesL();                 // pictures the engine has decoded since: into the reader (pmnative.cpp)
 	TInt PicturesPref() const { return iSettings->iSpare[0]; }   // 0 shown, 1 only attached files, 2 none
+	TInt WhereToken() const;                  // where PsiMail is, for iSpare[1] (reopened there next time)
+	void ReopenL();
 	// MEikListBoxObserver
 	void HandleListBoxEventL(CEikListBox* aListBox, TListBoxEvent aEventType);
 private:
@@ -428,6 +431,7 @@ private:
 	TInt iSplitX;                    // where the folder list ends
 	TInt iStatusH;
 	TUint iMsgListSum;               // what the message list shows (to skip rebuilds)
+	TInt iColFromW, iColSubjW;       // the From and Subject columns (the rows are clipped to them)
 	// forwarding attachments: they are downloaded first (pmcontacts round)
 	TInt iFwdPending;                // attachments still to come
 	TUint iFwdUid;                   // the message they are for
@@ -525,6 +529,8 @@ public:
 private:
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
+	void HandleControlStateChangeL(TInt aControlId);
+	void LocalLinesDimmed();
 	TInt& iSource;               // 0 GitHub, 1 GitHub test builds, 2 local server
 	TDes& iHost;
 	TInt& iPort;
@@ -564,9 +570,11 @@ private:
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
 	void ContactsL(TBool aComplete);          // the Contacts button (or Tab: complete what's typed)
 	TInt AddressLine() const;                 // the To, Cc or Bcc line with the focus (To otherwise)
+	TUint StateSum() const;
 	CPmDraft& iDraft;
 	TPtrC iTitle;
 	TInt iRuns;                  // formatting runs in the text (Collect)
+	TUint iSum0;                 // the message as it was opened (Close asks only if it changed)
 	};
 
 class CPmAccountDialog : public CEikDialog

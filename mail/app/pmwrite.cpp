@@ -20,7 +20,6 @@ void CPmEventDialog::PreLayoutDynInitL()
 	((CEikTimeEditor*)Control(EPmDlgEvEnd))->SetTime(iEvent.iEnd);
 	SetChoiceListCurrentItem(EPmDlgEvAllDay, iEvent.iAllDay ? 1 : 0);
 	SetChoiceListCurrentItem(EPmDlgEvAlarm, iEvent.iAlarm);
-	SetLabelL(EPmDlgInfo1, iNote);
 	TimesDimmed();
 	}
 
@@ -86,7 +85,8 @@ void CPmView::NewEventL()
 	ev.iEnd = TTime(TDateTime(y, TMonth(m - 1), d - 1, hour + 1, 0, 0, 0));
 	ev.iAllDay = EFalse;
 	ev.iAlarm = 3;                          // 15 minutes before
-	// where it will go
+	// where it will go (said afterwards: the dialog has no room for a note
+	// on the 240-pixel screen)
 	TBuf<80> note;
 	TBuf<100> dir;
 	StoreDir(dir);
@@ -97,14 +97,14 @@ void CPmView::NewEventL()
 	TInt def = -1;
 	TRAPD(err, CPmCalSync::CalendarsL(dir, *names, *ids, def));
 	if (!iCal->iCal.enabled)
-		note = _L("Goes into the Agenda (calendar sync is off)");
+		note = _L("Added to the Agenda");
 	else if (def >= 0 && def < names->Count())
 		{
-		note = _L("Goes into the Agenda, then to ");
+		note = _L("Added to the Agenda - sending it to ");
 		note.Append(Clip((*names)[def], 40));
 		}
 	else
-		note = _L("Goes into the Agenda, then to the calendar");
+		note = _L("Added to the Agenda - sending it to the calendar");
 	CleanupStack::PopAndDestroy(2);
 
 	CPmEventDialog* dlg = new(ELeave) CPmEventDialog(ev, note);
@@ -136,12 +136,8 @@ void CPmView::NewEventL()
 	iCalMonth = EFalse;
 	iSidebar = EFalse;
 	TRAP(err, LoadCalendarL());
+	Toast(note);
 	if (iCal->iCal.enabled)
-		{
-		Toast(_L("Added to the Agenda - sending it to the calendar"));
 		CalendarSyncL();
-		}
-	else
-		Toast(_L("Added to the Agenda"));
 	Render();
 	}

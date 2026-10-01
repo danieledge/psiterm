@@ -84,6 +84,8 @@ const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 // Little helpers
 // ============================================================================
 
+static TUint32 Fnv(const TDesC8& aText);     // (below: Paths and files)
+
 static void CopyToC(char* aDst, TInt aMax, const TDesC& aSrc)
 	{
 	TInt n = aSrc.Length() < aMax - 1 ? aSrc.Length() : aMax - 1;
@@ -289,11 +291,60 @@ void CPmView::FinishStartL()
 	{
 	iStartPending = EFalse;
 	AccountChangedL();                        // the folders and the list, from the card
+	TRAPD(re, ReopenL());                     // where the last session was closed
+	(void)re;
 	DrawNow();
 	StartEngineL();
 	TRAPD(err, LoadCalendarL());
 	(void)err;
 	Render();
+	}
+
+// Where PsiMail is, for the next start (the style guide: a program reopens
+// what was in use when it was closed). Kept in a settings word: the folder's
+// name hash with 1 in the low bits, 2 the Outbox, 3 the calendar, 0 the Inbox.
+TInt CPmView::WhereToken() const
+	{
+	if (iMode == ECalendar)
+		return 3;
+	if (iMode == EOutbox)
+		return 2;
+	if ((iMode == EList || iMode == EMessage) && !iSearch && iFolder.CompareF(_L8("INBOX")) != 0)
+		return (TInt)((Fnv(iFolder) & ~3u) | 1);
+	return 0;
+	}
+
+// ... and back there at the start (nothing is fetched for it: the first
+// check for mail does that, as for the Inbox)
+void CPmView::ReopenL()
+	{
+	TInt where = iSettings->iSpare[1];
+	if (iMode != EList || !where)
+		return;
+	TInt kind = where & 3;
+	if (kind == 3)
+		{
+		ShowCalendarL();
+		return;
+		}
+	if (kind == 2)
+		{
+		ShowOutboxL();
+		return;
+		}
+	for (TInt i = 0; i < iFolders->Count(); i++)
+		{
+		const TPmFolder& f = (*iFolders)[i];
+		if ((TInt)(Fnv(f.iImap) & ~3u) == (where & ~3) && f.iKind != 'N')
+			{
+			iFolder = f.iImap;
+			iFolderSel = i;
+			iSel = 0;
+			LoadListL();
+			Render();
+			return;
+			}
+		}
 	}
 
 void CPmView::StoreDir(TDes& aDir) const
@@ -587,7 +638,10 @@ void CPmView::AccountChangedL()
 	PmAccount& a = iSettings->iAccounts[iSettings->iAcct];
 	if (!a.used)
 		{
+		iFolders->Reset();                    // (not the last account's folders)
+		iRows->Reset();
 		iMode = ENoAccount;
+		iSidebar = EFalse;
 		Render();
 		return;
 		}
@@ -2388,6 +2442,8 @@ TBool CPmPasswordDialog::OkToExitL(TInt /*aButtonId*/)
 void CPmChoiceDialog::PreLayoutDynInitL()
 	{
 	SetTitleL(iTitle);
+	if (iPrompt.Length())
+		SetControlCaptionL(EPmDlgChoice, iPrompt);
 	CEikChoiceList* cl = (CEikChoiceList*)Control(EPmDlgChoice);
 	cl->SetArrayL(iItems);              // it owns the array now
 	cl->SetCurrentItem(iChoice >= 0 && iChoice < iItems->Count() ? iChoice : 0);
@@ -2531,6 +2587,34 @@ void CPmComposeDialog::PostLayoutDynInitL()
 	((CEikEdwin*)Control(EPmDlgBody))->SetCursorPosL(0, EFalse);
 	if (iDraft.iTo.Length())
 		TryChangeFocusToL(EPmDlgBody);
+	// what the message looked like to begin with: Close asks about
+	// discarding it only if that has changed
+	Collect();
+	iSum0 = StateSum();
+	}
+
+// a checksum of the message as written (the addresses, the subject, the
+// text, the attachments)
+TUint CPmComposeDialog::StateSum() const
+	{
+	TUint sum = 17;
+	const TDesC* parts[5] = { &iDraft.iTo, &iDraft.iCc, &iDraft.iBcc, &iDraft.iSubject, iDraft.iBody };
+	for (TInt k = 0; k < 5; k++)
+		{
+		if (!parts[k])
+			continue;
+		const TDesC& t = *parts[k];
+		for (TInt i = 0; i < t.Length(); i++)
+			sum = sum * 31 + t[i];
+		sum = sum * 7 + 1;
+		}
+	for (TInt a = 0; a < iDraft.iAttach->Count(); a++)
+		{
+		const TDesC& t = (*iDraft.iAttach)[a];
+		for (TInt i = 0; i < t.Length(); i++)
+			sum = sum * 31 + t[i];
+		}
+	return sum;
 	}
 
 // the address line with the focus: To, Cc or Bcc (To from anywhere else)
@@ -2713,7 +2797,9 @@ TBool CPmComposeDialog::OkToExitL(TInt aButtonId)
 		}
 	if (aButtonId == EEikBidCancel)
 		{
-		if ((iDraft.iBody && iDraft.iBody->Length() > 0) || iDraft.iTo.Length())
+		// (only if something was written: the style guide confirms only
+		// what would be lost)
+		if (StateSum() != iSum0)
 			return iEikonEnv->QueryWinL(_L("Save as draft keeps it in the Outbox"), _L("Discard this message?"));
 		}
 	return ETrue;
@@ -3838,6 +3924,22 @@ void CPmUpdateDialog::PreLayoutDynInitL()
 	SetChoiceListCurrentItem(EPmDlgUpdSource, iSource >= 0 && iSource <= 2 ? iSource : 0);
 	SetEdwinTextL(EPmDlgUpdHost, &iHost);
 	SetNumberEditorValue(EPmDlgUpdPort, iPort > 0 ? iPort : 8686);
+	LocalLinesDimmed();
+	}
+
+// the Local server and Port lines belong to the "Local server" source: dimmed
+// (not hidden) with the others, as the style guide has dependent lines
+void CPmUpdateDialog::LocalLinesDimmed()
+	{
+	TBool local = ChoiceListCurrentItem(EPmDlgUpdSource) == 2;
+	SetLineDimmedNow(EPmDlgUpdHost, !local);
+	SetLineDimmedNow(EPmDlgUpdPort, !local);
+	}
+
+void CPmUpdateDialog::HandleControlStateChangeL(TInt aControlId)
+	{
+	if (aControlId == EPmDlgUpdSource)
+		LocalLinesDimmed();
 	}
 
 TBool CPmUpdateDialog::OkToExitL(TInt /*aButtonId*/)
@@ -4134,6 +4236,10 @@ void CPmAboutDialog::PreLayoutDynInitL()
 	TBuf<32> title(_L("PsiMail "));
 	title.Append(KVersion);
 	SetLabelL(EPmDlgInfo1, title);
+	TBuf<80> who(_L("Email & calendar for the Psion Series 5mx - "));
+	who.Append(TChar(0xa9));                  // (c), as the Psion's fonts have it
+	who.Append(_L(" 2026 Dan Edge"));
+	SetLabelL(EPmDlgInfo2, who);
 	SetLabelL(EPmDlgInfo3, iStatus);
 	}
 
@@ -4179,14 +4285,14 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		}
 	else if (aMenuId == R_PM_MESSAGE_MENU)
 		{
-		aMenuPane->SetItemDimmed(EPmCmdReplyMenu, !msg);
+		// (the Reply to and Attachments cascades are never dimmed: their
+		// items are, so the commands can still be seen - style guide 7.1.3)
 		aMenuPane->SetItemDimmed(EPmCmdForward, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdUnread, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdFlag, !msg);
 		const TPmRow* row = msg ? iView->CurrentRow() : NULL;
 		aMenuPane->SetItemButtonState(EPmCmdUnread, row && row->iFlags.Locate('S') < 0 ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPmCmdFlag, row && row->iFlags.Locate('F') >= 0 ? EEikMenuItemSymbolOn : 0);
-		aMenuPane->SetItemDimmed(EPmCmdAttachMenu, iView->AttachmentCount() == 0);
 		aMenuPane->SetItemDimmed(EPmCmdWhole, m != CPmView::EMessage);
 		aMenuPane->SetItemDimmed(EPmCmdWeb, m != CPmView::EMessage || !iView->HasHtml());
 		aMenuPane->SetItemDimmed(EPmCmdNew, m == CPmView::ENoAccount);
@@ -4254,6 +4360,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 	switch (aCommand)
 		{
 	case EEikCmdExit:
+		iSettings.iSpare[1] = iView->WhereToken();   // (reopened here next time)
 		SaveSettings();
 		iView->StopEngine();
 		Exit();

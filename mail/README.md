@@ -69,7 +69,7 @@ save the upload time).
 
 ## The calendar
 
-Tools > Calendar settings: turn "Sync with the Agenda" on. The server is
+Tools > Calendar settings: turn "Sync with Agenda" on. The server is
 caldav.fastmail.com (for another server give its address, with a path if
 it needs one: `dav.example.com/cal/`). The mail password is used unless
 you give another. Pick your time zone (PsiMail guesses from the Psion's
@@ -85,8 +85,8 @@ server as PsiWin does.
 * Events that repeat arrive as one entry per time. Change or delete one on
   the Psion and just that one changes on the server.
 * Entries you add on the Psion go to the calendar chosen in the settings
-  ("New Psion entries go to", once the first sync has found your
-  calendars). Entries already on the Psion stay there unless you choose
+  ("New entries go to", once the first sync has found your calendars).
+  Entries already on the Psion stay there unless you choose
   "Copy to the server" before the first sync.
 * Changes both ways; if an event changed on both sides, the server's
   version wins. Deleting on either side deletes on the other. Events that

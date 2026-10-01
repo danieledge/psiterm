@@ -17,6 +17,7 @@
 #include <eikrted.h>
 #include <eiksbfrm.h>
 #include <eikscrlb.h>
+#include <eiktxtut.h>
 #include <eiktbar.h>
 #include <e32hal.h>
 #include <txtrich.h>
@@ -175,8 +176,10 @@ void CPmTreeDrawer::DrawActualItem(TInt aItemIndex, const TRect& aRect, TBool aC
 		PmDrawIcon(gc, iIcons, icon, TPoint(ix, mid - s.iHeight / 2));
 		}
 	// the name: highlighted on its own, as the built-in programs do
-	TPtrC text = iModel->ItemText(aItemIndex);
+	TBuf<80> text(Clip(iModel->ItemText(aItemIndex), 80));
 	TInt tx = ix + 16 + 3;
+	if (tx + font->TextWidthInPixels(text) + 5 > aRect.iBr.iX)
+		TextUtils::ClipToFit(text, *font, aRect.iBr.iX - tx - 5);   // "..." where it won't fit
 	TInt tw = font->TextWidthInPixels(text) + 5;
 	if (tx + tw > aRect.iBr.iX) tw = aRect.iBr.iX - tx;
 	TRect tr(tx, top + 1, tx + tw, bottom - 1);
@@ -552,6 +555,12 @@ void CPmView::LayoutNative()
 	TInt from = rest * 2 / 5;
 	TInt subj = rest - from;
 	if (subj < 20) subj = 20;
+	if (from != iColFromW || subj != iColSubjW)
+		{
+		iColFromW = from;
+		iColSubjW = subj;
+		iMsgListSum = 0;                       // (the rows are clipped to the columns: build them again)
+		}
 	CColumnListBoxData* cd = iMsgList->Model()->ColumnData();
 	TRAPD(err,
 		cd->SetColumnWidthPixelL(0, KIconCol);
@@ -798,10 +807,17 @@ void CPmView::UpdateMessageListL()
 			else
 				FormatNativeDate(r.iDate, date);
 			iMsgIcons->AppendL(MsgIcon(r, iMode == EOutbox));
+			// what won't fit its column ends in "...", as the style guide has
+			// it (and EIKON's own lists), in the row's font (bold when unread)
+			const CFont* f = (!(iMode == EOutbox) && r.iFlags.Locate('S') < 0 && iBoldFont) ? iBoldFont : iListFont;
+			TBuf<64> from(Clip(r.iFrom, 60));
+			if (f && iColFromW > 20) TextUtils::ClipToFit(from, *f, iColFromW - 6);
+			TBuf<160> subj(r.iSubject.Length() ? Clip(r.iSubject, 150) : TPtrC(_L("(no subject)")));
+			if (f && iColSubjW > 20) TextUtils::ClipToFit(subj, *f, iColSubjW - 6);
 			line = _L("\t\t");
-			line.Append(Clip(r.iFrom, 60));
+			line.Append(from);
 			line.Append(_L("\t\t"));
-			line.Append(r.iSubject.Length() ? Clip(r.iSubject, 150) : TPtrC(_L("(no subject)")));
+			line.Append(subj);
 			line.Append(_L("\t\t"));
 			line.Append(date);
 			items->AppendL(line);
@@ -1552,11 +1568,24 @@ void CPmView::ReaderScrollL(TInt aMovement)
 	UpdateReaderBar();
 	}
 
+// Home and End. The end is reached a page at a time: putting the cursor on
+// the last (empty) paragraph would show a blank page with it at the top.
 void CPmView::ReaderToL(TBool aEnd)
 	{
-	iReader->SetCursorPosL(aEnd ? iReader->TextLength() : 0, EFalse);
-	CTextLayout* lay = iReader->TextLayout();
-	iReaderAbove = aEnd && lay ? lay->FormattedHeightInPixels() : 0;   // (UpdateReaderBar clamps it)
+	if (!aEnd)
+		{
+		iReader->SetCursorPosL(0, EFalse);
+		iReaderAbove = 0;
+		}
+	else
+		for (TInt guard = 0; guard < 400; guard++)
+			{
+			TInt px = iReader->TextView()->ScrollDisplayL(TCursorPosition::EFPageDown);
+			if (px < 0) px = -px;
+			if (px == 0)
+				break;
+			iReaderAbove += px;
+			}
 	iReader->TextView()->SetCursorVisibilityL(TCursor::EFCursorInvisible, TCursor::EFCursorInvisible);
 	UpdateReaderBar();
 	}
@@ -1820,8 +1849,8 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 		}
 	TInt x = btn.iBr.iX + 6;
 	TInt maxW = (box.iTl.iX - x) / 2;
-	while (where.Length() > 1 && iTitleFont->TextWidthInPixels(where) > maxW)
-		where.SetLength(where.Length() - 1);
+	if (maxW > 10 && iTitleFont->TextWidthInPixels(where) > maxW)
+		TextUtils::ClipToFit(where, *iTitleFont, maxW);
 	gc.SetPenColor(KRgbWhite);
 	gc.DrawText(where, TPoint(x, base));
 	TInt ww = iTitleFont->TextWidthInPixels(where);
@@ -1856,8 +1885,10 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 		}
 	TInt ml = x + ww + 10, mr = box.iTl.iX - 8;
 	gc.UseFont(iSmallFont);
-	while (mid.Length() && iSmallFont->TextWidthInPixels(mid) > mr - ml)
-		mid.SetLength(mid.Length() - 1);
+	if (mr - ml > 10 && iSmallFont->TextWidthInPixels(mid) > mr - ml)
+		TextUtils::ClipToFit(mid, *iSmallFont, mr - ml);
+	else if (mr - ml <= 10)
+		mid.Zero();
 	TInt mw = iSmallFont->TextWidthInPixels(mid);
 	TInt mx = ml + (mr - ml - mw) / 2;
 	TInt mbase = band.iTl.iY + (iTitleH - iSmallFont->HeightInPixels()) / 2 + iSmallFont->AscentInPixels();
@@ -1906,8 +1937,8 @@ void CPmView::DrawHeaders(CWindowGc& gc) const
 			}
 		TInt room = b.Width() - 8 - (arrow >= 0 ? 12 : 0);
 		TBuf<16> t(name);
-		while (t.Length() > 1 && iBoldFont->TextWidthInPixels(t) > room)
-			t.SetLength(t.Length() - 1);
+		if (room > 8 && iBoldFont->TextWidthInPixels(t) > room)
+			TextUtils::ClipToFit(t, *iBoldFont, room);
 		TInt tx = i == 1 ? x0 + (b.Width() - iBoldFont->TextWidthInPixels(t)) / 2 : x0 + 4;
 		gc.DrawText(t, TPoint(tx, base));
 		if (arrow >= 0)

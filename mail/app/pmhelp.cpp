@@ -36,7 +36,8 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "Then press Shift+Ctrl+C (File > Check mail) to fetch your folders and the Inbox. The first time "
 	  "PsiMail talks to a server it shows the server's key and asks whether to trust it.\n"
 	  "\n"
-	  "PsiMail opens in the Inbox, with your accounts, folders and preferences as you left them." },
+	  "PsiMail opens where you closed it - the folder, the Outbox or the calendar - with your accounts, "
+	  "folders and preferences as you left them." },
 
 	{ "Reading messages",
 	  "The folders are on the left and the messages of the open folder on the right; unread messages "
