@@ -75,7 +75,13 @@ enum TPmCommands
 	EPmCmdHelp,              // Tools > Help on PsiMail
 	EPmCmdSwitchViewMenu,    // the calendar's View > Switch view (a cascade)
 	EPmCmdWeekView,          // View > Switch view > Week
-	EPmCmdMonthView          // View > Switch view > Month
+	EPmCmdMonthView,         // View > Switch view > Month
+	EPmCmdUndo,              // Edit > Undo (0.74)
+	EPmCmdPrintMenu,         // File > Printing (a cascade)
+	EPmCmdPageSetup,         // File > Printing > Page setup...
+	EPmCmdPrintSetup,        // File > Printing > Print setup...
+	EPmCmdPrintPreview,      // File > Printing > Print preview...
+	EPmCmdPrint              // File > Printing > Print...
 	};
 
 enum TPmDialogControls
@@ -144,7 +150,11 @@ enum TPmDialogControls
 	EPmDlgHelpTopic,         // Help on PsiMail
 	EPmDlgHelpText,
 	EPmDlgPictures,          // Preferences: Show pictures
-	EPmDlgEmailButton        // Preferences: Email icon opens
+	EPmDlgEmailButton,       // Preferences: Email icon opens
+	EPmDlgAlert,             // Preferences > New mail: Alert for new mail (0.74)
+	EPmDlgCheckEvery,        // Check for new mail
+	EPmDlgCheckConnect,      // If not connected
+	EPmDlgAutoSend           // Send waiting mail when connected
 	};
 
 enum TPmButtons
@@ -163,7 +173,9 @@ enum TPmPages
 	EPmPageOutgoing,
 	EPmPageOptions,
 	EPmPageCalServer,
-	EPmPageCalAgenda
+	EPmPageCalAgenda,
+	EPmPagePrefsGeneral,     // Preferences (0.74: two pages)
+	EPmPagePrefsNewMail
 	};
 
 // Connection settings > Test (0.74): the button, and the result dialog's lines

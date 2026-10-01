@@ -231,6 +231,7 @@ CPmView::~CPmView()
 	delete iCalSync;
 	calm_free(&iCalModel);
 	delete iTimer;
+	delete iCheckTimer;
 	delete iWatcher;
 	delete iFolders;
 	delete iRows;
@@ -299,6 +300,7 @@ void CPmView::FinishStartL()
 	TRAPD(err, LoadCalendarL());
 	(void)err;
 	Render();
+	AutoSettingsChanged();                    // the timed check, if it is on (pmauto.cpp)
 	((CPmAppUi*)iEikonEnv->EikAppUi())->EmailButtonSoon();
 	}
 
@@ -1174,6 +1176,8 @@ void CPmView::DeleteCurrentL()
 	if (forGood && !iEikonEnv->QueryWinL(_L("It is in the Trash already"), _L("Delete this message for good?")))
 		return;
 	Cmd(PM_CMD_MOVE, iFolder, uid, KNullDesC8);
+	if (!forGood)
+		NoteUndoL(uid);                       // (Edit > Undo: pmundo.cpp)
 	for (TInt i = 0; i < iRows->Count(); i++)
 		if ((*iRows)[i].iUid == uid) { iSel = i; break; }
 	if (iSel < 0 || iSel >= iRows->Count() || (*iRows)[iSel].iUid != uid)
@@ -1206,6 +1210,7 @@ TBool CPmView::MoveCurrentL(const TDesC8& aDest)
 		return EFalse;
 		}
 	Cmd(PM_CMD_MOVE, iFolder, row->iUid, aDest);
+	NoteUndoL(row->iUid);                     // (Edit > Undo: pmundo.cpp)
 	iRows->Delete(iSel);
 	if (iSel >= iRows->Count()) iSel = iRows->Count() - 1;
 	if (iSel < 0) iSel = 0;
@@ -1905,12 +1910,20 @@ void CPmView::TickL()
 		iSplashDone = ETrue;
 		redraw = ETrue;
 		}
+	AutoTickL();                             // a connection came up: send what waits (pmauto.cpp)
 	if (redraw)
 		Render();
 	}
 
 void CPmView::HandleResultL(const PmCmd& aCmd)
 	{
+	if (aCmd.op == PM_CMD_UNDO)
+		{
+		UndoResultL(aCmd);                   // (pmundo.cpp)
+		return;
+		}
+	if (AutoResultL(aCmd))                   // a timed check: quiet but for new mail (pmauto.cpp)
+		return;
 	PmShared* s = iShared;
 	TBuf<160> msg;
 	FromC(msg, s->last_msg);
@@ -1959,6 +1972,8 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		if (res != PM_RES_OFFLINE && res != PM_RES_CANCELLED && !iSettings->iOffline)
 			CalendarSyncL();
 		}
+	if (res == PM_RES_OK)
+		NewMailAlertL(aCmd, EFalse);         // the sound (pmauto.cpp)
 	switch (res)
 		{
 	case PM_RES_OK:
@@ -2824,6 +2839,7 @@ void CPmPrefsDialog::PreLayoutDynInitL()
 	SetChoiceListCurrentItem(EPmDlgStore, iSettings.iStore ? 1 : 0);
 	SetChoiceListCurrentItem(EPmDlgPictures, iSettings.iSpare[0] >= 0 && iSettings.iSpare[0] <= 2 ? iSettings.iSpare[0] : 0);
 	SetChoiceListCurrentItem(EPmDlgEmailButton, (iSettings.iView & KPmViewEmailButton) ? 0 : 1);
+	NewMailInitL();                           // the New mail page (pmauto.cpp)
 	}
 
 TBool CPmPrefsDialog::OkToExitL(TInt /*aButtonId*/)
@@ -2837,6 +2853,7 @@ TBool CPmPrefsDialog::OkToExitL(TInt /*aButtonId*/)
 		iSettings.iView |= KPmViewEmailButton;
 	else
 		iSettings.iView &= ~KPmViewEmailButton;
+	NewMailSave();
 	return ETrue;
 	}
 
@@ -3180,6 +3197,7 @@ CPmAppUi::~CPmAppUi()
 		}
 	delete iContacts;
 	delete iMbm;
+	PmDeletePrinter(iPrinter);
 	}
 
 CPmContacts* CPmAppUi::Contacts()
@@ -4385,6 +4403,11 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		// says where to turn it on)
 		aMenuPane->SetItemDimmed(EPmCmdCalendar, !iCalSettings.iCal.enabled);
 		}
+	else if (aMenuId == R_PM_PRINT_MENU)
+		{
+		aMenuPane->SetItemDimmed(EPmCmdPrintPreview, !iView->CanPrint());
+		aMenuPane->SetItemDimmed(EPmCmdPrint, !iView->CanPrint());
+		}
 	else if (aMenuId == R_PM_FOLDER_MENU)
 		{
 		aMenuPane->SetItemDimmed(EPmCmdRefresh, m != CPmView::EList);
@@ -4400,6 +4423,7 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemDimmed(EPmCmdDelete, !msg && !(m == CPmView::EOutbox && iView->CurrentRow()));
 		aMenuPane->SetItemDimmed(EPmCmdMove, !msg);
 		aMenuPane->SetItemDimmed(EPmCmdArchive, !msg);
+		aMenuPane->SetItemDimmed(EPmCmdUndo, !iView->CanUndo());
 		aMenuPane->SetItemDimmed(EPmCmdSearch, m == CPmView::ECalendar || m == CPmView::ENoAccount);
 		aMenuPane->SetItemDimmed(EPmCmdAddSender, !msg);
 		}
@@ -4517,6 +4541,8 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 			iView->Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
 		iView->Toast(iSettings.iOffline ? _L("Working offline - changes wait until you go online")
 			: _L("Online - PsiMail will connect when it needs to"));
+		if (!iSettings.iOffline)
+			iView->LeftOfflineL();               // send what waits (pmauto.cpp)
 		break;
 	case EPmCmdHangup:
 		iView->Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
@@ -4556,12 +4582,22 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 			SaveSettings();
 			ApplyEmailButton();
 			iView->SettingsChanged();
+			iView->AutoSettingsChanged();
 			if (sort != iSettings.iSort)
 				iView->SortL(sort);
 			iView->Render();
 			}
 		break;
 		}
+	case EPmCmdUndo:
+		iView->UndoL();
+		break;
+	case EPmCmdPageSetup:
+	case EPmCmdPrintSetup:
+	case EPmCmdPrintPreview:
+	case EPmCmdPrint:
+		PrintCommandL(aCommand);              // (pmprint.cpp)
+		break;
 	case EPmCmdTool4:
 		if (m == CPmView::EMessage)
 			iView->BackL();

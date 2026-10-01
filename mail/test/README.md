@@ -95,6 +95,21 @@ NAME`, `delfolder FOLDER`. It checks the names go as modified UTF-7 under
 the right parent, that folders.txt and the store directories follow, and
 that the Inbox, a standard folder and a folder with children are refused.
 
+## Undo (no server needed)
+
+`undotest.sh` runs Edit > Undo's engine side (`undo FOLDER UID`, where the
+message was moved from) against `fakeimap.py`, once with MOVE and UIDPLUS
+(the uids come from COPYUID) and once with `--no-uidplus` (COPY, STORE
+\Deleted and EXPUNGE; the message found again by its Message-ID): a
+delete to the Trash and a move undone with the downloaded text coming back
+and no "new mail" at the next check; a move made offline undone before it
+reached the server (its pending.txt line goes); a move the server made,
+undone offline (an UNMOVE line, sent at the next check, the row taking the
+server's new uid); "Nothing to undo"; and a message deleted from the Trash
+since ("Not undone - the message is no longer in Trash"). `fakeimap.py
+--arrive N,M` puts a new message in the Inbox before its Nth SELECT, for
+the new mail alert and the timed check.
+
 ## Certificates
 
 `certtest.c` + `certtest.py` check the chain code on a saved chain, e.g.

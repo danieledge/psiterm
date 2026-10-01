@@ -93,7 +93,8 @@ enum
 	PM_CMD_MKFOLDER,         /* folder = parent ("" = top level), arg = the name to show */
 	PM_CMD_RENFOLDER,        /* folder, arg = its new name */
 	PM_CMD_DELFOLDER,        /* folder (not the Inbox or a standard folder) */
-	PM_CMD_PICTURES          /* folder, uid, arg = part ids to fetch and decode ("1.2 1.3"; "!2" = however big): see engine/pictures.c */
+	PM_CMD_PICTURES,         /* folder, uid, arg = part ids to fetch and decode ("1.2 1.3"; "!2" = however big): see engine/pictures.c */
+	PM_CMD_UNDO              /* folder, uid: put back the message moved from there (Edit > Undo: engine/undo.c); last_file = its uid now */
 	};
 
 /* pictures in a message (engine/pictures.c, app/pmpict.cpp): a part this

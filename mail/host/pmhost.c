@@ -211,6 +211,7 @@ int main(int argc, char **argv)
 		else if (!strcmp(op, "pictures")) { c.op = PM_CMD_PICTURES; pm_copy(c.arg, args[2], sizeof(c.arg)); }
 		else if (!strcmp(op, "flag")) { c.op = PM_CMD_FLAG; pm_copy(c.arg, args[2], sizeof(c.arg)); }
 		else if (!strcmp(op, "move")) { c.op = PM_CMD_MOVE; pm_copy(c.arg, args[2], sizeof(c.arg)); }
+		else if (!strcmp(op, "undo")) c.op = PM_CMD_UNDO;     /* undo FOLDER UID: where it was moved from */
 		else if (!strcmp(op, "search")) { c.op = PM_CMD_SEARCH; pm_copy(c.arg, args[1], sizeof(c.arg)); c.uid = 0; }
 		else if (!strcmp(op, "send")) c.op = PM_CMD_SEND;
 		else if (!strcmp(op, "sendrecv")) c.op = PM_CMD_SENDRECV;
@@ -247,6 +248,7 @@ int main(int argc, char **argv)
 		pm_do_command(&c);
 		printf("%s: %s %s\n", op, k_res[g_sh.last_res], g_sh.last_msg);
 		if (c.op == PM_CMD_UPDATE && g_sh.update_ready) printf("  ready: %s\n", g_sh.last_file);
+		if (c.op == PM_CMD_UNDO && g_sh.last_file[0]) printf("  back as uid %s\n", g_sh.last_file);
 		if (g_sh.last_res == PM_RES_UNTRUSTED)
 			printf("  untrusted %s: %s\n  key %s\n", g_sh.trust_host, g_sh.trust_why, g_sh.trust_fp);
 		if (g_sh.last_res != PM_RES_OK) rc = 1;

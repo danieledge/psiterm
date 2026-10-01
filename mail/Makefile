@@ -9,7 +9,7 @@ LTC     := $(TOP)/ssh/db/libtomcrypt/src
 LTM     := $(TOP)/ssh/db/libtommath
 
 ENGINE  := pmmain imap imapparse smtp compose mime charset html store pmnet certcheck pmrsa \
-           caldav caltz ics http xmlscan pmupdate pictures
+           caldav caltz ics http xmlscan pmupdate pictures undo
 IMG_SRCS := pmimg pmjpeg pmpng pmgif picojpeg
 Z_SRCS  := adler32 crc32 inflate inftrees inffast zutil
 LTC_SRCS := stream/chacha/chacha_crypt stream/chacha/chacha_ivctr32 stream/chacha/chacha_keystream \

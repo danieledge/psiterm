@@ -35,6 +35,8 @@ class CPmFolderListBox;
 class CPmMsgListBox;
 class CPmContacts;
 class CPmPictures;
+class CPmPrinter;
+class CRichText;
 
 extern "C" {
 #include <psimail.h>
@@ -49,6 +51,14 @@ const TUid KUidPsiMail = { 0x01000A7C };
 const TUid KUidPmButton = { 0x01000A80 };   // pmbutton.exe (mail/button): the Email icon opens PsiMail
 const TInt KPmViewEmailButton = 0x100;      // TPmSettings::iView bits
 const TInt KPmViewEmailButtonAsked = 0x200;
+// TPmSettings::iView bits 12-18 (spare until 0.74): new mail (pmauto.cpp).
+// All zero is the standard: sound & message, no timed check, send waiting mail
+const TInt KPmViewAlertShift = 12;          // 0x3000: 0 sound & message, 1 message only, 2 off
+const TInt KPmViewAlertMask = 0x3000;
+const TInt KPmViewCheckShift = 14;          // 0x1C000: check every 0 never, 1 10, 2 15, 3 30, 4 60 minutes
+const TInt KPmViewCheckMask = 0x1C000;
+const TInt KPmViewCheckConnect = 0x20000;   // the timed check may connect (else only while connected)
+const TInt KPmViewNoAutoSend = 0x40000;     // don't send the Outbox when a connection comes up
 
 // app-wide settings (accounts are PmAccount, as the engine uses them)
 struct TPmSettings
@@ -66,6 +76,7 @@ struct TPmSettings
 	TInt iSort;            // the message list's order: 0 newest first (see pmnative.cpp)
 	TInt iView;            // what's hidden: 1 toolbar, 2 title bar, 4 folder list;
 	                       // 0x100 the Email icon below the screen opens PsiMail (pmbutton.exe), 0x200 that was asked once
+	                       // 0x3000, 0x1C000, 0x20000, 0x40000: new mail alert, timed check, sending (KPmView* above)
 	TInt iSpare[2];        // (TPmSettings is saved whole: keep its size)
 	                       // iSpare[0]: pictures in messages - 0 shown, 1 only attached files, 2 none (pmnative.cpp)
 	                       // iSpare[1]: where PsiMail was when closed (CPmView::WhereToken)
@@ -440,6 +451,42 @@ private:
 	TInt iFwdPending;                // attachments still to come
 	TUint iFwdUid;                   // the message they are for
 	CDesCArrayFlat* iFwdFiles;       // where they landed
+	// ---- 0.74: Edit > Undo (pmundo.cpp)
+public:
+	TBool CanUndo() const;                   // something this account can undo
+	void UndoL();                            // Edit > Undo: the last delete, move or archive
+	// ---- 0.74: new mail alert, timed check, sending what waits (pmauto.cpp)
+	void AutoSettingsChanged();              // the check's timer, after Preferences (and at the start)
+	void LeftOfflineL();                     // Work offline was turned off: send what waits
+	// ---- 0.74: File > Printing (pmprint.cpp)
+	CRichText* PrintTextL(TDes& aTitle);     // the open (or selected) message as the reader has it, or NULL
+	TBool CanPrint() const;
+private:
+	struct TPmUndo
+		{
+		TInt iAcct;
+		TBuf8<128> iFolder;                  // where it was
+		TUint iUid;
+		TBuf<80> iSubject;
+		};
+	void NoteUndoL(TUint aUid);              // before a delete or move (DeleteCurrentL, MoveCurrentL)
+	void UndoResultL(const PmCmd& aCmd);
+	TBool AutoResultL(const PmCmd& aCmd);    // an automatic check's result (quiet): ETrue if it was one
+	void NewMailAlertL(const PmCmd& aCmd, TBool aAuto);   // after a check: the sound and the message
+	void AutoTickL();                        // from TickL: a connection came up
+	TInt WaitingToSend();                    // Outbox messages to send (not drafts, not failed)
+	void SendWaitingL();
+	static TInt CheckCallback(TAny* aSelf);
+	void CheckDueL();
+	TBool InBackground() const;
+	enum { KPmUndoMax = 5 };
+	TPmUndo iUndo[KPmUndoMax];
+	TInt iUndoCount;
+	TPmUndo iUndoDoing;                      // the one with the engine
+	CPeriodic* iCheckTimer;                  // every 5 minutes while a timed check is on
+	TInt iCheckTicks;                        // 5-minute ticks since the last check
+	TUint iAutoCmd;                          // cmd_head + 1 of the automatic check in flight (0 none)
+	TBool iAutoOnlineWas;
 	};
 
 class CPmInfoDialog : public CEikDialog
@@ -558,6 +605,10 @@ private:
 	TBool OkToExitL(TInt aButtonId);
 	TPmSettings& iSettings;
 	TInt& iSort;
+	// 0.74: the New mail page (pmauto.cpp)
+	void NewMailInitL();
+	void NewMailSave();
+	void HandleControlStateChangeL(TInt aControlId);
 	};
 
 class CPmComposeDialog : public CEikDialog
@@ -716,7 +767,12 @@ private:
 	TBool iTool4Close;                 // the last toolbar button says Close
 	TPmSettings iSettings;
 	TPmCalSettings iCalSettings;
+	// 0.74: File > Printing (pmprint.cpp)
+	void PrintCommandL(TInt aCommand);
+	CPmPrinter* iPrinter;
 	};
+
+void PmDeletePrinter(CPmPrinter* aPrinter);      // (pmprint.cpp)
 
 class CPmDocument : public CEikDocument
 	{
