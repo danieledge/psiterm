@@ -1,11 +1,13 @@
-/* pmimg.h - small picture decoders for the Psion: JPEG (baseline), PNG and
+/* pmimg.h - small picture decoders for the Psion: JPEG (baseline and progressive), PNG and
  * GIF (first frame) straight to 16 greys, scaled down to fit and dithered.
  *
  * Made for an ARM710 with no FPU and little memory: everything is integer,
  * the source is read through a callback a piece at a time, rows are
  * shrunk as they come (JPEGs eight times bigger than wanted are decoded at
  * 1/8 from the DC coefficients alone), and only the result - two pixels a
- * byte, a few hundred KB at most - is kept. Interlaced PNGs and GIFs need
+ * byte, a few hundred KB at most - is kept. A progressive JPEG needs its
+ * coefficients kept until the last scan: only the luma's, and only those
+ * the shrink uses, within max_full_bytes (pmjprog.c). Interlaced PNGs and GIFs need
  * the whole picture at 8 bits a pixel, so they are refused above a size.
  *
  * Corrupt or hostile input gives an error, never a crash: sizes are checked
@@ -45,7 +47,7 @@ enum
 	{
 	PMIMG_OK = 0,
 	PMIMG_E_FORMAT,          /* not a picture we know, or too broken to start */
-	PMIMG_E_UNSUPPORTED,     /* e.g. a progressive JPEG */
+	PMIMG_E_UNSUPPORTED,     /* e.g. an arithmetic-coded JPEG */
 	PMIMG_E_TOO_BIG,         /* beyond the limits in PmImgOpts */
 	PMIMG_E_MEMORY,
 	PMIMG_E_READ,            /* the read callback failed */
@@ -130,6 +132,8 @@ unsigned int  pmimg_in_le16(PmImgIn *in);
 void pmimg_opts_fill(PmImgOpts *o, const PmImgOpts *from);
 
 int pmimg_decode_jpeg(PmImgIn *in, const PmImgOpts *opts, PmImage *out, char *err, int errmax);
+/* progressive (and extended sequential) JPEGs: pmjprog.c, from the start of the file */
+int pmimg_decode_jpeg_prog(PmImgIn *in, const PmImgOpts *opts, PmImage *out, char *err, int errmax);
 int pmimg_decode_png(PmImgIn *in, const PmImgOpts *opts, PmImage *out, char *err, int errmax);
 int pmimg_decode_gif(PmImgIn *in, const PmImgOpts *opts, PmImage *out, char *err, int errmax);
 void pmimg_err(char *err, int errmax, const char *text);

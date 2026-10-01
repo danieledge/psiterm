@@ -9,6 +9,7 @@ SUBPROJECT    psimail
 
 SOURCE        psimail.cpp pmcal.cpp pmcalview.cpp pmwrite.cpp pmnative.cpp pmcontacts.cpp pmhelp.cpp pmpict.cpp
 SOURCE        pmundo.cpp pmauto.cpp pmprint.cpp
+SOURCE        pmstore.cpp pminvite.cpp pmvcard.cpp pmsaveword.cpp
 SUBPROJECT    psimailinc\ui
 SOURCE        pmquote.cpp pmcalmodel.cpp
 SUBPROJECT    psitermssh
@@ -22,4 +23,4 @@ SYSTEMINCLUDE \ptproj\psimailinc \ptproj\psitermssh \epoc32\include\libc \epoc32
 LIBRARY       euser.lib efsrv.lib apparc.lib cone.lib eikon.lib ws32.lib gdi.lib
 LIBRARY       fbscli.lib bafl.lib apgrfx.lib etext.lib agnmodel.lib estor.lib form.lib nifman.lib cntmodel.lib
 LIBRARY       c32.lib esock.lib insock.lib
-LIBRARY       print.lib
+LIBRARY       wpeng.lib print.lib

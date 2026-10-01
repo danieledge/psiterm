@@ -9,8 +9,8 @@ LTC     := $(TOP)/ssh/db/libtomcrypt/src
 LTM     := $(TOP)/ssh/db/libtommath
 
 ENGINE  := pmmain imap imapparse smtp compose mime charset html store pmnet certcheck pmrsa \
-           caldav caltz ics http xmlscan pmupdate pictures undo
-IMG_SRCS := pmimg pmjpeg pmpng pmgif picojpeg
+           caldav caltz ics http xmlscan pmupdate pictures undo invite invmsg
+IMG_SRCS := pmimg pmjpeg pmjprog pmpng pmgif picojpeg
 Z_SRCS  := adler32 crc32 inflate inftrees inffast zutil
 LTC_SRCS := stream/chacha/chacha_crypt stream/chacha/chacha_ivctr32 stream/chacha/chacha_keystream \
 	stream/chacha/chacha_setup stream/chacha/chacha_done mac/poly1305/poly1305 hashes/sha2/sha256 \
@@ -52,7 +52,7 @@ ENG_OBJS := $(addprefix $(O)/,$(ENGINE:=.o)) $(addprefix $(O)/img/,$(IMG_SRCS:=.
 TLS_OBJS := $(O)/tls13.o $(O)/x25519.o $(O)/pmrandom.o
 LTC_OBJS := $(addprefix $(O)/ltc/,$(subst /,__,$(LTC_SRCS:=.o)))
 LTM_OBJS := $(addprefix $(O)/ltm/,$(LTM_SRCS:=.o))
-HDRS    := $(MAIL)/psimail.h $(MAIL)/engine/pm.h $(TOP)/ssh/psishared.h
+HDRS    := $(MAIL)/psimail.h $(MAIL)/engine/pm.h $(MAIL)/engine/invite.h $(TOP)/ssh/psishared.h
 
 all: $(OUT)
 

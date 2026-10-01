@@ -2,7 +2,7 @@
 """fakeimap.py - a tiny plaintext IMAP server for the modem-mode tests
 
   fakeimap.py PORT [--drop-at N[,N...]] [--drop-every N] [--slow MS_PER_KB]
-              [--mute-noop] [--no-uidplus] [--arrive N[,N...]]
+              [--mute-noop] [--no-uidplus] [--arrive N[,N...]] [--invite]
 
 Serves an INBOX of a few messages: one whose text has "NO CARRIER" on a
 line of its own (as an email about modems would), one of 30 KB (several
@@ -20,8 +20,12 @@ undotest.sh). --no-uidplus leaves MOVE and UIDPLUS out of the capabilities,
 as an older server would: no COPYUID, so the client must search.
 --arrive puts a new message in the INBOX just before the Nth SELECT of it
 (counting from 1, over the whole run): new mail for a later check to find.
+looks like once a router has quietly forgotten it. --invite adds two
+multipart messages: 106, an invitation (text/plain and a base64
+text/calendar METHOD:REQUEST part, as Google sends), and 107 with a vCard
+attached (invite.h).
 """
-import socket, sys, threading, time
+import socket, sys, threading, time, base64
 
 PORT = int(sys.argv[1])
 DROP_AT = []
@@ -30,6 +34,7 @@ SLOW_MS = 0
 MUTE_NOOP = False
 NO_UIDPLUS = False
 ARRIVE = []
+INVITE = False
 args = sys.argv[2:]
 while args:
     a = args.pop(0)
@@ -39,6 +44,7 @@ while args:
     elif a == '--mute-noop': MUTE_NOOP = True
     elif a == '--no-uidplus': NO_UIDPLUS = True
     elif a == '--arrive': ARRIVE = [int(x) for x in args.pop(0).split(',')]
+    elif a == '--invite': INVITE = True
 CAPS = 'IMAP4rev1 LITERAL+' + ('' if NO_UIDPLUS else ' UIDPLUS MOVE')
 
 def msg(uid, subject, text):
@@ -51,6 +57,41 @@ MSGS = [
     msg(104, 'another', 'Second short note.\n'),
     msg(105, 'last', 'Third short note.\n'),
 ]
+
+ICS = """BEGIN:VCALENDAR
+PRODID:-//Google Inc//Google Calendar 70.9054//EN
+VERSION:2.0
+METHOD:REQUEST
+BEGIN:VEVENT
+DTSTART:20261007T090000Z
+DTEND:20261007T103000Z
+DTSTAMP:20260930T120000Z
+ORGANIZER;CN=Ann:mailto:ann@example.com
+UID:fake-invite-1@example.com
+ATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:dan@example.com
+SUMMARY:Design review
+LOCATION:Room 2
+SEQUENCE:0
+END:VEVENT
+END:VCALENDAR
+""".replace('\n', '\r\n')
+VCF = """BEGIN:VCARD
+VERSION:3.0
+N:Jones;Bob;;;
+FN:Bob Jones
+ORG:Example Ltd
+EMAIL;TYPE=WORK:bob@example.org
+TEL;TYPE=CELL:07700 900456
+END:VCARD
+""".replace('\n', '\r\n')
+if INVITE:
+    b64 = base64.encodebytes(ICS.encode()).decode().replace('\n', '\r\n')
+    MSGS.append(dict(uid=106, subject='Invitation: Design review', text='', msgid='<106@example.com>', deleted=False, parts=[
+        ('("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" %d 2 NIL NIL NIL NIL)', 'You are invited to Design review.\r\n'),
+        ('("TEXT" "CALENDAR" ("CHARSET" "UTF-8" "METHOD" "REQUEST") NIL NIL "BASE64" %d 10 NIL NIL NIL NIL)', b64)]))
+    MSGS.append(dict(uid=107, subject='My card', text='', msgid='<107@example.com>', deleted=False, parts=[
+        ('("TEXT" "PLAIN" ("CHARSET" "utf-8") NIL NIL "7BIT" %d 1 NIL NIL NIL NIL)', 'Here is my card.\r\n'),
+        ('("TEXT" "VCARD" ("CHARSET" "utf-8" "NAME" "bob.vcf") NIL NIL "7BIT" %d 8 NIL ("attachment" ("FILENAME" "bob.vcf")) NIL NIL)', VCF)]))
 
 # the messages in each folder (others are made empty when first selected)
 BOXES = {'INBOX': dict(validity=1, next=MSGS[-1]['uid'] + 1, msgs=MSGS)}
@@ -97,6 +138,8 @@ def envelope(m):
     return '("Mon, 1 Jan 2024 10:00:00 +0000" "%s" (("Ann" NIL "ann" "example.com")) (("Ann" NIL "ann" "example.com")) (("Ann" NIL "ann" "example.com")) (("Dan" NIL "dan" "example.com")) NIL NIL NIL "%s")' % (m['subject'], m['msgid'])
 
 def bodystructure(m):
+    if m.get('parts'):
+        return '(' + ''.join(bs % len(t) for bs, t in m['parts']) + ' "MIXED" ("BOUNDARY" "b") NIL NIL NIL)'
     return '("TEXT" "PLAIN" ("CHARSET" "us-ascii") NIL NIL "7BIT" %d %d)' % (len(m['text']), m['text'].count('\n'))
 
 def fetch_items(m, seq, items):
@@ -232,8 +275,10 @@ def handle(conn, addr):
                     seq = sel['msgs'].index(m) + 1
                     part = items[items.index('<') + 1:items.index('>')]
                     off, ln = [int(x) for x in part.split('.')]
-                    data = m['text'][off:off + ln]
-                    send('* %d FETCH (UID %d BODY[1]<%d> {%d}\r\n' % (seq, uid, off, len(data)))
+                    pid = items[items.index('BODY.PEEK[') + 10:items.index(']')]
+                    text = m['parts'][int(pid) - 1][1] if m.get('parts') else m['text']
+                    data = text[off:off + ln]
+                    send('* %d FETCH (UID %d BODY[%s]<%d> {%d}\r\n' % (seq, uid, pid, off, len(data)))
                     send(data)
                     send(')\r\n%s OK fetched\r\n' % tag)
                 else:

@@ -15,8 +15,16 @@ Dropbear is vendored from upstream commit `59870ad4` (2026-08-31) with Psion
 changes - the diff is in `docs/patches/dropbear-psion.diff` (plus the new file
 `ssh/db/src/curve25519_gf32.h`). zlib is upstream commit `767c4c94`.
 
-The PNG and GIF decoders and the 16-grey dithering in `mail/engine/img/`
-(`pmimg.c`, `pmpng.c`, `pmgif.c`, `pmjpeg.c`) are PsiMail's own code (MIT).
+The PNG and GIF decoders, the progressive JPEG decoder and the 16-grey
+dithering in `mail/engine/img/` (`pmimg.c`, `pmpng.c`, `pmgif.c`, `pmjpeg.c`,
+`pmjprog.c`) are PsiMail's own code (MIT). `pmjprog.c` decodes the scans as
+the JPEG standard (ITU T.81, Annex G) describes, and its integer IDCT is the
+one in [stb_image](https://github.com/nothings/stb) by Sean Barrett (public
+domain / MIT, either at your choice), adapted.
+
+The invitation and contact card readers (`mail/engine/invite.c`, iCalendar
+RFC 5545 / iTIP RFC 5546 / vCard 2.1, 3.0 and 4.0) are PsiMail's own code
+(MIT).
 
 The TLS 1.3 client used for updates (`ssh/tls13.c`) is PsiTerm's own code
 (MIT), built on the LibTomCrypt and TweetNaCl code above.

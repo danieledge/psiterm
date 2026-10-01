@@ -68,6 +68,13 @@ typedef struct
 /* calls fn for every VEVENT in the (UTF-8) text; returns how many */
 int  ics_each(const char *text, int len, void (*fn)(const IcsEvent *e, void *ctx), void *ctx);
 
+/* the reader's pieces (for invite.c): the next unfolded line (-1 at the
+   end), a line split into its name (upper case), parameters and value, and
+   a TEXT value unescaped into cp1252 */
+int  ics_line(const char *text, int len, int *pos, char *line, int max);
+const char *ics_prop(const char *line, char *name, int nmax, char *params, int pmax);
+void ics_text(const char *v, char *out, int max);
+
 /* an event's details from the Psion, for a new event or a change */
 typedef struct
 	{

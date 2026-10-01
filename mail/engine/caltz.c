@@ -137,16 +137,22 @@ static int num(const char *s, int n)
 
 int cal_parse_time(const char *s, long *t, int *utc, int *date_only)
 {
-	int y = num(s, 4), m = num(s + 4, 2), d = num(s + 6, 2), hh = 0, mm = 0, ss = 0;
-	if (y < 0 || m < 1 || m > 12 || d < 1 || d > 31) return -1;
+	int y = num(s, 4), m = y < 0 ? -1 : num(s + 4, 2), d = m < 0 ? -1 : num(s + 6, 2), hh = 0, mm = 0, ss = 0;
+	/* (a long is 32 bits on the Psion: seconds since 1970 reach 1901..2038,
+	   and an event up to 400 days long must still fit after its start) */
+	if (y < 1902 || y > 2035 || m < 1 || m > 12 || d < 1 || d > 31) return -1;
 	*utc = 0;
 	*date_only = 1;
 	if (s[8] == 'T') {
-		hh = num(s + 9, 2); mm = num(s + 11, 2); ss = num(s + 13, 2);
-		if (hh < 0 || mm < 0) return -1;
-		if (ss < 0) ss = 0;
+		hh = num(s + 9, 2); mm = hh < 0 ? -1 : num(s + 11, 2);
+		if (hh < 0 || mm < 0 || hh > 24 || mm > 59) return -1;
+		ss = num(s + 13, 2);
 		*date_only = 0;
-		*utc = s[15] == 'Z';
+		/* (each read stops at the first character that is not a digit, so
+		   none goes past the end of a short value) */
+		if (ss < 0) { ss = 0; *utc = s[13] == 'Z'; }
+		else *utc = s[15] == 'Z';
+		if (ss > 60) ss = 0;
 	}
 	*t = cal_days(y, m, d) * 86400 + hh * 3600L + mm * 60L + ss;
 	return 0;
@@ -183,7 +189,8 @@ void cal_fmt_local(long t, char *out)
 
 long cal_parse_local(const char *s)
 {
-	int y = num(s, 4), m = num(s + 4, 2), d = num(s + 6, 2), hh = num(s + 8, 2), mm = num(s + 10, 2);
+	int y = num(s, 4), m = y < 0 ? -1 : num(s + 4, 2), d = m < 0 ? -1 : num(s + 6, 2);
+	int hh = d < 0 ? -1 : num(s + 8, 2), mm = hh < 0 ? -1 : num(s + 10, 2);
 	if (y < 0 || m < 1 || d < 1) return 0;
 	if (hh < 0) hh = 0;
 	if (mm < 0) mm = 0;

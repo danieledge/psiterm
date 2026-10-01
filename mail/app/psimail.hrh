@@ -81,7 +81,16 @@ enum TPmCommands
 	EPmCmdPageSetup,         // File > Printing > Page setup...
 	EPmCmdPrintSetup,        // File > Printing > Print setup...
 	EPmCmdPrintPreview,      // File > Printing > Print preview...
-	EPmCmdPrint              // File > Printing > Print...
+	EPmCmdPrint,             // File > Printing > Print...
+	// 0.74 (mail2)
+	EPmCmdContactsMenu,      // Edit > Add to Contacts (a cascade: Sender / Contact card)
+	EPmCmdAddCard,           // Edit > Add to Contacts > Contact card
+	EPmCmdInviteMenu,        // Edit > Invitation (a cascade)
+	EPmCmdAccept,            // Edit > Invitation > Accept
+	EPmCmdTentative,
+	EPmCmdDecline,
+	EPmCmdRemoveEvent,       // Edit > Invitation > Remove from Agenda
+	EPmCmdSaveWord           // File > Save as Word file
 	};
 
 enum TPmDialogControls

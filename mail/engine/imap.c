@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include "pm.h"
+#include "invite.h"
 
 #define RESP_MAX   (48 * 1024)
 #define STREAM_MIN 1024        /* literals bigger than this go to the stream callback */
@@ -788,6 +789,7 @@ static void remove_cached(int acct, const char *folder, unsigned int uid)
 	st_msg_path(acct, folder, uid, "att", p, sizeof(p)); remove(p);
 	st_msg_path(acct, folder, uid, "htm", p, sizeof(p)); remove(p);
 	pic_remove(acct, folder, uid);
+	inv_remove(acct, folder, uid);
 }
 
 int imap_sync(int acct, const char *folder, int older, char *why, int whymax)
@@ -1382,6 +1384,8 @@ static int imap_body_1(int acct, const char *folder, unsigned int uid, int full,
 		r = PM_RES_FAILED;
 	}
 	if (r != PM_RES_OK) { remove(tmp); return r; }
+	/* an invitation or a contact card in it: fetched too, and summed up (invmsg.c) */
+	inv_fetch(acct, folder, uid, &b.st);
 
 	/* mark it read, here and on the server */
 	{

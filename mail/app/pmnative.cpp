@@ -1002,6 +1002,22 @@ void CPmView::UpdateReaderL()
 	// a rule under the header
 	AddSpan(*spans, lastHead, lastHeadLen, ESpanRuleBelow);
 
+	// an invitation or a contact card: what it is, and the choices as links
+	// (pminvite.cpp): styles come back as (position, length, kind) triples
+	{
+	CArrayFixFlat<TInt>* st = new(ELeave) CArrayFixFlat<TInt>(12);
+	CleanupStack::PushL(st);
+	InviteBannerL(t, *st);
+	static const TInt KKinds[5] = { ESpanBold, ESpanUnder, ESpanBig, ESpanItalic, ESpanRuleBelow };
+	for (TInt b = 0; b + 2 < st->Count(); b += 3)
+		{
+		TInt kind = (*st)[b + 2];
+		if (kind >= 0 && kind < 5)
+			AddSpan(*spans, (*st)[b], (*st)[b + 1], KKinds[kind], kind == 2 ? 1150 : 0);
+		}
+	CleanupStack::PopAndDestroy();           // st
+	}
+
 	if (waiting)
 		{
 		if (iBodyError.Length())
@@ -1684,6 +1700,11 @@ void CPmView::NativeActivateLinkL()
 	if (iLinkSel < 0 || iLinkSel >= iLinks->Count())
 		return;
 	TInt link = (*iLinks)[iLinkSel].iLink;
+	if (link <= -3000)
+		{
+		InviteLinkL(link);                    // the invitation's or card's box (pminvite.cpp)
+		return;
+		}
 	if (link <= -2000)
 		{
 		// a big picture: fetched only when asked for
@@ -2190,6 +2211,15 @@ void CPmView::StatusInfoL()
 	else
 		lines[2] = _L("This folder: -");
 	lines[3].Format(_L("Outbox: %d waiting to be sent"), OutboxCount());
+	{
+	// where the mail is kept (pmstore.cpp): \System\Data\PsiMail on a disk
+	TBuf<100> dir;
+	StoreDir(dir);
+	if (dir.Length() > 1 && dir[dir.Length() - 1] == '\\')
+		dir.SetLength(dir.Length() - 1);
+	lines[3].Append(_L(" - the mail is in "));
+	lines[3].Append(Clip(dir, 40));
+	}
 	lines[4] = _L("Last: ");
 	if (Busy() && iLastProgress.Length())
 		lines[4].Append(Clip(iLastProgress, 100));

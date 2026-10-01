@@ -140,7 +140,8 @@ RESOURCE HOTKEYS r_pm_hotkeys
 		HOTKEY { command=EPmCmdToday; key='d'; },
 		HOTKEY { command=EPmCmdHelp; key='h'; },
 		HOTKEY { command=EPmCmdPrintSetup; key='p'; },
-		HOTKEY { command=EPmCmdPrintPreview; key='v'; }
+		HOTKEY { command=EPmCmdPrintPreview; key='v'; },
+		HOTKEY { command=EPmCmdSaveWord; key='s'; }
 		};
 	}
 
@@ -178,11 +179,11 @@ RESOURCE MENU_PANE r_pm_file_menu
 	items=
 		{
 		MENU_ITEM { command=EPmCmdSendRecv; txt="Check mail (send & receive)"; },
-		MENU_ITEM { command=EPmCmdCalendar; txt="Sync calendar"; },
 		MENU_ITEM { command=EPmCmdFolderMenu; cascade=r_pm_folder_menu; txt="Folder"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdHangup; txt="Disconnect"; },
 		MENU_ITEM { command=EPmCmdStop; txt="Stop"; extratxt="Esc"; },
 		MENU_ITEM { command=EPmCmdOffline; txt="Work offline"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdSaveWord; txt="Save as Word file..."; },
 		MENU_ITEM { command=EPmCmdPrintMenu; cascade=r_pm_print_menu; txt="Printing"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
 		};
@@ -227,7 +228,32 @@ RESOURCE MENU_PANE r_pm_edit_menu
 		MENU_ITEM { command=EPmCmdArchive; txt="Archive"; },
 		MENU_ITEM { command=EPmCmdDelete; txt="Delete"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdSearch; txt="Find..."; },
-		MENU_ITEM { command=EPmCmdAddSender; txt="Add sender to Contacts"; }
+		MENU_ITEM { command=EPmCmdContactsMenu; cascade=r_pm_contacts_menu; txt="Add to Contacts"; },
+		MENU_ITEM { command=EPmCmdInviteMenu; cascade=r_pm_invite_menu; txt="Invitation"; }
+		};
+	}
+
+// Edit > Add to Contacts: the message's sender, or the contact card in it
+// (pmvcard.cpp). The items finish the phrase, as cascades should
+RESOURCE MENU_PANE r_pm_contacts_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdAddSender; txt="Sender"; },
+		MENU_ITEM { command=EPmCmdAddCard; txt="Contact card"; }
+		};
+	}
+
+// Edit > Invitation: an invitation in the open message (pminvite.cpp); the
+// reader's box has the same choices as links
+RESOURCE MENU_PANE r_pm_invite_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdAccept; txt="Accept"; },
+		MENU_ITEM { command=EPmCmdTentative; txt="Tentative"; },
+		MENU_ITEM { command=EPmCmdDecline; txt="Decline"; },
+		MENU_ITEM { command=EPmCmdRemoveEvent; txt="Remove from Agenda"; }
 		};
 	}
 
@@ -273,7 +299,8 @@ RESOURCE MENU_PANE r_pm_event_menu
 		{
 		MENU_ITEM { command=EPmCmdNew; txt="Create new event..."; },
 		MENU_ITEM { command=EPmCmdEventDetails; txt="Details..."; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdToday; txt="Go to today"; }
+		MENU_ITEM { command=EPmCmdToday; txt="Go to today"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdCalendar; txt="Sync calendar"; }
 		};
 	}
 
