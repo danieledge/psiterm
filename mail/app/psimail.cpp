@@ -2994,8 +2994,8 @@ void CPmAppUi::ConstructL()
 // Preferences, pmbutton.exe (mail/button) runs in the background and takes
 // that key instead: PsiMail is brought to the front, or started. The setting
 // is kept in iView, and as the file Button.ini, which is what tells
-// pmbutton.exe after a restart (started by pmbutton.rdl in \System\Recogs)
-// that it is wanted. Turning the setting off removes the file and stops the program:
+// pmbutton.exe that it is wanted; PsiMail starts it each time it opens
+// with the setting on (no boot hook is installed: see mail/README.md). Turning the setting off removes the file and stops the program:
 // the Email icon is the System screen's again. Uninstalling removes the file
 // too (an FN line in psimail.pkg), and pmbutton.exe stops when it goes.
 

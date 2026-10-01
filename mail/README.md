@@ -199,11 +199,13 @@ Like PsiWeb, two programs share a chunk of memory (`psimail.h`):
   exists, and stops when that file goes (Preferences, or the uninstaller's
   FN line), when PsiMail.app is removed or replaced, or when PsiMail tells
   it to; with it gone the System screen's capture is the one that counts
-  again. ER5 has no list of programs to start at boot, so `pmbutton.rdl`
-  in `\System\Recogs` is a file recogniser that recognises nothing and
-  starts `pmbutton.exe` 30 s after the app architecture server loads it (a
-  program started while the Psion is still starting stops the System
-  screen from finishing; see `button/pmbtnrec.cpp`).
+  again. PsiMail starts it each time PsiMail opens with the preference on,
+  so after a reset the icon is PsiMail's once PsiMail has been opened.
+  `button/pmbtnrec.cpp` is a boot hook (a recogniser that recognises
+  nothing and starts `pmbutton.exe` 30 s after boot); it is built but NOT
+  installed: in the emulator a program started while the Psion is still
+  starting stopped the System screen from finishing, and a recogniser on
+  C: that broke booting could only be cleared by a cold reset.
 
 Everything the engine downloads is decoded as it arrives and written to a
 file, so no message is held whole in memory (peak heap in the emulator:

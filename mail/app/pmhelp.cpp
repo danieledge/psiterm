@@ -162,8 +162,8 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "\n"
 	  "With PsiMail chosen, a tap on the Email icon brings PsiMail to the front, or opens it if it is "
 	  "closed. A small helper program, pmbutton, waits in the background for the tap, taking very "
-	  "little memory and doing nothing until then; the other icons work as they always do. When the "
-	  "Psion restarts, the helper starts again about 30 seconds later.\n"
+	  "little memory and doing nothing until then; the other icons work as they always do. After the "
+	  "Psion has been reset, open PsiMail once and the Email icon is PsiMail's again.\n"
 	  "\n"
 	  "Choose Built-in Email, or remove PsiMail, and the Email icon opens the built-in Email program "
 	  "again. PsiMail's connections and the built-in Email program are not changed either way." },
