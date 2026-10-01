@@ -228,6 +228,8 @@ CPmView::~CPmView()
 	delete iFwdFiles;
 	delete iInvText;
 	delete iCardText;
+	delete iHeaderRuns;
+	DeleteBusyWin();
 	StopEngine();
 	DestroyNative();
 	delete iCalSync;
@@ -1311,12 +1313,9 @@ void CPmView::CalProgress(const TDesC& aText)
 	{
 	SafeCopy(iStatus, aText);
 	iStatusUntil = User::TickCount() + 64 * 30;
-	if (iNativeShown && aText.Length())
-		{
-		TRAPD(err, iEikonEnv->BusyMsgL(aText, EHLeftVBottom, TTimeIntervalMicroSeconds32(300000)));
-		(void)err;
-		iBusyShown = ETrue;
-		}
+	iCalBusy.Copy(Clip(aText, iCalBusy.MaxLength()));
+	TRAPD(err, BusyTickL());                 // (pmstatus.cpp: "Updating the calendar...", or this)
+	(void)err;
 	Render();
 	}
 
@@ -1324,11 +1323,9 @@ void CPmView::CalSyncDone(TInt aError, const TDesC& aSummary, TBool aPushed)
 	{
 	iStatus.Zero();
 	iStatusUntil = 0;
-	if (iBusyShown && !Busy())
-		{
-		iEikonEnv->BusyMsgCancel();
-		iBusyShown = EFalse;
-		}
+	iCalBusy.Zero();
+	TRAPD(berr, BusyTickL());
+	(void)berr;
 	if (aError == KErrNone && aPushed && !iCalSecond)
 		{
 		// send what changed in the Agenda (the engine then fetches again)
@@ -1866,31 +1863,13 @@ void CPmView::TickL()
 	if (prog != iLastProgress || s->busy != iBusyWas)
 		{
 		iLastProgress = prog;
+		if (s->busy != iBusyWas)
+			redraw = ETrue;                      // (the progress alone changes nothing drawn)
 		iBusyWas = s->busy;
-		redraw = ETrue;
-		// what the engine is doing: EIKON's busy message, bottom left
-		if (iNativeShown && NativeMode() && s->busy && prog.Length())
-			{
-			TRAPD(err, iEikonEnv->BusyMsgL(prog, EHLeftVBottom, TTimeIntervalMicroSeconds32(300000)));
-			(void)err;
-			iBusyShown = ETrue;
-			}
-		else if (iBusyShown && !s->busy)
-			{
-			iEikonEnv->BusyMsgCancel();
-			iBusyShown = EFalse;
-			iWorkingSince = 0;
-			}
 		}
-	if (s->busy)
-		iWorkingSince = 0;                       // (the engine took the work up)
-	else if (iWorkingSince && iBusyShown && User::TickCount() - iWorkingSince > 64 * 5)
-		{
-		// Working()'s message, and the engine never got busy: take it down
-		iEikonEnv->BusyMsgCancel();
-		iBusyShown = EFalse;
-		iWorkingSince = 0;
-		}
+	// what the engine is doing: EIKON's busy message, bottom left - one
+	// steady message per command, or every step (pmstatus.cpp)
+	BusyTickL();
 	// messages that have had their time
 	TUint now = User::TickCount();
 	if (iStatus.Length() && iStatusUntil && now - iStatusUntil < 0x80000000u && !s->busy)
@@ -1933,8 +1912,11 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 	iStatusUntil = User::TickCount() + 64 * 6;
 	if (aCmd.op == PM_CMD_PICTURES && res == PM_RES_OK)
 		iStatus.Zero();                      // (the pictures themselves say so)
-	if (iNativeShown && NativeMode() && iStatus.Length() && aCmd.op != PM_CMD_UPDATE)
-		iEikonEnv->InfoMsg(iStatus);         // the outcome, as an infoprint
+	// the outcome, as an infoprint: quiet, only what the user needs to
+	// know (and every failure); detailed, the engine's words (pmstatus.cpp)
+	TBuf<160> outcome;
+	if (OutcomeText(aCmd, res, msg, outcome) && iNativeShown && NativeMode())
+		iEikonEnv->InfoMsg(outcome);
 	if (aCmd.op == PM_CMD_UPDATE)
 		{
 		iStatus.Zero();
@@ -2005,10 +1987,8 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 			else
 				LaunchFileL(file);                     // Open attachment: fetched, now open it
 			}
-		else if ((aCmd.op == PM_CMD_SYNC || aCmd.op == PM_CMD_SENDRECV) && s->new_mail > 0 && aCmd.op == PM_CMD_SENDRECV)
-			Toast(msg);
-		else if (aCmd.op == PM_CMD_SEND || aCmd.op == PM_CMD_SENDRECV)
-			Toast(msg);
+		else if ((aCmd.op == PM_CMD_SEND || aCmd.op == PM_CMD_SENDRECV) && outcome.Length())
+			Toast(outcome);                    // (said above; again after the dialogs a check can bring)
 		if (aCmd.op == PM_CMD_BODY || aCmd.op == PM_CMD_FULLBODY)
 			{
 			if (iMode == EMessage && aCmd.uid == iMsgUid)
@@ -2082,7 +2062,8 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 			ReloadL();                         // queued, as expected when offline
 			break;
 			}
-		Toast(msg);
+		if (outcome.Length())
+			Toast(outcome);                    // (quiet: not for a flag or a move kept for later)
 		ReloadL();
 		break;
 	case PM_RES_CANCELLED:
@@ -2188,9 +2169,9 @@ void CPmView::Toast(const TDesC& aText)
 	}
 
 // "Sending...", "Stopping...": the style guide puts what the program is
-// doing bottom left, as EIKON's busy message. The engine's own progress
-// replaces it, and the tick takes it down when the engine is idle (or after
-// a few seconds, should the engine never have picked the work up)
+// doing bottom left, as EIKON's busy message. It stays until the engine has
+// done the work (or a few seconds, should it never pick it up); with
+// detailed progress on, the engine's own words replace it (pmstatus.cpp)
 void CPmView::Working(const TDesC& aText)
 	{
 	if (!iRunning || !iNativeShown)
@@ -2198,12 +2179,12 @@ void CPmView::Working(const TDesC& aText)
 		Toast(aText);
 		return;
 		}
-	TRAPD(err, iEikonEnv->BusyMsgL(aText, EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
-	if (err != KErrNone)
-		return;
-	iBusyShown = ETrue;
+	iWorkText.Copy(Clip(aText, iWorkText.MaxLength()));
+	iWorkSeen = EFalse;
 	iWorkingSince = User::TickCount();
 	if (!iWorkingSince) iWorkingSince = 1;
+	TRAPD(err, BusyTickL());                 // (pmstatus.cpp)
+	(void)err;
 	}
 
 void CPmView::FormatDate(TInt aDate, TDes& aOut) const

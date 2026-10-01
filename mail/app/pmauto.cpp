@@ -228,18 +228,21 @@ void CPmPrefsDialog::NewMailInitL()
 	SetChoiceListCurrentItem(EPmDlgCheckEvery, c);
 	SetChoiceListCurrentItem(EPmDlgCheckConnect, (v & KPmViewCheckConnect) ? 1 : 0);
 	SetChoiceListCurrentItem(EPmDlgAutoSend, (v & KPmViewNoAutoSend) ? 1 : 0);
+	SetChoiceListCurrentItem(EPmDlgDetailed, (v & KPmViewDetailedProgress) ? 0 : 1);   // (0.75: Yes, No)
 	SetLineDimmedNow(EPmDlgCheckConnect, c == 0);
 	}
 
 void CPmPrefsDialog::NewMailSave()
 	{
-	TInt v = iSettings.iView & ~(KPmViewAlertMask | KPmViewCheckMask | KPmViewCheckConnect | KPmViewNoAutoSend);
+	TInt v = iSettings.iView & ~(KPmViewAlertMask | KPmViewCheckMask | KPmViewCheckConnect | KPmViewNoAutoSend | KPmViewDetailedProgress);
 	v |= (ChoiceListCurrentItem(EPmDlgAlert) << KPmViewAlertShift) & KPmViewAlertMask;
 	v |= (ChoiceListCurrentItem(EPmDlgCheckEvery) << KPmViewCheckShift) & KPmViewCheckMask;
 	if (ChoiceListCurrentItem(EPmDlgCheckConnect) == 1)
 		v |= KPmViewCheckConnect;
 	if (ChoiceListCurrentItem(EPmDlgAutoSend) == 1)
 		v |= KPmViewNoAutoSend;
+	if (ChoiceListCurrentItem(EPmDlgDetailed) == 0)
+		v |= KPmViewDetailedProgress;
 	iSettings.iView = v;
 	}
 

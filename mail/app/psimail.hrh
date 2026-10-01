@@ -163,7 +163,8 @@ enum TPmDialogControls
 	EPmDlgAlert,             // Preferences > New mail: Alert for new mail (0.74)
 	EPmDlgCheckEvery,        // Check for new mail
 	EPmDlgCheckConnect,      // If not connected
-	EPmDlgAutoSend           // Send waiting mail when connected
+	EPmDlgAutoSend,          // Send waiting mail when connected
+	EPmDlgDetailed           // Show detailed progress (0.75)
 	};
 
 enum TPmButtons
@@ -192,4 +193,10 @@ enum TPmLinkTest
 	{
 	EPmBidTest = 0x7400,
 	EPmDlgTest1, EPmDlgTest2, EPmDlgTest3, EPmDlgTest4, EPmDlgTest5
+	};
+
+// Help on PsiMail (0.75): the text with its scroll bar, a custom dialog control (pmhelp.cpp)
+enum TPmCustomControls
+	{
+	EPmCtHelpText = 0x7500
 	};

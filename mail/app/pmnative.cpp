@@ -948,59 +948,12 @@ void CPmView::UpdateReaderL()
 	CArrayFixFlat<TPmSpan>* spans = new(ELeave) CArrayFixFlat<TPmSpan>(64);
 	CleanupStack::PushL(spans);
 	const TChar KPara(CEditableText::EParagraphDelimiter);
-	TBuf<300> v;
-	TInt lastHead = 0, lastHeadLen = 1;
+	TInt p0;
 
-	// the header: subject, then From / To / Cc / Date, the attachments
-	if (row && row->iSubject.Length()) v = Clip(row->iSubject, 200);
-	else if (!MessageHeader(_L("Subject"), v)) v = _L("(no subject)");
-	TInt p0 = t.Length();
-	t.Append(v);
-	AddSpan(*spans, p0, t.Length() - p0, ESpanBold);
-	AddSpan(*spans, p0, t.Length() - p0, ESpanBig, 1250);
-	lastHead = p0;
-	lastHeadLen = t.Length() - p0;
-	t.Append(KPara);
-	const TText* KNames[] = { _S("From"), _S("To"), _S("Cc"), _S("Date") };
-	for (TInt h = 0; h < 4; h++)
-		{
-		TPtrC name(KNames[h]);
-		if (!MessageHeader(name, v) || !v.Length())
-			continue;
-		p0 = t.Length();
-		t.Append(name);
-		t.Append(_L(": "));
-		AddSpan(*spans, p0, t.Length() - p0, ESpanBold);
-		t.Append(Clip(v, 250));
-		lastHead = p0;
-		lastHeadLen = t.Length() - p0;
-		t.Append(KPara);
-		}
-	if (iAttNames->Count())
-		{
-		p0 = t.Length();
-		t.Append(_L("Attachments: "));
-		AddSpan(*spans, p0, t.Length() - p0, ESpanBold);
-		for (TInt a = 0; a < iAttNames->Count(); a++)
-			{
-			if (a) t.Append(_L(",  "));
-			TPmLinkRange lr;
-			lr.iPos = t.Length();
-			t.Append((*iAttNames)[a]);
-			t.Append(_L(" ("));
-			t.Append((*iAttSizes)[a]);
-			t.Append(')');
-			lr.iLen = t.Length() - lr.iPos;
-			lr.iLink = -1000 - a;
-			iLinks->AppendL(lr);
-			AddSpan(*spans, lr.iPos, lr.iLen, ESpanUnder);
-			}
-		lastHead = p0;
-		lastHeadLen = t.Length() - p0;
-		t.Append(KPara);
-		}
-	// a rule under the header
-	AddSpan(*spans, lastHead, lastHeadLen, ESpanRuleBelow);
+	// the header: subject, sender and date, recipients, attachments, and a
+	// rule (pmheader.cpp). Lines that belong under it go in here, after it
+	// (HeaderEnd() is where it stops)
+	HeaderTextL(t, row);
 
 	// an invitation or a contact card: what it is, and the choices as links
 	// (pminvite.cpp): styles come back as (position, length, kind) triples
@@ -1318,6 +1271,7 @@ void CPmView::UpdateReaderL()
 			}
 		rt->ApplyCharFormatL(cf, cm, sp.iPos, sp.iLen);
 		}
+	HeaderFormatL(*rt);                     // the header's fonts, tabs and chips (pmheader.cpp)
 	CleanupStack::PopAndDestroy(2);         // spans, buf
 	// the pictures, in place of their stand-in spaces
 	for (TInt pl = 0; pl < iPictures->PlaceCount(); pl++)
@@ -1728,6 +1682,11 @@ void CPmView::NativeActivateLinkL()
 	if (link <= -1000)
 		{
 		OpenAttachmentL(-link - 1000);        // in its own program (Save is on the menu)
+		return;
+		}
+	if (link < 0)
+		{
+		HeaderLinkL(link);                    // the header's "+2 others" (pmheader.cpp)
 		return;
 		}
 	TBuf<256> url;

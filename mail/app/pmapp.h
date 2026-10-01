@@ -25,6 +25,7 @@
 #include <eiklbo.h>
 #include <eiksbobs.h>
 #include <gdi.h>
+#include <eikfctry.h>
 
 class CEikTextListBox;
 class CEikColumnListBox;
@@ -37,6 +38,8 @@ class CPmContacts;
 class CPmPictures;
 class CPmPrinter;
 class CRichText;
+class TResourceReader;
+class CEikMsgWin;
 
 extern "C" {
 #include <psimail.h>
@@ -59,6 +62,10 @@ const TInt KPmViewCheckShift = 14;          // 0x1C000: check every 0 never, 1 1
 const TInt KPmViewCheckMask = 0x1C000;
 const TInt KPmViewCheckConnect = 0x20000;   // the timed check may connect (else only while connected)
 const TInt KPmViewNoAutoSend = 0x40000;     // don't send the Outbox when a connection comes up
+// bit 19 (0.75): Preferences > New mail > Show detailed progress. Off (the
+// standard) shows one busy message per command and its outcome, as the
+// built-in Email does; on, every step the engine and the link report (pmstatus.cpp)
+const TInt KPmViewDetailedProgress = 0x80000;
 
 // app-wide settings (accounts are PmAccount, as the engine uses them)
 struct TPmSettings
@@ -77,6 +84,7 @@ struct TPmSettings
 	TInt iView;            // what's hidden: 1 toolbar, 2 title bar, 4 folder list;
 	                       // 0x100 the Email icon below the screen opens PsiMail (pmbutton.exe), 0x200 that was asked once
 	                       // 0x3000, 0x1C000, 0x20000, 0x40000: new mail alert, timed check, sending (KPmView* above)
+	                       // 0x80000: show detailed progress (0.75)
 	TInt iSpare[2];        // (TPmSettings is saved whole: keep its size)
 	                       // iSpare[0]: pictures in messages - 0 shown, 1 only attached files, 2 none (pmnative.cpp)
 	                       // iSpare[1]: where PsiMail was when closed (CPmView::WhereToken)
@@ -515,7 +523,39 @@ private:
 	HBufC* iInvText;                 // the open message's <uid>.inv (../engine/invite.h), or NULL
 	HBufC* iCardText;                // ... its <uid>.vcd
 	TBuf<16> iInvAnswer;             // ... and what was answered (<uid>.inr)
+	// ---- 0.75 (mui): quiet progress (pmstatus.cpp), the reader's header (pmheader.cpp)
+public:
+	TBool DetailedProgress() const { return (iSettings->iView & KPmViewDetailedProgress) != 0; }
+	void HeaderLinkL(TInt aLink);            // a KPmLinkHeader* link in the header (pmheader.cpp)
+private:
+	void BusyTickL();                        // from TickL: the busy message, steady and debounced
+	void BusyTextNow(TDes& aOut) const;      // what it says now ("" for none)
+	void ShowBusy(const TDesC& aText);
+	void HideBusy();
+	TBool OutcomeText(const PmCmd& aCmd, TInt aRes, const TDesC& aMsg, TDes& aOut) const;   // the infoprint when a command ends
+	TBuf<80> iBusyText;              // the busy message up (or waiting out its delay)
+	TBuf<80> iWorkText;              // Working()'s message, until the engine has done the work
+	TBool iWorkSeen;                 // ... and the engine has been busy since
+	TBuf<80> iCalBusy;               // the Agenda half of a calendar sync: what it is doing
+	TUint iBusyAt;                   // tick count when the busy message was first asked for
+	CEikMsgWin* iBusyWin;            // the busy message's window: EIKON's, without the flashing
+public:
+	void DeleteBusyWin();            // (~CPmView)
+private:
+	// the header at the top of the reader: subject, sender and date,
+	// recipients, attachments (pmheader.cpp; UpdateReaderL calls these)
+	void HeaderTextL(TDes& aText, const TPmRow* aRow);      // its paragraphs into the reader's text
+	void HeaderFormatL(CRichText& aText);                   // then its fonts, colours, tabs and pictures
+	TInt HeaderEnd() const { return iHeaderEnd; }           // where the text after it starts (for lines below it)
+	CArrayFixFlat<TInt>* iHeaderRuns;  // (position, length, kind, value) for HeaderFormatL
+	TInt iHeaderEnd;
+	TBool iHeaderAllTo;              // all the recipients shown (the "+2 others" link was tapped)
+	TUint iHeaderUid;                // ... for this message
 	};
+
+// the links in the reader's header (TPmLinkRange::iLink): above the
+// attachments' range (-1000 - n), below the web links (1 up)
+const TInt KPmLinkHeaderTo = -500;      // "+2 others": show all the recipients
 
 // the links in the reader's invitation / card box (TPmLinkRange::iLink):
 // Accept, Tentative (-3001) and Decline (-3002); below -2000, the pictures' range
@@ -606,13 +646,48 @@ class CPmHelpDialog : public CEikDialog
 	{
 public:
 	CPmHelpDialog(TInt aTopic) : iTopic(aTopic) {}
+	void TopicLineL() { TryChangeFocusToL(EPmDlgHelpTopic); }   // (Up at the top of the text)
 private:
+	SEikControlInfo CreateCustomControlL(TInt aControlType);   // the text with its scroll bar (0.75)
 	void PreLayoutDynInitL();
 	void PostLayoutDynInitL();
 	void HandleControlStateChangeL(TInt aControlId);
 	TBool OkToExitL(TInt aButtonId);
 	void ShowTopicL(TInt aTopic);
 	TInt iTopic;
+	};
+
+// the help's text: a read-only rich text editor with a scroll bar (pmhelp.cpp)
+class CPmHelpText : public CCoeControl
+	{
+public:
+	~CPmHelpText();
+	CEikRichTextEditor* Editor() const { return iEditor; }
+	void TextChangedL();
+	void SetDialog(CPmHelpDialog* aDialog) { iDialog = aDialog; }
+private:
+	void ConstructFromResourceL(TResourceReader& aReader);
+	void SetContainerWindowL(const CCoeControl& aContainer);
+	TSize MinimumSize();
+	void SizeChangedL();
+	void PositionChanged();
+	void Layout();
+	TInt CountComponentControls() const;
+	CCoeControl* ComponentControl(TInt aIndex) const;
+	void Draw(const TRect& aRect) const;
+	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
+	void HandlePointerEventL(const TPointerEvent& aEvent);
+	void Model(TInt& aTotal, TInt& aShown, TInt& aAbove) const;
+	void DrawBar(CWindowGc& aGc) const;
+	void UpdateBar();
+	TInt ScrollL(TInt aMovement);
+	TBool AtEnd() const;
+	CEikRichTextEditor* iEditor;
+	CPmHelpDialog* iDialog;
+	TRect iBar;
+	TInt iAbove;               // pixels scrolled
+	TInt iPress;               // the pen: 1 up, 2 down, 3 the thumb
+	TInt iGrab;
 	};
 
 class CPmUpdateDialog : public CEikDialog
