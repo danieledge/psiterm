@@ -2,6 +2,7 @@
 """Signs a PsiTerm, PsiWeb or PsiMail release so its updater will accept it.
 
     tools/release/sign.py dist/PsiTerm.sis 0.23 [--key ~/.psiterm-signing/release.key]
+    (or with the key's hex in $PSITERM_RELEASE_KEY)
     tools/release/sign.py --product PsiWeb dist/PsiWeb.sis 0.2
     tools/release/sign.py --product PsiMail dist/PsiMail.sis 0.3
 
@@ -83,9 +84,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("sis"); ap.add_argument("version")
     ap.add_argument("--product", default="PsiTerm", choices=["PsiTerm", "PsiWeb", "PsiMail"])
-    ap.add_argument("--key", default=os.path.expanduser("~/.psiterm-signing/release.key"))
+    ap.add_argument("--key", default=None,
+                    help="key file (hex seed); default: $PSITERM_RELEASE_KEY, else ~/.psiterm-signing/release.key")
     a = ap.parse_args()
-    seed = bytes.fromhex(open(a.key).read().strip())
+    if a.key:
+        hexseed = open(a.key).read()
+    elif os.environ.get("PSITERM_RELEASE_KEY"):
+        hexseed = os.environ["PSITERM_RELEASE_KEY"]       # e.g. from ~/.secrets (Vaultwarden)
+    else:
+        hexseed = open(os.path.expanduser("~/.psiterm-signing/release.key")).read()
+    seed = bytes.fromhex(hexseed.strip())
     digest = hashlib.sha256(open(a.sis, "rb").read()).digest()
     msg = a.product.encode() + b" update\n" + a.version.encode() + b"\n" + digest
     out = a.sis + ".sig"
