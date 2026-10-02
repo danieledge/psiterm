@@ -230,8 +230,7 @@ save the upload time).
 Tools > Connection settings chooses how PsiMail reaches the Internet; the
 settings are shared with PsiTerm.
 
-* **Modem**: a serial Wi-Fi modem (such as a WiRSa, a WiFi232 or the
-  [Atom modem](../firmware/atom-modem/README.md)) on the Psion's serial port.
+* **Modem**: a serial Wi-Fi modem (such as a WiRSa or a WiFi232) on the Psion's serial port.
   PsiMail dials the server with `ATDT host:port`. Set the baud rate to the
   modem's; 115200 with RTS/CTS flow control is fastest if the cable carries
   those lines. The line is only taken while PsiMail needs it, and File >

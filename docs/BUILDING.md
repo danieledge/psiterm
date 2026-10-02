@@ -34,10 +34,10 @@ PsiWeb, a web browser, is in development on the `dev` branch. It does not
 work yet, so it is not released from `main`. Its source is in `web/`; build
 and test it from `dev` (see `web/README.md` there).
 
-## The Atom modem firmware
+## The Atom modem firmware (dev only)
 
-`firmware/atom-modem` builds with PlatformIO or the Arduino IDE, and has host
-unit tests: see [its README](../firmware/atom-modem/README.md#building-and-testing).
+The Wi-Fi modem firmware for the M5Stack Atom has not been tested on hardware
+yet, so it is only on the `dev` branch (`firmware/atom-modem`).
 
 ## Layout
 
@@ -53,7 +53,6 @@ unit tests: see [its README](../firmware/atom-modem/README.md#building-and-testi
 | `libvterm/` | terminal emulation |
 | `mail/` | PsiMail - IMAP/SMTP over TLS and CalDAV: see [mail/README.md](../mail/README.md) |
 | `web/` | PsiWeb, the web browser in development (released from `dev` only) |
-| `firmware/atom-modem/` | Psion-tuned Wi-Fi modem firmware for the M5Stack Atom |
 | `pkg/` | installer definition, font and icon files |
 | `server/` | optional local update/debug server (plain HTTP) |
 | `tools/` | font and icon converters, screenshot renderer, release signing, test harnesses |

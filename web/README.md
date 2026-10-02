@@ -47,8 +47,7 @@ as PsiTerm and PsiMail. **Test** (Ctrl+T) tries them before OK: whether the
 modem answers and at what baud rate, CTS and DCD, or whether the Psion's
 Internet connection is up. The serial port can only be used by one program
 at a time, so disconnect PsiTerm or PsiMail first (and the Remote link must
-be off). The [Atom modem firmware](../firmware/atom-modem/README.md) is a
-Wi-Fi modem tuned for the Psion.
+be off).
 
 **If the engine stops**: the browser engine runs as its own program, so a
 page too big for the memory stops the engine rather than the Psion. PsiWeb

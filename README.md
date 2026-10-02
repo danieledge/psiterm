@@ -18,7 +18,6 @@ TLS and two-way calendar sync, as native EPOC apps for a 36 MHz palmtop.
 |---|---|---|---|
 | **PsiTerm** | An SSH terminal (xterm-256color) on a port of Dropbear: tmux, vim, htop and Claude Code on a palmtop, with file transfer | 0.73 | [below](#psiterm) |
 | **PsiMail** | Email for any IMAP/SMTP server with TLS (made for Fastmail), and a calendar that keeps the Agenda in step with CalDAV | 0.74 | [mail/README.md](mail/README.md) |
-| **Atom modem** | Firmware that turns an M5Stack Atom into a Wi-Fi modem tuned for the Psion | - | [firmware/atom-modem](firmware/atom-modem/README.md) |
 
 Both apps look and behave like the Psion's own programs - EIKON toolbars,
 menus, dialogs and shortcuts, following Symbian's *EIKON Application Style
@@ -56,7 +55,7 @@ click one to see it full size.
 </tr>
 <tr>
 <td><a href="docs/screenshots/psiterm-file-menu.png"><img src="docs/screenshots/psiterm-file-menu.png" alt="PsiTerm's File menu" width="400"></a><br>The File menu</td>
-<td><a href="docs/screenshots/psiterm-test.png"><img src="docs/screenshots/psiterm-test.png" alt="Connection settings: the Test result from an Atom modem" width="400"></a><br>Connection settings > Test</td>
+<td><a href="docs/screenshots/psiterm-test.png"><img src="docs/screenshots/psiterm-test.png" alt="Connection settings: the Test result from a Wi-Fi modem" width="400"></a><br>Connection settings > Test</td>
 </tr>
 </table>
 
@@ -109,8 +108,7 @@ More PsiMail screenshots are in [mail/README.md](mail/README.md).
   invitations into the Agenda, contact cards into Contacts, progressive JPEG,
   File > Save as Word file.
 - PsiMail 0.72: the **Email icon** below the screen can open PsiMail.
-- Both: a **Test** button in Connection settings, and new
-  [Atom modem firmware](firmware/atom-modem/README.md).
+- Both: a **Test** button in Connection settings.
 
 ## PsiTerm
 
@@ -243,11 +241,8 @@ connection is up and names can be looked up (it asks before dialling).
   `ATDT host:port` and talk through the connection the modem makes. Set the
   baud rate to the modem's; 115200 with RTS/CTS flow control is fastest if
   the cable carries those lines, otherwise choose None.
-- **The Atom modem**: [`firmware/atom-modem`](firmware/atom-modem/README.md)
-  turns an M5Stack Atom on an Atomic RS232 Base into a Hayes-style Wi-Fi
-  modem that works exactly like a WiRSa, plus **output pacing** so the Psion
-  is never overrun even on a three-wire cable without RTS/CTS. Its README has
-  the wiring, flashing, Wi-Fi set-up and the settings to use.
+- **Atom modem firmware** for an M5Stack Atom is in development on the `dev`
+  branch. It has not been tested on hardware yet, so it is not released here.
 
 ## Updates
 
