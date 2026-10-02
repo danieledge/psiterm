@@ -25,5 +25,6 @@ Notes:
 - **Timing:** PsiMail's first window appears at about 78 s simulated time; PsiTerm's at about 45 s. Keys sent before that are queued or lost.
 - **Keys:** Enter 3, Esc 4, Menu 148, arrows 14–17 (left, right, up, down), letters as ASCII capitals. Taps use `X ≈ LCD x + 45`.
 - **Serial:** the harness can bridge the Psion's serial port to a Unix socket (`--serial-bridge-socket`). A fake Hayes modem such as `ssh/test/fakemodem.py`, or `firmware/atom-modem/hosttest/hostmodem`, can sit on it to reach local test servers.
+- **Card layout can wedge loading:** the same build can stall at "Starting the browser engine..." or end with KERN-EXEC 3 on one card image and run cleanly on another with the files shifted (PAD.BIN size). Seen with PsiWeb on 2 Oct 2026: 3 of 11 runs failed on one layout, 0 of 10 with PAD.BIN at 9000 bytes. Try another layout before suspecting the code.
 - **Card writer quirks:** the FAT16 writer holds about 16 entries per folder. If a folder grows past one cluster, the card can come out damaged.
 - `ESTLIB.DLL` is the EPOC C library, taken from the SDK's redistributable `stdlib.sis`. The `seed/` pictures are synthetic test images.
