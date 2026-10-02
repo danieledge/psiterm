@@ -107,8 +107,9 @@ please report them via [GitHub issues](https://github.com/danieledge/psiterm/iss
   after Check mail so they open at once.
 * HTML mail is shown as rich text - headings, bold and italic, lists,
   quotes, links you can move to with Tab and open with Enter - and
-  Message > Web > View as web page opens the original in PsiWeb (NetSurf),
-  as do links. Plain text gets its quotes and links shown the same way.
+  Message > Web > View as web page opens the original in a web browser, as
+  do links. The browser is in development on the `dev` branch and is not in
+  this release yet. Plain text gets its quotes and links shown the same way.
 * HTML newsletters without the empty space: hidden preheaders, spacer
   cells and pictures, empty paragraphs and cells are left out, and blank
   lines come one at a time (`engine/html.c`).
@@ -227,17 +228,17 @@ save the upload time).
 ## Connections
 
 Tools > Connection settings chooses how PsiMail reaches the Internet; the
-settings are shared with PsiTerm and PsiWeb.
+settings are shared with PsiTerm.
 
 * **Modem**: a serial Wi-Fi modem (such as a WiRSa, a WiFi232 or the
   [Atom modem](../firmware/atom-modem/README.md)) on the Psion's serial port.
   PsiMail dials the server with `ATDT host:port`. Set the baud rate to the
   modem's; 115200 with RTS/CTS flow control is fastest if the cable carries
   those lines. The line is only taken while PsiMail needs it, and File >
-  Disconnect (Ctrl+U) hangs up so PsiTerm or PsiWeb can have it.
+  Disconnect (Ctrl+U) hangs up so PsiTerm can have it.
 * **Psion Internet (PPP)**: the Psion's own dial-up connection, set up in the
   Control panel's Internet and Modems settings. PsiMail starts it when it
-  needs to and the Psion's connection dialogs appear; PsiWeb shares it.
+  needs to and the Psion's connection dialogs appear; PsiTerm shares it.
 * **Test** (Ctrl+T) tries the settings shown, before OK: whether the modem
   answers and at what speed, CTS and DCD, the modem's name, and whether
   RTS/CTS will work; for Psion Internet, whether the connection is up and
@@ -375,7 +376,7 @@ without the `cryptography` package too). The version must go up each time.
   set Tools > Preferences > New mail > Show detailed progress to Yes and
   try again: every step (dialling, the modem's answer, logging in, each
   message) is shown at the bottom left. Check that the Remote link is off
-  and that PsiTerm or PsiWeb isn't holding the serial port.
+  and that PsiTerm isn't holding the serial port.
 * **`psimail.log`**, next to the program in `\System\Apps\PsiMail\` (on the
   disk PsiMail is installed on), records what the mail engine did, each line
   timed; after a crash or a restart the previous engine's log is kept as
@@ -394,7 +395,7 @@ without the `cryptography` package too). The version must go up each time.
 
 ## How it works
 
-Like PsiWeb, two programs share a chunk of memory (`psimail.h`):
+Like PsiTerm, two programs share a chunk of memory (`psimail.h`):
 
 * `psimail.exe` (`engine/`, C): IMAP (`imap.c`, `imapparse.c`), SMTP
   (`smtp.c`), MIME (`mime.c`, `compose.c`), character sets (`charset.c`:

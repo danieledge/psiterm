@@ -2,7 +2,7 @@
 
 Firmware for an **M5Stack Atom** (Lite or Matrix, ESP32) on an **Atomic RS232
 Base**. It turns that pair into a Hayes-style WiFi modem for a Psion Series 5/5mx
-running PsiTerm, PsiMail or PsiWeb. It talks to the apps exactly as a WiRSa
+running PsiTerm or PsiMail. It talks to the apps exactly as a WiRSa
 does (`ATDT host:port`, `CONNECT`, `+++`, `ATH`, `NO CARRIER`). It adds the one
 thing a three-wire link lacks: **output pacing**, so the Psion is not
 overrun even though there is no RTS/CTS.
@@ -15,7 +15,7 @@ MIT licence, as the rest of the repository (see `LICENSE` at the top).
 - [Wiring to the Psion cable](#wiring-to-the-psion-cable)
 - [Flashing](#flashing)
 - [First set-up (WiFi)](#first-set-up-wifi)
-- [Settings for PsiTerm, PsiMail and PsiWeb](#settings-for-psiterm-psimail-and-psiweb)
+- [Settings for PsiTerm and PsiMail](#settings-for-psiterm-and-psimail)
 - [AT command reference](#at-command-reference)
 - [Pacing in detail](#pacing-in-detail)
 - [Status LED and button](#status-led-and-button)
@@ -163,7 +163,7 @@ the modem rejoins by itself at every power-up. `ATI` shows the modem's name,
 the network, its IP address and the pacing. The Zimodem form
 `ATW"My network,my password"` works too.
 
-## Settings for PsiTerm, PsiMail and PsiWeb
+## Settings for PsiTerm and PsiMail
 
 In each app, go to **Tools > Connection settings**:
 
@@ -257,8 +257,8 @@ Why these values:
   (`epoc-comms-best-practices.md`) show that its 75 % high-water mark only
   helps when RTS/CTS works. Without RTS/CTS, the buffer must instead absorb
   any time the app is not reading. At 5500 B/s it lasts 3 seconds, which
-  covers a page layout or a flash write. That rate is still faster than PsiWeb
-  or PsiMail can use a TLS stream on a 36 MHz ARM, so little speed is lost.
+  covers a page layout or a flash write. That rate is still faster than PsiMail
+  can use a TLS stream on a 36 MHz ARM, so little speed is lost.
 - **TCP does the rest.** The ESP32's buffer (up to 128 KB) fills while the
   Psion is slow. When it is full the socket is not read, and the server is
   held back by TCP. No data is dropped anywhere on the way.
@@ -295,8 +295,8 @@ It does not take AT commands.
 ## Optional: an emulated DCD
 
 The base has no DCD line, so the apps detect a dropped connection from the
-in-band `NO CARRIER`, which works well. If you want DCD as well (PsiTerm,
-PsiMail and PsiWeb then notice a drop at once through `KConfigFailDCD`):
+in-band `NO CARRIER`, which works well. If you want DCD as well (PsiTerm
+and PsiMail then notice a drop at once through `KConfigFailDCD`):
 
 1. Choose a spare GPIO: G33, G23, G21 or G25 on the Atom's header.
 2. Feed it through an RS232 driver: a spare channel of a MAX232/MAX3232, or a
