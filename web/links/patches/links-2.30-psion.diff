@@ -1,8 +1,17 @@
 Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
 - drivers.c, links.h, main.c: the "psi" graphics driver (GRDRV_PSI), always graphics mode
 - img.c (PSI_LAZY_IMAGES): no decoder or full-size buffer kept for pictures not yet drawn
-- jpeg.c (PSI_JPEG_SCALE): libjpeg scales while decoding; buffered mode only for progressive
+- jpeg.c (PSI_JPEG_SCALE): libjpeg scales while decoding; buffered mode only for progressive;
+  colour JPEGs decoded to grey (Y only), fast IDCT
 - html.c (PSIWEB): no <link rel=canonical/alternate/...> lines, no prefetch/preload
+- html.c, html_r.c (PSIWEB): the form search for each control no longer starts at the top of
+  the page when there is no <form> (quadratic: 200M ARM instructions on BBC)
+- links.h, session.c, view.c, view_gr.c (PSI_NO_BARS, with GRDRV_PSI): no title or status
+  bar, the page gets the whole screen; no welcome box; a tap at the top is on the page
+- dip.c (PSIWEB): fixed-point glyph sharpening, a glyph lookup cache, remembered colours,
+  the last picture gamma table kept (soft-float costs on the ARM710)
+- connect.c, https.c, default.c (PSI_EPOC, the ARM build): connections through
+  web/links/epoc/psi_os.c (pwn: psiglue + TLS 1.3), 16 KB reads, no config files
 
 --- a/drivers.c
 +++ b/drivers.c
@@ -28,7 +37,43 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  #endif
 --- a/html.c
 +++ b/html.c
-@@ -2739,6 +2739,18 @@
+@@ -1727,6 +1727,10 @@
+ 	form->num = (int)(a - startf);
+ }
+ 
++#ifdef PSIWEB
++unsigned char *noform_startf, *noform_upto;	/* (reset with last_form_tag) */
++#endif
++
+ static void find_form_for_input(unsigned char *i)
+ {
+ 	unsigned char *s, *ss, *name, *attr, *lf, *la;
+@@ -1749,6 +1753,13 @@
+ 	} else {
+ 		lf = NULL, la = NULL;
+ 		s = startf;
++#ifdef PSIWEB
++		/* no <form> up to the last control: carry on from there instead
++		   of from the start of the page for every control (BBC's buttons
++		   made this 200 million ARM instructions) */
++		if (noform_upto && noform_startf == startf && i >= noform_upto)
++			s = noform_upto;
++#endif
+ 	}
+ 	se:
+ 	while (s < i && *s != '<') sp:s++;
+@@ -1772,6 +1783,10 @@
+ 		get_html_form(la, &form);
+ 	} else {
+ 		last_form_tag = NULL;
++#ifdef PSIWEB
++		noform_startf = startf;
++		noform_upto = i;
++#endif
+ 	}
+ }
+ 
+@@ -2739,6 +2754,18 @@
  	    !casestrcmp(name, cast_uchar "preconnect") ||
  	    !casestrcmp(name, cast_uchar "stylesheet") ||
  	    casestrstr(name, cast_uchar "icon") ||
@@ -47,6 +92,21 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  	    0) goto skip;
  	if (!casestrcmp(name, cast_uchar "prefetch") ||
  	    !casestrcmp(name, cast_uchar "prerender") ||
+--- a/html_r.c
++++ b/html_r.c
+@@ -1311,6 +1311,12 @@
+ 	push_base_format(url, &screen->opt, frame, implicit_pre_wrap);
+ 	table_level = 0;
+ 	g_ctrl_num = 0;
++#ifdef PSIWEB
++	{
++		extern unsigned char *noform_upto;
++		noform_upto = NULL;
++	}
++#endif
+ 	last_form_tag = NULL;
+ 	last_form_attr = NULL;
+ 	last_input_tag = NULL;
 --- a/img.c
 +++ b/img.c
 @@ -1348,6 +1348,15 @@
@@ -67,7 +127,7 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  	return image;
 --- a/jpeg.c
 +++ b/jpeg.c
-@@ -246,13 +246,39 @@
+@@ -246,13 +246,48 @@
  		/* jpeg_read_header */
  		if (JPEG_SUSPENDED==jpeg_read_header(global_cinfo,TRUE))
  			break;
@@ -103,11 +163,20 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
 +			global_cinfo->scale_num = num;
 +			global_cinfo->scale_denom = 8;
 +		}
++		/* PsiWeb: the Psion shows 16 greys, so colour JPEGs are decoded
++		 * to grey (Y only): libjpeg then skips the chroma IDCTs (which
++		 * libjpeg 9 does at 16x16 to upsample) and the colour
++		 * conversion - most of the cost of a photo on the ARM. The fast
++		 * integer IDCT is plenty for 16 greys. */
++		if (global_cinfo->jpeg_color_space == JCS_YCbCr)
++			global_cinfo->out_color_space = JCS_GRAYSCALE;
++		global_cinfo->dct_method = JDCT_IFAST;
++		global_cinfo->do_fancy_upsampling = FALSE;
 +#endif
  		/* jpeg_start_decompress */
  		if (jpeg_start_decompress(global_cinfo)==FALSE)
  			break;
-@@ -330,7 +356,7 @@
+@@ -330,7 +365,7 @@
  
  		case 2:
  		/* jpeg_start_output */
@@ -116,7 +185,7 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  susp0:
  			/* Suspended */
  			break;
-@@ -364,6 +390,7 @@
+@@ -364,6 +399,7 @@
  
  		case 4:
  		/* jpeg_finish_output */
@@ -124,7 +193,7 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  		if (FALSE==jpeg_finish_output(global_cinfo))
  		{
  			/* Suspended */
-@@ -374,6 +401,7 @@
+@@ -374,6 +410,7 @@
  			/* Some more scans awaited... */
  			goto new_scan;
  		}
@@ -143,6 +212,19 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  #define GRDRV_VIRTUAL_DEVICES
  #endif
  
+@@ -2151,6 +2151,12 @@
+ 
+ #define G_BFU_FONT_SIZE menu_font_size
+ 
++/* PsiWeb: PsiWeb.app shows the title, address and status itself, so Links
++ * draws no bars of its own and the page gets the whole screen */
++#ifdef GRDRV_PSI
++#define PSI_NO_BARS 1
++#endif
++
+ struct letter {
+ 	const unsigned char *begin; /* Begin in the byte stream (of PNG data) */
+ 	int length; /* Length (in bytes) of the PNG data in the byte stream */
 --- a/main.c
 +++ b/main.c
 @@ -335,6 +335,9 @@
@@ -155,3 +237,281 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  	if (dmp) ggr = 0;
  }
  
+--- a/session.c
++++ b/session.c
+@@ -285,6 +285,9 @@
+ #ifdef G
+ 	} else {
+ 		int l = 0;
++#ifdef PSI_NO_BARS
++		return;
++#endif
+ 		if (ses->st) g_print_text(term->dev, 0, term->y - G_BFU_FONT_SIZE, bfu_style_wb_mono, ses->st, &l);
+ 		drv->fill_area(term->dev, l, term->y - G_BFU_FONT_SIZE, term->x, term->y, !proxies.only_proxies ? bfu_bg_color : bfu_fg_color);
+ #endif
+@@ -2819,6 +2822,10 @@
+ 	ses->screen->xw = ses->term->x;
+ 	if (ses->term->y < gf_val(2, 2 * G_BFU_FONT_SIZE)) ses->screen->yw = 0;
+ 	else ses->screen->yw = ses->term->y - gf_val(2, 2 * G_BFU_FONT_SIZE);
++#ifdef PSI_NO_BARS
++	ses->screen->yp = 0;
++	ses->screen->yw = ses->term->y;
++#endif
+ }
+ 
+ static struct session *create_session(struct window *win)
+@@ -2836,6 +2843,11 @@
+ 	ses->screen->xp = 0; ses->screen->xw = term->x;
+ 	ses->screen->yp = gf_val(1, G_BFU_FONT_SIZE);
+ 	ses->screen->yw = term->y - gf_val(2, 2 * G_BFU_FONT_SIZE);
++#ifdef PSI_NO_BARS
++	ses->screen->yp = 0;
++	ses->screen->yw = term->y;
++	first_use = 0;		/* no welcome box: Links' own UI is not shown */
++#endif
+ 	memcpy(&ses->ds, &dds, sizeof(struct document_setup));
+ 	init_list(ses->format_cache);
+ 	add_to_list(sessions, ses);
+--- a/view.c
++++ b/view.c
+@@ -3790,6 +3790,7 @@
+ 			} else return;
+ 		}
+ #endif
++#ifndef PSI_NO_BARS
+ 		if (ev->y >= 0 && ev->y < gf_val(1, G_BFU_FONT_SIZE) && ev->x >=0 && ev->x < ses->term->x && (ev->b & BM_ACT) == B_DOWN) {
+ #ifdef G
+ 			if (F && ev->x < ses->back_size) {
+@@ -3805,6 +3806,7 @@
+ 				goto x;
+ 			}
+ 		}
++#endif
+ 		do_mouse_event(ses, ev);
+ 	}
+ 	return;
+--- a/view_gr.c
++++ b/view_gr.c
+@@ -1325,7 +1325,12 @@
+ {
+ 	int b, z, w;
+ 	struct graphics_device *dev = f->ses->term->dev;
+-	unsigned char *title = stracpy(!drv->set_title && f->f_data && f->f_data->title && f->f_data->title[0] ? f->f_data->title : NULL);
++	unsigned char *title;
++#ifdef PSI_NO_BARS
++	f->ses->back_size = 0;
++	return;
++#endif
++	title = stracpy(!drv->set_title && f->f_data && f->f_data->title && f->f_data->title[0] ? f->f_data->title : NULL);
+ 	if (!title) {
+ 		if (f->rq && f->rq->url)
+ 			title = display_url(f->ses->term, f->rq->url, 1);
+--- a/dip.c
++++ b/dip.c
+@@ -1407,6 +1407,17 @@
+ 	unsigned short last_val;
+ 	const float_double inv_255=(float_double)(1/255.);
+ 	const float_double inv_65535=(float_double)(1/65535.);
++#ifdef PSIWEB
++	/* nearly every picture has the same gamma: the 768 soft-float pow()s
++	   of its table cost about 20 million instructions, so keep the last */
++	static unsigned short last_table[768];
++	static float_double last_rg = -1, last_gg = -1, last_bg = -1;
++	if (cimg->buffer_bytes_per_pixel <= 4 && rg == last_rg && gg == last_gg && bg == last_bg) {
++		cimg->gamma_table = mem_alloc(768 * sizeof(*(cimg->gamma_table)));
++		memcpy(cimg->gamma_table, last_table, sizeof(last_table));
++		return;
++	}
++#endif
+ 
+ 	if (cimg->buffer_bytes_per_pixel<=4) {
+ 		/* 8-bit */
+@@ -1427,6 +1438,10 @@
+ 			cmd_limit_16(last_val);
+ 			*ptr_16 = last_val;
+ 		}
++#ifdef PSIWEB
++		memcpy(last_table, cimg->gamma_table, sizeof(last_table));
++		last_rg = rg; last_gg = gg; last_bg = bg;
++#endif
+ 	}else{
+ 		int x_slow_fpu;
+ 		if (gamma_bits != 2) x_slow_fpu = !gamma_bits;
+@@ -1489,6 +1504,22 @@
+ 	float_double a=input;
+ 	unsigned short retval;
+ 	const float_double inv_255=(float_double)(1/255.);
++#ifdef PSIWEB
++	/* every new glyph asks for its colour three times: remember answers */
++	static float memo_gamma[8];
++	static unsigned short memo_val[8];
++	static unsigned char memo_in[8], memo_ok[8];
++	int m = input & 7;
++	if (memo_ok[m] && memo_in[m] == input && memo_gamma[m] == gamma)
++		return memo_val[m];
++	a*=inv_255;
++	a=fd_pow(a,gamma);
++	a*=65535;
++	retval = (unsigned short)(a+(float_double)0.5);
++	cmd_limit_16(retval);
++	memo_ok[m] = 1; memo_in[m] = input; memo_gamma[m] = gamma; memo_val[m] = retval;
++	return retval;
++#endif
+ 
+ 	a*=inv_255;
+ 	a=fd_pow(a,gamma);
+@@ -1529,6 +1560,18 @@
+ {
+ 	int tries[3];
+ 	int try;
++#ifdef PSIWEB
++	/* layout asks for every character's width: remember the glyph for the
++	   first 256 codes of each style instead of searching 800 glyphs again */
++	static struct letter *cache[4][256];
++	int slot = (style->flags & FF_MONOSPACED ? 2 : 0) | (style->flags & FF_BOLD ? 1 : 0);
++	struct letter *found;
++	if (letter_number >= 0 && letter_number < 256 && (found = cache[slot][letter_number]))
++		return found;
++#define return_letter(l) do { found = (l); if (letter_number >= 0 && letter_number < 256) cache[slot][letter_number] = found; return found; } while (0)
++#else
++#define return_letter(l) return (l)
++#endif
+ 	if (style->flags & FF_MONOSPACED) {
+ 		tries[0] = FONT_MONOSPACED;
+ 		if (style->flags & FF_BOLD) {
+@@ -1557,9 +1600,10 @@
+ #define AB(v, key)	(letter_data[start + v].code > key)
+ 		BIN_SEARCH(font->length, EQ, AB, letter_number, result);
+ 		if (result >= 0)
+-			return letter_data + start + result;
++			return_letter(letter_data + start + result);
+ 	}
+-	return letter_data + font_table[0].begin;
++	return_letter(letter_data + font_table[0].begin);
++#undef return_letter
+ }
+ 
+ struct read_work {
+@@ -1790,6 +1834,26 @@
+ 	conv0 = (1 + sharpness) * contrast;
+ 	conv1 = (float)(-sharpness * (float)0.25 * contrast);
+ 
++#ifdef PSIWEB
++	/* The same sum in 16.16 fixed point: with no FPU, the float version
++	   costs about 450 instructions a pixel of soft float. */
++	{
++		int k0 = (int)(conv0 * 65536 + (float)0.5);
++		int k1 = (int)(conv1 * 65536 + (conv1 < 0 ? (float)-0.5 : (float)0.5));
++		for (y0 = y; y0; y0--) {
++			for (x0 = *x; x0; x0--) {
++				c = (*i2ptr * k0 + (i2ptr[-ix] + i2ptr[-1] + i2ptr[1] + i2ptr[ix]) * k1 + 32768) >> 16;
++				if (c & ~255) c = c < 0 ? 0 : 255;
++				*dptr = (unsigned char)c;
++				dptr++;
++				i2ptr++;
++			}
++			i2ptr += 2;
++		}
++		mem_free(interm2);
++		return;
++	}
++#endif
+ 	for (y0 = y; y0; y0--) {
+ 		for (x0 = *x; x0; x0--) {
+ 			/* Convolution */
+--- a/connect.c
++++ b/connect.c
+@@ -190,12 +190,46 @@
+ 	unsigned char host[1];
+ };
+ 
++#ifdef PSI_EPOC
++/* psi_os.c: a pseudo-socket over pwn (web/engine/pwnet.c). Blocks while the
++   link dials, resolves the name, connects and (tls) does the handshake. */
++int psi_sock_connect(unsigned char *host, int port, int tls, unsigned char **why);
++
++static void psi_make_connection(struct connection *c, int port, int *sock, void (*func)(struct connection *))
++{
++	unsigned char *host, *why = NULL;
++	int s, tls;
++	if (!(host = get_host_name(c->url))) {
++		setcstate(c, S_INTERNAL);
++		abort_connection(c);
++		return;
++	}
++	tls = !is_proxy_url(c->url) && !casecmp(c->url, cast_uchar "https://", 8);
++	setcstate(c, S_CONN);
++	s = psi_sock_connect(host, port, tls, &why);
++	mem_free(host);
++	if (s < 0) {
++		if (why) mem_free(why);
++		setcstate(c, tls ? S_SSL_ERROR : get_error_from_errno(ECONNREFUSED));
++		retry_connection(c);
++		return;
++	}
++	*sock = s;
++	set_connection_timeout(c);
++	func(c);
++}
++#endif
++
+ void make_connection(struct connection *c, int port, int *sock, void (*func)(struct connection *))
+ {
+ 	int socks_port = -1;
+ 	unsigned char *host;
+ 	size_t sl;
+ 	struct conn_info *b;
++#ifdef PSI_EPOC
++	psi_make_connection(c, port, sock, func);
++	return;
++#endif
+ 	if (*c->socks_proxy) {
+ 		/* pasing duplicated in proxy_ok_dialog */
+ 		unsigned char *p = cast_uchar strchr(cast_const_char c->socks_proxy, '@');
+@@ -1019,7 +1053,13 @@
+ 	set_handlers(s, NULL, write_select, c);
+ }
+ 
++#ifdef PSI_EPOC
++/* the link brings about 10 KB a second: no need to grow every read buffer
++   by 64 KB */
++#define READ_SIZE	16384
++#else
+ #define READ_SIZE	64240
++#endif
+ #define TOTAL_READ	(4193008 - READ_SIZE)
+ 
+ static void read_select(void *c_)
+--- a/https.c
++++ b/https.c
+@@ -897,8 +897,14 @@
+ 
+ void https_func(struct connection *c)
+ {
++#ifdef PSI_EPOC
++	/* TLS is done below the socket, by pwn (web/engine/pwnet.c and
++	   ssh/tls13.c): https is http on a connection made with tls set */
++	http_func(c);
++#else
+ 	setcstate(c, S_NO_SSL);
+ 	abort_connection(c);
++#endif
+ }
+ 
+ #endif
+--- a/default.c
++++ b/default.c
+@@ -886,6 +886,13 @@
+ {
+ 	get_system_name();
+ 	get_compiler_name();
++#ifdef PSI_EPOC
++	/* no configuration files: the defaults are built in (psi_os.c) and
++	   PsiWeb.app keeps the settings */
++	links_home = NULL;
++	first_use = 0;
++	return;
++#endif
+ 	links_home = get_home(&first_use);
+ 	if (!links_home) {
+ 		fprintf(stderr, "Unable to find or create links config directory. Please check, that you have $HOME variable set correctly and that you have write permission to your home directory.\n\007");

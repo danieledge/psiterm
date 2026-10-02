@@ -295,7 +295,12 @@ static int nsfb_to_links(int c)
 	case NK_BS: return KBD_BS;
 	case NK_TAB: return KBD_TAB;
 	case NK_LF: case NK_RETURN: case NK_KP_ENTER: return KBD_ENTER;
-	case NK_ESC: return KBD_ESC;
+	case NK_ESC:
+#ifdef PSI_NO_BARS
+		return 0;	/* Esc and F9/F10 would open Links' own menus */
+#else
+		return KBD_ESC;
+#endif
 	case NK_DEL: return KBD_DEL;
 	case NK_UP: return KBD_UP;
 	case NK_DOWN: return KBD_DOWN;
@@ -307,7 +312,11 @@ static int nsfb_to_links(int c)
 	case NK_PGUP: return KBD_PAGE_UP;
 	case NK_PGDN: return KBD_PAGE_DOWN;
 	}
+#ifndef PSI_NO_BARS
 	if (c >= NK_F1 && c <= NK_F12) return KBD_F1 - (c - NK_F1);
+#else
+	if (c >= NK_F1 && c <= NK_F12) return 0;
+#endif
 	if (c >= PWB_UNICODE_BASE) return c - PWB_UNICODE_BASE;
 	if (c >= 32 && c < 127) return c;
 	return 0;
@@ -423,7 +432,8 @@ static void poll_fn(void *p)
 		if (ses) {
 			const char *h = pwb_home_url();
 			home_done = 1;
-			if (list_empty(ses->history) && !ses->rq && h && *h && strcmp(h, "about:blank"))
+			/* (about:welcome is NetSurf's start page: Links has none) */
+			if (list_empty(ses->history) && !ses->rq && h && *h && strncmp(h, "about:", 6))
 				psi_goto(ses, h);
 			report_state(1);
 			pwb_ready();
@@ -485,6 +495,10 @@ static unsigned char *psi_init_driver(unsigned char *param, unsigned char *displ
 		return stracpy(cast_uchar "psi: no colour function\n");
 	}
 	init_virtual_devices(&psi_driver, 1);
+#ifdef PSI_EPOC
+	/* PsiWeb.app's setting; off unless the user has asked for pictures */
+	dds.display_images = pwb_load_images() ? 1 : 0;
+#endif
 	last_status = get_time();
 	poll_timer = install_timer(POLL_MS, poll_fn, NULL);
 	return NULL;

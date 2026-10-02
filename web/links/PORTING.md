@@ -326,3 +326,216 @@ Estimates are in working days for one developer who knows this codebase.
 1. **Links replaces NetSurf** as PsiWeb's engine, rather than running beside it.
 2. **Pictures are off by default.** A "Show pictures" command loads them for the current page.
 3. **Everything goes through PsiWeb.app's EIKON menus and dialogs.** Links' own menus, dialogs and bars are not shown.
+
+## Phase 2: ARM harness results
+
+Written 2 October 2026. Phase 2 asked whether Links is fast enough and small enough on the real hardware. It built Links for the Psion's ARM with the Psion compiler and ran that exact code in the unicorn harness. This also lays the EPOC foundation: networking, the main loop and the build.
+
+### Verdict
+
+**Yes for text pages; pictures need work before they are usable.**
+
+- Text pages cost 1 to 6 seconds of CPU on a 36 MHz 5mx: info.cern.ch 1.0 s, NPR 2.7 s, Wikipedia 4.7 s, 68k.news 5.5 s.
+- The BBC home page (1 MB of HTML, pictures off) costs 20 s. That is close to what the modem needs to bring its 118 KB in.
+- Scrolling a screen costs 0.2 to 1.2 s.
+- Start-up is 2.5 s.
+- The heap never went above **3.4 MB**, against the 10 MB limit. No allocation failed on any page.
+- The EXE is **about 1.8 MB**. It started at 5.5 MB.
+
+The figures came after the fixes listed below. Before them, 68k.news took 15 s and BBC 57 s.
+
+These figures are **CPU only**. Transfer time over the link comes on top: at about 10 KB/s, 68k.news needs a further 4 s and BBC 12 s.
+
+The timing rests on one assumption: that the ARM710T runs about 1 instruction per 2.4 cycles, which is **15 MIPS** at 36 MHz. That is the harness's conversion (instructions / 15e6). Soft float and memory waits could make the real figure up to about 1.5 times worse. One run on the device would settle it.
+
+### What was built
+
+All new code is under `web/links/`. The NetSurf build, `web/app`, `dist/` and `web/emu/*` are untouched; the files in `web/emu` are used as they are, or copied where a change was needed.
+
+| File | What it is |
+|---|---|
+| `epoc.mk` | ARM build: arm-pe-gcc (gcc 3.0 Psion 98r2, `-mcpu=arm710 -msoft-float -O2`), ESTLIB headers. It compiles Links, our driver, libjpeg 9f, read-only libpng 1.6.43 and inflate-only zlib (as archives, so only what is used is linked), `tls13.c`, libtomcrypt and `pwnet.c`. The `emu` target links `build/links/epoc/psiweb-emu.pe` with the emu stand-ins. Run it with `tools/docker/psibuild "make -f web/links/epoc.mk -j8 emu"`. |
+| `epoc/config.h` | Hand-written Links configuration for ESTLIB (`PSI_EPOC`). Graphics with only the psi driver; PNG, JPEG and zlib; no IPv6, no threads, no async DNS, no signals. |
+| `epoc/psicompat.h` | Force-included compat header. It supplies `ssize_t`/`socklen_t`, the errno values ESTLIB lacks and `snprintf`, and routes `read`, `write`, `close`, `fcntl`, `pipe` and `select` to `psi_os.c`. |
+| `epoc/psi_os.c` | The EPOC OS layer. See *Networking* and *Main loop* below. Its `main()` calls Links' `main` (renamed `links_main`) with PsiWeb's built-in settings, so no configuration files are needed. |
+| `epoc/pnglibconf.h`, `epoc/float.h` | libpng read-only: no write support, no simplified API and fixed-point arithmetic. `float.h` because ESTLIB has none. |
+| `psi_grey.c` | `pw_grey_convert` with output identical to `web/fb/pwgrey.c`, but faster. It reads two pixels as a word, takes white and black pairs straight through, and divides by 255 with a multiply. It is used only by the Links build. |
+| `mkfont.py` | Rewrites Links' `font_inc.c`: a Latin subset (1,157 of 2,996 glyphs) at 40 px masters. The gamma is applied offline, so the PNGs say gAMA 1.0 and libpng does no gamma work per glyph. Font data drops from 2.58 MB to 0.47 MB. |
+| `mklang.py`, `mksuffix.py` | English-only `language.inc` (380 KB to 17 KB). A public-suffix list of names with one or two labels (188 KB to 102 KB). |
+| `emu/links_rt.c` | A copy of `web/emu/emu_rt.c` with these changes: |
+| | - a **10 MB heap limit**: `malloc` returns NULL above it, and the harness can change the limit; |
+| | - the heap counted as RHeap would count it (size + 4, rounded to 4), live and peak, overall and per page; |
+| | - word-at-a-time `memcpy`, `memset` and `memmove`, like EUSER's `Mem::Copy`. NetSurf's byte loops overstated their cost several times. |
+| | - `pow`, `log`, `exp` and `frexp` written in C and compiled for the ARM with soft float, so their cost counts as ESTLIB's libm would; |
+| | - stubs for the POSIX calls Links links against. |
+| `emu/setjmp.s` | `setjmp`/`longjmp` for the emulator. ESTLIB has them on the device. |
+| `emu/emu_back.c` | A copy of `web/emu/emu_back.c`: no NetSurf start page, and "load pictures" comes from the harness. |
+| `emu/run_links.py` | A copy of `web/emu/run_psiweb.py`. It adds: |
+| | - per-page figures: instructions from `open` or `cmd` to the screenshot, heap peak, bytes over the link and dials; |
+| | - `--images`, `--heap-limit N` and `--json FILE`; |
+| | - `--profile`: instructions per function, static functions included (from `arm-pe-nm`); |
+| | - `--callers f1,f2`: who calls a function; |
+| | - script line `mark NAME`, which starts a new measured section. |
+| `emu/run_pages.sh` | Runs the page set below in parallel. It serves `mktestpage.py`'s picture page on 127.0.0.1:8765. Output goes to `build/links/emu-shots/`. |
+
+The emulator build reuses `web/emu/emu_hc.c` as it is.
+
+### Networking (`psi_os.c` + the `connect.c` patch)
+
+**Connecting**
+- `make_connection` calls `psi_sock_connect(host, port, tls)` when `PSI_EPOC` is set.
+- That calls `pwn_connect`, which dials or connects through psiglue, lets psiglue resolve the name, and does TLS 1.3 when the URL is https.
+- It returns a **pseudo-descriptor** (40 and up). Links' DNS, `socket`/`connect`, `https.c` and OpenSSL are not used. `https_func` is simply `http_func`.
+
+**One connection at a time**
+- Only one pseudo-socket is live. A new connection makes the old descriptor stale, and reads or writes on it fail, so Links retries.
+- Links runs with `max-connections 1`, `max-connections-to-host 1` and `retries 1`.
+- Before each request on a kept-alive connection, `pwn_is_open` checks that the server has not closed it.
+- Keep-alive works: Wikipedia with pictures made 7 requests on one connection.
+
+**Reading and writing**
+- `read` maps to `pwn_read`.
+- A socket is readable when psiglue has bytes, TLS has decrypted data pending, or the link has closed.
+- `write` maps to `pwn_write`.
+- `READ_SIZE` is 16 KB (it was 64 KB).
+
+**Not done yet:** proxy settings from the shared chunk, and connection errors mapped to messages. `pwn`'s reason is put on the status line.
+
+### Main loop
+
+`select.c` is used as it is, with its timers and bottom halves. `loop_select` becomes `psi_select`:
+- It returns at once if a pseudo-socket or file is ready.
+- Otherwise it waits in `pg_wait(ms, want_net, 0)` until the network has data or Links' next timer is due.
+
+The psi driver's 20 ms timer still polls `pwb_next_event` for keys, pen and commands, as on the PC. Signals are off (`NO_SIGNAL_HANDLERS`). Links' startup pipe is a dummy pseudo-descriptor.
+
+### UI changes (driver and patches)
+
+**Pictures**
+- Pictures are **off by default**: `-html-display-images 0`, then `pwb_load_images()` from the app's setting.
+- `PW_CMD_IMAGES "1"` (Show pictures) loads them for the current page. It was tested: see `showpics-1` and `showpics-2`.
+
+**Links' own interface is gone (`PSI_NO_BARS`, set with `GRDRV_PSI`)**
+- No title bar and no status bar: the page gets all 240 lines.
+- No welcome box.
+- A tap at the top of the page no longer opens Links' menu.
+- Esc and F1 to F12 are no longer passed to Links, because they open its menus.
+
+**Other**
+- `about:` home pages, such as NetSurf's `about:welcome`, are not opened.
+- No configuration files are read or written (`init_home` under `PSI_EPOC`).
+- Title, URL, status and busy reach the app through `pwb_set_*`, as in phase 1.
+
+### CPU fixes made, and what they saved
+
+These were found with `--profile`. The figures are ARM instructions for the page load.
+
+| Fix | Where | Effect |
+|---|---|---|
+| 8-bit gamma tables (`-gamma-correction 0`). The 16-bit ones were 196,608 soft-float `pow` evaluations at every start. | `psi_os.c` options | start-up 124M → 44M |
+| Glyph sharpening in 16.16 fixed point instead of float (about 450 instructions a pixel of soft float before) | `dip.c` | 68k.news 168M → 90M |
+| Fonts with 40 px masters and gamma applied offline (decode and scale of each glyph about 7 times less) | `mkfont.py` | 68k.news 229M → 168M (with 48 px) |
+| The search for each form control no longer starts at the top of the page when the page has no `<form>`. This was quadratic: BBC's buttons made 585M instructions. | `html.c`, `html_r.c` | BBC 837M → 290M |
+| Colour JPEGs decoded to grey (Y only) with the fast integer IDCT. libjpeg 9 had been doing 16×16 IDCTs for the chroma upsampling, then the colour conversion. | `jpeg.c` | pictures page 388M → 250M |
+| The picture gamma table (768 `pow`s, about 20M instructions) is kept for the next picture with the same gamma | `dip.c` | pictures page 250M → 124M |
+| Faster `pw_grey_convert`; a glyph lookup cache; remembered `ags_8_to_16` colours | `psi_grey.c`, `dip.c` | about 10% on text pages |
+
+The 32-bit scaler was not needed. The 64-bit divides in `scale_t` did not show in any profile, because JPEGs are now scaled by libjpeg itself and fonts use the grey scaler.
+
+### Results per page (after the fixes)
+
+Each page ran in a fresh process with the 10 MB heap limit, using `web/links/emu/run_pages.sh` plus a 30× Page Down run.
+
+- **Instructions**: counted from the `open` (or command) to the screenshot after the page went idle.
+- **Time**: instructions at 15 MIPS.
+- **Heap**: the RHeap-equivalent peak during that section.
+- **Bytes in**: what came over the link, compressed and with TLS overhead.
+
+| Page | ARM instructions | ~5mx CPU time | Heap peak | Bytes in | Dials | Page Down (one screen) |
+|---|---|---|---|---|---|---|
+| start-up (no page) | 38M | 2.5 s | 1.07 MB (300 KB after) | | | |
+| http://info.cern.ch/ | 14.5M | 1.0 s | 386 KB | 878 | 1 | page fits the screen |
+| http://68k.news/ | 83.2M | 5.5 s | 791 KB | 40,089 | 1 | 17.3M, 1.2 s |
+| https://text.npr.org/ | 39.8M | 2.7 s | 419 KB | 10,097 | 1 | 5.4M, 0.4 s |
+| https://en.m.wikipedia.org/wiki/Psion | 71.1M | 4.7 s | 532 KB | 32,436 | 2 (redirect) | 7.5M, 0.5 s |
+| https://www.bbc.co.uk/, pictures off | 299.4M | 20.0 s | 2.25 MB | 118,258 | 1 | 5.4M, 0.4 s |
+| local picture page, pictures on | 124.1M | 8.3 s | 1.14 MB | 79,813 | 6 | 64.5M, 4.3 s (decodes the 1600×1040 JPEG) |
+| the same, pictures off, then Show pictures | 20.5M + 111.7M | 1.4 s + 7.4 s | 419 KB / 1.16 MB | 890 + 78,923 | 1 + 5 | |
+| https://www.bbc.co.uk/, pictures on (first screen) | 2,256M | 150 s | 3.36 MB | 1,365,737 | 87 | 5.3M, 0.4 s |
+| the same, then 30× Page Down | 103M for 30 screens | 6.9 s | 2.69 MB | 0 | 0 | 0.23 s a screen |
+
+**Notes**
+- The TLS 1.3 handshake costs about **13M instructions (0.9 s)**, mostly x25519.
+- **BBC with pictures: 87 connections.** `ichef.bbci.co.uk` closes the idle kept-alive connection while the Psion is busy between pictures, so nearly every picture needs a new TLS connection. About half of the 150 s is handshakes. A run without `--count`, which is several times faster, needed only 3 connections. Over the modem each new connection is also a dial.
+- No allocation failed on any page. The heap peaks are far below phase 1's PC figures (9.0 MB for BBC with pictures), for three reasons: there is no OpenSSL, colour JPEGs are decoded to grey, and the page uses smaller read buffers.
+- **Scrolling memory is still untested.** 30 Page Downs reached only about 5% of the BBC page (the page is very long without CSS). Phase 1's 17.7 MB after scrolling through every picture has not been retested here.
+
+### Screenshots
+
+In `build/links/emu-shots/`, with copies in this session's scratchpad (`scratchpad/links2/shots/`). Each `NAME-1` is the first screen, and each `NAME-2` is the screen after Page Down or Show pictures.
+
+- `cern-1`, `cern-2`
+- `68k-1`, `68k-2`
+- `npr-1`, `npr-2`
+- `wikipedia-1`, `wikipedia-2`
+- `bbc-1`, `bbc-2`: pictures off
+- `bbcpics-1`, `bbcpics-2`: pictures on
+- `images-1`, `images-2`: pictures on
+- `showpics-1`: pictures off, showing the alt text
+- `showpics-2`: after Show pictures
+
+Text with the 40 px masters looks the same as with Links' 120 px fonts. Grey JPEG decoding gives the same picture as before.
+
+### Sizes (ARM, gcc 3.0 -O2)
+
+The emulator image is **1.68 MB of .text (code and constant data) plus 95 KB of .data**, and about 155 KB of .bss. About 10 KB of that is the emu stand-ins. On the device, ESTLIB is a DLL, and `pwepoc.cpp` plus psiglue add an estimated 50 to 80 KB. **The EXE will be about 1.8 MB.**
+
+| Part | Code | Data (incl. constants) |
+|---|---|---|
+| Links (all of it, before the items below) | 619 KB | 127 KB |
+| fonts (`font_inc.c`, Latin, 40 px) | – | 475 KB (from 2.58 MB of glyph data / 734 KB at 48 px) |
+| public suffixes (one or two labels) | 1 KB | 102 KB (was 188 KB) |
+| charsets | 7 KB | 84 KB |
+| language (English only) | 2 KB | 17 KB (was 380 KB) |
+| libjpeg (decoder) | 121 KB | 9 KB |
+| libpng (read only) | 90 KB | 10 KB |
+| zlib (inflate) | 16 KB | 14 KB |
+| TLS (tls13, x25519, libtomcrypt parts) | 25 KB | 4 KB (+67 KB bss) |
+| psi driver, OS layer, grey conversion, pwnet | 15 KB | 1 KB |
+
+**Further trims**, if needed:
+- Links' own UI modules (`menu`, `bfu`, `listedit`, `bookmark`: about 130 KB of code) once nothing calls them.
+- The unused protocols (`ftp`, `smb`, `finger`, `mailto`, `af_unix`, `doh`).
+- `charsets` limited to the common ones.
+
+### Remaining risks
+
+1. **The 15 MIPS assumption.** All times scale with it, and the CPI of gcc 3.0 code on the ARM710T is not measured. A run of the EPOC build on the 5mx is the real test.
+2. **Not yet an EPOC EXE.** The objects compile with the device flags and ESTLIB headers, but nothing is linked against `estlib.lib` yet. Still to do:
+   - `pwepoc.cpp`'s start-up, heartbeats and quit with Links' `main`;
+   - `psi_mem_report` from RHeap;
+   - a `petran` step with a 10 MB heap;
+   - checking ESTLIB's `setjmp`, maths and `strtod` (only the emulator versions have been run).
+   - Expected: 2 to 3 days.
+3. **The connection model with pictures.** One connection at a time, and servers drop idle keep-alive connections while the Psion decodes. Two possible fixes:
+   - fetch all of a page's pictures before decoding any;
+   - send everything through the WebOne proxy, which keeps its own connections.
+4. **Picture memory on long scrolls** (phase 1 item 4) is still untested on the ARM. Stores of 4-bit grey bitmaps and eviction are still to do.
+5. **Start-up gamma tables** still cost 27M instructions (1.8 s). The fix is to bake the 256-entry tables at build time.
+6. **Links' keyboard shortcuts.** Letters typed outside a form field still reach them (`g`, `q`, `/`) and open Links dialogs. Phase 1 item 8 still applies.
+7. **Links are not distinguished from text.** Blue becomes near-black in 16 greys. Links should be underlined or set to a grey.
+
+### Updated estimate
+
+Phase 2 completed most of phase 1's items 1, 2, 3, 6 and 10, and part of 5 and 7. What remains:
+
+| Item | Days |
+|---|---|
+| EPOC EXE: link with ESTLIB, `pwepoc.cpp` integration, petran, first run on the 5mx | 3–4 |
+| Network: proxy (WebOne) settings, error messages, pictures fetched before decoding or via the proxy | 3–4 |
+| Picture memory: 4-bit bitmaps, eviction, caps, "Page too big" | 5–8 |
+| UI integration: keys and dialogs, forms, link styling, pen scrolling, page information | 4–6 |
+| CPU: baked gamma tables, further trims | 1–2 |
+| Device validation over a modem and over PPP | 3–5 |
+
+**Total: about 19 to 29 days**, against the 31 to 49 days estimated after phase 1.
