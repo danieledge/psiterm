@@ -148,12 +148,50 @@ static void SetMsg(char* aOut, int aMax, const char* aText)
 	aOut[k] = 0;
 	}
 
+// Plain words for the errors a connection meets (NetDial nd_err.h, PPP
+// in_iface.h, TCP/IP in_sock.h, E32), so a message says what went wrong
+// rather than only a number
+static const char* ErrWords(TInt aErr)
+	{
+	switch (aErr)
+		{
+	case -3:    return "cancelled";
+	case -21:   return "the serial port is reserved - is the Remote link on?";
+	case -33:   return "timed out";
+	case -34:   return "the server refused the connection";
+	case -36:   return "the connection was closed";
+	case -190:  return "the network cannot be reached - the dial-up failed";
+	case -191:  return "the server cannot be reached";
+	case -3001: return "the modem did not answer the dial-up";
+	case -3002: return "the modem reported an error";
+	case -3003: return "the login to the Internet service failed";
+	case -3004: return "the login script timed out";
+	case -3005: return "the login script failed";
+	case -3006: return "no Internet service is set up (Control panel > Internet)";
+	case -3050: return "the Internet service refused the user name or password";
+	case -3051: return "the Internet service wants a more secure login";
+	case -3052: return "the Internet account is disabled";
+	case -3053: return "the Internet account may not log in at this time";
+	case -3054: return "the Internet account's password has expired";
+	case -3055: return "the Internet account may not dial in";
+	case -3056: return "the Internet service wants the password changed";
+	case -3057: return "the Internet service's call-back was not accepted";
+	default:    return 0;
+		}
+	}
+
 static void SetMsgErr(char* aOut, int aMax, const char* aText, TInt aErr)
 	{
 	if (!aOut || aMax < 16)
 		return;
 	TPtr8 p((TUint8*)aOut, 0, aMax - 1);
 	p.Copy(TPtrC8((const TUint8*)aText));
+	const char* w = ErrWords(aErr);
+	if (w && p.Length() + 4 + (TInt)User::StringLength((const TUint8*)w) + 12 < aMax)
+		{
+		p.Append(_L8(": "));
+		p.Append(TPtrC8((const TUint8*)w));
+		}
 	p.AppendFormat(_L8(" (error %d)"), aErr);
 	p.ZeroTerminate();
 	}
@@ -631,9 +669,9 @@ static int WaitLink(TRequestStatus& aStat, TInt aTimeoutUs, const char* aWhat)
 				{
 				char m[100];
 				TPtr8 p((TUint8*)m, 0, sizeof(m) - 1);
-				p.Format(_L8("  Psion Internet: %s (stage %d)...\r\n"), stageName, stage);
+				p.Format(_L8("  Psion Internet: %s...\r\n"), stageName);
 				p.ZeroTerminate();
-				LinkMsg(m);
+				Say(m);                      // (the status line, and the terminal or update window)
 				}
 			}
 		if (sinceNote >= KStillWaitingUs)
@@ -1591,6 +1629,26 @@ static int ModemAnswersAt()
 	return 0;
 	}
 
+// Sends a command and waits for its result: 1 OK, 0 ERROR, -1 nothing
+static int ModemCommand(const char* aCmd)
+	{
+	char line[160];
+	int n = 0;
+	while (aCmd[n]) n++;
+	pg_serial_write(aCmd, n);
+	pg_serial_write("\r", 1);
+	for (int i = 0; i < 4; i++)
+		{
+		if (ReadLine(line, sizeof(line), 800) < 0)
+			return -1;
+		if (StartsWith(line, "OK"))
+			return 1;
+		if (StartsWith(line, "ERROR"))
+			return 0;
+		}
+	return -1;
+	}
+
 // Psion Internet: before the Psion's TCP/IP starts, send the modem the
 // user's "first send" command (e.g. ATDT777, which puts a WiRSa into PPP)
 // and wait for CONNECT. Nothing here is specific to one modem: the command
@@ -1826,6 +1884,18 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 		else
 			Say("  The modem still does not answer AT - is it on, and at this baud rate?\r\n");
 		}
+	// Wi-Fi modems (WiRSa, WiFi232, RetroWiFiModem) can treat 0xFF bytes as
+	// telnet commands, eating or doubling them, which corrupts SSH and TLS.
+	// ATNET0 turns that off for the call; a modem without it answers ERROR,
+	// which does no harm (the Atom firmware never does telnet).
+	pg_msleep(100);
+	gRxPos = gRxLen = 0;
+	gComm->ResetBuffers();
+	{
+	int net0 = ModemCommand("ATNET0");
+	LinkLog(net0 == 1 ? "modem: ATNET0 OK (telnet handling off)"
+	                  : net0 == 0 ? "modem: ATNET0 not supported (ERROR)" : "modem: no answer to ATNET0");
+	}
 	pg_msleep(100);
 	gRxPos = gRxLen = 0;
 	gComm->ResetBuffers();
@@ -2244,6 +2314,10 @@ static void LtReportModem(PgLinkTest* aT)
 			}
 		else
 			LtSay1(aT, "CTS is ", cts, ", DCD is ", dcd);
+		// the modem drives CTS: hardware flow control can be used, and at
+		// 115200 it is what stops long downloads overrunning the Psion
+		if (!aT->rtscts && aT->cts && at == PG_AT_OK)
+			LtSay1(aT, "The modem drives CTS - Flow control RTS/CTS is safer at speed");
 		}
 	if (aT->modem[0])
 		LtSay1(aT, "Modem: ", aT->modem);

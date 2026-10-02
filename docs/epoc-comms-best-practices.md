@@ -92,7 +92,10 @@ Each rule gives its source and how the code complies.
 - **N8:** an empty host name is refused before it can "resolve" to the Psion itself.
 - **Connect:** File > Connect is in PsiTerm, and is added to PsiMail and PsiWeb in this change. It brings the link up ahead of use, for both routes.
 
-### 3.2 Needs Dan's decision, because each changes connection behaviour
+### 3.2 Agreed with Dan and done in 0.78 (2 October 2026)
+
+All four were approved. What was done: `ATNET0` is sent before every `ATDT` and an `ERROR` reply is ignored; the Test suggests RTS/CTS when the modem drives CTS; each dial-up stage is listed as it happens; the NetDial, PPP and TCP/IP error codes come with plain words (`ErrWords` in psiglue).
+
 
 1. **Telnet handling on Wi-Fi modems (well sourced).**
    - What happens: WiFi232, WiRSa and RetroWiFiModem process telnet IAC bytes (0xFF) unless told not to: `ATNET0` on WiRSa, WiFi232 and RetroWiFiModem, or `ATDT` without the T modifier on Zimodem. In that mode they eat or double 0xFF bytes, which corrupts SSH and TLS. The result is the classic rare, unexplained MAC error.

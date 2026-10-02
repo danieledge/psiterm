@@ -106,7 +106,7 @@ void PgLinkTestL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppSt
  * connection up (dialling, with no "Connect now?" question), or checks the
  * modem, and says what it found in the result dialog, titled aTitle. */
 void PgLinkConnectL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
-	int aResultDialog, int aFirstLineId, const TDesC& aTitle);
+	int aResultDialog, int aFirstLineId, const TDesC8& aTitle);
 #endif
 
 #endif

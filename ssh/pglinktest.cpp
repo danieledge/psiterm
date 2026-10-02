@@ -105,7 +105,7 @@ void PgLinkTestL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppSt
 	}
 
 void PgLinkConnectL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
-	int aResultDialog, int aFirstLineId, const TDesC& aTitle)
+	int aResultDialog, int aFirstLineId, const TDesC8& aTitle)
 	{
 	PgLinkRunL(aBaudIndex, aRtsCts, aNetMode, aPppStart, aResultDialog, aFirstLineId, ETrue, &aTitle);
 	}

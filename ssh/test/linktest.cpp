@@ -94,6 +94,14 @@ int main()
 	CHECK(Has(t, "CTS is low - set Flow control to None"));
 	CHECK(Has(t, "may not support flow control"));
 
+	// CTS high with flow control off: suggest RTS/CTS; low or already on: not
+	Blank(t); t.at = PG_AT_OK; t.signals = 1; t.cts = 1; t.dcd = 1;
+	pg_lt_report(&t); Dump("CTS high, flow control off", t);
+	CHECK(Has(t, "Flow control RTS/CTS is safer at speed"));
+	Blank(t); t.at = PG_AT_OK; t.signals = 1; t.cts = 1; t.rtscts = 1;
+	pg_lt_report(&t);
+	CHECK(!Has(t, "Flow control RTS/CTS is safer"));
+
 	Blank(t); t.at = PG_AT_OK; t.escaped = 1;
 	pg_lt_report(&t);
 	CHECK(Has(t, "+++ and ATH ended it"));
