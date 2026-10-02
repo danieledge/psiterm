@@ -115,8 +115,10 @@ static void pf_progress(struct pf *f, const char *fmt, ...)
 	pwb_set_status(buf);
 }
 
+extern void pw_log(const char *);
 static void pf_error(struct pf *f, const char *why)
 {
+	pw_log(why);
 	fetch_msg msg;
 	msg.type = FETCH_ERROR;
 	msg.data.error = why;

@@ -27,7 +27,8 @@ SKIP = {
 }
 # extra per-project flags
 EXTRA = {
-    "netsurf": "-DPSIWEB -I$(WEB)/fb -I$(WEB)",
+    "netsurf": "-DPSIWEB -Dgettimeofday=pwb_gettimeofday -I$(WEB)/fb -I$(WEB)",
+    "libnsutils": "-Dgettimeofday=pwb_gettimeofday",
     "libnsfb": "-I$(WEB)/fb",
 }
 

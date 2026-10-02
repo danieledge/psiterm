@@ -9,6 +9,7 @@
 #include <e32std.h>
 #include <e32base.h>
 #include <e32hal.h>
+#include <f32file.h>
 #include <e32keys.h>
 
 extern "C" {
@@ -16,6 +17,7 @@ extern "C" {
 #include "fb/pwback.h"
 extern PsiShared* pg_shared();
 extern int pg_attach();
+extern void pg_set_link_log(void (*aFn)(const char*));
 extern void pwn_idle_tick(void);
 extern void pg_msleep(int);
 }
@@ -29,6 +31,84 @@ enum
 	NK_RSHIFT = 303, NK_LSHIFT, NK_RCTRL, NK_LCTRL,
 	NK_MOUSE_1 = 401
 	};
+
+// The Psion's clock (gettimeofday, TTime) counts whole seconds: its RTC has
+// no finer step. NetSurf's scheduler compares times with it, so every
+// callback (a fetch poll due in 10 ms, a redraw) waited for the next
+// second, and many in a row made a page take minutes or never appear. This
+// gettimeofday (NetSurf and libnsutils are built to call it instead) adds
+// the 64 Hz tick count to the clock's seconds.
+extern "C" int gettimeofday(void*, void*);
+extern "C" int pwb_gettimeofday(void* aTv, void*)
+	{
+	static TUint sBaseTick = 0;
+	static long sBaseSec = 0, sBaseUs = 0;
+	static TBool sInit = EFalse;
+	long* tv = (long*)aTv;
+	if (!sInit)
+		{
+		long t[2] = {0, 0};
+		gettimeofday(t, 0);
+		sBaseSec = t[0];
+		sBaseUs = 0;                     // (the sub-second part isn't real)
+		sBaseTick = User::TickCount();
+		sInit = ETrue;
+		}
+	TUint d = User::TickCount() - sBaseTick;          // 1/64 s
+	long sec = sBaseSec + (long)(d >> 6);
+	long us = sBaseUs + (long)(d & 63) * 15625;
+	tv[0] = sec;
+	tv[1] = us;
+	return 0;
+	}
+
+
+// ----- C:\System\Data\PsiWeb.log -------------------------------------------
+// One line per event, "mm:ss.t text", for finding out where a page stops:
+// status text, busy changes, link messages, fetch errors, frames drawn.
+// The last run's log is kept as PsiWeb.old.
+_LIT(KLogFile, "C:\\System\\Data\\PsiWeb.log");
+_LIT(KLogOld, "C:\\System\\Data\\PsiWeb.old");
+static RFs gLogFs;
+static RFile gLog;
+static TInt gLogOpen = 0;       // 0 not tried, 1 open, -1 failed
+static TUint gLogT0 = 0;
+static char gLogLast[96];
+
+static void LogOpen()
+	{
+	gLogOpen = -1;
+	if (gLogFs.Connect() != KErrNone)
+		return;
+	gLogFs.Delete(KLogOld);
+	gLogFs.Rename(KLogFile, KLogOld);
+	if (gLog.Replace(gLogFs, KLogFile, EFileWrite | EFileShareAny) != KErrNone)
+		{
+		gLogFs.Close();
+		return;
+		}
+	gLogT0 = User::TickCount();
+	gLogOpen = 1;
+	}
+
+extern "C" void pw_log(const char* aText)
+	{
+	if (gLogOpen == 0)
+		LogOpen();
+	if (gLogOpen != 1 || !aText)
+		return;
+	TUint t = (User::TickCount() - gLogT0) * 10 / 64;       // 1/10 s
+	TBuf8<160> line;
+	line.AppendFormat(_L8("%02u:%02u.%u "), (t / 600) % 100, (t / 10) % 60, t % 10);
+	TInt n = 0;
+	while (aText[n] && n < 120) n++;
+	line.Append((const TUint8*)aText, n);
+	line.Append(_L8("\r\n"));
+	gLog.Write(line);
+	gLog.Flush();
+	}
+
+static void LogLink(const char* aText) { pw_log(aText); }
 
 static PwShared* gPw = 0;
 static int gInitDone = 0;
@@ -48,6 +128,8 @@ static PwShared* Pw()
 	if (!gInitDone)
 		{
 		gInitDone = 1;
+		pw_log("engine start");
+		pg_set_link_log(LogLink);
 		gInitResult = pg_attach();     // the chunk only: the serial port is
 		                               // opened when a page is fetched
 		PwShared* s = (PwShared*)pg_shared();
@@ -111,6 +193,15 @@ extern "C" void pwb_present(const unsigned short* aFb, int aFbW, int aX0, int aY
 	if (aY0 < s->dirty_y0) s->dirty_y0 = aY0;
 	if (aY1 > s->dirty_y1) s->dirty_y1 = aY1;
 	s->frame_seq++;
+	if (s->frame_seq <= 5 || s->frame_seq % 25 == 0)
+		{
+		char b[48];
+		TBuf8<48> t;
+		t.Format(_L8("frame %u rows %d-%d"), s->frame_seq, aY0, aY1);
+		Mem::Copy(b, t.Ptr(), t.Length());
+		b[t.Length()] = 0;
+		pw_log(b);
+		}
 	}
 
 // EPOC key code -> NSFB key code (or a ready character)
@@ -280,10 +371,26 @@ extern "C" int pwb_take_command(char* aArg, int aMax)
 	return c;
 	}
 
-extern "C" void pwb_set_status(const char* aText) { SetText(Pw()->status, sizeof(Pw()->status), aText); }
+extern "C" void pwb_set_status(const char* aText)
+	{
+	SetText(Pw()->status, sizeof(Pw()->status), aText);
+	// (progress lines repeat every few KB: only log a change of wording)
+	if (aText && Mem::Compare((const TUint8*)aText, 12, (const TUint8*)gLogLast, 12) != 0)
+		{
+		SetText(gLogLast, sizeof(gLogLast), aText);
+		char b[120];
+		b[0] = 's'; b[1] = 't'; b[2] = ':'; b[3] = ' ';
+		SetText(b + 4, sizeof(b) - 4, aText);
+		pw_log(b);
+		}
+	}
 extern "C" void pwb_set_title(const char* aText) { SetText(Pw()->title, sizeof(Pw()->title), aText); }
 extern "C" void pwb_set_url(const char* aText) { SetText(Pw()->url, sizeof(Pw()->url), aText); }
-extern "C" void pwb_set_busy(int aBusy) { Pw()->busy = aBusy; }
+extern "C" void pwb_set_busy(int aBusy)
+	{
+	Pw()->busy = aBusy;
+	pw_log(aBusy ? "busy 1" : "busy 0");
+	}
 extern "C" void pwb_set_nav(int aBack, int aFwd) { Pw()->can_back = aBack; Pw()->can_forward = aFwd; }
 
 extern "C" void pwb_fatal(const char* aWhy)
@@ -294,6 +401,7 @@ extern "C" void pwb_fatal(const char* aWhy)
 
 extern "C" void pwb_ready()
 	{
+	pw_log("ready");
 	TMemoryInfoV1Buf mem;
 	UserHal::MemoryInfo(mem);
 	Pw()->free_ram = mem().iFreeRamInBytes;
@@ -318,11 +426,10 @@ extern "C" int pwb_load_images() { return Pw()->load_images; }
 extern "C" int pwb_zoom() { return Pw()->zoom; }
 extern "C" void* pwb_shared() { return Pw(); }
 
+// (the fetcher's poll slices and time-outs: tick resolution, not seconds)
 extern "C" unsigned long pwb_ms()
 	{
-	TTime t;
-	t.UniversalTime();
-	TInt64 us = t.Int64();
-	TInt64 ms = us / TInt64(1000);
-	return ms.Low();
+	long tv[2];
+	pwb_gettimeofday(tv, 0);
+	return (unsigned long)tv[0] * 1000UL + (unsigned long)(tv[1] / 1000);
 	}

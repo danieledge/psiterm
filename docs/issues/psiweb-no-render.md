@@ -1,6 +1,14 @@
 # PsiWeb never shows a web page
 
-Status: **open**. Logged 2 Oct 2026, last seen in PsiWeb 0.57 (dev c5dcd44).
+Status: **fix in 0.58, to be confirmed on the 5mx**. Logged 2 Oct 2026, last seen in PsiWeb 0.57 (dev c5dcd44).
+
+## Finding (2 Oct 2026)
+
+- The engine and the app's repaint are fine: the host harness renders pages and error pages, and in the emulator NetSurf's own toolbar reaches the screen.
+- The Psion's clock (`gettimeofday`, `TTime`) has **whole-second** resolution. NetSurf's scheduler and `pwb_ms()` used it, so every scheduled callback (fetch poll, redraw, layout) waited for the next second. A 30 KB page at 115200 baud took 46 s instead of 3.3 s in the harness (`PW_COARSE=1 web/emu/run_psiweb.py`).
+- 0.58: `pwb_gettimeofday()` in `pwepoc.cpp` adds the 64 Hz tick count; NetSurf and libnsutils are built to call it (`web/gen.py`); `pwb_ms()` uses it.
+- 0.58 also writes `C:\System\Data\PsiWeb.log` (previous run: `PsiWeb.old`): status text, busy changes, link messages, fetch errors, frames drawn. If pages still don't show, read it.
+- The emulator could not confirm the fix: `RComm::Open` on COMM::0 never returns there.
 
 ## Symptom
 

@@ -297,6 +297,7 @@ int atexit(void (*f)(void)) { (void)f; return 0; }
 int _epoc32_atexit(void (*f)(void)) { (void)f; return 0; }
 struct timeval { long tv_sec, tv_usec; };
 int gettimeofday(struct timeval *tv, void *tz) { (void)tz; emu_hc(HC_GETTIMEOFDAY, (int)tv, 0, 0, 0); return 0; }
+int pwb_gettimeofday(struct timeval *tv, void *tz) { return gettimeofday(tv, tz); }
 long time(long *t) { struct timeval tv; gettimeofday(&tv, 0); if (t) *t = tv.tv_sec; return tv.tv_sec; }
 static int tmbuf[11];
 void *localtime(const long *t) { emu_hc(HC_LOCALTIME, (int)*t, (int)tmbuf, 0, 0); return tmbuf; }

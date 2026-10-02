@@ -218,3 +218,7 @@ int pwb_load_images(void) { return 1; }
 int pwb_zoom(void) { return getenv("PW_ZOOM") ? atoi(getenv("PW_ZOOM")) : 100; }
 
 unsigned long pwb_ms(void) { return (unsigned long)now_ms(); }
+
+/* NetSurf and libnsutils call this instead of gettimeofday (see pwepoc.cpp) */
+void pw_log(const char *t) { (void)t; }
+int pwb_gettimeofday(struct timeval *tv, void *tz) { (void)tz; return gettimeofday(tv, NULL); }

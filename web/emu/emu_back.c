@@ -54,6 +54,7 @@ unsigned long pwb_ms(void) { return (unsigned long)emu_hc(HB_MS, 0, 0, 0, 0); }
 int pg_dial(char *why, int max) { return emu_hc(HP_DIAL, (int)g_sh.net.host, g_sh.net.port, (int)why, max); }
 void pg_hangup(void) { emu_hc(HP_HANGUP, 0, 0, 0, 0); }
 void pg_link_close(void) { emu_hc(HP_HANGUP, 0, 0, 0, 0); }
+void pw_log(const char *t) { (void)t; }
 int pg_link_is_open(void) { return 0; }
 int pg_net_closed(void) { return 0; }
 int pg_net_avail(void) { return emu_hc(HP_AVAIL, 0, 0, 0, 0); }

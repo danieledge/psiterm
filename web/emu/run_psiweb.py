@@ -167,7 +167,10 @@ def hc(op, a, b, c, d):
     if op == 1:                                      # exit
         state["exit"] = s32(a); uc.emu_stop(); return 0
     if op == 3:                                      # gettimeofday
-        t = time.time(); wr(a, struct.pack("<ii", int(t), int((t % 1) * 1e6))); return 0
+        t = time.time()
+        # PW_COARSE=1: whole seconds only, like the Psion's RTC (TTime and
+        # gettimeofday have no finer step there)
+        wr(a, struct.pack("<ii", int(t), 0 if os.environ.get("PW_COARSE") else int((t % 1) * 1e6))); return 0
     if op == 4:                                      # fopen
         path, mode = cstr(a), cstr(b)
         path = path.replace("\\", "/")
