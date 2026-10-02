@@ -655,6 +655,33 @@ private:
 	TBuf8<240> iTitle;         // the terminal title as it arrives (OSC 0/2)
 	TTmuxTab iTitleTabs[KMaxTabs];   // tmux's window list from a PSITABS title
 	TInt iTitleTabCount;
+	// tmux's windows, asked of tmux itself on a channel of their own
+	// (ssh/tmuxq.c): exact, whatever the status line looks like. The status
+	// line and the PSITABS title stay as fallbacks (a server that will not
+	// run commands, a tmux on another socket).
+	enum { KTqFreshTicks = 15 * 64 };   // an answer is used for this long
+	TUint iTqSent;            // tq_req of the query in flight (0 = none)
+	TUint iTqStartedAt;       // when (TickCount) it was posted
+	TUint iTqDueAt;           // when the next periodic query is due
+	TUint iTqKickAt;          // a query soon, because something changed (0 = none)
+	TInt iTqState;            // 0 not known, 1 tmux answers, 2 the server refuses, 3 no tmux
+	TInt iTqNone;             // answers without tmux in a row
+	TInt iTqPendingSel;       // a window to go to once the query in flight is done (-1 = none)
+	TTmuxTab iQTabs[KMaxTabs];   // the answer: the windows of our session
+	TInt iQCount;
+	TUint iQAt;               // when it arrived
+	TBuf8<16> iQSid;          // our session's id, "$3"
+	TBool iQBarTop;           // status-position top
+	TInt iQBarLines;          // the status setting: 0 off, 1 on, 2... lines
+	TUint iTqPrefixAt;        // when the tmux prefix key was last typed
+	void TmuxQueryReset();
+	void TmuxQueryKick();                // something changed: ask again soon
+	void TmuxQueryTick();                // every tick: post, collect
+	void TmuxQueryDone();                // read the answer
+	TBool TmuxQueryPost(TInt aOp, TInt aIndex);
+	TBool ExactReady() const;            // a fresh answer, and a channel to act on it
+	TBool ExactTabs(TTmuxTab* aTabs, TInt& aCount, TInt& aRow) const;
+	TBool TmuxSelectExact(TInt aIndex);  // go to that window by asking tmux
 	TInt iLastState;          // connection state last tick, and since when
 	TUint iStateSince;
 	TUint iTickCount;

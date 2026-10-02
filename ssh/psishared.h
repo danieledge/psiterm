@@ -18,6 +18,7 @@
 #define PSI_OUT_SIZE      16384
 #define PSI_ENTROPY_SIZE  512
 #define PSI_XFER_LIST_SIZE 16384
+#define PSI_TQ_OUT_SIZE 2048
 
 enum
 	{
@@ -115,7 +116,38 @@ typedef struct
 	/* LIST: one line per entry: 'd' (folder), 'f' (file) or 'l' (other),
 	   the size in decimal, a tab, the name, '\n' */
 	char xfer_list[PSI_XFER_LIST_SIZE];
+	/* tmux queries on a channel of their own (tmuxq.c): PsiTerm asks tmux
+	   itself for its windows - a command run on the server, not a guess
+	   from what the status line shows. PsiTerm fills in tq_op (and the
+	   arguments), then adds 1 to tq_req; psissh runs the command and sets
+	   tq_ack = tq_req, with tq_result (PSI_TQ_*) and the output in tq_out.
+	   One request at a time. */
+	volatile unsigned int tq_req;      /* written by PsiTerm */
+	volatile unsigned int tq_ack;      /* written by psissh */
+	int tq_op;                         /* PSI_TQ_LIST or PSI_TQ_SELECT */
+	char tq_sid[16];                   /* SELECT: the session's id, "$3" */
+	int tq_idx;                        /* SELECT: the window's index */
+	volatile int tq_result;            /* PSI_TQ_* */
+	volatile int tq_len;               /* bytes in tq_out */
+	char tq_out[PSI_TQ_OUT_SIZE];
 	} PsiShared;
+
+/* tmux queries: what to do (tq_op) */
+enum
+	{
+	PSI_TQ_LIST = 1,        /* the clients, windows and status settings */
+	PSI_TQ_SELECT           /* go to window tq_idx of session tq_sid, then LIST */
+	};
+
+/* ...and how it went (tq_result) */
+enum
+	{
+	PSI_TQ_OK = 0,
+	PSI_TQ_NO_EXEC,         /* the server does not run commands on a channel */
+	PSI_TQ_FAILED,          /* the channel failed */
+	PSI_TQ_TIMEOUT,         /* no answer */
+	PSI_TQ_LINK             /* not logged in, or the connection went */
+	};
 
 /* file transfer: what to do (xfer_op) */
 enum

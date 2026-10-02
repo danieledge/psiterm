@@ -955,6 +955,7 @@ int CTermView::CbSetTermProp(VTermProp aProp, VTermValue* aVal, void* aUser)
 		self->iTitle.Append(TPtrC8((const TUint8*)f.str, (TInt)f.len < room ? (TInt)f.len : room));
 		if (f.final)
 			{
+			self->TmuxQueryKick();           // (a window changed, or tmux sent its list)
 			self->iTitleTabCount = 0;
 			if (self->iTitle.Length() >= 8 && self->iTitle.Left(8) == _L8("PSITABS "))
 				{
@@ -1266,6 +1267,7 @@ void CTermView::Tick()
 			BaudValue(iSettings.iBaudIndex));
 		LocalMessage(msg);
 		}
+	TmuxQueryTick();
 	ParseTmuxTabs();
 	if (iStatusH)
 		{
@@ -1402,7 +1404,10 @@ void CTermView::ParseTmuxTabs()
 	TTmuxTab tabs[KMaxTabs];
 	TInt count = 0;
 	TInt row = -1;
-	if (SshLoggedIn() && iScreen)
+	// tmux's own answer (TmuxQueryDone) when there is a fresh one; else what
+	// the status line on the screen shows (or tmux's PSITABS title)
+	TBool exact = iSettings.iTmuxTabs && SshLoggedIn() && iScreen && ExactTabs(tabs, count, row);
+	if (!exact && SshLoggedIn() && iScreen)
 		{
 		for (TInt pass = 0; pass < 2 && row < 0; pass++)
 			{
@@ -1492,6 +1497,8 @@ void CTermView::ParseTmuxTabs()
 	// message in the bar (shown in the strip meanwhile) does not change the
 	// terminal's size, which would make every program redraw.
 	TBool found = iSettings.iTmuxTabs && row >= 0;
+	if (found && !exact && iQCount == 0 && iTqState != 2 && iTqNone < 3)
+		TmuxQueryKick();                     // tabs on the screen: ask tmux for them properly
 	if (!SshLoggedIn() || !iSettings.iTmuxTabs)
 		iTabMiss = KTabMissLimit;            // no session or tabs off: no strip
 	else if (found || (iTabsTop && RowIsBar(iTabHideRow)))
@@ -1570,6 +1577,16 @@ void CTermView::CheckTabsL()
 		m.Append(_L8("\r\n"));
 		LocalMessage(m);
 		}
+	{
+	static const char* const KTqText[] = { "not asked yet", "tmux answers", "the server will not run commands", "no tmux seen" };
+	TBuf8<120> q;
+	q.Format(_L8("\r\nAsking tmux: %s"), KTqText[iTqState >= 0 && iTqState < 4 ? iTqState : 0]);
+	if (iTqState == 1)
+		q.AppendFormat(_L8(", %d windows, session %S, bar %s %d line(s), %d s ago"), iQCount, (const TDesC8*)&iQSid,
+			iQBarTop ? "top" : "bottom", iQBarLines, (TInt)(User::TickCount() - iQAt) / 64);
+	q.Append(_L8("\r\n"));
+	LocalMessage(q);
+	}
 	if (iTabCount == 1)
 		m.Format(_L8("\r\nFound: row %d, 1 window:"), iTabRow + 1);
 	else
@@ -1590,8 +1607,333 @@ void CTermView::CheckTabsL()
 	ShowDebugL();
 	}
 
+// ----- tmux asked directly ---------------------------------------------------------
+// psissh runs "tmux list-clients / list-windows -a / show-options" on a
+// channel of its own (ssh/tmuxq.c) and the answer is parsed here: lines "C",
+// the clients (last activity, session id), "W", the windows (session id,
+// index, 1 if current, name) and tmux's own status settings. Unlike the
+// status line on the screen it does not depend on the theme, a long or odd
+// name, a hidden bar or a redraw half done, and tapping a tab can ask tmux
+// to switch rather than type keys into whatever is running.
+
+// A name from the server (UTF-8) in the Psion's code page; EFalse if it did
+// not all fit
+static TBool TmuxName(const TDesC8& aIn, TDes& aOut)
+	{
+	aOut.Zero();
+	TInt i = 0;
+	while (i < aIn.Length() && aOut.Length() < aOut.MaxLength())
+		{
+		TUint c = aIn[i++];
+		if (c >= 0xc0 && c < 0xf8)
+			{
+			TInt more = c >= 0xf0 ? 3 : c >= 0xe0 ? 2 : 1;
+			TUint cp = c & (0x3f >> more);
+			TInt k = 0;
+			while (k < more && i < aIn.Length() && (aIn[i] & 0xc0) == 0x80)
+				{
+				cp = (cp << 6) | (aIn[i++] & 0x3f);
+				k++;
+				}
+			TInt m = (k == more) ? PsiMapToCodePage(cp) : -1;
+			c = m >= 0 ? (TUint)m : '?';
+			}
+		else if (c >= 0x80 || c < 0x20)
+			c = '?';
+		aOut.Append((TChar)c);
+		}
+	return i >= aIn.Length();
+	}
+
+// the next line of aRest (without its end) in aLine; EFalse when none is left
+static TBool TmuxNextLine(TPtrC8& aRest, TPtrC8& aLine)
+	{
+	if (aRest.Length() == 0)
+		return EFalse;
+	TInt n = aRest.Locate('\n');
+	if (n < 0)
+		{
+		aLine.Set(aRest);
+		aRest.Set(aRest.Right(0));
+		}
+	else
+		{
+		aLine.Set(aRest.Left(n));
+		aRest.Set(aRest.Mid(n + 1));
+		}
+	if (aLine.Length() && aLine[aLine.Length() - 1] == '\r')
+		aLine.Set(aLine.Left(aLine.Length() - 1));
+	return ETrue;
+	}
+
+// field aN (0 = the letter) of a tab-separated line; the last field is the
+// rest of the line, tabs and all (a window's name may hold anything)
+static TBool TmuxField(const TDesC8& aLine, TInt aN, TInt aLast, TPtrC8& aOut)
+	{
+	TPtrC8 rest(aLine);
+	for (TInt i = 0; i < aN; i++)
+		{
+		TInt t = rest.Locate('\t');
+		if (t < 0)
+			return EFalse;
+		rest.Set(rest.Mid(t + 1));
+		}
+	if (aN == aLast)
+		{
+		aOut.Set(rest);
+		return ETrue;
+		}
+	TInt t = rest.Locate('\t');
+	aOut.Set(t < 0 ? rest : rest.Left(t));
+	return t >= 0;
+	}
+
+static TInt TmuxNumber(const TDesC8& aText)
+	{
+	TInt v = 0;
+	for (TInt i = 0; i < aText.Length() && aText[i] >= '0' && aText[i] <= '9' && v < 100000000; i++)
+		v = v * 10 + (aText[i] - '0');
+	return v;
+	}
+
+void CTermView::TmuxQueryReset()
+	{
+	iTqSent = 0;
+	iTqStartedAt = 0;
+	iTqDueAt = 0;
+	iTqKickAt = 0;
+	iTqState = 0;
+	iTqNone = 0;
+	iTqPendingSel = -1;
+	iTqPrefixAt = 0;
+	iQCount = 0;
+	iQAt = 0;
+	iQSid.Zero();
+	iQBarTop = EFalse;
+	iQBarLines = 1;
+	}
+
+// Something has probably changed (a title, the prefix key): ask again soon
+void CTermView::TmuxQueryKick()
+	{
+	if (iTqState == 2 || iTqKickAt)
+		return;
+	iTqKickAt = User::TickCount() + 20;        // 1/3 s: tmux has acted by then
+	if (!iTqKickAt)
+		iTqKickAt = 1;
+	}
+
+TBool CTermView::TmuxQueryPost(TInt aOp, TInt aIndex)
+	{
+	PsiShared* s = iShared;
+	if (!s || !iSshActive || iTqSent)
+		return EFalse;
+	s->tq_op = aOp;
+	if (aOp == PSI_TQ_SELECT)
+		{
+		TInt n = iQSid.Length() < (TInt)sizeof(s->tq_sid) - 1 ? iQSid.Length() : (TInt)sizeof(s->tq_sid) - 1;
+		Mem::Copy(s->tq_sid, iQSid.Ptr(), n);
+		s->tq_sid[n] = 0;
+		s->tq_idx = aIndex;
+		}
+	TUint req = s->tq_req + 1;
+	s->tq_req = req;                           // last: psissh starts now
+	iTqSent = req ? req : 1;
+	iTqStartedAt = User::TickCount();
+	return ETrue;
+	}
+
+TBool CTermView::ExactReady() const
+	{
+	return iShared && iSshActive && iTqState == 1 && iQCount > 0 && iQSid.Length() > 0
+		&& SshLoggedIn() && (TInt)(User::TickCount() - iQAt) < KTqFreshTicks;
+	}
+
+// The windows, from the answer, if it is fresh and the bar is where tmux
+// says. EFalse while tmux has a prompt or message in the bar (the cursor is
+// there), so the strip shows that as before, and when the bar is off or more
+// than one line (the status line on the screen is then read as before).
+TBool CTermView::ExactTabs(TTmuxTab* aTabs, TInt& aCount, TInt& aRow) const
+	{
+	if (!ExactReady() || iQBarLines != 1 || iRows < 3)
+		return EFalse;
+	TInt row = iQBarTop ? 0 : iRows - 1;
+	if (iCurVisible && iCurRow == row)
+		return EFalse;
+	for (TInt t = 0; t < iQCount; t++)
+		aTabs[t] = iQTabs[t];
+	aCount = iQCount;
+	aRow = row;
+	return ETrue;
+	}
+
+void CTermView::TmuxQueryDone()
+	{
+	PsiShared* s = iShared;
+	TInt res = s->tq_result;
+	if (res == PSI_TQ_NO_EXEC)
+		{
+		iTqState = 2;                        // this server will not run commands: the screen it is
+		iQCount = 0;
+		return;
+		}
+	if (res != PSI_TQ_OK)
+		return;                              // (the last answer stays until it is stale)
+	TInt len = s->tq_len;
+	if (len < 0 || len > PSI_TQ_OUT_SIZE)
+		len = 0;
+	TPtrC8 text((const TUint8*)s->tq_out, len);
+	TPtrC8 rest(text), line, f;
+	// first pass: our session is the one of the client active last; the
+	// status settings
+	TBuf8<16> best, only;
+	TInt bestAct = -1, sessions = 0;
+	TBool top = EFalse;
+	TInt barLines = 1;
+	while (TmuxNextLine(rest, line))
+		{
+		if (line.Length() > 2 && line[0] == 'C' && line[1] == '\t')
+			{
+			TPtrC8 act, sid;
+			if (TmuxField(line, 1, 2, act) && TmuxField(line, 2, 2, sid) && sid.Length() < 16)
+				{
+				TInt a = TmuxNumber(act);
+				if (a > bestAct)
+					{
+					bestAct = a;
+					best.Copy(sid);
+					}
+				}
+			}
+		else if (line.Length() > 2 && line[0] == 'W' && line[1] == '\t')
+			{
+			TPtrC8 sid;
+			if (TmuxField(line, 1, 4, sid) && sid.Length() < 16 && sid != only)
+				{
+				only.Copy(sid);
+				sessions++;
+				}
+			}
+		else if (line.Length() >= 16 && line.Left(16) == _L8("status-position "))
+			top = line.Mid(16) == _L8("top");
+		else if (line.Length() >= 7 && line.Left(7) == _L8("status "))
+			{
+			TPtrC8 v = line.Mid(7);
+			barLines = v == _L8("off") ? 0 : v == _L8("on") ? 1 : TmuxNumber(v);
+			}
+		}
+	TBuf8<16> sid;
+	if (bestAct >= 0)
+		sid = best;
+	else if (sessions == 1)
+		sid = only;                          // (no client listed: one session, so it is ours)
+	TInt n = 0;
+	TTmuxTab tabs[KMaxTabs];
+	if (sid.Length())
+		{
+		rest.Set(text);
+		while (TmuxNextLine(rest, line) && n < KMaxTabs)
+			{
+			TPtrC8 ws, idx, act, name;
+			if (line.Length() > 2 && line[0] == 'W' && line[1] == '\t'
+				&& TmuxField(line, 1, 4, ws) && ws == sid
+				&& TmuxField(line, 2, 4, idx) && TmuxField(line, 3, 4, act) && TmuxField(line, 4, 4, name))
+				{
+				tabs[n].iIndex = TmuxNumber(idx);
+				if (!TmuxName(name, tabs[n].iName))
+					{
+					tabs[n].iName.SetLength(tabs[n].iName.MaxLength() - 1);
+					tabs[n].iName.Append((TChar)0x85);   // ("..." - cut here to fit)
+					}
+				tabs[n].iCurrent = act.Length() && act[0] == '1';
+				tabs[n].iX0 = tabs[n].iX1 = 0;
+				n++;
+				}
+			}
+		}
+	if (n == 0)
+		{
+		iQCount = 0;
+		iTqState = 3;                        // no tmux (or none we can tell is ours)
+		iTqNone++;
+		return;
+		}
+	TInt cur = 0;
+	for (TInt t = 0; t < n; t++)
+		if (tabs[t].iCurrent)
+			cur++;
+	if (cur == 0)
+		tabs[0].iCurrent = ETrue;
+	for (TInt t = 0; t < n; t++)
+		iQTabs[t] = tabs[t];
+	iQCount = n;
+	iQAt = User::TickCount();
+	iQSid = sid;
+	iQBarTop = top;
+	iQBarLines = barLines;
+	iTqState = 1;
+	iTqNone = 0;
+	}
+
+void CTermView::TmuxQueryTick()
+	{
+	PsiShared* s = iShared;
+	TUint now = User::TickCount();
+	if (!s || !iSshActive || !iSettings.iTmuxTabs || !SshLoggedIn() || iReconnectWait)
+		return;
+	if (iTqSent)
+		{
+		if (s->tq_ack == iTqSent)
+			{
+			iTqSent = 0;
+			TmuxQueryDone();
+			}
+		else if ((TInt)(now - iTqStartedAt) > 40 * 64)
+			iTqSent = 0;                     // never answered (psissh gives up itself after 25 s)
+		else
+			return;
+		}
+	if (iTqState == 2)
+		return;
+	if (iTqPendingSel >= 0 && ExactReady())
+		{
+		TInt i = iTqPendingSel;
+		iTqPendingSel = -1;
+		if (TmuxQueryPost(PSI_TQ_SELECT, i))
+			return;
+		}
+	TBool kick = iTqKickAt && (TInt)(now - iTqKickAt) >= 0;
+	if (!kick && (TInt)(now - iTqDueAt) < 0)
+		return;
+	if ((TInt)(now - iTqStartedAt) < 20)
+		return;                              // (not again within 1/3 s)
+	if (TmuxQueryPost(PSI_TQ_LIST, 0))
+		{
+		iTqKickAt = 0;
+		// about every 4 s while tmux answers; less often while it does not
+		iTqDueAt = now + (iTqState == 1 ? 4 * 64 : iTqNone >= 3 ? 30 * 64 : 10 * 64);
+		}
+	}
+
+// Go to a window by asking tmux (not by typing its prefix into whatever is
+// running: in vim's insert mode, a pager or a prompt that goes wrong). The
+// tabs change at once; the answer to the command confirms them.
+TBool CTermView::TmuxSelectExact(TInt aIndex)
+	{
+	if (!ExactReady())
+		return EFalse;
+	for (TInt t = 0; t < iQCount; t++)
+		iQTabs[t].iCurrent = (iQTabs[t].iIndex == aIndex);
+	iTabSig.Zero();                          // (so the strip is drawn again)
+	if (!TmuxQueryPost(PSI_TQ_SELECT, aIndex))
+		iTqPendingSel = aIndex;
+	return ETrue;
+	}
+
 void CTermView::SelectTmuxWindow(TInt aIndex)
 	{
+	if (TmuxSelectExact(aIndex))
+		return;
 	SendCtrl(iSettings.iTmuxPrefix ? 'A' : 'B');
 	if (aIndex >= 0 && aIndex <= 9)
 		SendChar('0' + aIndex);
@@ -1605,6 +1947,16 @@ void CTermView::SelectTmuxWindow(TInt aIndex)
 
 void CTermView::TmuxNextWindow(TBool aBack)
 	{
+	if (ExactReady())
+		{
+		TInt cur = 0;
+		for (TInt t = 0; t < iQCount; t++)
+			if (iQTabs[t].iCurrent)
+				cur = t;
+		TInt next = aBack ? (cur + iQCount - 1) % iQCount : (cur + 1) % iQCount;
+		if (TmuxSelectExact(iQTabs[next].iIndex))
+			return;
+		}
 	SendCtrl(iSettings.iTmuxPrefix ? 'A' : 'B');
 	SendChar(aBack ? 'p' : 'n');
 	}
@@ -2349,6 +2701,15 @@ TKeyResponse CTermView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aT
 	TUint mods = aKeyEvent.iModifiers;
 	if (code != EKeyMenu)
 		AddKeyEntropy(code);
+	// the tmux prefix and the key after it may change the window: ask tmux soon
+	if (iSshActive && iSettings.iTmuxTabs && iTqState == 1)
+		{
+		TUint now = User::TickCount();
+		if ((mods & EModifierCtrl) && code == (TUint)(iSettings.iTmuxPrefix ? 1 : 2))
+			iTqPrefixAt = now ? now : 1;
+		if (iTqPrefixAt && now - iTqPrefixAt < 3 * 64)
+			TmuxQueryKick();
+		}
 	if (iReconnectWait)
 		{
 		if (code == EKeyEscape)
@@ -3252,6 +3613,7 @@ void CTermView::LaunchSshL(TInt aMode)
 	iChunkOpen = ETrue;
 	iShared = (PsiShared*)iChunk.Base();
 	Mem::FillZ(iShared, sizeof(PsiShared));
+	TmuxQueryReset();
 	iShared->magic = PSI_SHARED_MAGIC;
 	iShared->rows = iRows;
 	iShared->cols = iCols;
@@ -3555,6 +3917,7 @@ void CTermView::SshProcessEnded()
 		iChunkOpen = EFalse;
 		}
 	iSshActive = EFalse;
+	TmuxQueryReset();
 	SyncToolbar();
 	iModemOnline = EFalse;              // psissh hangs up as it ends
 	iMouseMode = VTERM_PROP_MOUSE_NONE;  // whatever asked for the mouse has gone

@@ -415,9 +415,8 @@ static void sftp_chan_cleanup(const struct Channel *c)
 
 /* SSH_MSG_CHANNEL_SUCCESS / FAILURE (cli-session.c sends them here): the
    answer to our subsystem request. Others (keepalives) are ignored. */
-void psi_sftp_chanreply(int success)
+void psi_sftp_chanreply(int success, unsigned int chan)
 {
-	unsigned int chan = buf_getint(ses.payload);
 	if (!ch || ch->index != chan || ch_state != CH_SUBSYS)
 		return;
 	if (!success) {

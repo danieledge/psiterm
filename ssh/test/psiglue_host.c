@@ -153,7 +153,52 @@ static void xfer_tick(void)
 		return;
 	}
 }
-int pg_kbd_avail(void) { xfer_tick(); pump_stdin(0); return (int)(g.kbd_head - g.kbd_tail); }
+/* tmux query test hook: PSI_TQ names a script, run once logged in, one
+   request at a time as PsiTerm posts them. Results go to PSI_TQ_OUT (default
+   /tmp/psitq.out). Lines:  list     select <session id, e.g. $0> <window index>
+   sleep <seconds>     quit */
+static FILE* gTqIn;
+static FILE* gTqOut;
+static int gTqBusy, gTqEnd;
+static long long gTqWake;
+static char gTqCmd[200];
+static void tq_tick(void)
+{
+	char line[300], a[100];
+	int n;
+	if (!gTqIn) {
+		static int tried;
+		if (tried || !getenv("PSI_TQ")) return;
+		tried = 1;
+		gTqIn = fopen(getenv("PSI_TQ"), "r");
+		gTqOut = fopen(getenv("PSI_TQ_OUT") ? getenv("PSI_TQ_OUT") : "/tmp/psitq.out", "w");
+		if (!gTqIn || !gTqOut) return;
+	}
+	if (g.state != PSI_STATE_CONNECTED || gTqEnd) return;
+	if (gTqWake && now_us() < gTqWake) return;
+	gTqWake = 0;
+	if (gTqBusy) {
+		if (g.tq_ack != g.tq_req) return;
+		fprintf(gTqOut, "RESULT %s rc=%d len=%d\n", gTqCmd, g.tq_result, g.tq_len);
+		fwrite(g.tq_out, 1, g.tq_len, gTqOut);
+		fflush(gTqOut);
+		gTqBusy = 0;
+	}
+	for (;;) {
+		if (!fgets(line, sizeof(line), gTqIn)) { fprintf(gTqOut, "END\n"); fflush(gTqOut); gTqEnd = 1; return; }
+		line[strcspn(line, "\r\n")] = 0;
+		if (!strcmp(line, "quit")) { g.quit = 1; return; }
+		if (sscanf(line, "sleep %d", &n) == 1) { gTqWake = now_us() + n * 1000000LL; return; }
+		if (!strcmp(line, "list")) g.tq_op = PSI_TQ_LIST;
+		else if (sscanf(line, "select %99s %d", a, &n) == 2) { g.tq_op = PSI_TQ_SELECT; snprintf(g.tq_sid, sizeof(g.tq_sid), "%s", a); g.tq_idx = n; }
+		else continue;
+		snprintf(gTqCmd, sizeof(gTqCmd), "%s", line);
+		g.tq_req++;
+		gTqBusy = 1;
+		return;
+	}
+}
+int pg_kbd_avail(void) { xfer_tick(); tq_tick(); pump_stdin(0); return (int)(g.kbd_head - g.kbd_tail); }
 int pg_kbd_read(void* b, int m) { int n = 0; unsigned char* o = b; pump_stdin(0); while (n < m && g.kbd_tail != g.kbd_head) { o[n++] = g.kbd[g.kbd_tail % PSI_KBD_SIZE]; g.kbd_tail++; } return n; }
 void pg_out_write(const void* b, int n) { fwrite(b, 1, n, stdout); fflush(stdout); }
 void pg_winsize(int* r, int* c) { *r = g.rows; *c = g.cols; }
@@ -170,6 +215,7 @@ int pg_wait(int ms, int wantNet, int wantKbd)
 		if (g.quit) mask |= 8;
 		if (mask) return mask;
 		xfer_tick();
+		tq_tick();
 		{
 			int slice = 30000;
 			if (ms >= 0) { long long left = ms * 1000LL - (now_us() - start); if (left <= 0) return 0; if (left < slice) slice = (int)left; if (slice < 1000) slice = 1000; }

@@ -51,10 +51,20 @@ static void cli_algos_initialise(void);
 struct clientsession cli_ses; /* GLOBAL */
 
 #ifdef __EPOC32__
-extern void psi_sftp_chanreply(int success);
+extern void psi_sftp_chanreply(int success, unsigned int chan);
 extern void psi_sftp_loop(void);
-static void psi_recv_channel_success(void) { psi_sftp_chanreply(1); }
-static void psi_recv_channel_failure(void) { psi_sftp_chanreply(0); }
+extern void psi_tq_chanreply(int success, unsigned int chan);
+extern void psi_tq_loop(void);
+/* the channel number comes first in the message: read it once, tell both
+   second-channel users (file transfer, tmux queries) */
+static void psi_recv_channel_reply(int success)
+{
+	unsigned int chan = buf_getint(ses.payload);
+	psi_sftp_chanreply(success, chan);
+	psi_tq_chanreply(success, chan);
+}
+static void psi_recv_channel_success(void) { psi_recv_channel_reply(1); }
+static void psi_recv_channel_failure(void) { psi_recv_channel_reply(0); }
 #endif
 
 /* Sorted in decreasing frequency will be more efficient - data and window
@@ -350,6 +360,7 @@ static void cli_sessionloop() {
 			}
 #ifdef __EPOC32__
 			psi_sftp_loop();        /* PsiTerm's file transfer requests */
+			psi_tq_loop();          /* ...and its tmux queries */
 #endif
 			return;
 

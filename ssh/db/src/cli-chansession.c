@@ -89,7 +89,9 @@ static void cli_closechansess(const struct Channel *UNUSED(channel)) {
 	{
 		/* PsiTerm: the file transfer channel must not keep the session open */
 		extern void psi_sftp_shell_closed(void);
+		extern void psi_tq_shell_closed(void);
 		psi_sftp_shell_closed();
+		psi_tq_shell_closed();
 	}
 #endif
 

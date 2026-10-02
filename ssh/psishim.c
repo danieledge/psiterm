@@ -65,6 +65,7 @@ extern const char* pg_home(void);
 #define PSI_FD_SIGR 51
 #define PSI_FD_SIGW 52
 #define PSI_FD_SFTP 53                       /* the file transfer channel (sftp.c) */
+#define PSI_FD_TQ 54                         /* the tmux query channel (tmuxq.c) */
 
 /* from sftp.c */
 extern int psi_sftp_read(void*, int);
@@ -72,6 +73,11 @@ extern int psi_sftp_write(const void*, int);
 extern int psi_sftp_pending(void);
 extern int psi_sftp_running(void);
 extern void psi_sftp_session_ended(void);
+/* from tmuxq.c */
+extern int psi_tq_read(void*, int);
+extern int psi_tq_write(const void*, int);
+extern int psi_tq_running(void);
+extern void psi_tq_session_ended(void);
 
 static FILE psi_tty_file;                    /* marker for "/dev/tty" */
 #define PSI_TTY (&psi_tty_file)
@@ -343,6 +349,8 @@ int psi_read(int fd, void *buf, size_t len)
 	}
 	if (fd == PSI_FD_SFTP)
 		return psi_sftp_read(buf, len);
+	if (fd == PSI_FD_TQ)
+		return psi_tq_read(buf, len);
 	if (fd == PSI_FD_SIGR) {
 		if (psi_sig_pending) {
 			psi_sig_pending = 0;
@@ -369,6 +377,8 @@ int psi_write(int fd, const void *buf, size_t len)
 	}
 	if (fd == PSI_FD_SFTP)
 		return psi_sftp_write(buf, len);
+	if (fd == PSI_FD_TQ)
+		return psi_tq_write(buf, len);
 	return write(fd, buf, len);
 }
 
@@ -386,7 +396,7 @@ int psi_writev(int fd, const struct iovec *iov, int iovcnt)
 
 int psi_close(int fd)
 {
-	if (fd <= 2 || fd == PSI_FD_NET || fd == PSI_FD_SIGR || fd == PSI_FD_SIGW || fd == PSI_FD_SFTP)
+	if (fd <= 2 || fd == PSI_FD_NET || fd == PSI_FD_SIGR || fd == PSI_FD_SIGW || fd == PSI_FD_SFTP || fd == PSI_FD_TQ)
 		return 0;
 	return close(fd);
 }
@@ -419,8 +429,8 @@ int psi_select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv)
 	ms = tv ? (int)(tv->tv_sec * 1000 + tv->tv_usec / 1000) : -1;
 	if (wantW || (wantSig && psi_sig_pending) || sftpOut)
 		ms = 0;
-	else if (psi_sftp_running() && (ms < 0 || ms > 250))
-		ms = 250;                      /* look for file transfer requests 4 times a second */
+	else if ((psi_sftp_running() || psi_tq_running()) && (ms < 0 || ms > 250))
+		ms = 250;                      /* look for file transfer and tmux requests 4 times a second */
 
 	mask = pg_wait(ms, wantNet, wantKbd);
 
@@ -1253,6 +1263,7 @@ void psi_session_ended(int code, int lost)
 {
 	PsiShared *s = pg_shared();
 	psi_sftp_session_ended();  /* no half-written download left on the Psion */
+	psi_tq_session_ended();
 	if (s && lost && !s->quit)
 		s->lost_link = 1;      /* logged in, then the link failed: PsiTerm may reconnect */
 	pg_hangup();
