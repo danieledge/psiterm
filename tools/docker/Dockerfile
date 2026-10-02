@@ -9,6 +9,7 @@ RUN dpkg --add-architecture i386 && apt-get update && apt-get install -y --no-in
         build-essential gcc-multilib g++-multilib flex bison zlib1g-dev \
         wine wine32:i386 \
         python3 python3-pil git perl gperf pkg-config libpng-dev \
+        libexpat1-dev libfreetype-dev libssl-dev \
         xz-utils zip unzip ca-certificates file \
     && rm -rf /var/lib/apt/lists/*
 ENV WINEDEBUG=-all
