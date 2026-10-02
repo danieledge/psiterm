@@ -35,10 +35,12 @@ setup)
 		git clone "$SDK_URL" "$SDK"
 		git -C "$SDK" checkout -q "$SDK_REV"
 	fi
-	if [ ! -x "$SDK/gcc-3.0-psion-98r2-9/bin/arm-pe-gcc" ]; then
-		run "cd '$SDK/install' && ./install.sh"
+	run "wineboot -i >/dev/null 2>&1 || true"      # (install.sh links into the prefix)
+	if [ ! -d "$SDK/epoc_cpp_sdk/epoc32" ]; then
+		run "cd '$SDK/install' && ./install.sh" > "$WORK/sdk-install.log" 2>&1 \
+			|| { tail -20 "$WORK/sdk-install.log"; exit 1; }
 	fi
-	run "wineboot -i >/dev/null 2>&1 || true"
+	[ -d "$SDK/epoc_cpp_sdk/epoc32" ] || { echo "SDK install failed: see $WORK/sdk-install.log"; exit 1; }
 	echo "SDK ready in $SDK"
 	;;
 all)
