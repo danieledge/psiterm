@@ -49,7 +49,7 @@ echo "== package"
 P=$TOP/build/web-pkg
 rm -rf "$P"; mkdir -p "$P" "$TOP/dist"
 cp "$REL/psiweb.app" "$REL/psiweb.rsc" "$REL/psiweb.exe" "$HERE/pkg/psiweb.pkg" "$TOP/build/web-icons/psiweb.mbm" "$P/"
-cp "$REL/stdlib.sis" "$P/STDLIB.SIS"       # ESTLIB.DLL for psiweb.exe (not in the 5mx ROM)
+install -m 644 "$REL/stdlib.sis" "$P/STDLIB.SIS"   # ESTLIB.DLL for psiweb.exe (not in the 5mx ROM)
 python3 "$HERE/pkg/mkicon.py" "$P/psiweb.aif" > /dev/null
 { echo "PsiWeb is NetSurf (https://www.netsurf-browser.org/), GNU GPL v2,"
   echo "with PsiTerm's networking and TLS (MIT). Source: https://github.com/danieledge/psiterm"
