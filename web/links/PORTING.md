@@ -695,3 +695,123 @@ In order of size:
 6. **New glyphs** still cost about 40,000 instructions each (scale, sharpen, mix, round): 68k.news's Page Down is 0.35 s because it brings new sizes into view. Pre-rendering the few sizes PsiWeb uses would remove it.
 7. **TLS reads block** until a whole record has arrived (up to 16 KB, 1.6 s at 10 KB/s), during which Links cannot react to the pen or keys. Not a CPU cost, but worth fixing with the network work.
 8. **The 15 MIPS assumption**: still to be checked with one run on the 5mx.
+
+## Phase 4: device build
+
+Written 2 October 2026. Phase 4 makes the real thing: `PsiWeb.sis` whose `psiweb.exe` is Links, linked against ESTLIB with PsiWeb's own EPOC backend, so Dan can install it on the 5mx and time it. PsiWeb's version is now **0.62** (`web/app/psiweb.cpp` `KVersion`, `web/pkg/psiweb.pkg`). It is not signed, `dist/` is untouched and nothing is committed: that is the release step.
+
+### Sizes
+
+| | Size |
+|---|---|
+| `psiweb.exe` (Links, petran'd) | **1,860,884 bytes** (1.77 MB; NetSurf's was 2.6 MB) |
+| `PsiWeb.sis` (app, engine, icons, COPYING, and ESTLIB's `STDLIB.SIS`) | **2,021,038 bytes** (NetSurf 0.61: 2,800,785) |
+
+The petran settings are NetSurf's: heap 256 KB to **10 MB**, stack 256 KB. Links' peaks in the ARM harness are 0.3 to 2.3 MB for text pages and up to 6 MB for BBC with all its pictures, so the 10 MB ceiling stays. The EXE is loaded into RAM, so it costs about 1.8 MB on top of the heap.
+
+### How to build
+
+```
+tools/docker/psibuild web/build.sh                          # dist/PsiWeb.sis (Links)
+tools/docker/psibuild "PSIWEB_SIS=$PWD/build/x.sis web/build.sh"   # elsewhere
+tools/docker/psibuild "make -f web/links/epoc.mk -j8 exe"   # only the engine: build/links/epoc/psiweb.exe
+```
+
+`web/build.sh` fetches and patches Links the first time (`web/links/fetch.sh`), builds the engine with `web/links/epoc.mk exe`, then PsiWeb.app and the package as before. The log is `build/web-links.log`.
+
+**Switching back to NetSurf:** `PSIWEB_ENGINE=netsurf web/build.sh [host]` builds the 0.61 engine exactly as before (`web/Makefile`, `web/engine/fetch_psi.c`, `web/fb`, `web/patches` are all still there). The app works with either engine: the shared chunk and the commands are the same, and the only new backend call (`pwb_first_url`) is unused by NetSurf. The NetSurf engine would show Show pictures as "pictures from now on" rather than "this page".
+
+### What changed
+
+**The EXE (`web/links/epoc.mk`, target `exe`)**
+- The same Links, libjpeg, libpng, zlib, TLS and psi objects as the emulator build, plus:
+  - `web/engine/pwepoc.cpp`: the chunk shared with PsiWeb.app, PsiWeb.log, heartbeats, the 64 Hz `pwb_gettimeofday`;
+  - `ssh/psiglue.cpp` (unchanged): the modem and Psion Internet routes;
+  - `web/engine/pwupdate.c`: Tools > Update PsiWeb;
+  - `web/links/epoc/psi_heap.cpp`: `psi_mem_report` from RHeap (`mem <page>: heap … KB` lines in PsiWeb.log);
+  - `web/links/epoc/psi_stubs.c`: `kill`, `signal`, `lstat`, `readlink`, `ftruncate`, `execvp`, `remove`, which ESTLIB lacks and nothing on PsiWeb's path calls.
+- Linked as `web/Makefile` links NetSurf: `eexe.o`, `ecrt0.o`, `estlib.lib`, `euser`, `efsrv`, `c32`, `esock`, `insock`, `nifman`; then petran with NetSurf's UIDs.
+- `psicompat.h` now also:
+  - sends `gettimeofday` to `pwb_gettimeofday`: the Psion's clock counts whole seconds, which would make every Links timer (the 20 ms input poll, layout delays) wait for the next second;
+  - sends `fprintf`/`vfprintf`/`printf`/`fflush`/`perror` on stdout and stderr to PsiWeb.log (`psi_os.c`), because ESTLIB would open a text console over the app. A Links fatal message ("out of memory" and the like) also becomes what the app says when the engine stops.
+
+**The main loop (`psi_os.c`)**
+- psiglue's `pg_wait` times out by `TTime`, which has a one-second step on the Psion. Used for a 20 ms wait, it waited up to a second, and in the emulator keys and taps took 4 to 5 seconds to arrive. Now:
+  - with no connection waiting, `psi_select` sleeps exactly (`pg_msleep`, 20 ms at most);
+  - with a connection waiting, it still uses `pg_wait`, but PsiWeb.app sets `net.resized` whenever it hands over a key, a tap or a command, and `pg_wait` returns at once on that. (On the modem route; over Psion Internet psiglue's socket wait still runs to the second. A tick-based `NowMicro` in psiglue would fix both, but psiglue is shared with PsiTerm and PsiMail and was not touched.)
+- `main()` adds `-http-proxy host:port` when Preferences > Use a proxy is set. `https://` addresses then also go to the proxy as plain requests (`sched.c`), as NetSurf's fetcher did with WebOne.
+- On quit the engine hangs up and frees the serial port (`pwn_release_now`).
+
+**The start page.** The first page is the one PsiMail asked for, or else **`about:welcome`**, a page built into the engine (`web/links/welcome.html`, made into `welcome.inc` by `epoc.mk`; served by `psi_about_func`). So starting PsiWeb needs no network and no file. File > Home page still goes to the home page (`http://68k.news/` unless set); an empty home page is the welcome page. Up to 0.61 PsiWeb opened the home page at start, which dialled.
+
+**Pictures (Dan's decision 2)**
+- View > **Show pictures** (Ctrl+I) is now a command, not a tick box: it fetches the pictures of the page showing. Following a link goes back to none; going Back to that page shows them again (`psi_show_pictures`, called from `cached_format_html`).
+- The old Images setting became Tools > Preferences > **Pictures**: "Only when asked" (the standard) or "On every page". It is kept as a new byte at the end of PsiWeb.ini, so NetSurf's old setting (on by default) does not carry over. The engine restarts when it changes, as for the other preferences.
+- On an `about:` page, Show pictures says "No pictures to show"; with pictures on every page, "Pictures are already shown on every page".
+
+**No Links interface (Dan's decision 3)**
+- Keys (`psi_filter_key` in `psi_drv.c`):
+  - outside a form field, only Up, Down, Page Up/Down, Home, End, Enter, Tab, Space (page down) and Backspace (back) reach Links; Left and Right scroll a wide page sideways (Links would go back and follow a link). Letters, digits, punctuation, Ctrl+letters and Esc are dropped, so `g`, `q`, `/`, `s`, `d` and the rest no longer open Links' dialogs;
+  - in a text field, letters, digits, punctuation, the arrows, Backspace, Delete and Ctrl+A/E/U/K/D reach it;
+  - if a Links window is open over the page (a `<select>` list), it gets every key, Esc included.
+- Dialogs: Links' `msg_box` makes no window. Its text goes to the app as an infoprint (through `net.link_msg`, which the app already shows), and the box is answered as Esc would answer it. In particular:
+  - a page that fails says "Page not loaded - …" in plain words (`psi_load_failed`: "the connection broke", "server not found"…), or psiglue's own reason when the connection could not be made;
+  - a page that needs a user name and password says "Not available - this page needs a user name and password" and shows the server's own page;
+  - a file Links can't show says "Not available - PsiWeb cannot show or save … files".
+- `file:///D:/x` is the file `D:/x` (PsiMail's "View as web page"), and the built-in pages may link to files.
+
+**Links visible.** Links are underlined (`html.c`, `set_link_attr`). Their blue is all but black in 16 greys; with the underline they read clearly and the text stays crisp black (see `68k-1.png` and the screenshots below).
+
+**Commands.** Open, Back, Forward, Reload, Stop, Home, Zoom, Top/End of page, Disconnect (Links' connections stopped, then the port freed) and Update (Links' connections stopped, then `pw_update_run`) are all handled in `psi_drv.c`. Connect, Page information and the settings dialogs are the app's own and are unchanged.
+
+**App wording.** About now credits Links; Help describes Links, the welcome page, pictures on request and sideways scrolling.
+
+### Test results
+
+**ARM harness** (`NET=replay web/links/emu/run_pages.sh`, the phase 3 recordings): every page passes with the same figures as phase 3 to within 1 to 4% (the underlines): cern 4.5M, 68k.news 31.7M, NPR 25.3M, Wikipedia 52.6M, BBC 101.6M, the picture page 27.3M, Show pictures 7.0M + 24.2M instructions; heap peaks unchanged; no failed allocations. `about:welcome` and a pen tap on one of its links were also run there.
+
+**The Psion emulator** (`tools/emu`, the real `PsiWeb.sis` contents, ESTLIB, the 5mx ROM). Screenshots are in this session's scratchpad, `scratchpad/links4/shots/`:
+
+| Shot | What it shows |
+|---|---|
+| `welcome.png` | PsiWeb starts with Links and draws the welcome page about 14 s (simulated) after the tap on its icon, most of it loading the 1.8 MB EXE from the card |
+| `file-menu.png`, `view-menu.png` | menus open; Stop and Back/Forward are dimmed only in their own panes (no EIKON panics in any run) |
+| `local-nopics.png` | a page on the card (`file:///D:/TEST/PICS.HTM`, reached by a tap on a link): alt text where the pictures are |
+| `local-showpics.png` | after View > Show pictures: JPEG, PNG and GIF |
+| `local-zoom110.png` | the Zoom button: 110% |
+| `form-typing.png` | a tap on a text field, then H, I, G typed into it (G did not open Links' Go to dialog) |
+| `back.png` | the Back button |
+| `home-no-link.png` | Home with no network: psiglue's reason as an infoprint (too long for the screen: an existing psiglue wording) |
+| `preferences.png` | the new Pictures line |
+| `page-info.png` | Page information |
+| `connect.png` | File > Connect |
+| `update-source.png`, `update-progress.png`, `after-update.png` | Tools > Update PsiWeb runs in the Links engine, fails without a serial port, and the engine carries on |
+| `toolbar-hidden.png` | View > Show toolbar off: the engine restarts at 640 wide on the same page |
+
+The local page and a few test-only lines needed a test engine: the same build with a link to `D:\TEST\PICS.HTM` on the welcome page (made in the scratchpad, never in the tree).
+
+**The card wedge.** Several runs stalled at "Starting the browser engine..." with the emulator's CF card stuck part way through loading `psiweb.exe` (always at 130 ATA commands). It depends on the card image and the EXE's exact bytes, not on the run: a layout that stalls does so every time, and another PAD.BIN size (`PAD=` in a scratch copy of `mkcard.ts`) loads at once. Restarting the engine (the toolbar test) can hit it too. The emulator also writes to the card image, so each run needs a fresh one.
+
+Not tested: anything over the network on the Psion (the emulator's serial port does not open), a real 5mx, Psion Internet.
+
+### Known issues
+
+1. **Psion Internet waits.** With a connection open over Psion Internet, a key or tap can wait up to a second (psiglue's socket wait; see *The main loop*). The fix belongs in psiglue (`NowMicro` from `User::TickCount()`), which is shared with PsiTerm and PsiMail.
+2. **`<select>` lists** still open Links' own pop-up list (the only Links window left). It works with the pen and the arrows.
+3. **No page progress in the app.** Links' status line ("Received 12 KB…") goes to Page information and PsiWeb.log only, as NetSurf's did; while a page loads the app shows psiglue's link messages and the busy state.
+4. **Pictures memory on long scrolls** (phase 3, item 5) is unchanged: pictures off by default makes it rare.
+5. Phase 3's list of remaining CPU work stands.
+
+### What Dan should test on the 5mx
+
+1. Install `PsiWeb.sis` (0.62) over 0.61. PsiWeb should open on the welcome page without dialling. Note the time from the tap to the page.
+2. Tap 68k.news on the welcome page; time it to the first screen and to idle (the busy message going). Page Down a few times.
+3. Back, Forward, Home, Reload, Esc during a load, Zoom in and out.
+4. On a page with pictures (68k.news stories, Wikipedia), View > Show pictures. Then Preferences > Pictures > On every page, and back.
+5. A text field: DuckDuckGo Lite (tap the field, type, tap the button).
+6. https: text.npr.org; and with the WebOne proxy set, the same pages through it.
+7. Both routes: the modem, and Psion Internet (PPP).
+8. File > Disconnect, then PsiTerm can use the port; Tools > Update PsiWeb opens and runs (it will say it is current or offer 0.62 again).
+9. PsiMail's "View as web page" (a `file:///D:/…` page).
+
+**What to send back:** `C:\System\Data\PsiWeb.log` (and `PsiWeb.old`, the run before) after a session. It has timestamps (`mm:ss.t`) for the start, each status and busy change, the link messages, every infoprint, and a `mem <page>: heap … KB` line when each page finishes, which gives the real timings and memory to set against the 15 MIPS estimates.

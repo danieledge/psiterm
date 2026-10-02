@@ -2,8 +2,12 @@
 # Run inside the psion-build container, from the repository root:
 #   tools/docker/psibuild "make -f web/links/epoc.mk -j8 emu"
 #
-#   emu   build/links/epoc/psiweb-emu.pe: the ARM objects with emu stand-ins
-#         for EPOC, run by web/links/emu/run_links.py
+#   exe   build/links/epoc/psiweb.exe: the device engine, linked with ESTLIB,
+#         web/engine/pwepoc.cpp (the chunk shared with PsiWeb.app, PsiWeb.log,
+#         heartbeats), ssh/psiglue.cpp (modem and Psion Internet) and the
+#         updater; web/build.sh packages it into PsiWeb.sis
+#   emu   build/links/epoc/psiweb-emu.pe: the same ARM objects with emu
+#         stand-ins for EPOC, run by web/links/emu/run_links.py
 #   objs  only compile
 #
 # The sources come from web/links/fetch.sh (build/links). zlib is ssh/zlib,
@@ -67,7 +71,7 @@ PNG_LIB    := $(O)/libpng.a
 Z_LIB      := $(O)/libz.a
 EMU_OBJS   := $(O)/emu/links_rt.o $(O)/emu/emu_hc.o $(O)/emu/emu_back.o $(O)/emu/setjmp.o
 
-all: emu
+all: exe emu
 objs: $(LINKS_OBJS) $(PSI_OBJS) $(JPG_LIB) $(PNG_LIB) $(Z_LIB)
 emu: $(O)/psiweb-emu.pe
 
@@ -81,6 +85,10 @@ $(O)/inc/jconfig.h: $(JPG)/jconfig.txt
 $(O)/inc/dither_psi.inc: $(LW)/mkdither.py
 	@mkdir -p $(dir $@)
 	python3 $< $@
+# the start page (about:welcome, psi_os.c), as a C string
+$(O)/inc/welcome.inc: $(LW)/welcome.html
+	@mkdir -p $(dir $@)
+	python3 -c 'import sys,json; d=open(sys.argv[1]).read(); print("\n".join(json.dumps(l + "\n") for l in d.splitlines()))' $< > $@
 HDRS := $(O)/inc/pnglibconf.h $(O)/inc/jconfig.h $(O)/inc/dither_psi.inc $(LW)/epoc/config.h $(LW)/epoc/psicompat.h
 
 $(O)/links/%.o: $(SRC)/%.c $(HDRS) $(SRC)/links.h $(SRC)/cfg.h
@@ -117,12 +125,12 @@ $(O)/links/font_inc.o: $(FONTC) $(HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) -c $(LCFLAGS) -O0 $< -o $@
 
-$(O)/psi/psi_drv.o: $(LW)/psi_drv.c $(HDRS) $(WEB)/fb/pwback.h $(SRC)/links.h
+$(O)/psi/psi_drv.o: $(LW)/psi_drv.c $(HDRS) $(WEB)/fb/pwback.h $(SRC)/links.h $(WEB)/psiweb.h $(TOP)/ssh/psishared.h
 	@mkdir -p $(dir $@)
-	$(CC) -c $(LCFLAGS) -I$(WEB)/fb -I$(WEB) $< -o $@
-$(O)/psi/psi_os.o: $(LW)/epoc/psi_os.c $(HDRS) $(WEB)/engine/pwnet.h $(SRC)/links.h
+	$(CC) -c $(LCFLAGS) -I$(WEB)/fb -I$(WEB) -I$(TOP)/ssh $< -o $@
+$(O)/psi/psi_os.o: $(LW)/epoc/psi_os.c $(HDRS) $(O)/inc/welcome.inc $(WEB)/engine/pwnet.h $(SRC)/links.h $(WEB)/psiweb.h $(TOP)/ssh/psishared.h
 	@mkdir -p $(dir $@)
-	$(CC) -c $(LCFLAGS) -I$(WEB)/fb -I$(WEB) -I$(WEB)/engine $< -o $@
+	$(CC) -c $(LCFLAGS) -I$(WEB)/fb -I$(WEB) -I$(WEB)/engine -I$(TOP)/ssh $< -o $@
 $(O)/psi/pwgrey.o: $(LW)/psi_grey.c $(WEB)/fb/pwback.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CFLAGS_C) -std=gnu99 -I$(WEB)/fb $< -o $@
@@ -132,7 +140,7 @@ $(O)/psi/psi_str.o: $(LW)/psi_str.c
 $(O)/psi/nsprintf.o: $(WEB)/compat/nsprintf.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CFLAGS_C) -std=gnu99 -I$(WEB)/compat $< -o $@
-$(O)/psi/pwnet.o: $(WEB)/engine/pwnet.c $(WEB)/engine/pwnet.h $(WEB)/psiweb.h
+$(O)/psi/pwnet.o: $(WEB)/engine/pwnet.c $(WEB)/psiweb.h $(TOP)/ssh/psishared.h $(WEB)/engine/pwnet.h $(WEB)/psiweb.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CFLAGS_C) -std=gnu99 -I$(TOP)/ssh -I$(WEB)/compat -include $(WEB)/compat/nscompat.h $< -o $@
 $(O)/psi/tls13.o: $(TOP)/ssh/tls13.c $(WEB)/tls/includes.h
@@ -183,4 +191,36 @@ $(O)/psiweb-emu.pe: $(LINKS_OBJS) $(PSI_OBJS) $(EMU_OBJS) $(JPG_LIB) $(PNG_LIB) 
 	arm-pe-nm -n $@ > $(O)/psiweb-emu.syms
 	@ls -la $@
 
-.PHONY: all objs emu
+# ---------- the device EXE (as web/Makefile links NetSurf's) ----------
+CXXFLAGS := $(ARCH) $(DEFS) -Wno-ctor-dtor-privacy -fcheck-new -fvtable-thunks -w -I$(WEB) -I$(TOP)/ssh $(LIBC)
+DEV_OBJS := $(O)/dev/pwepoc.o $(O)/dev/psiglue.o $(O)/dev/pwupdate.o $(O)/dev/psi_heap.o $(O)/dev/psi_stubs.o
+SYSLIBS := $(REL)/estlib.lib $(REL)/euser.lib $(REL)/c32.lib $(REL)/efsrv.lib $(REL)/esock.lib $(REL)/insock.lib $(REL)/nifman.lib $(LIBGCC)
+EXE_OBJS = $(REL)/eexe.o $(LINKS_OBJS) $(PSI_OBJS) $(DEV_OBJS) $(PNG_LIB) $(JPG_LIB) $(Z_LIB) $(REL)/ecrt0.o $(SYSLIBS)
+
+$(O)/dev/pwepoc.o: $(WEB)/engine/pwepoc.cpp $(WEB)/psiweb.h $(WEB)/fb/pwback.h $(TOP)/ssh/psishared.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $(CXXFLAGS) $(PWEPOC_DEFS) $< -o $@
+$(O)/dev/psiglue.o: $(TOP)/ssh/psiglue.cpp $(TOP)/ssh/psishared.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $(CXXFLAGS) '-DPSI_SHARED_NAME="PsiWebShared"' $< -o $@
+$(O)/dev/psi_heap.o: $(LW)/epoc/psi_heap.cpp $(WEB)/psiweb.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $(CXXFLAGS) $< -o $@
+$(O)/dev/psi_stubs.o: $(LW)/epoc/psi_stubs.c
+	@mkdir -p $(dir $@)
+	$(CC) -c $(CFLAGS_C) $< -o $@
+$(O)/dev/pwupdate.o: $(WEB)/engine/pwupdate.c $(WEB)/engine/pwnet.h $(WEB)/psiweb.h $(WEB)/psiweb_cmds.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $(LTCFLAGS) -I$(TOP)/ssh $< -o $@
+
+# petran: heap 256 KB to 10 MB (as NetSurf's), 256 KB stack (Links' table
+# layout recurses); UIDs as NetSurf's psiweb.exe, so PsiWeb.app starts it
+$(O)/psiweb.exe: $(LINKS_OBJS) $(PSI_OBJS) $(DEV_OBJS) $(JPG_LIB) $(PNG_LIB) $(Z_LIB)
+	arm-pe-ld -s -e _E32Startup --base-file $(O)/psiweb.bas -o $(O)/psiweb.tmp.exe $(EXE_OBJS)
+	arm-pe-dlltool --as=arm-pe-as --output-exp $(O)/psiweb.exp --base-file $(O)/psiweb.bas $(EXE_OBJS)
+	arm-pe-ld -s -e _E32Startup -Map $(O)/psiweb.map -o $(O)/psiweb.tmp.exe $(O)/psiweb.exp $(EXE_OBJS)
+	WINEDEBUG=-all wine $(E)/tools/petran.exe $(O)/psiweb.tmp.exe $@ -nocall -uid1 0x1000007a -uid2 0x00000000 -uid3 0x01000A7B -heap 0x40000 0xa00000 -stack 0x40000
+	@ls -la $@
+exe: $(O)/psiweb.exe
+
+.PHONY: all objs emu exe

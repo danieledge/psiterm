@@ -25,6 +25,9 @@
 
 #include "pwback.h"
 #include "psiweb_cmds.h"
+#ifdef PSI_EPOC
+#include "psiweb.h"
+#endif
 
 /* NSFB key codes (libnsfb_event.h) that PsiWeb.app sends */
 enum {
@@ -49,6 +52,8 @@ static int home_done;
 static int last_busy = -1, last_back = -1, last_fwd = -1;
 static unsigned char last_url[512], last_status_txt[256];
 static unsigned char *psi_param;
+static unsigned char *psi_pics_url;	/* View > Show pictures was asked for this page */
+static char psi_conn_why[80];		/* why the last connection failed (psi_os.c) */
 
 extern struct graphics_driver psi_driver;
 
@@ -310,6 +315,98 @@ static void report_state(int force)
 	}
 }
 
+/* ---------- messages for PsiWeb.app ---------- */
+
+/* An infoprint in the app (top right): the line goes where psiglue puts
+ * what the link is doing (net.link_msg), which the app already shows. No
+ * full stop at the end, as the style guide has it. */
+static void psi_infoprint(const char *text)
+{
+#ifdef PSI_EPOC
+	PwShared *s = (PwShared *)pwb_shared();
+	char *d;
+	int n = 0, max;
+	extern void pw_log(const char *);
+	if (!s || !text) return;
+	while (*text == ' ' || *text == '\n') text++;
+	d = s->net.link_msg;
+	max = (int)sizeof(s->net.link_msg) - 1;
+	for (; text[n] && n < max; n++) d[n] = text[n] == '\n' || text[n] == '\r' ? ' ' : text[n];
+	while (n > 0 && (d[n - 1] == ' ' || (d[n - 1] == '.' && !(n >= 3 && d[n - 2] == '.')))) n--;
+	d[n] = 0;
+	s->net.link_seq++;
+	pw_log(d);
+#else
+	fprintf(stderr, "[infoprint] %s\n", text);
+#endif
+}
+
+/* a Links message box (bfu.c msg_box, under PSI_NO_BARS): its words, joined
+   into one line */
+void psi_msg_box(unsigned char *title, unsigned char *text)
+{
+	char line[160];
+	int i, j = 0, sp = 0;
+	(void)title;
+	for (i = 0; text && text[i] && j < (int)sizeof(line) - 1; i++) {
+		unsigned char c = text[i];
+		if (c == '\n' || c == '\r' || c == ' ' || c == '\t') { sp = j > 0; continue; }
+		if (sp && j < (int)sizeof(line) - 2) line[j++] = ' ';
+		sp = 0;
+		line[j++] = c;
+	}
+	line[j] = 0;
+	psi_infoprint(line);
+}
+
+/* psi_os.c: a connection could not be made, and pwn said why */
+void psi_conn_failed(const char *why)
+{
+	snprintf(psi_conn_why, sizeof(psi_conn_why), "%s", why ? why : "");
+}
+
+/* session.c print_error_dialog: the page did not load. Links' words for
+   the commonest causes are put plainly (no "error", no "socket") */
+void psi_load_failed(unsigned char *why)
+{
+	static const char *const map[][2] = {
+		{ "Error writing to socket", "Page not loaded - the connection broke" },
+		{ "Error reading from socket", "Page not loaded - the connection broke" },
+		{ "Connection refused", "Page not loaded - the server refused the connection" },
+		{ "Receive timeout", "Page not loaded - the server did not answer in time" },
+		{ "SSL error", "Page not loaded - the secure connection failed" },
+		{ "Host not found", "Page not loaded - server not found" },
+		{ "Bad HTTP response", "Page not loaded - the server's answer made no sense" },
+		{ "Server returned empty response", "Page not loaded - the server sent nothing" },
+		{ "File not found", "File not found" },
+		{ "Interrupted", "Stopped" },
+	};
+	char line[120];
+	unsigned i;
+	if (psi_conn_why[0]) {
+		psi_infoprint(psi_conn_why);
+		psi_conn_why[0] = 0;
+		return;
+	}
+	if (!why) why = cast_uchar "";
+	for (i = 0; i < sizeof(map) / sizeof(map[0]); i++)
+		if (!casestrcmp(why, cast_uchar map[i][0])) {
+			psi_infoprint(map[i][1]);
+			return;
+		}
+	if (!casecmp(why, cast_uchar "Error ", 6)) why += 6;
+	snprintf(line, sizeof(line), "Page not loaded - %s", (char *)why);
+	psi_infoprint(line);
+}
+
+/* session.c cached_format_html: pictures for this page? */
+int psi_show_pictures(struct session *ses)
+{
+	if (dds.display_images) return 1;	/* the app's "pictures on every page" */
+	if (!psi_pics_url || !ses || list_empty(ses->history)) return 0;
+	return !strcmp(cast_const_char cur_loc(ses)->url, cast_const_char psi_pics_url);
+}
+
 /* ---------- input ---------- */
 
 static void send_key(int key, int flags)
@@ -331,12 +428,7 @@ static int nsfb_to_links(int c)
 	case NK_BS: return KBD_BS;
 	case NK_TAB: return KBD_TAB;
 	case NK_LF: case NK_RETURN: case NK_KP_ENTER: return KBD_ENTER;
-	case NK_ESC:
-#ifdef PSI_NO_BARS
-		return 0;	/* Esc and F9/F10 would open Links' own menus */
-#else
-		return KBD_ESC;
-#endif
+	case NK_ESC: return KBD_ESC;	/* (filtered in key_event) */
 	case NK_DEL: return KBD_DEL;
 	case NK_UP: return KBD_UP;
 	case NK_DOWN: return KBD_DOWN;
@@ -368,6 +460,59 @@ static int mod_bit(int c)
 	return 0;
 }
 
+#ifdef PSI_NO_BARS
+/* ---------- no Links interface: keys ----------
+ * PsiWeb.app's menus do what Links' letter shortcuts do, so outside a form
+ * field only the keys for moving round the page reach Links: g, q, /, s,
+ * d, Esc and the rest would open Links' own dialogs and menus. */
+
+static int psi_dialog_open(void)
+{
+	struct session *ses = psi_ses();
+	/* a Links window above the page (a <select> list, or a dialog that
+	   got through): it has the keys, Esc included, so it can be closed */
+	return ses && ses->term && ses->term->windows.next != &ses->win->list_entry;
+}
+
+static int psi_in_text_field(void)
+{
+	struct session *ses = psi_ses();
+	struct f_data_c *fd;
+	int n;
+	if (!ses || !(fd = current_frame(ses)) || !fd->vs || !fd->f_data) return 0;
+	n = fd->vs->current_link;
+	if (n < 0 || n >= fd->f_data->nlinks) return 0;
+	return fd->f_data->links[n].type == L_FIELD || fd->f_data->links[n].type == L_AREA;
+}
+
+/* the key to give Links, or 0 to drop it */
+static int psi_filter_key(int k, int m)
+{
+	if (psi_dialog_open()) return k;
+	switch (k) {
+	case KBD_UP: case KBD_DOWN: case KBD_PAGE_UP: case KBD_PAGE_DOWN:
+	case KBD_HOME: case KBD_END: case KBD_ENTER: case KBD_TAB:
+		return k;
+	case KBD_ESC:
+		return 0;		/* (the app's Stop) */
+	}
+	if (psi_in_text_field()) {
+		/* typing and editing in a field */
+		if (k == KBD_LEFT || k == KBD_RIGHT || k == KBD_BS || k == KBD_DEL) return k;
+		if (k > 0 && !(m & (KBD_CTRL | KBD_ALT))) return k;
+		if (k > 0 && (m & KBD_CTRL) && strchr("AEUKD", k)) return k;	/* line start/end, delete */
+		return 0;
+	}
+	switch (k) {
+	case KBD_LEFT: return '[';	/* scroll a wide page sideways (Links: back) */
+	case KBD_RIGHT: return ']';	/* (Links: follow the link) */
+	case KBD_BS: return k;		/* back, as browsers have it */
+	case ' ': return (m & (KBD_CTRL | KBD_ALT)) ? 0 : k;	/* page down */
+	}
+	return 0;
+}
+#endif
+
 static void key_event(int down, int c)
 {
 	int k, m = mod_bit(c);
@@ -391,6 +536,13 @@ static void key_event(int down, int c)
 		/* Links' Ctrl shortcuts are on upper-case letters */
 		if (k >= 'a' && k <= 'z') k -= 'a' - 'A';
 	}
+#ifdef PSI_NO_BARS
+	if (!(k = psi_filter_key(k, mods))) return;
+	if ((k == '[' || k == ']') && !psi_in_text_field() && !psi_dialog_open()) {
+		send_key(k, 0);
+		return;
+	}
+#endif
 	send_key(k, mods & (KBD_CTRL | KBD_ALT | (k < 0 ? KBD_SHIFT : 0)));
 }
 
@@ -415,7 +567,12 @@ static void run_command(int cmd, char *arg)
 	if (!ses) return;
 	switch (cmd) {
 	case PW_CMD_OPEN:	psi_goto(ses, arg); break;
-	case PW_CMD_HOME:	psi_goto(ses, pwb_home_url()); break;
+	case PW_CMD_HOME: {
+		const char *h = pwb_home_url();
+		/* (no home page set: NetSurf's about:welcome is ours too) */
+		psi_goto(ses, h && *h ? h : "about:welcome");
+		break;
+	}
 	case PW_CMD_BACK:	load_start(); go_back(ses, 1); break;
 	case PW_CMD_FORWARD:	load_start(); go_back(ses, -1); break;
 	case PW_CMD_RELOAD:	load_start(); reload(ses, -1); break;
@@ -440,7 +597,12 @@ static void run_command(int cmd, char *arg)
 		break;
 	}
 	case PW_CMD_IMAGES:
-		ses->ds.display_images = arg[0] == '1';
+		/* View > Show pictures: for the page showing (psi_show_pictures) */
+		if (psi_pics_url) mem_free(psi_pics_url), psi_pics_url = NULL;
+		if (arg[0] == '1' && !list_empty(ses->history)) {
+			psi_pics_url = stracpy(cur_loc(ses)->url);
+			load_start();
+		}
 		html_interpret_recursive(ses->screen);
 		draw_formatted(ses);
 		break;
@@ -449,6 +611,23 @@ static void run_command(int cmd, char *arg)
 		break;
 	case PW_CMD_HANGUP:
 		abort_all_connections();
+#ifdef PSI_EPOC
+		{
+			extern void pwn_release_now(void);
+			pwn_release_now();
+		}
+		pwb_set_status("Hung up - the serial port is free");
+#endif
+		break;
+	case PW_CMD_UPDATE:
+		/* Tools > Update PsiWeb (web/engine/pwupdate.c): it needs the
+		   connection, and runs to the end here (it keeps the app told
+		   through update_state) */
+		abort_all_connections();
+		{
+			extern int pw_update_run(void);
+			pw_update_run();
+		}
 		break;
 	}
 }
@@ -466,10 +645,15 @@ static void poll_fn(void *p)
 	if (!home_done) {
 		struct session *ses = psi_ses();
 		if (ses) {
+#ifdef PSI_EPOC
+			/* what PsiMail asked for, else the built-in welcome page:
+			   starting needs no network */
+			const char *h = pwb_first_url();
+#else
 			const char *h = pwb_home_url();
+#endif
 			home_done = 1;
-			/* (about:welcome is NetSurf's start page: Links has none) */
-			if (list_empty(ses->history) && !ses->rq && h && *h && strncmp(h, "about:", 6))
+			if (list_empty(ses->history) && !ses->rq && h && *h && strcmp(h, "about:blank"))
 				psi_goto(ses, h);
 			report_state(1);
 			pwb_ready();
@@ -477,6 +661,13 @@ static void poll_fn(void *p)
 	}
 
 	for (n = 0; n < 32 && pwb_next_event(&ev, 0); n++) {
+#ifdef PSI_DEBUG_EVENTS
+		if (ev.type != PWB_WAKE) {
+			char b[64];
+			snprintf(b, sizeof(b), "ev %d code %d at %d,%d dlg %d", ev.type, ev.code, ev.x, ev.y, psi_dialog_open());
+			psi_infoprint(b);
+		}
+#endif
 		switch (ev.type) {
 		case PWB_KEYDOWN:
 		case PWB_KEYUP:
@@ -550,6 +741,7 @@ static void psi_shutdown_driver(void)
 	free(psi_fb);
 	psi_fb = NULL;
 	if (psi_param) mem_free(psi_param), psi_param = NULL;
+	if (psi_pics_url) mem_free(psi_pics_url), psi_pics_url = NULL;
 }
 
 static void psi_emergency_shutdown(void) { }

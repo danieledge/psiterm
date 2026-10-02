@@ -81,6 +81,20 @@ int psi_pipe(int fd[2]);
 #define pipe(f) psi_pipe(f)
 #define NO_SIGNAL_HANDLERS
 
+/* The Psion's own clock counts whole seconds, so Links' timers (the 20 ms
+ * input poll, layout delays) would all wait for the next second: use
+ * pwepoc.cpp's clock, which adds the 64 Hz tick (the emulator has one too) */
+#define gettimeofday pwb_gettimeofday
+
+/* ESTLIB opens a text console over the app for anything written to stdout
+ * or stderr: psi_os.c sends those lines to PsiWeb.log instead (and Links'
+ * fatal messages to the app). Other files are written as usual. */
+#define fprintf psi_fprintf
+#define vfprintf psi_vfprintf
+#define printf psi_printf
+#define fflush psi_fflush
+#define perror psi_perror
+
 /* psi_str.c: word-at-a-time and table-driven versions of the string
  * functions Links spends most time in (see there) */
 size_t psi_strlen(const char *s);

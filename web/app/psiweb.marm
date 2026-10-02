@@ -1,0 +1,895 @@
+# This makefile is generated for GNU make, not nmake
+# 
+# EPOC toolchain ported to GNU/Linux by Alfred E. Heggestad 2000
+# in the hope that someone will find this useful
+# 
+ERASE = rm -f
+
+# EPOC DEFINITIONS
+
+INCDIR  = -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk//ptproj/psiweb/ -I- -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk//ptproj/psiwebinc/ -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk//ptproj/psitermssh/ -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk//epoc32/include/libc/ -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk//epoc32/include/
+
+GCCFLAGS= -c -nostdinc -Wno-ctor-dtor-privacy -mcpu=arm710 -mapcs-32 \
+		-mshort-load-bytes -msoft-float -O2 -fcheck-new -fvtable-thunks
+
+GCCDEFS = -D__SYMBIAN32__ -D__PSISOFT32__ -D__GCC32__ -D__EPOC32__ -D__MARM__ -D__DLL__ $(USERDEFS)
+
+EPOCBLDREL = $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/rel
+EPOCTRGREL = $(EPOCROOT)/epoc32/release/marm/rel
+
+EPOCBLDDEB = $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/deb
+EPOCTRGDEB = $(EPOCROOT)/epoc32/release/marm/deb
+
+EPOCBLDUREL = $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/urel
+EPOCTRGUREL = $(EPOCROOT)/epoc32/release/marm/urel
+
+EPOCBLDUDEB = $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/udeb
+EPOCTRGUDEB = $(EPOCROOT)/epoc32/release/marm/udeb
+
+
+GCCREL = arm-pe-gcc -s -fomit-frame-pointer $(GCCFLAGS) -DNDEBUG $(GCCDEFS)
+GCCDEB = arm-pe-gcc -g $(GCCFLAGS) -D_DEBUG $(GCCDEFS)
+GCCUREL = arm-pe-gcc -s -fomit-frame-pointer $(GCCFLAGS) -DNDEBUG -D_UNICODE $(GCCDEFS)
+GCCUDEB = arm-pe-gcc -g $(GCCFLAGS) -D_DEBUG -D_UNICODE $(GCCDEFS)
+
+
+# EPOC PSEUDOTARGETS
+
+rel: \
+	MAKEWORKREL \
+	$(EPOCTRGREL)/psiweb.rsc \
+	$(EPOCTRGREL)/psiweb.app
+
+deb: \
+	MAKEWORKDEB \
+	$(EPOCTRGDEB)/psiweb.rsc \
+	$(EPOCTRGDEB)/psiweb.app
+
+urel: \
+	MAKEWORKUREL \
+	$(EPOCTRGUREL)/psiweb.rsc \
+	$(EPOCTRGUREL)/psiweb.app
+
+udeb: \
+	MAKEWORKUDEB \
+	$(EPOCTRGUDEB)/psiweb.rsc \
+	$(EPOCTRGUDEB)/psiweb.app
+
+
+clean: cleanrel cleandeb cleanurel cleanudeb
+
+MAKEWORK : MAKEWORKREL MAKEWORKDEB MAKEWORKUREL MAKEWORKUDEB
+
+
+OBJECTSREL= \
+	$(EPOCBLDREL)/pglinktest.o \
+	$(EPOCBLDREL)/psiweb.o \
+	$(EPOCBLDREL)/pwhelp.o
+
+# REAL TARGET - BUILD VARIANT REL
+
+cleanrel: 
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/rel/psiweb.app
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/rel/psiweb.map
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/rel/psiweb.bas
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/rel/psiweb.sym
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/rel/psiweb.rsc
+	-$(ERASE) $(EPOCROOT)/epoc32/include/psiweb.rsg
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/rel/psiweb.lib
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/rel/pglinktest.o
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/rel/psiweb.o
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/rel/pwhelp.o
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/rel/psiweb.def
+
+
+MAKEWORKREL : /epoc32/release/marm/rel/ /epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/rel/
+
+/epoc32/release/marm/rel/ : 
+	mkdir -p $(EPOCROOT)/epoc32/release/marm/rel/
+
+/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/rel/ : 
+	mkdir -p $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/rel/
+
+
+LIBSREL= \
+	$(EPOCTRGREL)/euser.lib \
+	$(EPOCTRGREL)/efsrv.lib \
+	$(EPOCTRGREL)/apparc.lib \
+	$(EPOCTRGREL)/cone.lib \
+	$(EPOCTRGREL)/eikon.lib \
+	$(EPOCTRGREL)/ws32.lib \
+	$(EPOCTRGREL)/gdi.lib \
+	$(EPOCTRGREL)/fbscli.lib \
+	$(EPOCTRGREL)/bafl.lib \
+	$(EPOCTRGREL)/apgrfx.lib \
+	$(EPOCTRGREL)/nifman.lib \
+	$(EPOCTRGREL)/etext.lib \
+	$(EPOCTRGREL)/c32.lib \
+	$(EPOCTRGREL)/esock.lib \
+	$(EPOCTRGREL)/insock.lib
+
+$(EPOCTRGREL)/psiweb.app : $(OBJECTSREL) $(LIBSREL)
+	arm-pe-dlltool --as=arm-pe-as --output-def $(EPOCBLDREL)/psiweb.tmp.def $(OBJECTSREL) 
+	perl -S deftool.pl $(EPOCBLDREL)/psiweb.tmp.def > $(EPOCBLDREL)/psiweb.def 
+	arm-pe-ld -s -e _E32Dll --dll \
+		--base-file "$(EPOCBLDREL)/psiweb.bas" \
+		-o "$(EPOCBLDREL)/psiweb.app" $(EPOCTRGREL)/edll.o \
+		$(OBJECTSREL) \
+		 $(LIBSREL)
+	arm-pe-dlltool --as=arm-pe-as --output-lib $(EPOCTRGREL)/psiweb.lib \
+		--def $(EPOCBLDREL)/psiweb.def \
+		--dllname psiweb[01000a7a].app \
+		--output-exp psiweb.exp \
+		--base-file $(EPOCBLDREL)/psiweb.bas \
+		$(EPOCTRGREL)/edll.o 		$(OBJECTSREL)  $(LIBSREL)
+	arm-pe-ld -s -e _E32Dll --dll \
+		-Map $(EPOCTRGREL)/psiweb.map \
+		-o $(EPOCBLDREL)/psiweb.app psiweb.exp \
+		$(EPOCTRGREL)/edll.o \
+$(OBJECTSREL) \
+		 $(LIBSREL)
+	wine $(EPOCROOT)/epoc32/tools/petran.exe $(EPOCBLDREL)/psiweb.app $@ \
+		 -nocall -uid1 0x10000079 -uid2 0x1000006c -uid3 0x01000a7a
+	rm -f "psiweb.exp"
+	rm -f "$(EPOCBLDREL)/psiweb.app"
+
+OBJECTSDEB= \
+	$(EPOCBLDDEB)/pglinktest.o \
+	$(EPOCBLDDEB)/psiweb.o \
+	$(EPOCBLDDEB)/pwhelp.o
+
+# REAL TARGET - BUILD VARIANT DEB
+
+cleandeb: 
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/deb/psiweb.app
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/deb/psiweb.map
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/deb/psiweb.bas
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/deb/psiweb.sym
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/deb/psiweb.rsc
+	-$(ERASE) $(EPOCROOT)/epoc32/include/psiweb.rsg
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/deb/psiweb.lib
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/deb/pglinktest.o
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/deb/psiweb.o
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/deb/pwhelp.o
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/deb/psiweb.def
+
+
+MAKEWORKDEB : /epoc32/release/marm/deb/ /epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/deb/
+
+/epoc32/release/marm/deb/ : 
+	mkdir -p $(EPOCROOT)/epoc32/release/marm/deb/
+
+/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/deb/ : 
+	mkdir -p $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/deb/
+
+
+LIBSDEB= \
+	$(EPOCTRGDEB)/euser.lib \
+	$(EPOCTRGDEB)/efsrv.lib \
+	$(EPOCTRGDEB)/apparc.lib \
+	$(EPOCTRGDEB)/cone.lib \
+	$(EPOCTRGDEB)/eikon.lib \
+	$(EPOCTRGDEB)/ws32.lib \
+	$(EPOCTRGDEB)/gdi.lib \
+	$(EPOCTRGDEB)/fbscli.lib \
+	$(EPOCTRGDEB)/bafl.lib \
+	$(EPOCTRGDEB)/apgrfx.lib \
+	$(EPOCTRGDEB)/nifman.lib \
+	$(EPOCTRGDEB)/etext.lib \
+	$(EPOCTRGDEB)/c32.lib \
+	$(EPOCTRGDEB)/esock.lib \
+	$(EPOCTRGDEB)/insock.lib
+
+$(EPOCTRGDEB)/psiweb.app : $(OBJECTSDEB) $(LIBSDEB)
+	arm-pe-dlltool --as=arm-pe-as --output-def $(EPOCBLDDEB)/psiweb.tmp.def $(OBJECTSDEB) 
+	perl -S deftool.pl $(EPOCBLDDEB)/psiweb.tmp.def > $(EPOCBLDDEB)/psiweb.def 
+	arm-pe-ld -e _E32Dll --dll \
+		--base-file "$(EPOCBLDDEB)/psiweb.bas" \
+		-o "$(EPOCBLDDEB)/psiweb.app" $(EPOCTRGDEB)/edll.o \
+		$(OBJECTSDEB) \
+		 $(LIBSDEB)
+	arm-pe-dlltool --as=arm-pe-as --output-lib $(EPOCTRGDEB)/psiweb.lib \
+		--def $(EPOCBLDDEB)/psiweb.def \
+		--dllname psiweb[01000a7a].app \
+		--output-exp psiweb.exp \
+		--base-file $(EPOCBLDDEB)/psiweb.bas \
+		$(EPOCTRGDEB)/edll.o 		$(OBJECTSDEB)  $(LIBSDEB)
+	arm-pe-ld -e _E32Dll --dll \
+		-Map $(EPOCTRGDEB)/psiweb.map \
+		-o $(EPOCBLDDEB)/psiweb.app psiweb.exp \
+		$(EPOCTRGDEB)/edll.o \
+$(OBJECTSDEB) \
+		 $(LIBSDEB)
+	arm-pe-objcopy -X $(EPOCBLDDEB)/psiweb.app $(EPOCTRGDEB)/psiweb.sym
+	wine $(EPOCROOT)/epoc32/tools/petran.exe $(EPOCBLDDEB)/psiweb.app $@ \
+		 -nocall -uid1 0x10000079 -uid2 0x1000006c -uid3 0x01000a7a
+	rm -f "psiweb.exp"
+	rm -f "$(EPOCBLDDEB)/psiweb.app"
+
+OBJECTSUREL= \
+	$(EPOCBLDUREL)/pglinktest.o \
+	$(EPOCBLDUREL)/psiweb.o \
+	$(EPOCBLDUREL)/pwhelp.o
+
+# REAL TARGET - BUILD VARIANT UREL
+
+cleanurel: 
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/urel/psiweb.app
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/urel/psiweb.map
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/urel/psiweb.bas
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/urel/psiweb.sym
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/urel/psiweb.rsc
+	-$(ERASE) $(EPOCROOT)/epoc32/include/psiweb.rsg
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/urel/psiweb.lib
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/urel/pglinktest.o
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/urel/psiweb.o
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/urel/pwhelp.o
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/urel/psiweb.def
+
+
+MAKEWORKUREL : /epoc32/release/marm/urel/ /epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/urel/
+
+/epoc32/release/marm/urel/ : 
+	mkdir -p $(EPOCROOT)/epoc32/release/marm/urel/
+
+/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/urel/ : 
+	mkdir -p $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/urel/
+
+
+LIBSUREL= \
+	$(EPOCTRGUREL)/euser.lib \
+	$(EPOCTRGUREL)/efsrv.lib \
+	$(EPOCTRGUREL)/apparc.lib \
+	$(EPOCTRGUREL)/cone.lib \
+	$(EPOCTRGUREL)/eikon.lib \
+	$(EPOCTRGUREL)/ws32.lib \
+	$(EPOCTRGUREL)/gdi.lib \
+	$(EPOCTRGUREL)/fbscli.lib \
+	$(EPOCTRGUREL)/bafl.lib \
+	$(EPOCTRGUREL)/apgrfx.lib \
+	$(EPOCTRGUREL)/nifman.lib \
+	$(EPOCTRGUREL)/etext.lib \
+	$(EPOCTRGUREL)/c32.lib \
+	$(EPOCTRGUREL)/esock.lib \
+	$(EPOCTRGUREL)/insock.lib
+
+$(EPOCTRGUREL)/psiweb.app : $(OBJECTSUREL) $(LIBSUREL)
+	arm-pe-dlltool --as=arm-pe-as --output-def $(EPOCBLDUREL)/psiweb.tmp.def $(OBJECTSUREL) 
+	perl -S deftool.pl $(EPOCBLDUREL)/psiweb.tmp.def > $(EPOCBLDUREL)/psiweb.def 
+	arm-pe-ld -s -e _E32Dll --dll \
+		--base-file "$(EPOCBLDUREL)/psiweb.bas" \
+		-o "$(EPOCBLDUREL)/psiweb.app" $(EPOCTRGUREL)/edll.o \
+		$(OBJECTSUREL) \
+		 $(LIBSUREL)
+	arm-pe-dlltool --as=arm-pe-as --output-lib $(EPOCTRGUREL)/psiweb.lib \
+		--def $(EPOCBLDUREL)/psiweb.def \
+		--dllname psiweb.app \
+		--output-exp psiweb.exp \
+		--base-file $(EPOCBLDUREL)/psiweb.bas \
+		$(EPOCTRGUREL)/edll.o 		$(OBJECTSUREL)  $(LIBSUREL)
+	arm-pe-ld -s -e _E32Dll --dll \
+		-Map $(EPOCTRGUREL)/psiweb.map \
+		-o $(EPOCBLDUREL)/psiweb.app psiweb.exp \
+		$(EPOCTRGUREL)/edll.o \
+$(OBJECTSUREL) \
+		 $(LIBSUREL)
+	wine $(EPOCROOT)/epoc32/tools/petran.exe $(EPOCBLDUREL)/psiweb.app $@ \
+		 -nocall -uid1 0x10000079 -uid2 0x00000000 -uid3 0x00000000
+	rm -f "psiweb.exp"
+	rm -f "$(EPOCBLDUREL)/psiweb.app"
+
+OBJECTSUDEB= \
+	$(EPOCBLDUDEB)/pglinktest.o \
+	$(EPOCBLDUDEB)/psiweb.o \
+	$(EPOCBLDUDEB)/pwhelp.o
+
+# REAL TARGET - BUILD VARIANT UDEB
+
+cleanudeb: 
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/udeb/psiweb.app
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/udeb/psiweb.map
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/udeb/psiweb.bas
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/udeb/psiweb.sym
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/udeb/psiweb.rsc
+	-$(ERASE) $(EPOCROOT)/epoc32/include/psiweb.rsg
+	-$(ERASE) $(EPOCROOT)/epoc32/release/marm/udeb/psiweb.lib
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/udeb/pglinktest.o
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/udeb/psiweb.o
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/udeb/pwhelp.o
+	-$(ERASE) $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/udeb/psiweb.def
+
+
+MAKEWORKUDEB : /epoc32/release/marm/udeb/ /epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/udeb/
+
+/epoc32/release/marm/udeb/ : 
+	mkdir -p $(EPOCROOT)/epoc32/release/marm/udeb/
+
+/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/udeb/ : 
+	mkdir -p $(EPOCROOT)/epoc32/build//home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/marmd/udeb/
+
+
+LIBSUDEB= \
+	$(EPOCTRGUDEB)/euser.lib \
+	$(EPOCTRGUDEB)/efsrv.lib \
+	$(EPOCTRGUDEB)/apparc.lib \
+	$(EPOCTRGUDEB)/cone.lib \
+	$(EPOCTRGUDEB)/eikon.lib \
+	$(EPOCTRGUDEB)/ws32.lib \
+	$(EPOCTRGUDEB)/gdi.lib \
+	$(EPOCTRGUDEB)/fbscli.lib \
+	$(EPOCTRGUDEB)/bafl.lib \
+	$(EPOCTRGUDEB)/apgrfx.lib \
+	$(EPOCTRGUDEB)/nifman.lib \
+	$(EPOCTRGUDEB)/etext.lib \
+	$(EPOCTRGUDEB)/c32.lib \
+	$(EPOCTRGUDEB)/esock.lib \
+	$(EPOCTRGUDEB)/insock.lib
+
+$(EPOCTRGUDEB)/psiweb.app : $(OBJECTSUDEB) $(LIBSUDEB)
+	arm-pe-dlltool --as=arm-pe-as --output-def $(EPOCBLDUDEB)/psiweb.tmp.def $(OBJECTSUDEB) 
+	perl -S deftool.pl $(EPOCBLDUDEB)/psiweb.tmp.def > $(EPOCBLDUDEB)/psiweb.def 
+	arm-pe-ld -e _E32Dll --dll \
+		--base-file "$(EPOCBLDUDEB)/psiweb.bas" \
+		-o "$(EPOCBLDUDEB)/psiweb.app" $(EPOCTRGUDEB)/edll.o \
+		$(OBJECTSUDEB) \
+		 $(LIBSUDEB)
+	arm-pe-dlltool --as=arm-pe-as --output-lib $(EPOCTRGUDEB)/psiweb.lib \
+		--def $(EPOCBLDUDEB)/psiweb.def \
+		--dllname psiweb.app \
+		--output-exp psiweb.exp \
+		--base-file $(EPOCBLDUDEB)/psiweb.bas \
+		$(EPOCTRGUDEB)/edll.o 		$(OBJECTSUDEB)  $(LIBSUDEB)
+	arm-pe-ld -e _E32Dll --dll \
+		-Map $(EPOCTRGUDEB)/psiweb.map \
+		-o $(EPOCBLDUDEB)/psiweb.app psiweb.exp \
+		$(EPOCTRGUDEB)/edll.o \
+$(OBJECTSUDEB) \
+		 $(LIBSUDEB)
+	arm-pe-objcopy -X $(EPOCBLDUDEB)/psiweb.app $(EPOCTRGUDEB)/psiweb.sym
+	wine $(EPOCROOT)/epoc32/tools/petran.exe $(EPOCBLDUDEB)/psiweb.app $@ \
+		 -nocall -uid1 0x10000079 -uid2 0x00000000 -uid3 0x00000000
+	rm -f "psiweb.exp"
+	rm -f "$(EPOCBLDUDEB)/psiweb.app"
+
+# SOURCES
+
+# Source pglinktest.cpp
+
+DEPEND_pglinktest.cpp= \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apacmdln.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apadef.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apaflrec.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apaid.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/badesca.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/baerrhan.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bamdesca.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/barsc.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitbase.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitdev.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitdev.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitmap.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitstd.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/brdcst.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/c32comm.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/c32comm.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/cdbcols.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/cdbover.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/cdbover.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/cdbstore.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/cdbstore.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coealign.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coeccntx.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coecntrl.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coecobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coedef.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coemain.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/d32comm.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/d32comm.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32base.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32base.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32def.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32des16.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32des8.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32hal.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32keys.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32pccd.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32std.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32std.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32svr.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32ver.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikalign.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbctrl.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbordr.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbutb.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbutb.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikcolor.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdef.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdialg.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdutil.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikedwin.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikedwob.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikenv.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikform.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikftflg.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikirobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiklabel.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiksbfrm.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiksbobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikscbut.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikscrlb.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikteled.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikteled.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/es_prot.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/es_prot.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/es_sock.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/es_sock.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/es_ver.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/f32file.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/f32file.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fbs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fepbase.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fldbase.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fldbltin.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fldinfo.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fldset.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fntstore.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmframe.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmlaydt.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmlaydt.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmtlay.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmtlay.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmtview.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmtview.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmvis.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/gdi.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/gdi.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/in_sock.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/in_sock.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/netdial.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/nifman.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/nifvar.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/openfont.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32buf.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32buf.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32mem.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32mem.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32page.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32page.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32share.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32share.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32std.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32std.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32stor.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32stor.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32strm.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32strm.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/t32wld.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/t32wld.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtetext.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtetext.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtfrmat.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtfrmat.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtlaydc.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/w32std.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/pglinktest.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/psiglue.cpp \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/psishared.h
+
+DEPENDREL_pglinktest.cpp=$(DEPEND_pglinktest.cpp)
+
+DEPENDDEB_pglinktest.cpp=$(DEPEND_pglinktest.cpp)
+
+DEPENDUREL_pglinktest.cpp=$(DEPEND_pglinktest.cpp)
+
+DEPENDUDEB_pglinktest.cpp=$(DEPEND_pglinktest.cpp)
+
+
+$(EPOCBLDREL)/pglinktest.o: /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/pglinktest.cpp $(DEPENDREL_pglinktest.cpp)
+	$(GCCREL) -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/ $(INCDIR) -o $@ /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/pglinktest.cpp
+
+$(EPOCBLDDEB)/pglinktest.o: /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/pglinktest.cpp $(DEPENDDEB_pglinktest.cpp)
+	$(GCCDEB) -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/ $(INCDIR) -o $@ /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/pglinktest.cpp
+
+$(EPOCBLDUREL)/pglinktest.o: /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/pglinktest.cpp $(DEPENDUREL_pglinktest.cpp)
+	$(GCCUREL) -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/ $(INCDIR) -o $@ /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/pglinktest.cpp
+
+$(EPOCBLDUDEB)/pglinktest.o: /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/pglinktest.cpp $(DEPENDUDEB_pglinktest.cpp)
+	$(GCCUDEB) -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/ $(INCDIR) -o $@ /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/pglinktest.cpp
+
+
+
+# Source psiweb.cpp
+
+DEPEND_psiweb.cpp= \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apacmdln.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apadef.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apaflrec.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apaid.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apgcli.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apmrec.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apmrec.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apmstd.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apparc.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/badesca.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/baerrhan.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bamdesca.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/barsc.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitbase.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitdev.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitdev.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitmap.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitstd.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/brdcst.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/cdbcols.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/cdbover.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/cdbover.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coealign.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coeaui.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coeauib.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coeccntx.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coecntrl.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coecobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coedef.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coemain.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32base.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32base.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32def.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32des16.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32des8.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32hal.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32keys.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32pccd.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32std.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32std.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32svr.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikalign.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikapp.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikappui.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbctrl.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbordr.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbtpan.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbutb.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbutb.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikcal.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikchlst.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikcmbut.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikcmds.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikcmobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikcolor.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikctgrp.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdef.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdialg.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdialg.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdoc.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdutil.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikedwin.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikedwob.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikenv.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikform.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikftflg.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikimage.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikirobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiklabel.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiklbm.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiklbo.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiklbv.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiklbx.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikmenu.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikmenup.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikmfne.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikmobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiksbfrm.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiksbobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikscbut.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikscrlb.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiktbar.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikteled.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikteled.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiktxlbx.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/es_prot.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/es_prot.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/es_sock.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/es_sock.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/es_ver.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/f32file.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/f32file.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fbs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fepbase.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fldbase.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fldbltin.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fldinfo.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fldset.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fntstore.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmframe.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmlaydt.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmlaydt.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmtlay.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmtlay.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmtview.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmtview.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmvis.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/gdi.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/gdi.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/nifman.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/nifvar.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/openfont.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/psiweb.rsg \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32buf.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32buf.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32mem.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32mem.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32page.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32page.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32share.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32share.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32std.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32std.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32stor.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32stor.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32strm.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32strm.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/t32wld.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/t32wld.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtetext.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtetext.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtfrmat.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtfrmat.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtlaydc.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/w32std.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/pglinktest.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/psilink.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/psishared.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/pwapp.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/pwicons.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiwebinc/psiweb.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiwebinc/psiweb_cmds.h
+
+DEPENDREL_psiweb.cpp=$(DEPEND_psiweb.cpp)
+
+DEPENDDEB_psiweb.cpp=$(DEPEND_psiweb.cpp)
+
+DEPENDUREL_psiweb.cpp=$(DEPEND_psiweb.cpp)
+
+DEPENDUDEB_psiweb.cpp=$(DEPEND_psiweb.cpp)
+
+
+$(EPOCBLDREL)/psiweb.o: /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.cpp $(DEPENDREL_psiweb.cpp)
+	$(GCCREL) -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/ $(INCDIR) -o $@ /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.cpp
+
+$(EPOCBLDDEB)/psiweb.o: /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.cpp $(DEPENDDEB_psiweb.cpp)
+	$(GCCDEB) -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/ $(INCDIR) -o $@ /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.cpp
+
+$(EPOCBLDUREL)/psiweb.o: /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.cpp $(DEPENDUREL_psiweb.cpp)
+	$(GCCUREL) -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/ $(INCDIR) -o $@ /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.cpp
+
+$(EPOCBLDUDEB)/psiweb.o: /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.cpp $(DEPENDUDEB_psiweb.cpp)
+	$(GCCUDEB) -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/ $(INCDIR) -o $@ /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.cpp
+
+
+
+# Source pwhelp.cpp
+
+DEPEND_pwhelp.cpp= \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apacmdln.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apadef.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apaflrec.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apaid.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/apparc.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/badesca.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/baerrhan.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bamdesca.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/barsc.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitbase.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitdev.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitdev.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitmap.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/bitstd.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/brdcst.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coealign.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coeaui.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coeauib.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coeccntx.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coecntrl.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coecobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coedef.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/coemain.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32base.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32base.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32def.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32des16.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32des8.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32hal.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32keys.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32pccd.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32std.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32std.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/e32svr.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikapp.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikappui.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbctrl.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbordr.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbutb.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikbutb.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikchlst.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikcmds.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikcmobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikcolor.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdef.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdialg.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdialg.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdoc.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdutil.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikedwin.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikedwob.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikenv.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikfntut.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikform.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikftflg.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikgted.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikirobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiklbm.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiklbo.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiklbv.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiklbx.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikmenu.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikmenup.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikmobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikrted.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiksbfrm.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiksbobs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikscbut.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikscrlb.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikteled.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikteled.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiktxlbx.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/f32file.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/f32file.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fbs.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fepbase.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fldbase.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fldbltin.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fldinfo.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fldset.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/fntstore.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmframe.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmlaydt.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmlaydt.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmtlay.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmtlay.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmtview.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmtview.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/frmvis.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/gdi.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/gdi.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/openfont.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/psiweb.rsg \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32buf.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32buf.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32mem.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32mem.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32page.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32page.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32share.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32share.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32std.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32std.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32stor.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32stor.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32strm.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/s32strm.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/t32wld.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/t32wld.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtetext.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtetext.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtfmlyr.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtfmlyr.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtfmstm.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtfrmat.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtfrmat.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtglobl.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtglobl.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtlaydc.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtmfmtx.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtmrtsr.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtrich.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtrich.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtstyle.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/txtstyle.inl \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/w32std.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psitermssh/psishared.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.hrh \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/pwapp.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiwebinc/psiweb.h \
+	/home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiwebinc/psiweb_cmds.h
+
+DEPENDREL_pwhelp.cpp=$(DEPEND_pwhelp.cpp)
+
+DEPENDDEB_pwhelp.cpp=$(DEPEND_pwhelp.cpp)
+
+DEPENDUREL_pwhelp.cpp=$(DEPEND_pwhelp.cpp)
+
+DEPENDUDEB_pwhelp.cpp=$(DEPEND_pwhelp.cpp)
+
+
+$(EPOCBLDREL)/pwhelp.o: /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/pwhelp.cpp $(DEPENDREL_pwhelp.cpp)
+	$(GCCREL) -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/ $(INCDIR) -o $@ /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/pwhelp.cpp
+
+$(EPOCBLDDEB)/pwhelp.o: /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/pwhelp.cpp $(DEPENDDEB_pwhelp.cpp)
+	$(GCCDEB) -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/ $(INCDIR) -o $@ /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/pwhelp.cpp
+
+$(EPOCBLDUREL)/pwhelp.o: /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/pwhelp.cpp $(DEPENDUREL_pwhelp.cpp)
+	$(GCCUREL) -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/ $(INCDIR) -o $@ /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/pwhelp.cpp
+
+$(EPOCBLDUDEB)/pwhelp.o: /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/pwhelp.cpp $(DEPENDUDEB_pwhelp.cpp)
+	$(GCCUDEB) -I /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/ $(INCDIR) -o $@ /home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/pwhelp.cpp
+
+
+
+# Resource psiweb.rss
+
+DEPEND_psiweb.rss= \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikchlst.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikchlst.rh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikclock.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikclock.rh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikcmbut.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikcmbut.rh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikcmds.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikctrls.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdef.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdef.rh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdialg.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikdialg.rh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikedwin.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikedwin.rh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikgted.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiklabel.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiklabel.rh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikmenu.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikmenu.rh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikmfne.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikmfne.rh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikon.rsg \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikrted.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikrted.rh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikspace.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eikspace.rh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiktbar.hrh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/epoc32/include/eiktbar.rh \
+	../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.hrh
+
+$(EPOCTRGREL)/psiweb.rsc: ../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.rss $(DEPEND_psiweb.rss)
+	arm-pe-cpp -I ../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/ $(INCDIR) -DLANGUAGE_sc < ../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.rss > psiweb.rpp
+	sed -i '/# [0-9]\+ .\+/d' psiweb.rpp
+	wine $(EPOCROOT)/epoc32/tools/rcomp.exe -o$@ -hpsiweb.rs~ -i../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.rss -spsiweb.rpp
+	rm -f psiweb.rpp
+	cp -f psiweb.rs~ "$(EPOCROOT)/epoc32/include/psiweb.rsg"
+	rm -f psiweb.rs~
+
+$(EPOCTRGDEB)/psiweb.rsc: ../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.rss $(DEPEND_psiweb.rss)
+	arm-pe-cpp -I ../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/ $(INCDIR) -DLANGUAGE_sc < ../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.rss > psiweb.rpp
+	sed -i '/# [0-9]\+ .\+/d' psiweb.rpp
+	wine $(EPOCROOT)/epoc32/tools/rcomp.exe -o$@ -hpsiweb.rs~ -i../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.rss -spsiweb.rpp
+	rm -f psiweb.rpp
+	cp -f psiweb.rs~ "$(EPOCROOT)/epoc32/include/psiweb.rsg"
+	rm -f psiweb.rs~
+
+$(EPOCTRGUREL)/psiweb.rsc: ../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.rss $(DEPEND_psiweb.rss)
+	arm-pe-cpp -I ../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/ $(INCDIR) -DLANGUAGE_sc -D_UNICODE < ../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.rss > psiweb.rpp
+	sed -i '/# [0-9]\+ .\+/d' psiweb.rpp
+	wine $(EPOCROOT)/epoc32/tools/rcomp.exe -u -o$@ -hpsiweb.rs~ -i../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.rss -spsiweb.rpp
+	rm -f psiweb.rpp
+	cp -f psiweb.rs~ "$(EPOCROOT)/epoc32/include/psiweb.rsg"
+	rm -f psiweb.rs~
+
+$(EPOCTRGUDEB)/psiweb.rsc: ../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.rss $(DEPEND_psiweb.rss)
+	arm-pe-cpp -I ../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/ $(INCDIR) -DLANGUAGE_sc -D_UNICODE < ../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.rss > psiweb.rpp
+	sed -i '/# [0-9]\+ .\+/d' psiweb.rpp
+	wine $(EPOCROOT)/epoc32/tools/rcomp.exe -u -o$@ -hpsiweb.rs~ -i../../../../../../../home/daniel/www/psion/psion_cpp_sdk_linux/epoc_cpp_sdk/ptproj/psiweb/psiweb.rss -spsiweb.rpp
+	rm -f psiweb.rpp
+	cp -f psiweb.rs~ "$(EPOCROOT)/epoc32/include/psiweb.rsg"
+	rm -f psiweb.rs~
+
+
+

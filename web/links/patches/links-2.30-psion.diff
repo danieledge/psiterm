@@ -26,6 +26,18 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
 - compress.c (PSIWEB): no CRC check of gzip bodies (TLS or TCP has checked them)
 - sched.c (PSIWEB): each connection's host, port and keepalive key parsed once
 
+Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
+- bfu.c, objreq.c, session.c (PSI_NO_BARS): no Links dialogs - message boxes become
+  infoprints in PsiWeb.app (psi_drv.c psi_msg_box) and are answered as Esc would; load
+  errors go to psi_load_failed; "needs a user name and password" and unknown file types
+  are said plainly instead of asked
+- session.c (PSI_NO_BARS): pictures per page - psi_show_pictures() decides (View > Show
+  pictures, or the "on every page" preference)
+- html.c (PSIWEB): links are underlined (blue is all but black in 16 greys)
+- url.c, sched.c, links.h (PSI_EPOC): about:welcome and about:blank (psi_os.c), left as
+  they are by the URL tidying; file:///D:/x is the file D:/x; about: pages may link to
+  files; with a proxy (WebOne), https:// addresses go to it as plain requests
+
 --- a/drivers.c
 +++ b/drivers.c
 @@ -40,6 +40,9 @@
@@ -287,7 +299,18 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  		if (strchr(cast_const_char a, '&')) {
  			unsigned char *aa = a;
  			int c = d_opt->cp;
-@@ -1727,6 +1915,10 @@
+@@ -912,6 +1100,10 @@
+ static inline void set_link_attr(void)
+ {
+ 	memcpy(!(format_.attr & AT_INVERT) ? &format_.fg : &format_.bg, &format_.clink, sizeof(struct rgb));
++#ifdef PSIWEB
++	/* on 16 greys the link colour (blue) is all but black: underline links */
++	format_.attr |= AT_UNDERLINE;
++#endif
+ }
+ 
+ static void put_link_line(unsigned char *prefix, unsigned char *linkname, unsigned char *link, unsigned char *target)
+@@ -1727,6 +1919,10 @@
  	form->num = (int)(a - startf);
  }
  
@@ -298,7 +321,7 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  static void find_form_for_input(unsigned char *i)
  {
  	unsigned char *s, *ss, *name, *attr, *lf, *la;
-@@ -1749,9 +1941,27 @@
+@@ -1749,9 +1945,27 @@
  	} else {
  		lf = NULL, la = NULL;
  		s = startf;
@@ -326,7 +349,7 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  	if (s >= i) goto end_parse;
  	if (eofff - s >= 2 && (s[1] == '!' || s[1] == '?')) {
  		s = skip_comment(s, i);
-@@ -1772,6 +1982,10 @@
+@@ -1772,6 +1986,10 @@
  		get_html_form(la, &form);
  	} else {
  		last_form_tag = NULL;
@@ -337,7 +360,7 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  	}
  }
  
-@@ -2739,6 +2953,18 @@
+@@ -2739,6 +2957,18 @@
  	    !casestrcmp(name, cast_uchar "preconnect") ||
  	    !casestrcmp(name, cast_uchar "stylesheet") ||
  	    casestrstr(name, cast_uchar "icon") ||
@@ -356,7 +379,7 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  	    0) goto skip;
  	if (!casestrcmp(name, cast_uchar "prefetch") ||
  	    !casestrcmp(name, cast_uchar "prerender") ||
-@@ -2780,6 +3006,9 @@
+@@ -2780,6 +3010,9 @@
  	void (*func)(unsigned char *);
  	int linebreak;
  	int nopair; /* Somehow relates to paired elements */
@@ -366,7 +389,7 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  };
  
  static struct element_info elements[] = {
-@@ -2960,6 +3189,9 @@
+@@ -2960,6 +3193,9 @@
  	if (head) process_head(head);
  
  	set_lt:
@@ -376,7 +399,7 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  
  	/*set_globals;*/
  
-@@ -2970,6 +3202,25 @@
+@@ -2970,6 +3206,25 @@
  		int namelen;
  		struct element_info *ei;
  		int inv;
@@ -402,7 +425,7 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  		if (par_format.align != AL_NO && par_format.align != AL_NO_BREAKABLE && WHITECHAR(*html)) {
  			unsigned char *h = html;
  			/*if (putsp == -1) {
-@@ -3052,6 +3303,10 @@
+@@ -3052,6 +3307,10 @@
  			continue;
  		}
  		element:
@@ -413,7 +436,7 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  		html_format_changed = 1;
  		inv = *name == '/'; name += inv; namelen -= inv;
  		if (html_top.invisible == INVISIBLE_SCRIPT && !(inv && namelen == 6 && !casecmp(name, cast_uchar "SCRIPT", 6))) {
-@@ -3076,9 +3331,20 @@
+@@ -3076,9 +3335,20 @@
  			ng:;
  		}
  		html = end;
@@ -434,7 +457,7 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  			if (ei - elements > 4) {
  				struct element_info e = *ei;
  				memmove(elements + 1, elements, (ei - elements) * sizeof(struct element_info));
-@@ -3235,6 +3501,9 @@
+@@ -3235,6 +3505,9 @@
  	pos = 0;
  	/*line_breax = 1;*/
  	was_br = 0;
@@ -444,7 +467,7 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  #undef set_globals
  }
  
-@@ -3420,7 +3689,18 @@
+@@ -3420,7 +3693,18 @@
  	if (title) *title = init_str();
  	add_chr_to_str(head, hdl, '\n');
  	se:
@@ -670,7 +693,17 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  
 --- a/links.h
 +++ b/links.h
-@@ -1832,7 +1832,7 @@
+@@ -1696,6 +1696,9 @@
+ /* data.c */
+ 
+ void data_func(struct connection *);
++#ifdef PSI_EPOC
++void psi_about_func(struct connection *);
++#endif
+ 
+ /* file.c */
+ 
+@@ -1832,7 +1835,7 @@
  extern unsigned char term_seq_tw_mouse[];
  extern unsigned char term_seq_xterm[];
  
@@ -679,7 +712,7 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  #define GRDRV_VIRTUAL_DEVICES
  #endif
  
-@@ -2151,6 +2151,12 @@
+@@ -2151,6 +2154,12 @@
  
  #define G_BFU_FONT_SIZE menu_font_size
  
@@ -716,7 +749,63 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  		if (ses->st) g_print_text(term->dev, 0, term->y - G_BFU_FONT_SIZE, bfu_style_wb_mono, ses->st, &l);
  		drv->fill_area(term->dev, l, term->y - G_BFU_FONT_SIZE, term->x, term->y, !proxies.only_proxies ? bfu_bg_color : bfu_fg_color);
  #endif
-@@ -2819,6 +2822,10 @@
+@@ -356,7 +359,16 @@
+ void print_error_dialog(struct session *ses, struct status *stat, unsigned char *url)
+ {
+ 	unsigned char *t = get_err_msg(stat->state, ses->term);
+-	unsigned char *u = display_url(ses->term, url, 1);
++	unsigned char *u;
++#ifdef PSI_NO_BARS
++	/* PsiWeb: an infoprint in plain words (psi_drv.c), no dialog */
++	{
++		void psi_load_failed(unsigned char *why);
++		psi_load_failed(get_text_translation(t, ses->term));
++		return;
++	}
++#endif
++	u = display_url(ses->term, url, 1);
+ 	msg_box(ses->term, getml(u, NULL), TEXT_(T_ERROR), AL_CENTER, TEXT_(T_ERROR_LOADING), cast_uchar " ", u, cast_uchar ":\n\n", t, MSG_BOX_END, (void *)ses, 1, TEXT_(T_CANCEL), msg_box_null, B_ENTER | B_ESC /*, get_text_translation("Retry"), NULL, 0 !!! FIXME: retry */);
+ }
+ 
+@@ -1444,6 +1456,15 @@
+ 		int marg = (fd->marginwidth + G_HTML_MARGIN - 1) / G_HTML_MARGIN;
+ 		if (marg >= 0 && marg < 9) opt->margin = marg;
+ 	}
++#ifdef PSI_NO_BARS
++	/* PsiWeb: pictures on every page only if PsiWeb.app's preference says
++	   so; otherwise only on the page View > Show pictures was asked for
++	   (psi_drv.c) - following a link goes back to none */
++	{
++		int psi_show_pictures(struct session *ses);
++		if (opt->plain != 2) opt->display_images = psi_show_pictures(ses);
++	}
++#endif
+ 	if (opt->plain == 2) opt->margin = 0, opt->display_images = 1;
+ 	pr(
+ 	if (!jsint_get_source(fd, NULL, NULL) && ses) {
+@@ -2504,6 +2525,21 @@
+ 		mem_free(ct);
+ 		return;
+ 	}
++#ifdef PSI_NO_BARS
++	/* PsiWeb cannot save or open files: say so rather than ask */
++	{
++		void psi_msg_box(unsigned char *title, unsigned char *text);
++		unsigned char *m = stracpy(cast_uchar "Not available - PsiWeb cannot show or save ");
++		add_to_strn(&m, ct);
++		add_to_strn(&m, cast_uchar " files");
++		psi_msg_box(NULL, m);
++		mem_free(m);
++		tp_cancel(ses);
++		if (n) mem_free(a);
++		mem_free(ct);
++		return;
++	}
++#endif
+ 	m1 = stracpy(ct);
+ 	if (!a) {
+ 		if (!anonymous) msg_box(ses->term, getml(m1, NULL), TEXT_(T_UNKNOWN_TYPE), AL_CENTER, TEXT_(T_CONTENT_TYPE_IS), cast_uchar " ", m1, cast_uchar ".\n", TEXT_(T_DO_YOU_WANT_TO_SAVE_OR_DISLPAY_THIS_FILE), MSG_BOX_END, (void *)ses, 3, TEXT_(T_SAVE), tp_save, B_ENTER, TEXT_(T_DISPLAY), tp_display, 0, TEXT_(T_CANCEL), tp_cancel, B_ESC);
+@@ -2819,6 +2855,10 @@
  	ses->screen->xw = ses->term->x;
  	if (ses->term->y < gf_val(2, 2 * G_BFU_FONT_SIZE)) ses->screen->yw = 0;
  	else ses->screen->yw = ses->term->y - gf_val(2, 2 * G_BFU_FONT_SIZE);
@@ -727,7 +816,7 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  }
  
  static struct session *create_session(struct window *win)
-@@ -2836,6 +2843,11 @@
+@@ -2836,6 +2876,11 @@
  	ses->screen->xp = 0; ses->screen->xw = term->x;
  	ses->screen->yp = gf_val(1, G_BFU_FONT_SIZE);
  	ses->screen->yw = term->y - gf_val(2, 2 * G_BFU_FONT_SIZE);
@@ -1354,6 +1443,29 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  	if ((po = get_port(c->url)) == -1) return NULL;
  	if (!(ph = get_protocol_handle(c->url))) return NULL;
  	if (!(ho = get_keepalive_id(c->url))) return NULL;
+@@ -720,6 +771,11 @@
+ #ifdef HAVE_SSL
+ 	if (*proxies.https_proxy && !casecmp(url, cast_uchar "https://", 8)) return proxies.https_proxy;
+ #endif
++#ifdef PSI_EPOC
++	/* PsiWeb's proxy (WebOne) takes https:// addresses as plain requests and
++	   does the TLS itself: no CONNECT, no TLS on the Psion */
++	if (*proxies.http_proxy && !casecmp(url, cast_uchar "https://", 8)) return proxies.http_proxy;
++#endif
+ 	return NULL;
+ }
+ 
+@@ -754,6 +810,10 @@
+ 
+ int get_allow_flags(unsigned char *url)
+ {
++#ifdef PSI_EPOC
++	/* PsiWeb's own pages (about:welcome) may link to files on the Psion */
++	if (!casecmp(url, cast_uchar "about:", 6)) return ALLOW_FILE;
++#endif
+ 	return	!casecmp(url, cast_uchar "smb://", 6) ? ALLOW_SMB :
+ 		!casecmp(url, cast_uchar "file://", 7) ? ALLOW_FILE : 0;
+ }
 --- a/connect.c
 +++ b/connect.c
 @@ -190,12 +190,46 @@
@@ -1450,3 +1562,83 @@ Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
  	links_home = get_home(&first_use);
  	if (!links_home) {
  		fprintf(stderr, "Unable to find or create links config directory. Please check, that you have $HOME variable set correctly and that you have write permission to your home directory.\n\007");
+--- a/bfu.c
++++ b/bfu.c
+@@ -2343,6 +2343,24 @@
+ 	va_end(ap);
+ 	dlg->items[i].type = D_END;
+ 	add_to_ml(&ml, dlg, udata, NULL);
++#ifdef PSI_NO_BARS
++	/* PsiWeb shows no Links dialogs: the message goes to PsiWeb.app as an
++	   infoprint (psi_drv.c), and the box is answered at once as Esc would
++	   answer it (its Cancel button, else its only one) */
++	{
++		void psi_msg_box(unsigned char *title, unsigned char *text);
++		unsigned char **ptr;
++		unsigned char *text = init_str();
++		int textl = 0, k, pick = n - 1;
++		for (ptr = udata; *ptr; ptr++) add_to_str(&text, &textl, get_text_translation(*ptr, term));
++		psi_msg_box(get_text_translation(title, term), text);
++		mem_free(text);
++		for (k = 0; k < n; k++) if (dlg->items[k].gid & B_ESC) pick = k;
++		if (pick >= 0) dlg->items[pick].u.msg_fn(udata2);
++		freeml(ml);
++		return;
++	}
++#endif
+ 	do_dialog(term, dlg, ml);
+ }
+ 
+--- a/file.c
++++ b/file.c
+@@ -210,7 +210,8 @@
+ {
+ 	unsigned char *p, *m;
+ 	int ml;
+-#ifdef DOS_FS
++#if defined(DOS_FS) || defined(PSI_EPOC)
++	/* file:///D:/x is the file D:/x (PsiMail opens messages this way) */
+ 	if (url[7] == '/' && strchr(cast_const_char(url + 8), ':')) url++;
+ #endif
+ 	for (p = url + 7; *p && *p != POST_CHAR; p++)
+--- a/objreq.c
++++ b/objreq.c
+@@ -125,6 +125,16 @@
+ 	struct session *ses;
+ 	int net_cp;
+ 	if (!(term = find_terminal(rq->term))) return -1;
++#ifdef PSI_NO_BARS
++	/* no Links dialogs in PsiWeb: say so, and show the server's own page */
++	{
++		void psi_msg_box(unsigned char *title, unsigned char *text);
++		psi_msg_box(NULL, cast_uchar (rq->ce_internal->http_code == 407
++			? "Not available - the proxy needs a user name and password"
++			: "Not available - this page needs a user name and password"));
++		return -1;
++	}
++#endif
+ 	ses = list_struct(term->windows.prev, struct window)->data;
+ 	get_convert_table(rq->ce_internal->head, term_charset(term), ses->ds.assume_cp, &net_cp, NULL, ses->ds.hard_assume);
+ 	if (rq->ce_internal->http_code == 407) {
+--- a/url.c
++++ b/url.c
+@@ -17,6 +17,9 @@
+ 	int bypasses_socks;
+ } protocols[]= {
+ 		{"data", 0, data_func, NULL,		1, 0, 0, 0, 0},
++#ifdef PSI_EPOC
++		{"about", 0, psi_about_func, NULL,	1, 0, 0, 0, 0},	/* about:welcome (psi_os.c) */
++#endif
+ 		{"file", 0, file_func, NULL,		1, 1, 0, 0, 1},
+ 		{"https", 443, https_func, NULL,	0, 1, 1, 1, 0},
+ 		{"http", 80, http_func, NULL,		0, 1, 1, 1, 0},
+@@ -268,6 +271,9 @@
+ 	if (!casecmp(url, cast_uchar "javascript:", 11)) return;
+ 	if (!casecmp(url, cast_uchar "magnet:", 7)) return;
+ 	if (!casecmp(url, cast_uchar "gopher:", 7)) return;
++#ifdef PSI_EPOC
++	if (!casecmp(url, cast_uchar "about:", 6)) return;	/* about:welcome stays as it is */
++#endif
+ 	if (!dd || dd == url /*|| *--dd != '/'*/) return;
+ 	if (!dsep(*dd)) {
+ 		dd--;

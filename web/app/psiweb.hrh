@@ -53,7 +53,8 @@ enum TPwDialogControls
 	EPwDlgAbout5,
 	EPwDlgAbout6,
 	EPwDlgHelpTopic,         // Help on PsiWeb
-	EPwDlgHelpText
+	EPwDlgHelpText,
+	EPwDlgPictures           // Preferences: pictures on every page (0.62)
 	};
 
 // Connection settings > Test (0.74): the button, and the result dialog's lines

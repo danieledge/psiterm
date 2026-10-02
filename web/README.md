@@ -1,5 +1,13 @@
 # PsiWeb
 
+> **From 0.62 the browser engine is [Links 2](http://links.twibright.com/)**
+> (`web/links`, see `web/links/PORTING.md`): pages are plain documents (no
+> CSS, no JavaScript), pictures (JPEG, PNG, GIF) are fetched only when asked
+> (View > Show pictures, Ctrl+I, or Tools > Preferences > Pictures), links
+> are underlined, and PsiWeb starts on a built-in welcome page without
+> dialling. `web/build.sh` builds it; `PSIWEB_ENGINE=netsurf web/build.sh`
+> still builds the NetSurf engine described below.
+
 A modern web browser for the **Psion Series 5mx**: [NetSurf](https://www.netsurf-browser.org/)
 (HTML5 parser, CSS 2.1 and parts of CSS 3, no JavaScript) built with the 1999
 EPOC R5 toolchain, running on PsiTerm's networking - the same WiFi modem or

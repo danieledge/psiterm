@@ -29,6 +29,7 @@ void pwb_set_nav(int can_back, int can_forward);
 void pwb_ready(void);
 void pwb_fatal(const char *why);                       /* engine gives up: tell the app */
 const char *pwb_home_url(void);
+const char *pwb_first_url(void);                       /* Links: the first page (start_url or about:welcome) */
 const char *pwb_res_dir(void);
 int  pwb_load_images(void);
 int  pwb_zoom(void);                                  /* percent */

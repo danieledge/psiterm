@@ -18,6 +18,7 @@
 
 #include "pwback.h"
 #include "pwnet.h"
+#include "psiweb.h"
 
 #undef read
 #undef write
@@ -60,12 +61,156 @@ static char *psi_args[] = {
 	NULL
 };
 
+extern void pwn_release_now(void);
+
 int main(int argc, char **argv)
 {
-	int n = 0;
+	static char *args[sizeof(psi_args) / sizeof(psi_args[0]) + 4];
+	static char proxy[80];
+	PwShared *s = (PwShared *)pwb_shared();
+	int n = 0, r;
 	(void)argc; (void)argv;
-	while (psi_args[n]) n++;
-	return links_main(n, psi_args);
+	while (psi_args[n]) args[n] = psi_args[n], n++;
+	/* Preferences > Use a proxy (WebOne): every request goes to it as plain
+	   HTTP, https:// addresses too (the proxy does the TLS: see
+	   get_proxy_string in sched.c) */
+	if (s && s->use_proxy && s->proxy_host[0]) {
+		snprintf(proxy, sizeof(proxy), "%s:%d", s->proxy_host, s->proxy_port > 0 ? s->proxy_port : 8080);
+		args[n++] = "-http-proxy";
+		args[n++] = proxy;
+	}
+	args[n] = NULL;
+	r = links_main(n, args);
+	pwn_release_now();		/* hang up and give the serial port back */
+	return r;
+}
+
+/* ------------------------------------------------------------ about: pages */
+
+/* about:welcome, PsiWeb's start page (web/links/welcome.html, built in so
+ * the first page needs neither the network nor a file), and about:blank */
+static const char psi_welcome[] =
+#include "welcome.inc"
+;
+
+void psi_about_func(struct connection *c)
+{
+	struct cache_entry *e;
+	const char *page;
+	int r, len;
+	unsigned char *u = c->url;
+	if (!casecmp(u, cast_uchar "about:welcome", 13)) page = psi_welcome;
+	else if (!casecmp(u, cast_uchar "about:blank", 11)) page = "<html><body></body></html>";
+	else {
+		setcstate(c, S_BAD_URL);
+		abort_connection(c);
+		return;
+	}
+	if (!c->cache) {
+		if (get_connection_cache_entry(c)) {
+			setcstate(c, S_OUT_OF_MEM);
+			abort_connection(c);
+			return;
+		}
+		c->cache->refcount--;
+	}
+	e = c->cache;
+	if (e->head) mem_free(e->head);
+	e->head = stracpy(cast_uchar "\r\nContent-type: text/html\r\n");
+	len = (int)strlen(page);
+	r = add_fragment(e, 0, (const unsigned char *)page, len);
+	if (r < 0) {
+		setcstate(c, r);
+		abort_connection(c);
+		return;
+	}
+	truncate_entry(e, len, 1);
+	c->cache->incomplete = 0;
+	setcstate(c, S__OK);
+	abort_connection(c);
+}
+
+/* ------------------------------------------------------------ stdout, stderr */
+
+#undef fprintf
+#undef vfprintf
+#undef printf
+#undef fflush
+#undef perror
+
+extern void pw_log(const char *text);
+
+static char con_line[160];
+static int con_len;
+
+/* a whole line: to PsiWeb.log; a fatal one also becomes what the app says
+   when the engine stops (pwb_fatal keeps only the first) */
+static void con_flush_line(void)
+{
+	char *p = con_line;
+	if (!con_len) return;
+	con_line[con_len] = 0;
+	con_len = 0;
+	while (*p == ' ' || *p == '\007') p++;
+	if (!*p) return;
+	pw_log(p);
+	if (strstr(p, "out of memory"))
+		pwb_fatal("Not enough memory for this page - Tools > Restart browser engine starts it again");
+	else if (!strncmp(p, "ERROR", 5) || !strncmp(p, "INTERNAL ERROR", 14) || !strncmp(p, "Internal error", 14))
+		pwb_fatal(p);
+}
+
+static void con_out(const char *s, int n)
+{
+	for (; n > 0; n--, s++) {
+		if (*s == '\n' || *s == '\r') { con_flush_line(); continue; }
+		if (*s == '\033') continue;		/* (ANSI bold) */
+		if (con_len < (int)sizeof(con_line) - 1) con_line[con_len++] = *s;
+	}
+}
+
+static int is_con(FILE *f) { return f == stdout || f == stderr; }
+
+int psi_vfprintf(FILE *f, const char *fmt, va_list ap)
+{
+	char buf[256];
+	int n;
+	if (!is_con(f)) return vfprintf(f, fmt, ap);
+	n = vsnprintf(buf, sizeof(buf), fmt, ap);
+	con_out(buf, n < (int)sizeof(buf) ? n : (int)sizeof(buf) - 1);
+	return n;
+}
+
+int psi_fprintf(FILE *f, const char *fmt, ...)
+{
+	va_list ap;
+	int n;
+	va_start(ap, fmt);
+	n = psi_vfprintf(f, fmt, ap);
+	va_end(ap);
+	return n;
+}
+
+int psi_printf(const char *fmt, ...)
+{
+	va_list ap;
+	int n;
+	va_start(ap, fmt);
+	n = psi_vfprintf(stdout, fmt, ap);
+	va_end(ap);
+	return n;
+}
+
+int psi_fflush(FILE *f)
+{
+	if (f && !is_con(f)) return fflush(f);
+	con_flush_line();
+	return 0;
+}
+
+void psi_perror(const char *s)
+{
+	psi_fprintf(stderr, "%s: %d\n", s ? s : "", errno);
 }
 
 /* ------------------------------------------------------------ pseudo-descriptors */
@@ -129,6 +274,7 @@ int psi_sock_connect(unsigned char *host, int port, int tls, unsigned char **why
 		pfd[fd - PSI_FD0].kind = PF_FREE;
 		if (!msg[0]) snprintf(msg, sizeof(msg), "Could not connect to %s", (char *)host);
 		pwb_set_status(msg);
+		{ void psi_conn_failed(const char *why); psi_conn_failed(msg); }
 		*why = stracpy(cast_uchar msg);
 		errno = ECONNREFUSED;
 		return -1;
@@ -228,6 +374,19 @@ int psi_pipe(int fd[2])
 /* ------------------------------------------------------------ the wait */
 
 #define PSI_NET_BATCH_MS	30	/* see psi_select */
+#define PSI_SLEEP_MS		20	/* longest sleep with no connection waiting */
+
+extern void pg_msleep(int ms);
+extern PsiShared *pg_shared(void);
+
+/* PsiWeb.app has handed over input or a command (it sets net.resized) */
+static int psi_woken(void)
+{
+	PsiShared *ps = pg_shared();
+	if (!ps || !ps->resized) return 0;
+	ps->resized = 0;
+	return 1;
+}
 #define PSI_NET_BATCH_BYTES	2048
 
 static int scan(int n, fd_set *r, fd_set *w, fd_set *ro, fd_set *wo)
@@ -289,10 +448,25 @@ int psi_select(int n, void *rv, void *wv, void *ev, void *tvv)
 		if (left <= 0) break;
 		step = left;
 		if (live_wanted(n, r)) {
-			if (pg_wait(step, 1, 0) & 1 && pg_net_avail() == 0 && !tls_pending())
+			/* psiglue's waits time out by the Psion's clock (TTime), which
+			   counts whole seconds: with nothing arriving, this can take up
+			   to a second longer than asked. PsiWeb.app sets net.resized
+			   when it hands over a key, a tap or a command, which ends the
+			   wait at once (on the modem route; Psion Internet still waits
+			   for the second). */
+			int m = pg_wait(step, 1, 0);
+			if (m & 4) {
+				pg_shared()->resized = 0;
+				break;
+			}
+			if (m & 1 && pg_net_avail() == 0 && !tls_pending())
 				net_eof = 1;
-		} else
-			pg_wait(step, 0, 0);
+		} else {
+			/* nothing to wait for but time: sleep exactly (pg_wait would
+			   wait for the clock's next second) */
+			pg_msleep(step < PSI_SLEEP_MS ? step : PSI_SLEEP_MS);
+			if (psi_woken()) break;
+		}
 		if (ms < 0) continue;
 	}
 	if (r) memcpy(r, &ro, sizeof(fd_set));

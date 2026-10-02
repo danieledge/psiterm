@@ -1,5 +1,6 @@
 // PSIWEB.CPP - PsiWeb.app: screen, keyboard, pen, menus and settings for the
-// NetSurf engine (psiweb.exe). See psiweb.h.
+// browser engine, psiweb.exe (Links 2 from 0.62: web/links; NetSurf before).
+// See psiweb.h.
 
 #include <e32keys.h>
 #include <e32hal.h>
@@ -45,7 +46,7 @@ static void SaveSharedLink(RFs& aFs, const TPwSettings& aSettings)
 
 _LIT(KEngineExe, "psiweb.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiWeb\\PsiWeb.ini");
-_LIT(KVersion, "0.61");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
+_LIT(KVersion, "0.62");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
 _LIT(KDefaultHome, "http://68k.news/");
 const TInt KZoomSteps[] = { 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200 };
 const TInt KZoomCount = 11;
@@ -170,7 +171,7 @@ TInt CPwView::StartCallback(TAny* aSelf)
 	return 0;
 	}
 
-// a page to open: now if NetSurf is running, else as its first page
+// a page to open: now if the engine is running, else as its first page
 void CPwView::OpenUrlL(const TDesC& aUrl)
 	{
 	if (iRunning)
@@ -229,7 +230,7 @@ void CPwView::StartEngineL()
 	iMsg2.Zero();
 	iShowMsg = ETrue;
 	DrawNow();
-	// Loading the engine (2.6 MB) and its start-up take many seconds, during
+	// Loading the engine (1.9 MB) and its start-up take some seconds, during
 	// which this thread is held in Create(): say so, bottom left, and flush
 	// the window server's buffer so the message and the blank page show now
 	// rather than when Create() returns. Tick takes it down when the first
@@ -282,7 +283,7 @@ void CPwView::StopEngine()
 	iShared->quitting = 1;
 	iShared->net.quit = 1;
 	iShared->cmd = PW_CMD_QUIT;
-	// give NetSurf a few seconds to hang up and save cookies
+	// give the engine a few seconds to hang up and close
 	for (TInt i = 0; i < 40 && iShared->state != PW_STATE_EXITED; i++)
 		User::After(100000);
 	if (iWatcher)
@@ -399,6 +400,7 @@ void CPwView::Command(TInt aCmd, const TDesC& aArg)
 	if (aCmd == PW_CMD_STOP)
 		iShared->net.quit = 1;          // also interrupts a dial or download
 	iShared->cmd = aCmd;
+	iShared->net.resized = 1;            // wakes the engine's wait (see psi_os.c)
 	}
 
 TInt CPwView::TickCallback(TAny* aSelf)
@@ -705,6 +707,7 @@ void CPwView::PushEvent(TInt aType, TInt aCode, TInt aX, TInt aY)
 	e.x = aX;
 	e.y = aY;
 	s->ev_head++;
+	s->net.resized = 1;                  // wakes the engine's wait (see psi_os.c)
 	}
 
 // Key and pen timings: the randomness behind TLS keys (see psiglue pg_entropy)
@@ -907,6 +910,7 @@ void CPwPrefsDialog::PreLayoutDynInitL()
 	SetEdwinTextL(EPwDlgProxyHost, &iSettings.iProxyHost);
 	SetNumberEditorValue(EPwDlgProxyPort, iSettings.iProxyPort);
 	SetEdwinTextL(EPwDlgHome, &iSettings.iHome);
+	((CEikChoiceList*)Control(EPwDlgPictures))->SetCurrentItem(iSettings.iImages ? 1 : 0);
 	}
 
 TBool CPwPrefsDialog::OkToExitL(TInt /*aButtonId*/)
@@ -926,6 +930,7 @@ TBool CPwPrefsDialog::OkToExitL(TInt /*aButtonId*/)
 	iSettings.iProxyPort = NumberEditorValue(EPwDlgProxyPort);
 	GetEdwinText(iSettings.iHome, EPwDlgHome);
 	iSettings.iHome.Trim();
+	iSettings.iImages = ((CEikChoiceList*)Control(EPwDlgPictures))->CurrentItem() == 1;
 	return ETrue;
 	}
 
@@ -1034,7 +1039,7 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 	aSettings.iProxyHost.Zero();
 	aSettings.iProxyPort = 8080;
 	aSettings.iHome = KDefaultHome;
-	aSettings.iImages = 1;
+	aSettings.iImages = 0;            // pictures only when asked (View > Show pictures)
 	aSettings.iZoom = 100;
 	aSettings.iToolbar = 1;
 	RFile file;
@@ -1052,7 +1057,7 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 		aSettings.iNetMode = d[pos++] != 0;
 		aSettings.iUseProxy = d[pos++] != 0;
 		aSettings.iProxyPort = d[pos] | (d[pos + 1] << 8); pos += 2;
-		aSettings.iImages = d[pos++] != 0;
+		pos++;               // (NetSurf's pictures setting, up to 0.61: see below)
 		aSettings.iZoom = d[pos++];
 		if (aSettings.iZoom < 30) aSettings.iZoom = 100;
 		TInt len = d[pos++];
@@ -1069,6 +1074,10 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 					pos += len;
 					if (pos < d.Length())            // (0.55) after the home page
 						aSettings.iToolbar = d[pos++] != 0;
+					// (0.62) pictures on every page: a new byte, so that
+					// NetSurf's setting (on by default) does not carry over
+					if (pos < d.Length())
+						aSettings.iImages = d[pos++] != 0;
 					}
 				}
 			}
@@ -1103,6 +1112,7 @@ void CPwAppUi::SaveSettings(const TPwSettings& aSettings)
 	d.Append((TUint8)tmp.Length());
 	d.Append(tmp);
 	d.Append((TUint8)aSettings.iToolbar);
+	d.Append((TUint8)aSettings.iImages);    // (0.62)
 	file.Write(d);
 	file.Close();
 	}
@@ -1122,8 +1132,6 @@ void CPwAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		}
 	else if (aMenuId == R_PW_VIEW_MENU)
 		{
-		aMenuPane->SetItemButtonState(EPwCmdImages,
-			iView->Settings().iImages ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPwCmdToggleToolbar,
 			iView->Settings().iToolbar ? EEikMenuItemSymbolOn : 0);
 		}
@@ -1343,10 +1351,21 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 		break;
 		}
 	case EPwCmdImages:
-		st.iImages = !st.iImages;
-		iView->Command(PW_CMD_IMAGES, st.iImages ? _L("1") : _L("0"));
-		iEikonEnv->InfoMsg(st.iImages ? _L("Pictures shown from the next page on") : _L("Pictures not shown from the next page on"));
-		SaveSettings(st);
+		// View > Show pictures: fetches the pictures of the page showing
+		// (pictures on every page is in Preferences)
+		if (!iView->EngineRunning())
+			iView->Command(PW_CMD_IMAGES, _L("1"));   // (says why not)
+		else if (st.iImages)
+			iEikonEnv->InfoMsg(_L("Pictures are already shown on every page"));
+		else
+			{
+			TBuf<16> u;
+			FromUtf8(u, sh->url);
+			if (u.Length() == 0 || u.Left(6).Compare(_L("about:")) == 0)
+				iEikonEnv->InfoMsg(_L("No pictures to show"));
+			else
+				iView->Command(PW_CMD_IMAGES, _L("1"));
+			}
 		break;
 	case EPwCmdToggleToolbar:
 		st.iToolbar = !st.iToolbar;

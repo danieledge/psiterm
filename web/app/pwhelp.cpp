@@ -16,13 +16,14 @@ struct TPwHelpTopic { const char* iTitle; const char* iText; };
 static const TPwHelpTopic KHelpTopics[] =
 	{
 	{ "Getting started",
-	  "PsiWeb is the NetSurf web browser on the Psion: HTML, CSS and GIF pictures, no JavaScript. It "
+	  "PsiWeb is the Links web browser on the Psion: pages are shown as plain documents, with JPEG, "
+	  "PNG and GIF pictures when you ask for them; no JavaScript and no style sheets. It "
 	  "reaches the Internet through a WiFi modem on the serial port or the Psion's own Internet "
 	  "connection, as PsiTerm and PsiMail do.\n"
 	  "\n"
 	  "File > Open address (Ctrl+O, or the Open button) asks for an address; words instead of an "
 	  "address are searched for. File > Home page (Ctrl+H) opens your home page, which is set in "
-	  "Tools > Preferences.\n"
+	  "Tools > Preferences. PsiWeb starts on its own welcome page, which needs no connection.\n"
 	  "\n"
 	  "PsiWeb starts its browser engine when it opens; the engine then dials or connects when a page "
 	  "needs it, and says what it is doing at the bottom left." },
@@ -30,14 +31,16 @@ static const TPwHelpTopic KHelpTopics[] =
 	{ "Reading pages",
 	  "Up and Down scroll a line; Fn+Up and Fn+Down (Pg Up and Pg Dn) a screen; Go > Top of page and "
 	  "End of page go to the ends. Tap a link to follow it, a field to type in it, a button to press "
-	  "it; the scroll bars work with the pen too.\n"
+	  "it; once a field is chosen, type into it. Left and Right scroll a wide page sideways; the scroll "
+	  "bars work with the pen too.\n"
 	  "\n"
 	  "Go > Back (Ctrl+B, or the Back button) and Forward (Ctrl+F) move through the pages you have "
 	  "seen. Esc stops a page that is loading; File > Reload (Ctrl+R) fetches it again.\n"
 	  "\n"
 	  "View > Zoom in and Zoom out (Ctrl+M and Shift+Ctrl+M, or the Zoom button) go round the sizes "
-	  "from 50% to 200%; Normal size is 100%. View > Show pictures (Ctrl+I) fetches pictures or "
-	  "leaves them out, which is faster. View > Show toolbar (Ctrl+T) gives the page the toolbar's "
+	  "from 50% to 200%; Normal size is 100%. Pictures are left out, which is much faster over a "
+	  "modem: View > Show pictures (Ctrl+I) fetches the pictures of the page showing. To have them "
+	  "on every page, set Pictures in Tools > Preferences. View > Show toolbar (Ctrl+T) gives the page the toolbar's "
 	  "room; the engine starts again to draw at the new width.\n"
 	  "\n"
 	  "View > Page information (Shift+Ctrl+Q) shows the page's title and address, what the engine "
@@ -92,7 +95,7 @@ static const TPwHelpTopic KHelpTopics[] =
 	  "Ctrl+H / Ctrl+R: home page / reload\n"
 	  "Ctrl+B / Ctrl+F: back / forward\n"
 	  "Ctrl+M / Shift+Ctrl+M: zoom in / out\n"
-	  "Ctrl+I / Ctrl+T: show pictures / show toolbar\n"
+	  "Ctrl+I / Ctrl+T: show pictures (this page) / show toolbar\n"
 	  "Shift+Ctrl+Q: page information\n"
 	  "Ctrl+U: disconnect\n"
 	  "Ctrl+K / Shift+Ctrl+H / Shift+Ctrl+A / Ctrl+E: preferences / help / about / close" }

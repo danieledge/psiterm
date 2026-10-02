@@ -67,8 +67,15 @@ extern "C" int pwb_gettimeofday(void* aTv, void*)
 // One line per event, "mm:ss.t text", for finding out where a page stops:
 // status text, busy changes, link messages, fetch errors, frames drawn.
 // The last run's log is kept as PsiWeb.old.
-_LIT(KLogFile, "C:\\System\\Data\\PsiWeb.log");
-_LIT(KLogOld, "C:\\System\\Data\\PsiWeb.old");
+// (a test build can put it on the emulator's card, where it can be read
+// back: web/links/epoc.mk PWEPOC_DEFS=-DPW_LOG_ON_D)
+#ifdef PW_LOG_ON_D
+#define PW_LOG_DIR "D:\\"
+#else
+#define PW_LOG_DIR "C:\\System\\Data\\"
+#endif
+_LIT(KLogFile, PW_LOG_DIR "PsiWeb.log");
+_LIT(KLogOld, PW_LOG_DIR "PsiWeb.old");
 static RFs gLogFs;
 static RFile gLog;
 static TInt gLogOpen = 0;       // 0 not tried, 1 open, -1 failed
@@ -420,6 +427,20 @@ extern "C" const char* pwb_home_url()
 		}
 	s->start_taken = 1;
 	return s->home_url[0] ? s->home_url : "about:welcome";
+	}
+/* Links (web/links): the first page is the one another program (PsiMail)
+   asked for, else PsiWeb's built-in welcome page - never the home page, so
+   starting PsiWeb needs no network. Home then goes to the home page. */
+extern "C" const char* pwb_first_url()
+	{
+	PwShared* s = Pw();
+	if (s->start_url[0] && !s->start_taken)
+		{
+		s->start_taken = 1;
+		return s->start_url;
+		}
+	s->start_taken = 1;
+	return "about:welcome";
 	}
 extern "C" const char* pwb_res_dir() { return Pw()->res_dir; }
 extern "C" int pwb_load_images() { return Pw()->load_images; }
