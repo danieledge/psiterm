@@ -126,8 +126,8 @@ Modern servers work: curve25519 key exchange, Ed25519/RSA host keys,
 chacha20-poly1305, zlib compression. It is fast enough to run tmux, vim, htop -
 and Claude Code - on a 1999 palmtop.
 
-- SSH with saved servers and (optionally) saved passwords; a start screen to
-  connect with one key (1-9)
+- SSH with saved servers and (optionally) saved passwords; a block-drawn
+  start screen
 - SSH keys (Tools > SSH keys): make Ed25519 keys on the Psion or import
   your own (OpenSSH or Dropbear, Ed25519 or RSA), each named, with its
   fingerprint; show, rename, regenerate or delete them. File > Install

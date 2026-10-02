@@ -1300,13 +1300,8 @@ void CTermView::ApplyAppearanceL()
 	SetFontL(iSettings.iZoom);      // lays out again (status line on/off) and redraws
 	StartTick();
 	// start screen switched on or off while not connected: show / drop it now
-	if (!iSshActive && !iReconnectWait)
-		{
-		if (iSettings.iStartScreen && !iWelcome)
-			ShowWelcome();
-		else if (!iSettings.iStartScreen)
-			iWelcome = EFalse;
-		}
+	if (!iSshActive && !iReconnectWait && iSettings.iStartScreen)
+		ShowWelcome();
 	}
 
 // ----- tmux windows as tabs ------------------------------------------------------
@@ -1643,13 +1638,52 @@ static void AppendText(TDes8& aOut, const TDesC& aText, TInt aWidth)
 		aOut.Append(' ');
 	}
 
+// The wordmark, 7 pixels high; two pixel rows make one terminal row, drawn
+// with the half blocks (U+2580 upper, U+2584 lower, U+2588 full).
+static const char* const KWordmark[7] =
+	{
+	"#####. ......  ## ###### ...... ...... ........",
+	"##..## ......  .. ..##.. ...... ...... ........",
+	"##..## .####.  ## ..##.. .####. ##.##. ######..",
+	"#####. ##....  ## ..##.. ##..## ###... ##.##.##",
+	"##.... .###..  ## ..##.. ###### ##.... ##.##.##",
+	"##.... ...##.  ## ..##.. ##.... ##.... ##.##.##",
+	"##.... ####..  ## ..##.. .####. ##.... ##.##.##"
+	};
+const TInt KWordmarkCols = 47;
+
+static void AppendWordmark(TDes8& aOut, TInt aIndent)
+	{
+	for (TInt r = 0; r < 7; r += 2)
+		{
+		aOut.Append(_L8("\x1b[1m"));
+		for (TInt n = 0; n < aIndent; n++)
+			aOut.Append(' ');
+		for (TInt c = 0; c < KWordmarkCols; c++)
+			{
+			TBool top = KWordmark[r][c] == '#';
+			TBool bot = r + 1 < 7 && KWordmark[r + 1][c] == '#';
+			if (top && bot)
+				AppendUtf8(aOut, 0x2588);
+			else if (top)
+				AppendUtf8(aOut, 0x2580);
+			else if (bot)
+				AppendUtf8(aOut, 0x2584);
+			else
+				aOut.Append(' ');
+			}
+		aOut.Append(_L8("\x1b[0m\r\n"));
+		}
+	}
+
+// The start screen: a drawn logo, to show what the terminal can render
+// (block elements, box drawing, bold and grey). Written into the terminal as
+// text, so it scrolls away like anything else. Saved servers are chosen with
+// File > SSH to (Shift+Ctrl+S): the screen holds no list that can go stale.
 void CTermView::ShowWelcome()
 	{
-	iWelcome = EFalse;
 	if (!iSettings.iStartScreen)
 		return;
-	TInt width = iCols - 4;
-	if (width > 56) width = 56;
 	HBufC8* buf = HBufC8::New(2600);
 	if (!buf)
 		return;
@@ -1659,43 +1693,56 @@ void CTermView::ShowWelcome()
 	w.Append(_L8("\x1b[999;1H"));
 	for (TInt r = 0; r < iRows && r < 60; r++)
 		w.Append(_L8("\r\n"));
-	w.Append(_L8("\x1b[H\x1b[J\r\n  \x1b[7m PsiTerm "));
+	w.Append(_L8("\x1b[H\x1b[J"));
 	TBuf<8> ver(KPsiTermVersion);
-	AppendText(w, ver, ver.Length());
-	w.Append(_L8(" \x1b[0m  SSH for the Psion Series 5mx\r\n  "));
-	for (TInt i = 0; i < width; i++)
-		AppendUtf8(w, 0x2500);
-	w.Append(_L8("\r\n"));
-	TInt count = iHosts ? iHosts->Count() : 0;
-	if (count == 0)
-		w.Append(_L8("  No saved servers yet: Shift+Ctrl+S to add one.\r\n"));
+	if (iCols >= KWordmarkCols + 4 && iRows >= 11)
+		{
+		// the little terminal, with the name and the way in beside it
+		w.Append(_L8("\r\n"));
+		TInt pad = (iCols - KWordmarkCols) / 2;
+		if (pad > 6) pad = 6;
+		for (TInt n = 0; n < pad; n++)
+			w.Append(' ');
+		w.Append(_L8(" "));
+		AppendUtf8(w, 0x2584);
+		for (TInt n = 0; n < 10; n++)
+			AppendUtf8(w, 0x2584);
+		AppendUtf8(w, 0x2584);
+		w.Append(_L8("\r\n"));
+		for (TInt n = 0; n < pad; n++)
+			w.Append(' ');
+		AppendUtf8(w, 0x2590);
+		w.Append(_L8("\x1b[7m  \x1b[1m>_\x1b[22m        \x1b[0m"));
+		AppendUtf8(w, 0x258C);
+		w.Append(_L8("   \x1b[1mPsiTerm "));
+		AppendText(w, ver, ver.Length());
+		w.Append(_L8("\x1b[0m\r\n"));
+		for (TInt n = 0; n < pad; n++)
+			w.Append(' ');
+		AppendUtf8(w, 0x2590);
+		w.Append(_L8("\x1b[7m            \x1b[0m"));
+		AppendUtf8(w, 0x258C);
+		w.Append(_L8("   \x1b[90mSSH for the Psion Series 5mx\x1b[0m\r\n"));
+		for (TInt n = 0; n < pad; n++)
+			w.Append(' ');
+		w.Append(_L8(" "));
+		for (TInt n = 0; n < 12; n++)
+			AppendUtf8(w, 0x2580);
+		w.Append(_L8("\r\n\r\n"));
+		AppendWordmark(w, pad + 1);
+		w.Append(_L8("\r\n "));
+		for (TInt n = 0; n < pad; n++)
+			w.Append(' ');
+		w.Append(_L8("\x1b[90mShift+Ctrl+S: SSH to a saved server\x1b[0m\r\n"));
+		}
 	else
 		{
-		for (TInt i = 0; i < count && i < 9; i++)
-			{
-			const THostEntry& e = iHosts->At(i);
-			w.Append(_L8("   \x1b[1m"));
-			w.Append((TUint8)('1' + i));
-			w.Append(_L8("\x1b[0m  "));
-			AppendText(w, e.iName, 14);
-			w.Append(_L8(" \x1b[90m"));
-			TBuf<164> where(e.iUser);
-			where.Append('@');
-			where.Append(LeftSafe(e.iHost, 60));
-			AppendText(w, where, width - 20 > 10 ? width - 20 : 10);
-			w.Append(_L8("\x1b[0m\r\n"));
-			}
+		w.Append(_L8("\r\n  \x1b[7m PsiTerm "));
+		AppendText(w, ver, ver.Length());
+		w.Append(_L8(" \x1b[0m  SSH for the Psion Series 5mx\r\n\r\n  \x1b[90mShift+Ctrl+S: SSH to a saved server\x1b[0m\r\n"));
 		}
-	w.Append(_L8("  "));
-	for (TInt i = 0; i < width; i++)
-		AppendUtf8(w, 0x2500);
-	w.Append(_L8("\r\n  \x1b[90m"));
-	if (count)
-		w.Append(_L8("1-9 connect   "));
-	w.Append(_L8("Shift+Ctrl+S servers   Menu: everything else\x1b[0m\r\n\r\n"));
 	LocalMessage(w);
 	delete buf;
-	iWelcome = (count > 0);
 	}
 
 void CTermView::DrawAll(CWindowGc& aGc) const
@@ -2348,18 +2395,6 @@ TKeyResponse CTermView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aT
 		case EKeyHome:     ScrollTo(iSb.iCount); return EKeyWasConsumed;
 		case EKeyEnd:      ScrollTo(0); return EKeyWasConsumed;
 		default: break;
-			}
-		}
-	// welcome screen: 1-9 connect to that saved host; any other key goes on
-	// as normal (e.g. AT commands to the modem) and ends the welcome
-	if (iWelcome && code != EKeyMenu)
-		{
-		iWelcome = EFalse;
-		if (!iSshActive && !(mods & (EModifierCtrl | EModifierShift)) && code >= '1' && code <= '9'
-			&& iHosts && (TInt)(code - '1') < iHosts->Count())
-			{
-			CEikonEnv::Static()->EikAppUi()->HandleCommandL(EPtCmdHost0 + (code - '1'));
-			return EKeyWasConsumed;
 			}
 		}
 	// Shift+Ctrl + a key: a snippet on that hotkey (menu shortcuts such as
@@ -3607,8 +3642,7 @@ void CTermView::SshProcessEnded()
 				{
 				// never got in: keep the messages that say why on screen
 				LocalMessage(_L8("\r\n[Not connected - the lines above say why. "
-					"1-9 or Shift+Ctrl+S to try again.]\r\n"));
-				iWelcome = iHosts && iHosts->Count() > 0;
+					"Shift+Ctrl+S to try again.]\r\n"));
 				}
 			}
 		}
@@ -5139,7 +5173,7 @@ TBool CPsiTermAppUi::ConfirmDisconnectL(TInt aCommand)
 	return EFalse;
 	}
 
-// Connects to saved host aIndex (SSH to... list, or 1-9 on the welcome screen)
+// Connects to saved host aIndex (from the SSH to... list)
 void CPsiTermAppUi::ConnectHostL(TInt aIndex)
 	{
 	if (iView->SshActive() || aIndex < 0 || aIndex >= iHosts->Count())

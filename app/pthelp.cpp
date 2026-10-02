@@ -27,8 +27,8 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "Connect, and the status line at the bottom shows the dialling, the handshake and the login. "
 	  "The first time PsiTerm meets a server it shows the server's key and asks whether to trust it.\n"
 	  "\n"
-	  "The start screen lists the saved servers: press 1 to 9 to connect to one. Any other key goes "
-	  "to the modem, so AT commands work as in a plain terminal." },
+	  "The start screen shows the PsiTerm logo; File > SSH to lists the saved servers. Keys typed there "
+	  "go to the modem, so AT commands work as in a plain terminal." },
 
 	{ "The terminal",
 	  "Everything you type goes to the server, including every Ctrl+letter (Ctrl+C, Ctrl+D, Ctrl+Z): "
@@ -155,7 +155,6 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "Shift+Home / Shift+End (Shift+Fn+Left/Right): oldest text / live screen\n"
 	  "Shift+Ctrl+T: Shift+Tab (Claude Code's switch mode)\n"
 	  "Ctrl+Tab / Shift+Ctrl+Tab: next / previous tmux window (as tabs)\n"
-	  "1 to 9 on the start screen: connect to that server\n"
 	  "Esc while connecting: stop; Enter while waiting to reconnect: now\n"
 	  "Shift+Ctrl+K / Shift+Ctrl+H / Shift+Ctrl+A / Shift+Ctrl+E: preferences / help / about / close\n"
 	  "Shift+Ctrl+ a letter or digit of your own: a snippet" }

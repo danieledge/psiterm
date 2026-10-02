@@ -56,7 +56,7 @@ struct TPsiSettings
 	TInt iStatus;         // 1 = status line at the bottom
 	TInt iTmuxPrefix;     // 0 = Ctrl+B, 1 = Ctrl+A
 	TInt iBell;           // 0 = beep, 1 = silent
-	TInt iStartScreen;    // 1 = start screen (host menu) when not connected
+	TInt iStartScreen;    // 1 = start screen (logo) when not connected
 	TInt iTmuxTabs;       // 1 = draw tmux's window list as tabs
 	TBuf<40> iPppStart;   // Psion Internet: sent to the modem first (empty = nothing)
 	TInt iToolbar;        // 1 = the toolbar is showing (0.71: saved as one more byte, v13)
@@ -454,7 +454,7 @@ public:
 	void SetSnippets(CSnippetList* aSnippets) { iSnippets = aSnippets; }
 	void SetHosts(CHostList* aHosts) { iHosts = aHosts; }
 	void ApplyAppearanceL();           // theme / cursor / status line changed
-	void ShowWelcome();                // the start screen with the saved hosts
+	void ShowWelcome();                // the start screen (the logo)
 	void SendScreenSize();
 	void SerialInfo();
 	void HangUp();
@@ -606,7 +606,6 @@ private:
 	TBool iBlinkHidden;       // cursor in the "off" half of a blink
 	TBuf<120> iStatusDrawn;   // what the status line shows now
 	TTime iReconnectAt;       // when the next reconnect attempt starts
-	TBool iWelcome;           // the start screen is showing: 1-9 connect
 	void StatusText(TDes& aText, TInt& aSplit) const;
 	void DrawStatus(CWindowGc& aGc) const;
 	void Tick();
