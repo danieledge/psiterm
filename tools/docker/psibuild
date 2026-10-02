@@ -1,0 +1,55 @@
+#!/bin/bash
+# Runs a command in the psion-build container, with the work area mounted
+# at the same path so the SDK's absolute paths and symlinks keep working.
+#
+#   tools/docker/psibuild setup        build the image, fetch and install the SDK
+#   tools/docker/psibuild all          build PsiTerm, PsiMail and PsiWeb (dist/*.sis)
+#   tools/docker/psibuild <command>    anything else, e.g. "mail/build.sh host"
+#
+# Layout (PSION_WORK, default: the folder above this checkout):
+#   $PSION_WORK/psiterm               this repository
+#   $PSION_WORK/psion_cpp_sdk_linux   the EPOC R5 C++ SDK for Linux
+#   $PSION_WORK/.wine                 wine's prefix (bmconv, makesis, makmake...)
+set -e
+HERE=$(cd "$(dirname "$0")" && pwd)
+REPO=$(cd "$HERE/../.." && pwd)
+WORK=${PSION_WORK:-$(cd "$REPO/.." && pwd)}
+SDK=$WORK/psion_cpp_sdk_linux
+SDK_URL=https://github.com/static-void/psion_cpp_sdk_linux.git
+SDK_REV=7763ee8
+IMAGE=psion-build
+
+run() {
+	docker run --rm -i $( [ -t 0 ] && echo -t ) \
+		--user "$(id -u):$(id -g)" \
+		-v "$WORK:$WORK" -w "$PWD" \
+		-e HOME="$WORK" -e WINEPREFIX="$WORK/.wine" -e WINEDEBUG=-all \
+		-e PSION_SDK="$SDK" \
+		"$IMAGE" bash -c "$*"
+}
+
+case "$1" in
+setup)
+	docker build -t "$IMAGE" "$HERE"
+	if [ ! -d "$SDK" ]; then
+		git clone "$SDK_URL" "$SDK"
+		git -C "$SDK" checkout -q "$SDK_REV"
+	fi
+	if [ ! -x "$SDK/gcc-3.0-psion-98r2-9/bin/arm-pe-gcc" ]; then
+		run "cd '$SDK/install' && ./install.sh"
+	fi
+	run "wineboot -i >/dev/null 2>&1 || true"
+	echo "SDK ready in $SDK"
+	;;
+all)
+	cd "$REPO"
+	run "bash build.sh && mail/build.sh && web/build.sh"
+	ls -la "$REPO"/dist/*.sis
+	;;
+"")
+	sed -n '2,13p' "$0"
+	;;
+*)
+	run "$*"
+	;;
+esac
