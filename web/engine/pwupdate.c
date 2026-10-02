@@ -259,16 +259,26 @@ static void after(void)
 
 static int fetch_small(const char *name, char *buf, int max, char *why, int whymax)
 {
-	long k, want;
-	int r = request(name, NULL, 0, 0, why, whymax);
-	if (r) return r;
-	want = H.clen >= 0 && H.clen < max ? H.clen : max - 1;
-	k = body((unsigned char *)buf, want);
-	if (k == -2) return -2;
-	if (H.clen < 0 || H.clen >= max) pwn_close(1);   /* unread rest */
-	else after();
-	buf[k < 0 ? 0 : k] = 0;
-	return 0;
+	long k = 0, want;
+	int r, attempt;
+	/* a reply cut short (a slow or dropping link) is asked for again, up to
+	   3 times; it used to be taken as the whole file, and a half signature
+	   was then "damaged" */
+	for (attempt = 0; attempt < 3; attempt++) {
+		r = request(name, NULL, 0, 0, why, whymax);
+		if (r) return r;
+		want = H.clen >= 0 && H.clen < max ? H.clen : max - 1;
+		k = body((unsigned char *)buf, want);
+		if (k == -2) return -2;
+		if (H.clen < 0 || H.clen >= max) pwn_close(1);   /* unread rest */
+		else after();
+		buf[k < 0 ? 0 : k] = 0;
+		if (H.clen < 0 || H.clen >= max || k >= want)
+			return 0;
+		pwn_close(1);                                    /* cut short: again on a new connection */
+	}
+	snprintf(why, whymax, "the reply from the server was cut short (%ld of %ld bytes)", k < 0 ? 0 : k, H.clen);
+	return -1;
 }
 
 /* major.minor only, as the EPOC installer compares them. Versions were
@@ -357,7 +367,7 @@ int pw_update_run(void)
 	r = fetch_small("PsiWeb.sis.sig", sigtxt, sizeof(sigtxt), why, sizeof(why));
 	if (r) goto fail;
 	if (parse_sig(sigtxt, sigver, sizeof(sigver), sig) != 0) {
-		snprintf(why, sizeof(why), "the release signature (PsiWeb.sis.sig) is missing or damaged");
+		snprintf(why, sizeof(why), "the release signature (PsiWeb.sis.sig) is damaged (%.30s)", sigtxt);
 		r = -1; goto fail;
 	}
 	if (strcmp(sigver, remote) != 0) {

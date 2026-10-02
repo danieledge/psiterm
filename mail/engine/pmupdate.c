@@ -188,16 +188,27 @@ static void after(void)
 
 static int fetch_small(const char *name, char *buf, int max, char *why, int whymax)
 {
-	long k, want;
-	int r = request(name, 0, 0, 0, why, whymax);
-	if (r) return r;
-	want = H.clen >= 0 && H.clen < max ? H.clen : max - 1;
-	k = body((unsigned char *)buf, want);
-	if (k == -2) return -2;
-	if (H.clen < 0 || H.clen >= max) { pmn_close(1); g_conn = -1; }
-	else after();
-	buf[k < 0 ? 0 : k] = 0;
-	return 0;
+	long k = 0, want;
+	int r, attempt;
+	/* a reply cut short (a slow or dropping link) is asked for again, up to
+	   3 times; it used to be taken as the whole file, and a half signature
+	   was then "damaged" */
+	for (attempt = 0; attempt < 3; attempt++) {
+		r = request(name, 0, 0, 0, why, whymax);
+		if (r) return r;
+		want = H.clen >= 0 && H.clen < max ? H.clen : max - 1;
+		k = body((unsigned char *)buf, want);
+		if (k == -2) return -2;
+		if (H.clen < 0 || H.clen >= max) { pmn_close(1); g_conn = -1; }
+		else after();
+		buf[k < 0 ? 0 : k] = 0;
+		if (H.clen < 0 || H.clen >= max || k >= want)
+			return 0;
+		pmn_close(1);                                    /* cut short: again on a new connection */
+		g_conn = -1;
+	}
+	snprintf(why, whymax, "the reply from the server was cut short (%ld of %ld bytes)", k < 0 ? 0 : k, H.clen);
+	return -1;
 }
 
 /* "0.3" < "0.3.1" < "0.4" */
@@ -284,7 +295,7 @@ int pm_update(const char *src, const char *save, char *why, int whymax)
 	r = fetch_small("PsiMail.sis.sig", sigtxt, sizeof(sigtxt), why, whymax);
 	if (r) goto fail;
 	if (parse_sig(sigtxt, sigver, sizeof(sigver), sig) != 0) {
-		snprintf(why, whymax, "The release signature (PsiMail.sis.sig) is missing or damaged");
+		snprintf(why, whymax, "The release signature (PsiMail.sis.sig) is damaged (%.30s)", sigtxt);
 		r = -1; goto fail;
 	}
 	if (strcmp(sigver, remote) != 0) {

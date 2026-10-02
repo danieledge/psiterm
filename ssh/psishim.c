@@ -830,15 +830,26 @@ static int fetch_small(const char *name, char *buf, int max, char *why, int whym
 	char path[128];
 	long len;
 	int k;
+	int attempt;
 	sprintf(path, "%s%s", s->path, name);
-	len = http_request(path, 0, 0, why, whymax);
-	if (len == -2) return -1;
-	if (len < 0 || len > max - 1) len = max - 1;
-	k = read_body((unsigned char *)buf, (int)len);
-	pg_hangup();
-	if (k < 0) { sprintf(why, "cancelled"); return -1; }
-	buf[k] = 0;
-	return k;
+	/* A reply cut short (a slow or dropping link: the read gives up after
+	   15 s) used to be taken as the whole file, and a half signature came out
+	   as "the release signature file is damaged". Ask again, up to 3 times. */
+	for (attempt = 0; attempt < 3; attempt++) {
+		long want;
+		len = http_request(path, 0, 0, why, whymax);
+		if (len == -2) return -1;
+		want = (len < 0 || len > max - 1) ? max - 1 : len;
+		k = read_body((unsigned char *)buf, (int)want);
+		pg_hangup();
+		if (k < 0) { sprintf(why, "cancelled"); return -1; }
+		buf[k] = 0;
+		if (len < 0 || k >= want)
+			return k;
+		if (pg_quit_requested()) { sprintf(why, "cancelled"); return -1; }
+	}
+	sprintf(why, "the reply from the server was cut short (%d of %ld bytes)", k, len);
+	return -1;
 }
 
 static int version_newer(const char *remote, const char *local)
@@ -965,10 +976,14 @@ static int run_update(void)
 	}
 	strcpy(path, "PsiTerm.sis.sig");
 	if (fetch_small(path, sigtxt, sizeof(sigtxt), why, sizeof(why)) < 0) {
-		sprintf(why, "no release signature on the server (PsiTerm.sis.sig)");
+		if (!why[0] || strstr(why, "server said"))
+			sprintf(why, "no release signature on the server (PsiTerm.sis.sig)");
 		goto fail;
 	}
-	if (parse_sig(sigtxt, sigver, sizeof(sigver), sig) != 0) { sprintf(why, "the release signature file is damaged"); goto fail; }
+	if (parse_sig(sigtxt, sigver, sizeof(sigver), sig) != 0) {
+		sprintf(why, "the release signature file is damaged (%.40s)", sigtxt);
+		goto fail;
+	}
 	if (strcmp(sigver, remote) != 0) {
 		sprintf(why, "the server's copies are still updating (%.10s vs %.10s) - try again in a few minutes", sigver, remote);
 		goto fail;
