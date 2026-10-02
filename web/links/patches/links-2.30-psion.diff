@@ -1,0 +1,157 @@
+Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
+- drivers.c, links.h, main.c: the "psi" graphics driver (GRDRV_PSI), always graphics mode
+- img.c (PSI_LAZY_IMAGES): no decoder or full-size buffer kept for pictures not yet drawn
+- jpeg.c (PSI_JPEG_SCALE): libjpeg scales while decoding; buffered mode only for progressive
+- html.c (PSIWEB): no <link rel=canonical/alternate/...> lines, no prefetch/preload
+
+--- a/drivers.c
++++ b/drivers.c
+@@ -40,6 +40,9 @@
+ #ifdef GRDRV_SDL
+ extern struct graphics_driver sdl_driver;
+ #endif
++#ifdef GRDRV_PSI
++extern struct graphics_driver psi_driver;
++#endif
+ 
+ /*
+  * On SPAD you must test first svgalib and then X (because X test is slow).
+@@ -48,6 +51,9 @@
+  */
+ 
+ static struct graphics_driver *graphics_drivers[] = {
++#ifdef GRDRV_PSI
++	&psi_driver,	/* Psion Series 5mx (web/links/psi_drv.c) */
++#endif
+ #ifdef GRDRV_PMSHELL
+ 	&pmshell_driver,
+ #endif
+--- a/html.c
++++ b/html.c
+@@ -2739,6 +2739,18 @@
+ 	    !casestrcmp(name, cast_uchar "preconnect") ||
+ 	    !casestrcmp(name, cast_uchar "stylesheet") ||
+ 	    casestrstr(name, cast_uchar "icon") ||
++#ifdef PSIWEB
++	    /* not worth a line of a 240-pixel screen, or a fetch over a modem */
++	    !casestrcmp(name, cast_uchar "canonical") ||
++	    !casecmp(name, cast_uchar "alternate", 9) ||
++	    !casestrcmp(name, cast_uchar "amphtml") ||
++	    !casestrcmp(name, cast_uchar "search") ||
++	    !casestrcmp(name, cast_uchar "prefetch") ||
++	    !casestrcmp(name, cast_uchar "prerender") ||
++	    !casestrcmp(name, cast_uchar "preload") ||
++	    !casestrcmp(name, cast_uchar "modulepreload") ||
++	    !casestrcmp(name, cast_uchar "dns-prefetch") ||
++#endif
+ 	    0) goto skip;
+ 	if (!casestrcmp(name, cast_uchar "prefetch") ||
+ 	    !casestrcmp(name, cast_uchar "prerender") ||
+--- a/img.c
++++ b/img.c
+@@ -1348,6 +1348,15 @@
+ 	image->goti.go.xw = (int)image->cimg->xww;
+ 	image->goti.go.yw = (int)image->cimg->yww;
+ 	if (cimg->state == 0 || cimg->state == 8 || image->af->unknown_image_size) if (image->af->need_reparse != -1) image->af->need_reparse = 1;
++#ifdef PSI_LAZY_IMAGES
++	/* PsiWeb: the layout only needs the size. An unfinished decoder holds
++	 * the whole picture decoded (3-8 bytes a pixel) plus the decoder's own
++	 * buffers until the picture is drawn, which for pictures off the screen
++	 * may be never: drop it now. img_draw_image() starts again from the
++	 * cached file when the picture comes into view. */
++	if ((cimg->state == 12 || cimg->state == 14) && image->af->rq && image->af->rq->ce)
++		r3l0ad(cimg, image);
++#endif
+ 	if (im->insert_flag) add_to_list(current_f_data->images, image);
+ 	else image->list_entry.prev = image->list_entry.next = NULL;
+ 	return image;
+--- a/jpeg.c
++++ b/jpeg.c
+@@ -246,13 +246,39 @@
+ 		/* jpeg_read_header */
+ 		if (JPEG_SUSPENDED==jpeg_read_header(global_cinfo,TRUE))
+ 			break;
++#ifdef PSI_JPEG_SCALE
++		/* PsiWeb: buffered-image mode keeps every DCT coefficient of
++		 * the picture (2 bytes a sample, 3 MB for a 1600x1040 photo);
++		 * only progressive JPEGs need it. */
++		global_cinfo->buffered_image=jpeg_has_multiple_scans(global_cinfo);
++#else
+ 		global_cinfo->buffered_image=TRUE;
++#endif
+ 		deco->state=1;
+ 		/*-fallthrough*/
+ 
+ 		case 1:
+ 		/* If the scaling is sufficiently brutal we can leave out
+ 		 * some DCT coefficients...: */
++#ifdef PSI_JPEG_SCALE
++		if (!global_cinfo->scale_denom || global_cinfo->scale_num == global_cinfo->scale_denom) {
++			/* PsiWeb: decode straight to (nearly) the size shown.
++			 * libjpeg 7+ scales by n/8 in the IDCT, so a 1600-wide
++			 * photo shown 320 wide is decoded 400 wide: 1/16 of the
++			 * memory and much less work for the scaler. Pictures with
++			 * no size given are capped at PSI_JPEG_MAX_W. */
++			long w = (long)global_cinfo->image_width, h = (long)global_cinfo->image_height;
++			long tw = cimg->wanted_xw >= 0 ? (long)cimg->xww : -1;
++			long th = cimg->wanted_yw >= 0 ? (long)cimg->yww : -1;
++			int num;
++			if (tw < 0 && th < 0) tw = PSI_JPEG_MAX_W;
++			for (num = 1; num < 8; num++)
++				if ((tw < 0 || (w * num + 7) / 8 >= tw) && (th < 0 || (h * num + 7) / 8 >= th))
++					break;
++			global_cinfo->scale_num = num;
++			global_cinfo->scale_denom = 8;
++		}
++#endif
+ 		/* jpeg_start_decompress */
+ 		if (jpeg_start_decompress(global_cinfo)==FALSE)
+ 			break;
+@@ -330,7 +356,7 @@
+ 
+ 		case 2:
+ 		/* jpeg_start_output */
+-		if (FALSE==jpeg_start_output(global_cinfo,global_cinfo->input_scan_number)){
++		if (global_cinfo->buffered_image && FALSE==jpeg_start_output(global_cinfo,global_cinfo->input_scan_number)){
+ susp0:
+ 			/* Suspended */
+ 			break;
+@@ -364,6 +390,7 @@
+ 
+ 		case 4:
+ 		/* jpeg_finish_output */
++		if (global_cinfo->buffered_image) {
+ 		if (FALSE==jpeg_finish_output(global_cinfo))
+ 		{
+ 			/* Suspended */
+@@ -374,6 +401,7 @@
+ 			/* Some more scans awaited... */
+ 			goto new_scan;
+ 		}
++		}
+ 		deco->state=5;
+ 		/*-fallthrough*/
+ 
+--- a/links.h
++++ b/links.h
+@@ -1832,7 +1832,7 @@
+ extern unsigned char term_seq_tw_mouse[];
+ extern unsigned char term_seq_xterm[];
+ 
+-#if defined(GRDRV_SVGALIB) || defined(GRDRV_FB) || defined(GRDRV_GRX)
++#if defined(GRDRV_SVGALIB) || defined(GRDRV_FB) || defined(GRDRV_GRX) || defined(GRDRV_PSI)
+ #define GRDRV_VIRTUAL_DEVICES
+ #endif
+ 
+--- a/main.c
++++ b/main.c
+@@ -335,6 +335,9 @@
+ static void fixup_g(void)
+ {
+ 	if (ggr_drv[0] || ggr_mode[0] || force_g) ggr = 1;
++#ifdef GRDRV_PSI
++	ggr = 1;	/* the Psion has no text terminal: always graphics */
++#endif
+ 	if (dmp) ggr = 0;
+ }
+ 
