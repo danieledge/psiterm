@@ -25,6 +25,10 @@ The apps reach the internet in one of two ways, and the user chooses which in th
 - **The serial port and a Wi-Fi modem** (WiRSa, or `firmware/atom-modem` on an M5Stack Atom), using Hayes `ATDT host:port` and then raw TCP.
 - **The Psion's own "Psion Internet" PPP stack** (ESOCK, NetDial, NIFMAN).
 
+## Open issues
+
+- **PsiWeb never shows a web page** (device and emulator). See `docs/issues/psiweb-no-render.md` before working on PsiWeb.
+
 ## Architecture
 
 ### Every app is two processes
