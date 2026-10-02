@@ -1192,6 +1192,12 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	/* the window for an update, an upload or the speed test shows each step
+	   of getting online (checking the modem, dialling, the Internet
+	   connection), as the terminal does for SSH; without this it said only
+	   "Checking..." until the link was up */
+	pg_dial_verbose(1);
+
 	if (s->mode == 2 || s->mode == 3) {
 		r = (s->mode == 2) ? run_update() : run_upload();
 		pg_set_exit(r);

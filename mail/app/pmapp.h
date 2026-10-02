@@ -131,6 +131,7 @@ public:
 	};
 
 class CPmView;
+class CPmUpdateProgress;
 
 class CPmWatcher : public CActive
 	{
@@ -209,6 +210,9 @@ public:
 	const TPmFolder& FolderAt(TInt aIndex) const;
 	void FocusFoldersL();
 	void StartInstallerL(const TDesC& aFile);
+	void UpdateDialogL();                    // Tools > Update: the progress window, then what it came to
+	const TDesC& UpdateLog() const { return iUpdLog; }
+	void StopUpdate() { StopEngineWork(KNullDesC); }
 	void SetStatus(const TDesC& aText);
 	void OpenSidebarItemL(TInt aIndex);
 	TInt CurrentSidebarItem() const;
@@ -394,6 +398,16 @@ private:
 	TBuf<128> iStatus;
 	TUint iStatusUntil;              // tick count when it goes
 	TBuf<128> iLastProgress;
+	// Tools > Update PsiMail: the progress window (psimail.cpp)
+	TBuf<1200> iUpdLog;              // its text, one paragraph a line
+	CPmUpdateProgress* iUpdDlg;      // the window, while it is up
+	TBool iUpdEnded;                 // the command has finished
+	TInt iUpdRes;                    // ...with this PM_RES_*
+	TBuf<160> iUpdMsg;
+	TBuf<16> iUpdVer;                // a checked newer version is saved as iUpdFile
+	TBuf<128> iUpdFile;
+	TBool iUpdReady;
+	void UpdateLine(const TDesC& aLine);
 	TUint iLinkSeq;               // link messages (dialling, looking up...) from psiglue
 	TBuf<80> iLinkMsg;
 	TBuf<128> iLinkProg;           // the engine's progress text when that message came
@@ -712,6 +726,24 @@ private:
 	TInt iAbove;               // pixels scrolled
 	TInt iPress;               // the pen: 1 up, 2 down, 3 the thumb
 	TInt iGrab;
+	};
+
+// Update PsiMail's progress window, as PsiTerm's: each step line by line (a
+// download count replaces the last line), Stop while it works, Close when it
+// has ended
+class CPmUpdateProgress : public CEikDialog
+	{
+public:
+	CPmUpdateProgress(CPmView& aView) : iView(aView), iFinished(EFalse) {}
+	void ShowL(const TDesC& aText);          // the log so far
+	void FinishL(const TDesC& aText);        // the job has ended: Stop -> Close
+private:
+	void SetSizeAndPositionL(const TSize& aSize);
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	void SetButtonTextL(const TDesC& aText);
+	CPmView& iView;
+	TBool iFinished;
 	};
 
 class CPmUpdateDialog : public CEikDialog

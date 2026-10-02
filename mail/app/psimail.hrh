@@ -155,6 +155,7 @@ enum TPmDialogControls
 	EPmDlgUpdSource,
 	EPmDlgUpdHost,
 	EPmDlgUpdPort,
+	EPmDlgUpdText,           // the update progress window
 	EPmDlgFind,              // the Contacts picker's Find line
 	EPmDlgContactList,
 	EPmDlgFolderName,        // New folder / Rename folder

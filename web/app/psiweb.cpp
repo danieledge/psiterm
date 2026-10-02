@@ -8,6 +8,8 @@
 #include <eiklabel.h>
 #include <eikmfne.h>
 #include <eikcmbut.h>
+#include <eikbtpan.h>
+#include <txtetext.h>
 #include <eiktbar.h>
 #include <eikimage.h>
 #include <apgcli.h>
@@ -350,6 +352,18 @@ void CPwView::EngineEnded()
 	iProcess.Close();
 	iRunning = EFalse;
 	StartBusyCancel();
+	if (iUpdState == PW_UPD_RUNNING || iUpdState == -1)
+		{
+		// the engine went while updating: the progress window must not wait for it
+		iUpdState = PW_UPD_FAILED;
+		iUpdMsg = _L("The browser engine stopped");
+		UpdateLine(iUpdMsg);
+		if (iUpdDlg)
+			{
+			TRAPD(fe, iUpdDlg->FinishL(iUpdLog));
+			(void)fe;
+			}
+		}
 	if (iShared->quitting)
 		return;
 	TBuf<120> why;
@@ -419,7 +433,17 @@ void CPwView::Tick()
 		TBool dots = m.Length() >= 3 && m.Right(3).Compare(_L("...")) == 0;
 		if (m.Length() && m[m.Length() - 1] == '.' && !dots)
 			m.SetLength(m.Length() - 1);     // no full stop at the end of a message
-		if (dots)
+		if (iUpdDlg)
+			{
+			// updating: the progress window shows each step of getting online
+			if (m.Length())
+				{
+				UpdateLine(m);
+				TRAPD(ue, iUpdDlg->ShowL(iUpdLog));
+				(void)ue;
+				}
+			}
+		else if (dots)
 			{
 			TRAPD(err, iEikonEnv->BusyMsgL(m, EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
 			iLinkBusy = err == KErrNone;
@@ -480,8 +504,58 @@ void CPwView::StartUpdateL()
 		return;
 		}
 	iShared->update_state = PW_UPD_RUNNING;
-	iUpdState = -1;                      // show the progress screen at once
+	iUpdState = -1;                      // (the first tick shows the engine's first words)
+	iUpdLog.Zero();
+	UpdateLine(_L("Starting the update..."));
 	Command(PW_CMD_UPDATE, KNullDesC);
+	UpdateDialogL();
+	}
+
+// A line for the progress window. A download count ("12 of 2700 KB")
+// replaces the last line if that was one too, so the window shows steps and
+// not a hundred counts.
+void CPwView::UpdateLine(const TDesC& aLine)
+	{
+	TBool count = aLine.Find(_L(" KB")) >= 0;
+	TInt last = iUpdLog.LocateReverse(CEditableText::EParagraphDelimiter);
+	if (count && iUpdLog.Length() > 0 && iUpdLog.Mid(last + 1).Find(_L(" KB")) >= 0)
+		iUpdLog.SetLength(last >= 0 ? last : 0);
+	if (iUpdLog.Length() > 0)
+		iUpdLog.Append(CEditableText::EParagraphDelimiter);
+	while (iUpdLog.Length() + aLine.Length() + 1 > iUpdLog.MaxLength())
+		{
+		TInt p = iUpdLog.Locate(CEditableText::EParagraphDelimiter);
+		if (p < 0)
+			{
+			iUpdLog.Zero();
+			break;
+			}
+		iUpdLog.Delete(0, p + 1);
+		}
+	iUpdLog.Append(aLine.Left(aLine.Length() < 120 ? aLine.Length() : 120));
+	}
+
+// The progress window stays up while the engine works (Stop asks it to give
+// up); the tick adds its words and, at the end, turns Stop into Close. What
+// the update came to is then said: install it, saved, current, failed.
+void CPwView::UpdateDialogL()
+	{
+	CPwUpdateProgress* dlg = new(ELeave) CPwUpdateProgress(*this);
+	iUpdDlg = dlg;
+	TRAPD(err, dlg->ExecuteLD(R_PW_UPDATE_PROGRESS));
+	iUpdDlg = NULL;
+	User::LeaveIfError(err);
+	if (iUpdState == PW_UPD_READY)
+		{
+		TBuf<64> q;
+		TBuf<16> v;
+		FromUtf8(v, iShared->update_version);
+		q.Format(_L("Install PsiWeb %S now?"), &v);
+		if (iEikonEnv->QueryWinL(_L("PsiWeb will close while it installs"), q))
+			StartInstallerL();
+		else
+			iEikonEnv->InfoWinL(_L("Update saved"), iUpdateFile);
+		}
 	}
 
 // progress while the engine downloads; the outcome when it has finished
@@ -497,7 +571,9 @@ void CPwView::UpdateTickL()
 			{
 			iUpdState = PW_UPD_RUNNING;
 			iUpdMsg = msg;
-			ShowMessage(_L("Updating PsiWeb  (Esc to stop)"), msg);
+			UpdateLine(msg);
+			if (iUpdDlg)
+				iUpdDlg->ShowL(iUpdLog);
 			}
 		return;
 		}
@@ -505,23 +581,70 @@ void CPwView::UpdateTickL()
 	iUpdState = st;
 	if (was != PW_UPD_RUNNING && was != -1)
 		return;
-	iShowMsg = EFalse;
-	DrawNow();                           // the page again
-	if (st == PW_UPD_READY)
+	// it has ended: the last words, and Stop becomes Close. What it came
+	// to is said when the window closes (UpdateDialogL).
+	iUpdMsg = msg;
+	UpdateLine(msg);
+	if (iUpdDlg)
+		iUpdDlg->FinishL(iUpdLog);
+	}
+
+void CPwUpdateProgress::SetSizeAndPositionL(const TSize& aSize)
+	{
+	TSize screen = iEikonEnv->ScreenDevice()->SizeInPixels();
+	TSize size(aSize.iWidth < screen.iWidth - 8 ? aSize.iWidth : screen.iWidth - 8,
+		aSize.iHeight < screen.iHeight - 8 ? aSize.iHeight : screen.iHeight - 8);
+	SetCornerAndSizeL(EHCenterVCenter, size);   // what CEikDialog does, clamped
+	}
+
+void CPwUpdateProgress::PreLayoutDynInitL()
+	{
+	ShowL(iView.UpdateLog());
+	}
+
+// The last few lines showing (the text scrolls with the arrow keys)
+void CPwUpdateProgress::ShowL(const TDesC& aText)
+	{
+	CEikEdwin* ed = (CEikEdwin*)Control(EPwDlgUpdText);
+	ed->SetTextL(&aText);
+	TInt pos = aText.Length(), paras = 0;
+	while (pos > 0)
 		{
-		TBuf<64> q;
-		TBuf<16> v;
-		FromUtf8(v, s->update_version);
-		q.Format(_L("Install PsiWeb %S now?"), &v);
-		if (iEikonEnv->QueryWinL(_L("PsiWeb will close while it installs"), q))
-			StartInstallerL();
-		else
-			iEikonEnv->InfoWinL(_L("Update saved"), iUpdateFile);
+		if (aText[pos - 1] == CEditableText::EParagraphDelimiter && ++paras >= 6)
+			break;
+		pos--;
 		}
-	else if (st == PW_UPD_CURRENT)
-		iEikonEnv->InfoMsg(msg);
-	else if (st == PW_UPD_FAILED)
-		iEikonEnv->InfoWinL(_L("Update PsiWeb"), msg);
+	ed->SetCursorPosL(aText.Length(), EFalse);
+	ed->SetCursorPosL(pos, EFalse);
+	ed->DrawNow();
+	}
+
+// One button: "Stop" while the job runs, "Close" afterwards
+void CPwUpdateProgress::SetButtonTextL(const TDesC& aText)
+	{
+	CEikCommandButtonBase* b = ButtonPanel()->ButtonById(EEikBidOk);
+	if (b)
+		{
+		((CEikCommandButton*)b)->SetTextL(aText);
+		b->DrawNow();
+		}
+	}
+
+void CPwUpdateProgress::FinishL(const TDesC& aText)
+	{
+	if (iFinished)
+		return;
+	iFinished = ETrue;
+	ShowL(aText);
+	SetButtonTextL(_L("Close"));
+	}
+
+TBool CPwUpdateProgress::OkToExitL(TInt /*aButtonId*/)
+	{
+	if (iFinished)
+		return ETrue;
+	iView.StopUpdate();                  // Stop (or Esc): ask the updater to give up, stay open
+	return EFalse;
 	}
 
 void CPwView::StartInstallerL()
@@ -638,7 +761,7 @@ TKeyResponse CPwView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 		}
 	if (code == EKeyEscape && iUpdState == PW_UPD_RUNNING)
 		{
-		iShared->net.quit = 1;           // the updater gives up and says so
+		StopUpdate();                    // (the progress window has it too)
 		return EKeyWasConsumed;
 		}
 	if (iUpdState == PW_UPD_RUNNING)

@@ -276,6 +276,29 @@ RESOURCE DIALOG r_pw_update_dialog
 		};
 	}
 
+// Update PsiWeb, step two (as PsiTerm's update window): what the engine is
+// doing, line by line, with Stop while it works and Close when it has ended
+RESOURCE DIALOG r_pw_update_progress
+	{
+	title="Update PsiWeb";
+	flags=EEikDialogFlagWait;
+	buttons=r_pw_update_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; id=EPwDlgUpdText;
+			control=EDWIN { width=40; lines=7; maxlength=2000;
+				flags=EEikEdwinReadOnly|EEikEdwinNoAutoSelection; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pw_update_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Stop"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
 RESOURCE ARRAY r_pw_source_array
 	{
 	items={ LBUF { txt="GitHub"; }, LBUF { txt="GitHub - test builds (dev)"; }, LBUF { txt="Local server"; } };

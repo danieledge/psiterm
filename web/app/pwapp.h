@@ -68,6 +68,7 @@ private:
 	RProcess* iProcess;
 	};
 
+class CPwUpdateProgress;
 class CPwView : public CCoeControl
 	{
 public:
@@ -88,7 +89,9 @@ public:
 	void OpenUrlL(const TDesC& aUrl);
 	void RestartL(TBool aSamePage);
 	void SetPageRectL(const TRect& aRect);
+	const TDesC& UpdateLog() const { return iUpdLog; }
 	TBool Updating() const { return iUpdState == PW_UPD_RUNNING; }
+	void StopUpdate() { if (iShared) iShared->net.quit = 1; }   // the updater gives up and says so
 private:
 	static TInt StartCallback(TAny* aSelf);
 	void Draw(const TRect& aRect) const;
@@ -99,6 +102,8 @@ private:
 	static TInt TickCallback(TAny* aSelf);
 	void Tick();
 	void UpdateTickL();
+	void UpdateLine(const TDesC& aLine);        // adds to the progress window's text
+	void UpdateDialogL();                       // the progress window, then what the update came to
 	void StartInstallerL();
 private:
 	TPwSettings iSettings;
@@ -123,6 +128,8 @@ private:
 	TBool iShowMsg;
 	TInt iUpdState;            // last PW_UPD_* seen
 	TBuf<128> iUpdMsg;
+	TBuf<1200> iUpdLog;        // the progress window's text (paragraphs)
+	CPwUpdateProgress* iUpdDlg;   // the window, while it is up
 	TFileName iUpdateFile;
 	};
 
@@ -175,6 +182,24 @@ private:
 	TInt& iSource;
 	TDes& iHost;
 	TInt& iPort;
+	};
+
+// Update PsiWeb's progress window, as PsiTerm's: the engine's words line by
+// line (a download count replaces the last line), Stop while it works, Close
+// when it has ended
+class CPwUpdateProgress : public CEikDialog
+	{
+public:
+	CPwUpdateProgress(CPwView& aView) : iView(aView), iFinished(EFalse) {}
+	void ShowL(const TDesC& aText);      // the log so far
+	void FinishL(const TDesC& aText);    // the job has ended: Stop -> Close
+private:
+	void SetSizeAndPositionL(const TSize& aSize);
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	void SetButtonTextL(const TDesC& aText);
+	CPwView& iView;
+	TBool iFinished;
 	};
 
 class CPwOpenDialog : public CEikDialog

@@ -44,6 +44,7 @@ enum TPwDialogControls
 	EPwDlgUpdSource,
 	EPwDlgUpdHost,
 	EPwDlgUpdPort,
+	EPwDlgUpdText,           // the update progress window
 	EPwDlgAbout1,
 	EPwDlgAbout2,
 	EPwDlgAboutStatus,

@@ -212,6 +212,8 @@ void CPmView::BusyTickL()
 		}
 	TBuf<80> t;
 	BusyTextNow(t);
+	if (iUpdDlg)
+		t.Zero();                            // (the update window says it)
 	ShowBusy(t);
 	}
 

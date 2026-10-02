@@ -25,6 +25,7 @@
 #include <txtrich.h>
 #include <eiktbar.h>
 #include <eikcmbut.h>
+#include <eikbtpan.h>
 #include "pmicons.h"
 #include "pmapp.h"
 #include "pmcontacts.h"
@@ -496,6 +497,15 @@ void CPmView::EngineEnded()
 	TExitCategoryName cat = iProcess.ExitCategory();
 	iProcess.Close();
 	iRunning = EFalse;
+	if (iUpdDlg && !iUpdEnded)
+		{
+		// the engine went while updating: the progress window must not wait for it
+		iUpdEnded = ETrue;
+		iUpdRes = PM_RES_FAILED;
+		UpdateLine(_L("The mail engine stopped"));
+		TRAPD(ue, iUpdDlg->FinishL(iUpdLog));
+		(void)ue;
+		}
 	if (iShared->quitting)
 		return;
 	TBuf<120> why;
@@ -1880,6 +1890,12 @@ void CPmView::TickL()
 		}
 	if (prog != iLastProgress || s->busy != iBusyWas)
 		{
+		if (iUpdDlg && !iUpdEnded && s->busy && prog.Length() && prog != iLastProgress)
+			{
+			UpdateLine(prog);                    // (the link's steps too: prog is its message then)
+			TRAPD(ue, iUpdDlg->ShowL(iUpdLog));
+			(void)ue;
+			}
 		iLastProgress = prog;
 		if (s->busy != iBusyWas)
 			redraw = ETrue;                      // (the progress alone changes nothing drawn)
@@ -1934,6 +1950,21 @@ void CPmView::HandleResultL(const PmCmd& aCmd)
 		iStatus.Zero();                      // (the pictures themselves say so)
 	// the outcome, as an infoprint: quiet, only what the user needs to
 	// know (and every failure); detailed, the engine's words (pmstatus.cpp)
+	if (aCmd.op == PM_CMD_UPDATE && iUpdDlg)
+		{
+		// the progress window has it: its last words, Stop becomes Close
+		iUpdEnded = ETrue;
+		iUpdRes = res;
+		iUpdMsg = msg;
+		iUpdReady = res == PM_RES_OK && s->update_ready;
+		FromC(iUpdVer, s->update_version);
+		FromC(iUpdFile, s->last_file);
+		iStatus.Zero();
+		UpdateLine(msg);
+		TRAPD(ue, iUpdDlg->FinishL(iUpdLog));
+		(void)ue;
+		return;
+		}
 	TBuf<160> outcome;
 	if (OutcomeText(aCmd, res, msg, outcome) && iNativeShown && NativeMode())
 		iEikonEnv->InfoMsg(outcome);
@@ -4087,8 +4118,123 @@ void CPmAppUi::UpdateL()
 	TBuf8<40> save(card ? _L8("D:\\PsiMail-update.sis") : _L8("C:\\PsiMail-update.sis"));
 	TBuf8<60> arg;
 	arg.Copy(src);
-	iView->SetStatus(_L("Looking for a new PsiMail..."));
 	iView->Cmd(PM_CMD_UPDATE, save, 0, arg);
+	iView->UpdateDialogL();
+	}
+
+// ----- Tools > Update PsiMail: the progress window -----------------------------
+// As PsiTerm's: after "Updates from", a window shows each step - checking the
+// modem, dialling, the Internet connection, downloading, the signature - and
+// Stop asks the engine to give up. When it has ended Stop is Close, and what
+// the update came to is said (install it now?).
+
+void CPmView::UpdateLine(const TDesC& aLine)
+	{
+	// a download count ("12 of 2700 KB") replaces the last line if that was one too
+	TBool count = aLine.Find(_L(" KB")) >= 0;
+	TInt last = iUpdLog.LocateReverse(CEditableText::EParagraphDelimiter);
+	if (count && iUpdLog.Length() > 0 && iUpdLog.Mid(last + 1).Find(_L(" KB")) >= 0)
+		iUpdLog.SetLength(last >= 0 ? last : 0);
+	if (iUpdLog.Length() > 0)
+		{
+		// (the same words again: nothing new)
+		if (iUpdLog.Mid(last + 1) == aLine.Left(aLine.Length() < 120 ? aLine.Length() : 120))
+			return;
+		iUpdLog.Append(CEditableText::EParagraphDelimiter);
+		}
+	while (iUpdLog.Length() + aLine.Length() + 1 > iUpdLog.MaxLength())
+		{
+		TInt p = iUpdLog.Locate(CEditableText::EParagraphDelimiter);
+		if (p < 0)
+			{
+			iUpdLog.Zero();
+			break;
+			}
+		iUpdLog.Delete(0, p + 1);
+		}
+	iUpdLog.Append(aLine.Left(aLine.Length() < 120 ? aLine.Length() : 120));
+	}
+
+void CPmView::UpdateDialogL()
+	{
+	iUpdLog.Zero();
+	iUpdEnded = EFalse;
+	iUpdReady = EFalse;
+	iUpdRes = PM_RES_OK;
+	iUpdMsg.Zero();
+	UpdateLine(_L("Starting the update..."));
+	CPmUpdateProgress* dlg = new(ELeave) CPmUpdateProgress(*this);
+	iUpdDlg = dlg;
+	TRAPD(err, dlg->ExecuteLD(R_PM_UPDATE_PROGRESS));
+	iUpdDlg = NULL;
+	User::LeaveIfError(err);
+	if (iUpdEnded && iUpdRes == PM_RES_OK && iUpdReady)
+		{
+		TBuf<64> q;
+		q.Format(_L("Install PsiMail %S now?"), &iUpdVer);
+		if (iEikonEnv->QueryWinL(_L("PsiMail will close while it installs"), q))
+			StartInstallerL(iUpdFile);
+		else
+			iEikonEnv->InfoWinL(_L("The update is saved"), iUpdFile);
+		}
+	}
+
+void CPmUpdateProgress::SetSizeAndPositionL(const TSize& aSize)
+	{
+	TSize screen = iEikonEnv->ScreenDevice()->SizeInPixels();
+	TSize size(aSize.iWidth < screen.iWidth - 8 ? aSize.iWidth : screen.iWidth - 8,
+		aSize.iHeight < screen.iHeight - 8 ? aSize.iHeight : screen.iHeight - 8);
+	SetCornerAndSizeL(EHCenterVCenter, size);   // what CEikDialog does, clamped
+	}
+
+void CPmUpdateProgress::PreLayoutDynInitL()
+	{
+	ShowL(iView.UpdateLog());
+	}
+
+// The last few lines showing (the text scrolls with the arrow keys)
+void CPmUpdateProgress::ShowL(const TDesC& aText)
+	{
+	CEikEdwin* ed = (CEikEdwin*)Control(EPmDlgUpdText);
+	ed->SetTextL(&aText);
+	TInt pos = aText.Length(), paras = 0;
+	while (pos > 0)
+		{
+		if (aText[pos - 1] == CEditableText::EParagraphDelimiter && ++paras >= 6)
+			break;
+		pos--;
+		}
+	ed->SetCursorPosL(aText.Length(), EFalse);
+	ed->SetCursorPosL(pos, EFalse);
+	ed->DrawNow();
+	}
+
+// One button: "Stop" while the job runs, "Close" afterwards
+void CPmUpdateProgress::SetButtonTextL(const TDesC& aText)
+	{
+	CEikCommandButtonBase* b = ButtonPanel()->ButtonById(EEikBidOk);
+	if (b)
+		{
+		((CEikCommandButton*)b)->SetTextL(aText);
+		b->DrawNow();
+		}
+	}
+
+void CPmUpdateProgress::FinishL(const TDesC& aText)
+	{
+	if (iFinished)
+		return;
+	iFinished = ETrue;
+	ShowL(aText);
+	SetButtonTextL(_L("Close"));
+	}
+
+TBool CPmUpdateProgress::OkToExitL(TInt /*aButtonId*/)
+	{
+	if (iFinished)
+		return ETrue;
+	iView.StopUpdate();                      // Stop (or Esc): ask the engine to give up, stay open
+	return EFalse;
 	}
 
 void CPmUpdateDialog::PreLayoutDynInitL()

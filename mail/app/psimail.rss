@@ -459,6 +459,30 @@ RESOURCE DIALOG r_pm_update_dialog
 		};
 	}
 
+// Update PsiMail, step two (as PsiTerm's update window): what is happening,
+// line by line (checking the modem, dialling, downloading...), with Stop
+// while it works and Close when it has ended
+RESOURCE DIALOG r_pm_update_progress
+	{
+	title="Update PsiMail";
+	flags=EEikDialogFlagWait;
+	buttons=r_pm_update_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; id=EPmDlgUpdText;
+			control=EDWIN { width=40; lines=7; maxlength=2000;
+				flags=EEikEdwinReadOnly|EEikEdwinNoAutoSelection; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pm_update_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Stop"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
 RESOURCE ARRAY r_pm_source_array
 	{
 	items={ LBUF { txt="GitHub"; }, LBUF { txt="GitHub - test builds (dev)"; }, LBUF { txt="Local server"; } };
