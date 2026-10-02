@@ -212,8 +212,7 @@ page" in it. See [web/README.md](web/README.md).
    [PsiMail.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiMail.sis),
    [PsiWeb.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiWeb.sis)
    (always the latest versions - see `dist/version.txt`,
-   `dist/PsiMail-version.txt` and `dist/PsiWeb-version.txt`). Where a
-   combined **PsiApps.sis** is offered, it installs all three in one go.
+   `dist/PsiMail-version.txt` and `dist/PsiWeb-version.txt`).
 2. **Copy** them to the Psion: the easiest way is a **CF card** in a PC card
    reader (for example into `D:\Install\`), or PsiWin.
 3. **Open** each .sis on the Psion and install to **D:** (the CF card) if you
