@@ -189,12 +189,11 @@ RESOURCE MENU_PANE r_pt_term_menu
 	items=
 		{
 		MENU_ITEM { command=EPtCmdSsh; txt="SSH to..."; },
-		MENU_ITEM { command=EPtCmdSshDisconnect; txt="Disconnect SSH"; },
+		MENU_ITEM { command=EPtCmdSshDisconnect; txt="Disconnect SSH"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdConnect; txt="Connect..."; },
 		MENU_ITEM { command=EPtCmdHangup; txt="Hang up modem"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdSendFile; txt="Send file..."; },
-		MENU_ITEM { command=EPtCmdGetFile; txt="Get file..."; },
-		MENU_ITEM { command=EPtCmdLog; txt="Log to file..."; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdInstallKey; txt="Install login key on server"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { cascade=r_pt_files_popup; txt="Files"; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
 		};
 	}

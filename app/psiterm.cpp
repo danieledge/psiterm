@@ -78,7 +78,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.75");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.76");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -5662,11 +5662,9 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		TBool ssh = iView->SshActive();
 		aMenuPane->SetItemDimmed(EPtCmdSsh, ssh);
 		aMenuPane->SetItemDimmed(EPtCmdSshDisconnect, !ssh);
+		aMenuPane->SetItemDimmed(EPtCmdConnect, ssh);
 		aMenuPane->SetItemDimmed(EPtCmdHangup, ssh || !iView->ModemOnline());
 		aMenuPane->SetItemDimmed(EPtCmdInstallKey, !iView->SshLoggedIn() || iKeys->Count() == 0);
-		aMenuPane->SetItemDimmed(EPtCmdSendFile, !iView->SshLoggedIn());
-		aMenuPane->SetItemDimmed(EPtCmdGetFile, !iView->SshLoggedIn());
-		aMenuPane->SetItemButtonState(EPtCmdLog, PtLogging(*iView) ? EEikMenuItemSymbolOn : 0);
 		return;
 		}
 	if (aMenuId == R_PT_FILES_POPUP)          // the toolbar's Files: as the File menu
@@ -5812,6 +5810,25 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		iView->StartSpeedTestL();
 		iView->RunToolDialogL();
 		break;
+	case EPtCmdConnect:
+		{
+		// Brings the connection up now, without SSH or an update, so it is
+		// there before anything needs it (and nothing times out waiting for
+		// a dial-up): the Psion's Internet, dialled as the Test does but
+		// without asking; or, for the modem route, the modem checked. The
+		// result says what it found. PsiMail and PsiWeb use the same link.
+		if (iView->SshActive())
+			{
+			iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
+			break;
+			}
+		iView->SerialClose();                // (the terminal holds the port until we are done)
+		TRAPD(cerr, PgLinkConnectL(s.iBaudIndex, s.iRtsCts, s.iNetMode, s.iPppStart,
+			R_PT_TEST_DIALOG, EPtDlgTest1, _L("Connect")));
+		iView->ApplySerialSettings();
+		User::LeaveIfError(cerr);
+		break;
+		}
 	case EPtCmdHangup:
 		// dimmed on the menu while SSH is up, but the shortcut still arrives
 		if (iView->SshActive())

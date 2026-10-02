@@ -15,17 +15,20 @@
 class CPgLinkResultDialog : public CEikDialog
 	{
 public:
-	CPgLinkResultDialog(const PgLinkTest& aTest, TInt aFirstLineId)
-		: iTest(aTest), iFirstLineId(aFirstLineId) {}
+	CPgLinkResultDialog(const PgLinkTest& aTest, TInt aFirstLineId, const TDesC* aTitle = 0)
+		: iTest(aTest), iFirstLineId(aFirstLineId), iTitle(aTitle) {}
 private:
 	void PreLayoutDynInitL();
 	void SetSizeAndPositionL(const TSize& aSize);
 	const PgLinkTest& iTest;
 	TInt iFirstLineId;
+	const TDesC* iTitle;               // another title than the resource's, or 0
 	};
 
 void CPgLinkResultDialog::PreLayoutDynInitL()
 	{
+	if (iTitle)
+		SetTitleL(*iTitle);
 	for (TInt i = 0; i < PG_LT_LINES; i++)
 		{
 		if (i < iTest.nlines)
@@ -60,8 +63,8 @@ static void PgLinkBusy(void* aCtx, const char* aText)
 	env->WsSession().Flush();
 	}
 
-void PgLinkTestL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
-	int aResultDialog, int aFirstLineId)
+static void PgLinkRunL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
+	int aResultDialog, int aFirstLineId, TBool aConnect, const TDesC* aTitle)
 	{
 	CEikonEnv* env = CEikonEnv::Static();
 	PgLinkTest* t = new(ELeave) PgLinkTest;
@@ -77,6 +80,7 @@ void PgLinkTestL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppSt
 	t->ppp_start[n] = 0;
 	t->progress = PgLinkBusy;
 	t->ctx = env;
+	t->dial = aConnect ? 1 : 0;         // Connect: dial at once, nothing to ask
 	pg_link_test(t);
 	env->BusyMsgCancel();
 	if (t->need_dial)
@@ -89,7 +93,19 @@ void PgLinkTestL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppSt
 			env->BusyMsgCancel();
 			}
 		}
-	CPgLinkResultDialog* d = new(ELeave) CPgLinkResultDialog(*t, aFirstLineId);
+	CPgLinkResultDialog* d = new(ELeave) CPgLinkResultDialog(*t, aFirstLineId, aTitle);
 	d->ExecuteLD(aResultDialog);
 	CleanupStack::PopAndDestroy();       // t
+	}
+
+void PgLinkTestL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
+	int aResultDialog, int aFirstLineId)
+	{
+	PgLinkRunL(aBaudIndex, aRtsCts, aNetMode, aPppStart, aResultDialog, aFirstLineId, EFalse, 0);
+	}
+
+void PgLinkConnectL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
+	int aResultDialog, int aFirstLineId, const TDesC& aTitle)
+	{
+	PgLinkRunL(aBaudIndex, aRtsCts, aNetMode, aPppStart, aResultDialog, aFirstLineId, ETrue, &aTitle);
 	}

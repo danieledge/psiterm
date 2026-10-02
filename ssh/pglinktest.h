@@ -102,6 +102,11 @@ void pg_lt_report(PgLinkTest* aTest);
 class TDesC8;
 void PgLinkTestL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
 	int aResultDialog, int aFirstLineId);
+/* The same, as a command: a Connect menu item. It brings the Psion's Internet
+ * connection up (dialling, with no "Connect now?" question), or checks the
+ * modem, and says what it found in the result dialog, titled aTitle. */
+void PgLinkConnectL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
+	int aResultDialog, int aFirstLineId, const TDesC& aTitle);
 #endif
 
 #endif
