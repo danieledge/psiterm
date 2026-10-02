@@ -206,5 +206,5 @@ Use the `epoc-eikon-ui-guide` skill if it is available. The essentials:
 - **Long work in the engine:** must not starve the UI. Decode at low priority and keep heartbeats going.
 - **Card writes:** the emulator's CF card emulation can wedge on many small writes, which is why `pm_write_whole` exists.
 - **`.gitignore`:** has broad rules (`*seed*`, `screenshots/`, vendored `.gitignore`s). Use `git add -f` for real source files they hide.
-- **References in `docs/`:** `epoc-robustness-best-practices.md` covers SDK-derived practice for memory, leaves, active objects, files and power. The comms best-practice notes cover serial, ESOCK and PPP. The SDK's own docs are HTML under `$EPOCROOT/sysdoc/`, and its headers are in `$EPOCROOT/epoc32/include`.
+- **References in `docs/`:** `epoc-robustness-best-practices.md` covers SDK-derived practice for memory, leaves, active objects, files and power. `epoc-comms-best-practices.md` covers serial (C32), sockets (ESOCK), dial-up (NIFMAN), our compliance and open recommendations. The comms best-practice notes cover serial, ESOCK and PPP. The SDK's own docs are HTML under `$EPOCROOT/sysdoc/`, and its headers are in `$EPOCROOT/epoc32/include`.
 - **Writing style:** British English, plain short sentences, and the EIKON glossary terms.

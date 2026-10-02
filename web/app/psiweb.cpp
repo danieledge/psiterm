@@ -1118,6 +1118,7 @@ void CPwAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 	else if (aMenuId == R_PW_FILE_MENU)
 		{
 		aMenuPane->SetItemDimmed(EPwCmdStop, !s->busy);
+		aMenuPane->SetItemDimmed(EPwCmdConnect, s->busy);   // (a page is using the link)
 		}
 	else if (aMenuId == R_PW_VIEW_MENU)
 		{
@@ -1373,6 +1374,18 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 			SaveSettings(st);
 			RestartEngineL();
 			}
+		break;
+		}
+	case EPwCmdConnect:
+		{
+		// as PsiTerm's File > Connect: brings the link up now, before a page
+		// needs it - the Psion's Internet dialled, or the modem checked - with
+		// the shared connection settings, and says what it found
+		TPsiLink link;
+		link.SetDefaults();
+		link.Load(iCoeEnv->FsSession());
+		PgLinkConnectL(link.iBaudIndex, link.iRtsCts, link.iNetMode, link.iPppStart,
+			R_PW_TEST_DIALOG, EPwDlgTest1, _L("Connect"));
 		break;
 		}
 	case EPwCmdHangup:

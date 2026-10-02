@@ -786,7 +786,7 @@ void CPmAppUi::DynInitMail2L(TInt aMenuId, CEikMenuPane* aMenuPane)
 	{
 	CPmView::TMode m = iView->Mode();
 	TBool msg = (m == CPmView::EList || m == CPmView::EMessage) && iView->CurrentRow() != NULL;
-	if (aMenuId == R_PM_FILE_MENU)
+	if (aMenuId == R_PM_PRINT_MENU)          // (File > Printing: Save as Word file is there, 0.77)
 		aMenuPane->SetItemDimmed(EPmCmdSaveWord, m != CPmView::EMessage);
 	else if (aMenuId == R_PM_CONTACTS_MENU)
 		{

@@ -21,6 +21,7 @@ enum TPwCommands
 	EPwCmdAbout,
 	EPwCmdUpdate,
 	EPwCmdHangup,
+	EPwCmdConnect,           // File > Connect (as PsiTerm's)
 	EPwCmdToggleToolbar,
 	EPwCmdHelp               // Tools > Help on PsiWeb
 	};

@@ -1198,8 +1198,13 @@ int main(int argc, char **argv)
 	}
 	if (r != 0) {
 		if (s) {
-			char msg[80];
-			sprintf(msg, "\r\n[psissh: could not open the serial port (%d)]\r\n", r);
+			char msg[160];
+			if (r == -13)
+				sprintf(msg, "\r\n[The serial port is held by the Remote link - switch it off on the System screen (Ctrl+L)]\r\n");
+			else if (r == -10)
+				sprintf(msg, "\r\n[The serial port is in use by another program (PsiMail? PsiWeb? Comms?)]\r\n");
+			else
+				sprintf(msg, "\r\n[psissh: could not open the serial port (%d)]\r\n", r);
 			pg_out_write(msg, strlen(msg));
 			pg_set_exit(1);
 		}

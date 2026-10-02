@@ -681,6 +681,12 @@ static int NetConnect(char* aResult, int aMax)
 
 	TBuf<128> host;
 	host.Copy(TPtrC8((const TUint8*)gShared->host));
+	if (host.Length() == 0)
+		{
+		// (an empty name "resolves" to the Psion's own address: tcpdns.html)
+		SetMsg(aResult, aMax, "no server name given");
+		return -1;
+		}
 	TInetAddr addr;
 	int lookedUp = 0, fromCache = 0;
 	int sameHost = 1;
@@ -968,9 +974,18 @@ static int OpenSerial()
 	r = gServer->LoadCommModule(KCsyName);
 	if (r != KErrNone && r != KErrAlreadyExists)
 		return -9;
+	// A port another process has just closed can still be held for a moment
+	// (C32 releases an exclusive port after Close returns), so "in use" is
+	// tried again briefly. KErrAccessDenied is the Remote link (or another
+	// program) holding it: its own code, so the message can say what to do.
 	r = gComm->Open(*gServer, KPortName, ECommExclusive);
+	for (int tries = 0; r == KErrInUse && tries < 3; tries++)
+		{
+		User::After(300000);
+		r = gComm->Open(*gServer, KPortName, ECommExclusive);
+		}
 	if (r != KErrNone)
-		return r == KErrInUse ? -10 : -12;
+		return r == KErrInUse ? -10 : r == KErrAccessDenied ? -13 : -12;
 	gCommOpen = 1;
 
 	TCommConfig cfg;
@@ -1597,6 +1612,8 @@ static int StartPpp(char* aResult, int aResultMax)
 		gRxPos = gRxLen = 0;
 		if (r == -10)
 			Say("  Serial port busy - the Internet connection is probably up already.\r\n");
+		else if (r == -13)
+			Say("  The serial port is held by the Remote link (System screen, Ctrl+L) or another program - trying anyway.\r\n");
 		else
 			Say("  Could not open the serial port to start PPP - trying anyway.\r\n");
 		return 0;
@@ -1773,6 +1790,8 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 			{
 			if (r == -10)
 				SetMsg(aResult, aResultMax, "the serial port is in use by another program (PsiTerm? Remote link?)");
+			else if (r == -13)
+				SetMsg(aResult, aResultMax, "the serial port is held by the Remote link - switch it off on the System screen (Ctrl+L)");
 			else
 				SetMsgErr(aResult, aResultMax, "could not set up the serial port", r);   // (pg_link_open's step codes)
 			return -1;

@@ -180,10 +180,10 @@ RESOURCE MENU_PANE r_pm_file_menu
 		{
 		MENU_ITEM { command=EPmCmdSendRecv; txt="Check mail (send & receive)"; },
 		MENU_ITEM { command=EPmCmdFolderMenu; cascade=r_pm_folder_menu; txt="Folder"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdConnect; txt="Connect..."; },
 		MENU_ITEM { command=EPmCmdHangup; txt="Disconnect"; },
 		MENU_ITEM { command=EPmCmdStop; txt="Stop"; extratxt="Esc"; },
 		MENU_ITEM { command=EPmCmdOffline; txt="Work offline"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdSaveWord; txt="Save as Word file..."; },
 		MENU_ITEM { command=EPmCmdPrintMenu; cascade=r_pm_print_menu; txt="Printing"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
 		};
@@ -196,6 +196,7 @@ RESOURCE MENU_PANE r_pm_print_menu
 	{
 	items=
 		{
+		MENU_ITEM { command=EPmCmdSaveWord; txt="Save as Word file..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdPageSetup; txt="Page setup..."; },
 		MENU_ITEM { command=EPmCmdPrintSetup; txt="Print setup..."; },
 		MENU_ITEM { command=EPmCmdPrintPreview; txt="Print preview..."; },

@@ -4575,6 +4575,7 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPmCmdOffline, iSettings.iOffline ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemDimmed(EPmCmdHangup, !iView->Shared()->online);
 		aMenuPane->SetItemDimmed(EPmCmdStop, !iView->Busy());
+		aMenuPane->SetItemDimmed(EPmCmdConnect, iView->Busy() || iSettings.iOffline);
 		}
 	else if (aMenuId == R_PM_PRINT_MENU)
 		{
@@ -4728,6 +4729,18 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		if (!iSettings.iOffline)
 			iView->LeftOfflineL();               // send what waits (pmauto.cpp)
 		break;
+	case EPmCmdConnect:
+		{
+		// as PsiTerm's File > Connect: brings the link up now, before a check
+		// needs it - the Psion's Internet dialled, or the modem checked - with
+		// the shared connection settings, and says what it found
+		TPsiLink link;
+		link.SetDefaults();
+		link.Load(iCoeEnv->FsSession());
+		PgLinkConnectL(link.iBaudIndex, link.iRtsCts, link.iNetMode, link.iPppStart,
+			R_PM_TEST_DIALOG, EPmDlgTest1, _L("Connect"));
+		break;
+		}
 	case EPmCmdHangup:
 		iView->Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
 		iView->Working(_L("Disconnecting..."));

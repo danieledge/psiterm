@@ -5,6 +5,7 @@ enum TPmCommands
 	EPmCmdSendRecv = 0x1000,
 	EPmCmdOffline,
 	EPmCmdHangup,
+	EPmCmdConnect,           // File > Connect (as PsiTerm's)
 	EPmCmdAbout,
 	EPmCmdNew,
 	EPmCmdReply,

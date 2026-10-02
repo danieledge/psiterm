@@ -132,6 +132,7 @@ RESOURCE MENU_PANE r_pw_file_menu
 		MENU_ITEM { command=EPwCmdHome; txt="Home page"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPwCmdReload; txt="Reload"; },
 		MENU_ITEM { command=EPwCmdStop; txt="Stop"; extratxt="Esc"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdConnect; txt="Connect..."; },
 		MENU_ITEM { command=EPwCmdHangup; txt="Disconnect"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
 		};
