@@ -5,11 +5,14 @@ A modern web browser for the **Psion Series 5mx**: [NetSurf](https://www.netsurf
 EPOC R5 toolchain, running on PsiTerm's networking - the same WiFi modem or
 dial-up link, and PsiTerm's TLS 1.3 client for HTTPS.
 
-**Status: 0.2.** 0.1 crashed at start on a real 5mx (KERN-EXEC 3: settings read before the shared chunk was opened) - fixed in 0.2. Everything builds, and the
-exact ARM code that goes into `psiweb.exe` has been run in an ARM emulator
-(see *Testing*): it renders pages, follows links and redirects, and fetches
-over HTTP and HTTPS. `PsiWeb.app` (the EPOC front end) compiles but has
-only been checked by reading it.
+**Status: 0.57, alpha.** The exact ARM code that goes into `psiweb.exe` has
+been run in an ARM emulator (see *Testing*): it renders pages, follows links
+and redirects, and fetches over HTTP and HTTPS. `PsiWeb.app`, the EIKON front
+end, is checked screen by screen in a 5mx emulator against the EIKON style
+guide, as PsiTerm and PsiMail are. Bug reports are welcome via
+[GitHub issues](https://github.com/danieledge/psiterm/issues).
+
+[![Download PsiWeb.sis](https://img.shields.io/badge/Download-PsiWeb.sis-2ea44f?logo=github)](https://github.com/danieledge/psiterm/raw/main/dist/PsiWeb.sis)
 
 ## Using it
 
@@ -26,7 +29,7 @@ Extras bar.
 | Ctrl+M, Shift+Ctrl+M | zoom in / out (they cycle round the sizes) |
 | Ctrl+T | show or hide the toolbar (the page takes its room) |
 | Ctrl+I | show pictures on/off |
-| Shift+Ctrl+Q | page information (title, address, free memory) |
+| Shift+Ctrl+Q | page information (title, address, status, free memory, connection) |
 | Ctrl+U | disconnect (hang up and free the serial port) |
 | Ctrl+K | preferences: home page and proxy |
 | Shift+Ctrl+H | help on PsiWeb |
@@ -34,11 +37,22 @@ Extras bar.
 | pen | tap links, buttons, form fields and the scroll bars |
 
 The toolbar (Open, Back, Home, Zoom) and the menus (File, View, Go, Tools)
-follow the EIKON style guide, as PsiTerm's and PsiMail's do.
+follow the EIKON style guide, as PsiTerm's and PsiMail's do. View > Normal
+size goes back to 100%; Go > Top of page and End of page jump to the ends.
+Tools > Help on PsiWeb has the help topics.
 
 **Tools > Connection settings**: modem (`ATDT host:port`, as PsiTerm) or the
-Psion's own TCP/IP (dial-up), baud rate and flow control. The serial port
-can only be used by one program at a time, so disconnect PsiTerm first.
+Psion's own TCP/IP (dial-up), baud rate and flow control - the same settings
+as PsiTerm and PsiMail. **Test** (Ctrl+T) tries them before OK: whether the
+modem answers and at what baud rate, CTS and DCD, or whether the Psion's
+Internet connection is up. The serial port can only be used by one program
+at a time, so disconnect PsiTerm or PsiMail first (and the Remote link must
+be off). The [Atom modem firmware](../firmware/atom-modem/README.md) is a
+Wi-Fi modem tuned for the Psion.
+
+**If the engine stops**: the browser engine runs as its own program, so a
+page too big for the memory stops the engine rather than the Psion. PsiWeb
+says so on the page, and Tools > Restart browser engine starts it again.
 
 **Tools > Preferences**: the home page, and a proxy - strongly recommended - point PsiWeb at a
 [WebOne](https://github.com/atauenis/webone) proxy on your network (for
@@ -51,8 +65,8 @@ PsiTerm's TLS 1.3 client (X25519 + ChaCha20-Poly1305; certificates are
 
 ### Updating
 
-**Tools > Update PsiWeb...** asks where from (GitHub, GitHub's dev branch,
-or a local server: the same choice as PsiMail's, kept in
+**Tools > Update PsiWeb...** asks where from (GitHub, GitHub - test builds
+(dev), or a local server: the same choice as PsiMail's, kept in
 `C:\System\Apps\PsiWeb\Update.ini`) and then works like PsiTerm's updater: it reads
 `dist/PsiWeb-version.txt` from GitHub, downloads `dist/PsiWeb.sis` in
 64 KB pieces (retrying a piece that breaks off) to D: (or C:), checks the
@@ -87,8 +101,8 @@ To publish a release: set the version in `web/app/psiweb.cpp` (KVersion),
 
 PsiMail opens links and "View as web page" in PsiWeb: it starts PsiWeb with
 the address on its command line, or hands it to a PsiWeb that is already
-running (a message to the app). Messages are opened from the card as
-`file:///D:/PsiMail/...`.
+running (a message to the app). Messages are opened from PsiMail's store as
+`file:///D:/System/Data/PsiMail/...` (or `C:`).
 
 ## How it fits together
 

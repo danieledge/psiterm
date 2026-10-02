@@ -1,37 +1,137 @@
-# PsiTerm
+# PsiTerm, PsiMail and PsiWeb
 
-> **Alpha - pre-v1. Expect bugs!** PsiTerm is new and changing fast. It works
-> well enough for daily SSH, tmux and Claude Code on a real 5mx, but things
-> will break. Bug reports (a photo of the screen is perfect) are very welcome
-> via [GitHub issues](https://github.com/danieledge/psiterm/issues).
+**Bringing a 1999 Psion Series 5mx into 2026:** SSH, modern IMAP email with
+TLS, two-way calendar sync and a web browser, as native EPOC apps for a 36 MHz
+palmtop.
+
+> **Alpha - pre-v1. Expect bugs!** The apps are new and changing fast. They
+> work well enough for daily SSH, tmux, Claude Code and email on a real 5mx,
+> but things will break. Bug reports (a photo of the screen is perfect) are
+> very welcome via [GitHub issues](https://github.com/danieledge/psiterm/issues).
 
 [![Download PsiTerm.sis](https://img.shields.io/badge/Download-PsiTerm.sis-2ea44f?logo=github)](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis)
+[![Download PsiMail.sis](https://img.shields.io/badge/Download-PsiMail.sis-2ea44f?logo=github)](https://github.com/danieledge/psiterm/raw/main/dist/PsiMail.sis)
+[![Download PsiWeb.sis](https://img.shields.io/badge/Download-PsiWeb.sis-2ea44f?logo=github)](https://github.com/danieledge/psiterm/raw/main/dist/PsiWeb.sis)
 [![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support-FFDD00?logo=buymeacoffee&logoColor=000)](https://buymeacoffee.com/danedge)
 
-**Download:** [PsiTerm.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis)
-(always the latest version - see [`dist/version.txt`](dist/version.txt)).
-Once installed, PsiTerm updates itself: Tools > Update PsiTerm.
+<p align="center"><img src="docs/screenshots/banner.png" alt="PsiTerm running vim inside tmux, with the tmux windows as tabs, above PsiMail's Inbox" width="640"></p>
 
-An SSH terminal for the **Psion Series 5mx** (EPOC R5, 36 MHz ARM710T).
+| App | What it is | Version | More |
+|---|---|---|---|
+| **PsiTerm** | An SSH terminal (xterm-256color) on a port of Dropbear: tmux, vim, htop and Claude Code on a palmtop, with file transfer | 0.73 | [below](#psiterm) |
+| **PsiMail** | Email for any IMAP/SMTP server with TLS (made for Fastmail), and a calendar that keeps the Agenda in step with CalDAV | 0.74 | [mail/README.md](mail/README.md) |
+| **PsiWeb** | The NetSurf web browser: HTML5 and CSS, no JavaScript | 0.57 | [web/README.md](web/README.md) |
+| **Atom modem** | Firmware that turns an M5Stack Atom into a Wi-Fi modem tuned for the Psion | - | [firmware/atom-modem](firmware/atom-modem/README.md) |
 
-PsiTerm is a native EPOC terminal app (libvterm-based, xterm-256color) that
-wraps a port of the **Dropbear SSH** client. It connects through anything that
-behaves like a Hayes modem on the serial port - for example a WiFi RS-232
-modem - by dialling `ATDT host:port`, or over the Psion's own dial-up (PPP)
-TCP/IP stack.
+All three apps look and behave like the Psion's own programs - EIKON toolbars,
+menus, dialogs and shortcuts, following Symbian's *EIKON Application Style
+Guide* - and they share one connection layer: a Wi-Fi modem on the serial
+port (`ATDT host:port`) or the Psion's own dial-up TCP/IP. Modern servers
+work: curve25519, Ed25519, ChaCha20-Poly1305 and TLS 1.3, all on the Psion's
+ARM710.
+
+## Contents
+
+- [Screenshots](#screenshots)
+- [What's new](#whats-new)
+- [PsiTerm](#psiterm) · [PsiMail](#psimail) · [PsiWeb](#psiweb)
+- [Installing](#installing)
+- [Connecting](#connecting)
+- [Updates](#updates)
+- [Building from source](#building-from-source)
+- [Support](#support) · [Licence and credits](#licence-and-credits)
+
+## Screenshots
+
+Taken in a Series 5mx emulator at the Psion's own 640x240 resolution. Tap or
+click one to see it full size.
+
+**PsiTerm**
+
+<table>
+<tr>
+<td><a href="docs/screenshots/psiterm-ssh.png"><img src="docs/screenshots/psiterm-ssh.png" alt="An SSH session: ls -l, cat and uptime" width="400"></a><br>An SSH session</td>
+<td><a href="docs/screenshots/psiterm-tmux-tabs.png"><img src="docs/screenshots/psiterm-tmux-tabs.png" alt="tmux with three windows shown as EIKON tabs" width="400"></a><br>tmux windows as tabs</td>
+</tr>
+<tr>
+<td><a href="docs/screenshots/psiterm-files.png"><img src="docs/screenshots/psiterm-files.png" alt="The toolbar's Files pop-out: Send file, Get file, Log to file" width="400"></a><br>The toolbar's Files pop-out</td>
+<td><a href="docs/screenshots/psiterm-get-file.png"><img src="docs/screenshots/psiterm-get-file.png" alt="Get file: browsing the server's folders" width="400"></a><br>Get file (SFTP)</td>
+</tr>
+<tr>
+<td><a href="docs/screenshots/psiterm-file-menu.png"><img src="docs/screenshots/psiterm-file-menu.png" alt="PsiTerm's File menu" width="400"></a><br>The File menu</td>
+<td><a href="docs/screenshots/psiterm-test.png"><img src="docs/screenshots/psiterm-test.png" alt="Connection settings: the Test result from an Atom modem" width="400"></a><br>Connection settings > Test</td>
+</tr>
+</table>
+
+**PsiMail**
+
+<table>
+<tr>
+<td><a href="docs/screenshots/psimail-mailbox.png"><img src="docs/screenshots/psimail-mailbox.png" alt="The Inbox: folder tree and message list, unread in bold" width="400"></a><br>Folders and messages</td>
+<td><a href="docs/screenshots/psimail-reader.png"><img src="docs/screenshots/psimail-reader.png" alt="Reading a message with a picture" width="400"></a><br>A message with a picture</td>
+</tr>
+<tr>
+<td><a href="docs/screenshots/psimail-newsletter.png"><img src="docs/screenshots/psimail-newsletter.png" alt="An HTML newsletter" width="400"></a><br>An HTML newsletter</td>
+<td><a href="docs/screenshots/psimail-invitation.png"><img src="docs/screenshots/psimail-invitation.png" alt="A meeting invitation with Accept, Tentative and Decline" width="400"></a><br>An invitation</td>
+</tr>
+<tr>
+<td><a href="docs/screenshots/psimail-calendar-week.png"><img src="docs/screenshots/psimail-calendar-week.png" alt="The calendar's week view" width="400"></a><br>The calendar: week</td>
+<td><a href="docs/screenshots/psimail-calendar-month.png"><img src="docs/screenshots/psimail-calendar-month.png" alt="The calendar's month view" width="400"></a><br>The calendar: month</td>
+</tr>
+<tr>
+<td><a href="docs/screenshots/psimail-contacts.png"><img src="docs/screenshots/psimail-contacts.png" alt="Adding addresses from Contacts while writing" width="400"></a><br>Addresses from Contacts</td>
+<td><a href="docs/screenshots/psimail-preferences.png"><img src="docs/screenshots/psimail-preferences.png" alt="Preferences" width="400"></a><br>Preferences</td>
+</tr>
+</table>
+
+More PsiMail screenshots are in [mail/README.md](mail/README.md).
+
+## What's new
+
+**PsiTerm 0.73**
+- A **Files** button on the toolbar pops up Send file, Get file and Log to
+  file. Zoom stays on the sidebar's zoom icons and in the View menu.
+- **tmux windows as tabs**, drawn as EIKON's own dialog page tabs in place of
+  tmux's status line: tap one to switch, Ctrl+Tab for the next.
+
+**PsiMail 0.74**
+- A **new message header**: the subject in large bold type, the sender and
+  date, To and Cc on one line, and the attachments as chips you tap to open.
+- **Pictures from the web only when you ask** ("Show them"), as first-party
+  mail programs do; tracking pixels are never fetched.
+- **Newsletters without the empty space**: hidden preheaders, spacers and
+  empty cells are left out.
+- **Quiet progress**: one busy message per job and one outcome, with every
+  step still available (Preferences > New mail > Show detailed progress).
+- The mail engine stays up when a busy program holds the Psion, and starts
+  again by itself if it stops. Help has a scroll bar.
+
+**Recently**
+- PsiTerm 0.72: file transfer over SFTP and a session log.
+- PsiMail 0.73: Undo, printing, new-mail alerts and a timed check,
+  invitations into the Agenda, contact cards into Contacts, progressive JPEG,
+  File > Save as Word file.
+- PsiMail 0.72: the **Email icon** below the screen can open PsiMail.
+- All three: a **Test** button in Connection settings, and new
+  [Atom modem firmware](firmware/atom-modem/README.md).
+
+## PsiTerm
+
+A native EPOC terminal (libvterm-based, xterm-256color) wrapping a port of the
+**Dropbear SSH** client. It connects through anything that behaves like a
+Hayes modem on the serial port - for example a Wi-Fi RS-232 modem - by
+dialling `ATDT host:port`, or over the Psion's own dial-up (PPP) TCP/IP stack.
 
 Modern servers work: curve25519 key exchange, Ed25519/RSA host keys,
 chacha20-poly1305, zlib compression. It is fast enough to run tmux, vim, htop -
 and Claude Code - on a 1999 palmtop.
 
-## Features
-
-- SSH with saved hosts and (optionally) saved passwords; a start screen to
+- SSH with saved servers and (optionally) saved passwords; a start screen to
   connect with one key (1-9)
 - SSH keys (Tools > SSH keys): make Ed25519 keys on the Psion or import
   your own (OpenSSH or Dropbear, Ed25519 or RSA), each named, with its
   fingerprint; show, rename, regenerate or delete them. File > Install
-  login key on server adds one to a server, and each saved host chooses its
+  login key on server adds one to a server, and each saved server chooses its
   key, a saved password, or to ask
 - File transfer over the logged-in connection (SFTP, no second login):
   File > Send file picks a Psion file with the standard Open file dialog,
@@ -53,9 +153,9 @@ and Claude Code - on a 1999 palmtop.
   tmux menu (windows, splits, panes, zoom, scroll mode, detach)
 - Themes (classic, inverted, high contrast, soft), cursor styles, and a status
   line with the connection state and clock
-- Auto-reconnect when a session drops (Psion switched off, WiFi gone), with an
-  optional per-host command on login such as `tmux new -A -s psion` to land back where
-  you were
+- Auto-reconnect when a session drops (Psion switched off, Wi-Fi gone), with an
+  optional per-server command on login such as `tmux new -A -s psion` to land
+  back where you were
 - Terminus font in four sizes (plus Courier), optional bold, 16 greys
 - The standard EIKON toolbar: SSH to (End SSH while connected), then the Send
   snippet, Keys and Files pop-ups (Files: Send file, Get file, Log to file),
@@ -69,92 +169,136 @@ and Claude Code - on a 1999 palmtop.
   scroll. Shift+stylus still selects text
 - Scrollback, pen selection, copy/paste with the system clipboard
 - Box drawing, block and Braille graphics drawn natively
+- Tools > Help on PsiTerm (Shift+Ctrl+H)
 - Signed over-the-air updates straight from GitHub (TLS 1.3 on a 36 MHz ARM)
-- An on-device crypto speed test
+- An on-device crypto speed test (Tools > Debug)
 
-## PsiWeb: a web browser
+## PsiMail
 
-`web/` builds **PsiWeb**, the NetSurf web browser for the 5mx, on PsiTerm's
-modem/dial-up link and TLS 1.3 client - see [web/README.md](web/README.md)
-(`dist/PsiWeb.sis`, built by `web/build.sh`).
+An email client made to replace the built-in Email program, for Fastmail or
+any IMAP/SMTP server with TLS, with the server's certificate checked. The full
+feature list, keys and settings are in [mail/README.md](mail/README.md).
 
-## PsiMail: email
+- Laid out like the built-in Email program: a folder tree with unread counts,
+  a message list with unread messages in bold, a rich-text reader, the
+  standard toolbar, and File / Edit / Message / View / Tools menus
+- HTML mail as rich text, pictures (JPEG, PNG and GIF, decoded on the
+  Psion), attachments opened in their own programs, links opened in PsiWeb
+- Write with bold, italic and underline; addresses from Contacts; files
+  attached; drafts; Undo for deletes, moves and archives; Print; Save as
+  Word file
+- Folders: create, rename, delete, move, archive; search on the server;
+  work offline and send later; up to 4 accounts
+- Invitations: Accept, Tentative or Decline, into the Agenda, with a reply to
+  the organiser; contact cards into Contacts
+- A calendar with week and month views, and two-way sync between the
+  Psion's Agenda and a CalDAV server such as Fastmail's
+- New-mail alerts and a timed check; the Email icon below the screen can
+  open PsiMail
 
-`mail/` builds **PsiMail**, an IMAP/SMTP email client made for Fastmail, on the
-same link and TLS client, with the server's certificate checked - see
-[mail/README.md](mail/README.md) (`dist/PsiMail.sis`, built by `mail/build.sh`).
+## PsiWeb
 
-## Install
+[NetSurf](https://www.netsurf-browser.org/) built with the 1999 EPOC R5
+toolchain: an HTML5 parser, CSS 2.1 and parts of CSS 3, GIF and BMP pictures,
+no JavaScript. Light sites suit it best (68k.news, FrogFind, DuckDuckGo Lite,
+text.npr.org); a [WebOne](https://github.com/atauenis/webone) proxy on your
+network is recommended for https sites. PsiMail opens links and "View as web
+page" in it. See [web/README.md](web/README.md).
 
-Download [`PsiTerm.sis`](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis),
-copy it to the Psion (e.g. via a CF card or PsiWin) and open it - install to D:
-if you have a CF card. Then see `docs/FIRSTRUN.TXT` for a step-by-step first run.
+## Installing
 
-The installer also offers the EPOC "Standard C Library" (ESTLIB.DLL), which
-PsiTerm needs and the 5mx ROM lacks - say OK if asked.
+1. **Download** the apps you want from `dist/`:
+   [PsiTerm.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis),
+   [PsiMail.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiMail.sis),
+   [PsiWeb.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiWeb.sis)
+   (always the latest versions - see `dist/version.txt`,
+   `dist/PsiMail-version.txt` and `dist/PsiWeb-version.txt`). Where a
+   combined **PsiApps.sis** is offered, it installs all three in one go.
+2. **Copy** them to the Psion: the easiest way is a **CF card** in a PC card
+   reader (for example into `D:\Install\`), or PsiWin.
+3. **Open** each .sis on the Psion and install to **D:** (the CF card) if you
+   have one. The apps appear on the Extras bar.
 
-## Building
+Each installer also offers the EPOC "Standard C Library" (ESTLIB.DLL), which
+the apps need and the 5mx ROM lacks - say OK if asked. Installing a newer
+version replaces the old one. Removing PsiMail leaves your mail where it
+is: it is yours.
 
-You need Linux, wine, and the EPOC R5 C++ SDK with the gcc 3.0 Psion
-toolchain (`psion_cpp_sdk_linux`, containing `epoc_cpp_sdk/` and
-`gcc-3.0-psion-98r2-9/`).
+After that the apps **update themselves over the air**: Tools > Update
+PsiTerm (or PsiMail, PsiWeb) fetches the newest signed release from GitHub -
+see [Updates](#updates).
 
-```sh
-PSION_SDK=/path/to/psion_cpp_sdk_linux ./build.sh
-```
+Then, in PsiTerm: Tools > Connection settings (see below), and SSH to
+(Shift+Ctrl+S) > New for your first server. In PsiMail the account dialog opens
+by itself the first time. `docs/FIRSTRUN.TXT` is a step-by-step first run
+with a WiRSa modem, written for PsiTerm 0.35 (some menu names have changed
+since).
 
-This builds libvterm (`build_vterm.sh`), `psissh.exe` (`ssh/Makefile`), the
-PsiTerm app, and packages `dist/PsiTerm.sis`.
+## Connecting
 
-### Layout
+All three apps share one set of connection settings (Tools > Connection
+settings in any of them). The serial port can be used by one program at a
+time, so the Psion's **Remote link must be off** (Ctrl+L on the System
+screen), and only one app uses the modem at once - File > Disconnect or Hang
+up frees it.
 
-| Path | What |
-|---|---|
-| `app/` | PsiTerm.app - EIKON UI, terminal drawing, settings, dialogs |
-| `ssh/` | psissh.exe - Dropbear client plus the EPOC glue (`psiglue.cpp`, `psishim.c`) |
-| `ssh/psishared.h` | the shared-memory interface between the two |
-| `ssh/sftp.c` | the SFTP v3 client for file transfer, on a second channel of the SSH session (`app/ptxfer.cpp` is its UI and the session log) |
-| `libvterm/` | terminal emulation |
-| `pkg/` | installer definition, font and icon files |
-| `server/` | optional local update/debug server (plain HTTP) |
-| `tools/` | font and icon converters, screenshot renderer, test harnesses |
-| `ssh/test/` | host-side tests (build `ssh/test/Makefile.host`; `update-test.key` is a throwaway key only the host test build trusts; `sftp_test.py` tests file transfer against a local OpenSSH server) |
-| `mail/` | PsiMail - an email client (IMAP/SMTP over TLS, made for Fastmail): see `mail/README.md` |
+**Test** (Ctrl+T) in Connection settings tries the settings shown, before OK:
+for a modem, whether it answers and at what baud rate, CTS and DCD, the
+modem's name, and whether RTS/CTS will work; for Psion Internet, whether the
+connection is up and names can be looked up (it asks before dialling).
+
+- **Psion Internet (PPP)**: the Psion's own dial-up TCP/IP, set up in the
+  Control panel's Internet and Modems settings - a phone or a PPP server. The
+  apps start it when they need it and the Psion's connection dialogs appear.
+- **A Wi-Fi serial modem** such as a WiRSa or a WiFi232: the apps dial
+  `ATDT host:port` and talk through the connection the modem makes. Set the
+  baud rate to the modem's; 115200 with RTS/CTS flow control is fastest if
+  the cable carries those lines, otherwise choose None.
+- **The Atom modem**: [`firmware/atom-modem`](firmware/atom-modem/README.md)
+  turns an M5Stack Atom on an Atomic RS232 Base into a Hayes-style Wi-Fi
+  modem that works exactly like a WiRSa, plus **output pacing** so the Psion
+  is never overrun even on a three-wire cable without RTS/CTS. Its README has
+  the wiring, flashing, Wi-Fi set-up and the settings to use.
 
 ## Updates
 
-**Tools > Update PsiTerm** asks where to look (GitHub, its test builds, or a
-local server), then fetches `dist/version.txt` and `dist/PsiTerm.sis`
-from this repository over HTTPS. The Psion speaks a minimal TLS 1.3 client
-(`ssh/tls13.c`: X25519, ChaCha20-Poly1305) over the same modem or dial-up link
-SSH uses.
+Tools > Update PsiTerm, Update PsiMail and Update PsiWeb ask where to look
+(GitHub, its test builds, or a local server), download the newest release
+over the same modem or dial-up link, check it and offer to install it.
 
-Every release is signed. `dist/PsiTerm.sis.sig` holds an Ed25519 signature
-over the version and the SHA-256 of the .sis, and PsiTerm checks it against the
-public key built into `ssh/psishim.c` before installing anything. The Psion
-does not check TLS certificates (no CA store, too slow), so the signature is
-what makes updates trustworthy, from GitHub or anywhere else.
+The Psion speaks a minimal TLS 1.3 client (`ssh/tls13.c`: X25519,
+ChaCha20-Poly1305). Every release is signed with Ed25519, and each app checks
+the signature against the release key built into it before installing
+anything - so updates are trustworthy from GitHub or anywhere else. How
+releases are made and signed is in [docs/BUILDING.md](docs/BUILDING.md#updates-and-signing).
 
-To make a release: build, run
-`tools/release/sign.py dist/PsiTerm.sis <version>` with the release key
-(kept outside the repository), set `dist/version.txt`, commit, and **tag the
-commit `v<version>`** and push the tag. PsiTerm reads `version.txt` from
-`main`, then fetches the signature and the .sis from the tag
-(`.../v0.31/dist/`), so GitHub's 5-minute cache can never mix old and new
-files.
+## Building from source
 
-The dialog's Local server choice points PsiTerm at your own server instead
-(`server/psion-update.sh`, plain HTTP). The same server receives the Debug
-screenshots, a developer feature.
+You need Linux, wine, and the EPOC R5 C++ SDK with the gcc 3.0 Psion
+toolchain ([psion_cpp_sdk_linux](https://github.com/static-void/psion_cpp_sdk_linux)).
+
+```sh
+PSION_SDK=/path/to/psion_cpp_sdk_linux ./build.sh        # dist/PsiTerm.sis
+PSION_SDK=/path/to/psion_cpp_sdk_linux mail/build.sh     # dist/PsiMail.sis
+PSION_SDK=/path/to/psion_cpp_sdk_linux web/build.sh      # dist/PsiWeb.sis
+```
+
+[docs/BUILDING.md](docs/BUILDING.md) has the details, the source layout and
+the release steps; [mail/README.md](mail/README.md#how-it-works) and
+[web/README.md](web/README.md#how-it-fits-together) explain how PsiMail and
+PsiWeb are put together.
 
 ## Support
 
-If PsiTerm brings your Psion back to life and you'd like to say thanks,
+If the apps bring your Psion back to life and you'd like to say thanks,
 you can [buy me a coffee](https://buymeacoffee.com/danedge).
 
-## Licence
+## Licence and credits
 
-MIT for PsiTerm's own code - see `LICENSE`. Bundled components keep their own
-licences - see `THIRD-PARTY.md`.
+MIT for the project's own code - see `LICENSE`. Bundled components keep their
+own licences - see [`THIRD-PARTY.md`](THIRD-PARTY.md): Dropbear SSH (with
+LibTomCrypt, LibTomMath and TweetNaCl), libvterm, zlib, picojpeg, the
+Terminus font, and - for PsiWeb only - NetSurf and its libraries, which make
+`psiweb.exe` GPL v2.
 
 (c) Dan Edge

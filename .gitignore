@@ -33,6 +33,7 @@ signing/
 *.psi
 upload-*.bin
 screenshots/
+!docs/screenshots/
 known_hosts
 *seed*
 !ssh/db/src/dbrandom.c
