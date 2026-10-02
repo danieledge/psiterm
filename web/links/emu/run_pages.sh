@@ -9,7 +9,11 @@
 #
 # Build first: tools/docker/psibuild "make -f web/links/epoc.mk -j8 emu"
 # Environment: JOBS (parallel runs, default 3), RUN_OPTS (more harness
-# options, e.g. "--profile" or "--heap-limit 8000000").
+# options, e.g. "--profile" or "--heap-limit 8000000"),
+# NET=record|replay (default: live network): record saves each page's traffic
+# to NETDIR/NAME/net.json (default NETDIR build/links/net); replay plays it
+# back with the harness's virtual clock, so runs are repeatable and can be
+# compared before and after a change.
 set -e
 HERE=$(cd "$(dirname "$0")" && pwd)
 TOP=$(cd "$HERE/../../.." && pwd)
@@ -18,6 +22,8 @@ OUT=${1:-$TOP/build/links/emu-shots}
 mkdir -p "$OUT/www"
 OUT=$(cd "$OUT" && pwd)
 JOBS=${JOBS:-3}
+NET=${NET:-}
+NETDIR=${NETDIR:-$TOP/build/links/net}
 PORT=8765
 
 PAGES="$*"
@@ -32,16 +38,22 @@ showpics=http://127.0.0.1:$PORT/images.html
 "
 
 # the local picture page (JPEG, PNG, GIF), served on 127.0.0.1 only
-python3 "$TOP/web/links/mktestpage.py" "$OUT/www" > /dev/null
-python3 -m http.server $PORT --bind 127.0.0.1 -d "$OUT/www" > "$OUT/httpd.log" 2>&1 &
-HTTPD=$!
-trap 'kill $HTTPD 2>/dev/null' EXIT
-sleep 1
+if [ "$NET" != replay ]; then
+	python3 "$TOP/web/links/mktestpage.py" "$OUT/www" > /dev/null
+	python3 -m http.server $PORT --bind 127.0.0.1 -d "$OUT/www" > "$OUT/httpd.log" 2>&1 &
+	HTTPD=$!
+	trap 'kill $HTTPD 2>/dev/null' EXIT
+	sleep 1
+fi
 
 run_one() {   # name url
 	local name=$1 url=$2 opts="--count --json $OUT/$1.json $RUN_OPTS"
 	case $name in
 	*+) name=${name%+}; opts="--count --images --json $OUT/$name.json $RUN_OPTS" ;;
+	esac
+	case $NET in
+	record) opts="$opts --record $NETDIR/$name" ;;
+	replay) opts="$opts --replay $NETDIR/$name" ;;
 	esac
 	if [ "$name" = showpics ]; then
 		# pictures off, then the app's "Show pictures" (PW_CMD_IMAGES "1")

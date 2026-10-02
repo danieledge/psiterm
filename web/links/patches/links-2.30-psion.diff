@@ -1,8 +1,10 @@
 Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
 - drivers.c, links.h, main.c: the "psi" graphics driver (GRDRV_PSI), always graphics mode
-- img.c (PSI_LAZY_IMAGES): no decoder or full-size buffer kept for pictures not yet drawn
+- img.c (PSI_LAZY_IMAGES): no decoder or full-size buffer kept for pictures not yet drawn;
+  during layout a JPEG is read only up to its size (phase 3)
 - jpeg.c (PSI_JPEG_SCALE): libjpeg scales while decoding; buffered mode only for progressive;
-  colour JPEGs decoded to grey (Y only), fast IDCT
+  colour JPEGs decoded to grey (Y only), fast IDCT; a progressive JPEG takes in all the
+  data there is before showing a scan (phase 3)
 - html.c (PSIWEB): no <link rel=canonical/alternate/...> lines, no prefetch/preload
 - html.c, html_r.c (PSIWEB): the form search for each control no longer starts at the top of
   the page when there is no <form> (quadratic: 200M ARM instructions on BBC)
@@ -12,6 +14,17 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
   the last picture gamma table kept (soft-float costs on the ARM710)
 - connect.c, https.c, default.c (PSI_EPOC, the ARM build): connections through
   web/links/epoc/psi_os.c (pwn: psiglue + TLS 1.3), 16 KB reads, no config files
+Phase 3 (speed; see PORTING.md, "Phase 3: performance"):
+- html.c, html_tbl.c (PSIWEB): fast paths in the parser (script/style bodies and plain text
+  skipped with memchr, element names' lengths kept, word-at-a-time attribute scanning), a
+  memo of the current element's attributes for get_attr_val, values copied in one go
+- dip.c (PSIWEB): run-length glyphs (web/links/mkfont.py --rle), widths kept per font size,
+  scaler divisions by reciprocal, exact /255 without a divide; (PSI_EPOC) the sRGB picture
+  gamma table made at build time (web/links/mkdither.py); the colour scaler divides by
+  reciprocal (Granlund-Montgomery, exact)
+- dither.c (PSI_EPOC): the screen's colour tables made at build time (mkdither.py)
+- compress.c (PSIWEB): no CRC check of gzip bodies (TLS or TCP has checked them)
+- sched.c (PSIWEB): each connection's host, port and keepalive key parsed once
 
 --- a/drivers.c
 +++ b/drivers.c
@@ -37,7 +50,244 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  #endif
 --- a/html.c
 +++ b/html.c
-@@ -1727,6 +1727,10 @@
+@@ -19,6 +19,62 @@
+ 	return /*isA(c) ||*/ (c > ' ' && c != '=' && c != '<' && c != '>');
+ }
+ 
++#ifdef PSIWEB
++/* The first byte from p on that is uu or 0, or eof. Attribute values
++   (class lists, SVG paths, srcset) are most of a modern page's tags, and
++   are scanned several times: this looks at a word at a time. */
++#define PSI_ONES 0x01010101UL
++#define PSI_HIGHS 0x80808080UL
++/* (gcc 3.0 would build both constants afresh in every turn of the loop,
++   8 instructions a word: the empty asm makes it keep them in registers) */
++#ifdef __GNUC__
++#define PSI_KEEP(x) __asm__("" : "=r"(x) : "0"(x))
++#else
++#define PSI_KEEP(x) do { } while (0)
++#endif
++#define PSI_HASZERO(v) (((v) - ones) & ~(v) & highs)
++static inline unsigned char *psi_scan_quote(unsigned char *p, unsigned char *eof, unsigned char uu)
++{
++	unsigned long m = uu * PSI_ONES, v, x, ones = PSI_ONES, highs = PSI_HIGHS;
++	PSI_KEEP(ones);
++	PSI_KEEP(highs);
++	while (p < eof && ((unsigned long)p & 3)) {
++		if (*p == uu || !*p) return p;
++		p++;
++	}
++	while (eof - p >= 4) {
++		v = *(unsigned long *)p;
++		x = v ^ m;
++		if (PSI_HASZERO(v) | PSI_HASZERO(x)) break;
++		p += 4;
++	}
++	while (p < eof) {
++		if (*p == uu || !*p) return p;
++		p++;
++	}
++	return p;
++}
++
++/* the same, with no end but the 0 byte (as get_attr_val's own loops) */
++static inline unsigned char *psi_scan_quote0(unsigned char *p, unsigned char uu)
++{
++	unsigned long m = uu * PSI_ONES, v, x, ones = PSI_ONES, highs = PSI_HIGHS;
++	PSI_KEEP(ones);
++	PSI_KEEP(highs);
++	while ((unsigned long)p & 3) {
++		if (*p == uu || !*p) return p;
++		p++;
++	}
++	for (;; p += 4) {
++		v = *(unsigned long *)p;
++		x = v ^ m;
++		if (PSI_HASZERO(v) | PSI_HASZERO(x)) break;
++	}
++	while (*p != uu && *p) p++;
++	return p;
++}
++#endif
++
+ /* accepts one html element */
+ /* e is pointer to the begining of the element (*e must be '<') */
+ /* eof is pointer to the end of scanned area */
+@@ -73,6 +129,10 @@
+ 	}
+ 	if (U(*e)) {
+ 		unsigned char uu = *e;
++#ifdef PSIWEB
++		e = psi_scan_quote(e + 1, eof, uu);
++		if (e >= eof) return -1;
++#else
+ 		/*u:*/
+ 		if (1) goto x3;
+ 		while (e < eof && *e != uu && *e /*(WHITECHAR(*e) || *e > ' ')*/) {
+@@ -80,6 +140,7 @@
+ 			e++;
+ 			if (e >= eof) return -1;
+ 		}
++#endif
+ 		if (*e < ' ') return -1;
+ 		e++;
+ 		if (e >= eof /*|| (!WHITECHAR(*e) && *e != uu && *e != '>' && *e != '<')*/) return -1;
+@@ -113,6 +174,58 @@
+ 
+ int get_attr_val_nl = 0;
+ 
++#ifdef PSIWEB
++/* A memo of where each attribute of one element starts. parse_html and
++   the element's handler ask for several attributes of the same element
++   (id, style, class, href, ...), and each get_attr_val call used to scan
++   all of its attributes again: on a modern page, long class lists, SVG
++   paths and srcsets were scanned five or six times. The memo is only used
++   for the element parse_html is handling (amemo_scope), and is rebuilt for
++   each new one, so it never outlives the document it points into. With
++   it, get_attr_val goes straight to the attribute asked for, or returns
++   NULL at once; what it returns is exactly what the full scan returns. */
++#define PSI_AMEMO 40
++static unsigned char *amemo_scope;	/* the element being handled */
++static unsigned char *amemo_e;		/* the attributes the memo is for */
++static int amemo_n;			/* entries */
++static int amemo_ok;			/* 1: every attribute is in it */
++static unsigned char *amemo_at[PSI_AMEMO];	/* where each one starts */
++static int amemo_len[PSI_AMEMO];	/* the length of its name */
++
++static void amemo_build(unsigned char *e)
++{
++	unsigned char *p = e, *q, c;
++	amemo_e = e;
++	amemo_n = 0;
++	amemo_ok = 0;
++	for (;;) {
++		q = p;
++		while (WHITECHAR(*p)) p++;
++		if (*p == '>' || *p == '<') break;
++		if (amemo_n == PSI_AMEMO) return;	/* (too many: not used) */
++		amemo_at[amemo_n] = p;
++		while (atchr(*p)) p++;
++		amemo_len[amemo_n] = (int)(p - amemo_at[amemo_n]);
++		amemo_n++;
++		while (WHITECHAR(*p)) p++;
++		if (*p == '=') {
++			p++;
++			while (WHITECHAR(*p)) p++;
++			if (!U(*p)) {
++				while (!WHITECHAR(*p) && *p != '>' && *p != '<') p++;
++			} else {
++				c = *p;
++				p = psi_scan_quote0(p + 1, c);
++				if (!*p) break;		/* (get_attr_val stops here too) */
++				p++;
++			}
++		}
++		if (p == q) return;	/* (not a tag parse_element accepted) */
++	}
++	amemo_ok = 1;
++}
++#endif
++
+ /* parses html element attributes */
+ /* e is attr pointer previously got from parse_element, DON'T PASS HERE ANY OTHER VALUE!!! */
+ /* name is searched attribute */
+@@ -123,6 +236,21 @@
+ 	unsigned char *a = DUMMY;
+ 	int l = 0;
+ 	int f;
++#ifdef PSIWEB
++	if (e == amemo_scope && e) {
++		int i, nl;
++		if (amemo_e != e) amemo_build(e);
++		if (amemo_ok) {
++			nl = (int)strlen(cast_const_char name);
++			for (i = 0; i < amemo_n; i++)
++				if (amemo_len[i] == nl && !casecmp(amemo_at[i], name, nl)) {
++					e = amemo_at[i];
++					goto aa;
++				}
++			return NULL;
++		}
++	}
++#endif
+ 	aa:
+ 	while (WHITECHAR(*e)) e++;
+ 	if (*e == '>' || *e == '<') return NULL;
+@@ -134,6 +262,63 @@
+ 	if (*e != '=') goto ea;
+ 	e++;
+ 	while (WHITECHAR(*e)) e++;
++#ifdef PSIWEB
++	/* not the attribute asked for: step over its value without the
++	   per-character tests below (long class lists made this hot) */
++	if (f) {
++		unsigned char c, uu = *e;
++		if (!U(uu)) {
++			while ((c = *e) > ' ' && c != '>' && c != '<') e++;
++			if (!WHITECHAR(c) && c != '>' && c != '<') {
++				/* (a control character: as the loop below) */
++				while (!WHITECHAR(*e) && *e != '>' && *e != '<') e++;
++			}
++		} else {
++			e = psi_scan_quote0(e + 1, uu);
++			if (!*e) {
++				mem_free(a);
++				return NULL;
++			}
++			e++;
++		}
++		goto aa;
++	}
++	/* the attribute asked for: find the end of its value, then copy it
++	   in one go (it was copied a character at a time, with a realloc
++	   every 32) */
++	{
++		unsigned char *v, *ve, *d;
++		if (!U(*e)) {
++			v = e;
++			while (!WHITECHAR(*e) && *e != '>' && *e != '<') e++;
++			ve = e;
++			a = mem_alloc(ve - v + 1);
++			memcpy(a, v, ve - v);
++			l = (int)(ve - v);
++		} else {
++			v = e + 1;
++			ve = psi_scan_quote0(v, *e);
++			if (!*ve)
++				return NULL;
++			e = ve + 1;
++			d = a = mem_alloc(ve - v + 1);
++			if (get_attr_val_nl == 2) {
++				memcpy(d, v, ve - v);
++				d += ve - v;
++			} else {
++				for (; v < ve; v++) {
++					unsigned char c = *v;
++					if (c == 13) continue;
++					if (c != 9 && c != 10) *d++ = c;
++					else if (!get_attr_val_nl) *d++ = ' ';
++				}
++			}
++			l = (int)(d - a);
++		}
++		a[l] = 0;
++		goto ea_copied;
++	}
++#endif
+ 	if (!U(*e)) {
+ 		while (!WHITECHAR(*e) && *e != '>' && *e != '<') {
+ 			if (!f) add_chr(a, l, *e);
+@@ -167,6 +352,9 @@
+ 	if (!f) {
+ 		unsigned char *b;
+ 		add_chr(a, l, 0);
++#ifdef PSIWEB
++		ea_copied:
++#endif
+ 		if (strchr(cast_const_char a, '&')) {
+ 			unsigned char *aa = a;
+ 			int c = d_opt->cp;
+@@ -1727,6 +1915,10 @@
  	form->num = (int)(a - startf);
  }
  
@@ -48,7 +298,7 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  static void find_form_for_input(unsigned char *i)
  {
  	unsigned char *s, *ss, *name, *attr, *lf, *la;
-@@ -1749,6 +1753,13 @@
+@@ -1749,9 +1941,27 @@
  	} else {
  		lf = NULL, la = NULL;
  		s = startf;
@@ -61,8 +311,22 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
 +#endif
  	}
  	se:
++#ifdef PSIWEB
++	if (s < i && *s != '<') {
++		sp:
++		s++;
++		if (s < i && *s != '<') {
++			unsigned char *p = memchr(s, '<', i - s);
++			s = p ? p : i;
++		}
++	}
++#else
  	while (s < i && *s != '<') sp:s++;
-@@ -1772,6 +1783,10 @@
++#endif
+ 	if (s >= i) goto end_parse;
+ 	if (eofff - s >= 2 && (s[1] == '!' || s[1] == '?')) {
+ 		s = skip_comment(s, i);
+@@ -1772,6 +1982,10 @@
  		get_html_form(la, &form);
  	} else {
  		last_form_tag = NULL;
@@ -73,7 +337,7 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  	}
  }
  
-@@ -2739,6 +2754,18 @@
+@@ -2739,6 +2953,18 @@
  	    !casestrcmp(name, cast_uchar "preconnect") ||
  	    !casestrcmp(name, cast_uchar "stylesheet") ||
  	    casestrstr(name, cast_uchar "icon") ||
@@ -92,6 +356,113 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  	    0) goto skip;
  	if (!casestrcmp(name, cast_uchar "prefetch") ||
  	    !casestrcmp(name, cast_uchar "prerender") ||
+@@ -2780,6 +3006,9 @@
+ 	void (*func)(unsigned char *);
+ 	int linebreak;
+ 	int nopair; /* Somehow relates to paired elements */
++#ifdef PSIWEB
++	int namelen;	/* strlen(name), filled in at the first parse */
++#endif
+ };
+ 
+ static struct element_info elements[] = {
+@@ -2960,6 +3189,9 @@
+ 	if (head) process_head(head);
+ 
+ 	set_lt:
++#ifdef PSIWEB
++	amemo_scope = NULL;
++#endif
+ 
+ 	/*set_globals;*/
+ 
+@@ -2970,6 +3202,25 @@
+ 		int namelen;
+ 		struct element_info *ei;
+ 		int inv;
++#ifdef PSIWEB
++		/* Fast paths, exactly as the code below would go one character at
++		   a time (this loop was most of the cost of a big page):
++		   - inside <script> or <style> nothing but a '<' can matter;
++		   - in ordinary text, a character above space that is not '<'
++		     only moves html on. */
++		if (par_format.align != AL_NO && par_format.align != AL_NO_BREAKABLE && *html != '<') {
++			if (html_top.invisible == INVISIBLE_SCRIPT || html_top.invisible == INVISIBLE_STYLE) {
++				unsigned char *p = memchr(html, '<', eof - html);
++				html = p ? p : eof;
++				continue;
++			}
++			if (*html > ' ') {
++				unsigned char c;
++				do html++; while (html < eof && (c = *html) > ' ' && c != '<');
++				continue;
++			}
++		}
++#endif
+ 		if (par_format.align != AL_NO && par_format.align != AL_NO_BREAKABLE && WHITECHAR(*html)) {
+ 			unsigned char *h = html;
+ 			/*if (putsp == -1) {
+@@ -3052,6 +3303,10 @@
+ 			continue;
+ 		}
+ 		element:
++#ifdef PSIWEB
++		amemo_scope = attr;
++		amemo_e = NULL;
++#endif
+ 		html_format_changed = 1;
+ 		inv = *name == '/'; name += inv; namelen -= inv;
+ 		if (html_top.invisible == INVISIBLE_SCRIPT && !(inv && namelen == 6 && !casecmp(name, cast_uchar "SCRIPT", 6))) {
+@@ -3076,9 +3331,20 @@
+ 			ng:;
+ 		}
+ 		html = end;
++#ifdef PSIWEB
++		/* (strlen of every name in the table for every tag cost 300,000
++		   strlen calls on a big page) */
++		if (!elements[0].namelen)
++			for (ei = elements; ei != endof(elements); ei++) ei->namelen = (int)strlen(cast_const_char ei->name);
++#endif
+ 		for (ei = elements; ei != endof(elements); ei++) {
++#ifdef PSIWEB
++			if (ei->namelen != namelen || (unsigned char)ei->name[0] != upcase(name[0]) || casecmp(cast_uchar ei->name, name, namelen))
++				continue;
++#else
+ 			if (strlen(cast_const_char ei->name) != (size_t)namelen || casecmp(cast_uchar ei->name, name, namelen))
+ 				continue;
++#endif
+ 			if (ei - elements > 4) {
+ 				struct element_info e = *ei;
+ 				memmove(elements + 1, elements, (ei - elements) * sizeof(struct element_info));
+@@ -3235,6 +3501,9 @@
+ 	pos = 0;
+ 	/*line_breax = 1;*/
+ 	was_br = 0;
++#ifdef PSIWEB
++	amemo_scope = NULL;
++#endif
+ #undef set_globals
+ }
+ 
+@@ -3420,7 +3689,18 @@
+ 	if (title) *title = init_str();
+ 	add_chr_to_str(head, hdl, '\n');
+ 	se:
++#ifdef PSIWEB
++	if (s < eof && *s != '<') {
++		sp:
++		s++;
++		if (s < eof && *s != '<') {
++			unsigned char *p = memchr(s, '<', eof - s);
++			s = p ? p : eof;
++		}
++	}
++#else
+ 	while (s < eof && *s != '<') sp:s++;
++#endif
+ 	if (s >= eof) return;
+ 	if (eof - s >= 2 && (s[1] == '!' || s[1] == '?')) {
+ 		s = skip_comment(s, eof);
 --- a/html_r.c
 +++ b/html_r.c
 @@ -1311,6 +1311,12 @@
@@ -107,9 +478,77 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  	last_form_tag = NULL;
  	last_form_attr = NULL;
  	last_input_tag = NULL;
+--- a/html_tbl.c
++++ b/html_tbl.c
+@@ -390,7 +390,18 @@
+ 	unsigned char *name;
+ 	int namelen;
+ 	r:
++#ifdef PSIWEB
++	if (html < eof && *html != '<') {
++		rr:
++		html++;
++		if (html < eof && *html != '<') {
++			unsigned char *p = memchr(html, '<', eof - html);
++			html = p ? p : eof;
++		}
++	}
++#else
+ 	while (html < eof && (*html != '<')) rr:html++;
++#endif
+ 	if (eof - html >= 2 && (html[1] == '!' || html[1] == '?')) {
+ 		html = skip_comment(html, eof);
+ 		goto r;
 --- a/img.c
 +++ b/img.c
-@@ -1348,6 +1348,15 @@
+@@ -76,6 +76,11 @@
+ 	}
+ }
+ 
++#ifdef PSI_LAZY_IMAGES
++/* Set while insert_image() only wants a picture's size (see there). */
++int psi_size_only;
++#endif
++
+ static void mem_free_buffer(struct cached_image *cimg)
+ {
+ 	mem_free(cimg->buffer);
+@@ -387,9 +392,19 @@
+ 			} else {
+ 				unsigned char rgb[3];
+ 
++#ifdef PSI_LAZY_IMAGES
++				/* (a JPEG asked only for its size stops here, and
++				   insert_image frees the buffer at once: filling it
++				   cost 0.7 million instructions for a 480x270 picture) */
++				if (psi_size_only && cimg->image_type == IM_JPG)
++					goto psi_no_fill;
++#endif
+ 				/* 8-bit */
+ 				compute_background_8(cimg, rgb);
+ 				mix_one_color_24(cimg->buffer, cimg->width * cimg->height, rgb[0], rgb[1], rgb[2]);
++#ifdef PSI_LAZY_IMAGES
++				psi_no_fill:;
++#endif
+ 			}
+ 		}
+ 	}
+@@ -1342,12 +1357,30 @@
+ 	find_or_make_cached_image(image, im->url, d_opt->image_scale);
+ 	cimg = global_cimg;
+ 
++#ifdef PSI_LAZY_IMAGES
++	/* PsiWeb: only the size is wanted here (the decoder is dropped below).
++	   Without this, every layout pass while a page loads decoded each
++	   picture that had come so far in full, only to throw it away. */
++	psi_size_only = image->af->rq && image->af->rq->ce;
++#endif
+ next_chunk:
+ 	retval = img_process_download(image, NULL);
+ 	if (retval && !(cimg->state & 4)) goto next_chunk;
++#ifdef PSI_LAZY_IMAGES
++	psi_size_only = 0;
++#endif
  	image->goti.go.xw = (int)image->cimg->xww;
  	image->goti.go.yw = (int)image->cimg->yww;
  	if (cimg->state == 0 || cimg->state == 8 || image->af->unknown_image_size) if (image->af->need_reparse != -1) image->af->need_reparse = 1;
@@ -176,16 +615,44 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  		/* jpeg_start_decompress */
  		if (jpeg_start_decompress(global_cinfo)==FALSE)
  			break;
-@@ -330,7 +365,7 @@
+@@ -326,11 +361,35 @@
+ 		}
+ new_scan:
+ 		deco->state=2;
++#ifdef PSI_LAZY_IMAGES
++		{
++			/* insert_image() wants only the size: stop before decoding */
++			extern int psi_size_only;
++			if (psi_size_only) break;
++		}
++#endif
+ 		/*-fallthrough*/
  
  		case 2:
++#ifdef PSI_JPEG_SCALE
++		/* PsiWeb: a progressive JPEG used to be shown again after every
++		 * scan, each time a full IDCT of the picture with block
++		 * smoothing (about 0.7 s on the 5mx for 400x260, ten times
++		 * over). Take in all the data there is first, and show only the
++		 * latest scan: once if the file has all come (as when a picture
++		 * is decoded from the cache), or as the data comes in over a
++		 * slow link. The final picture is the same. */
++		if (global_cinfo->buffered_image) {
++			int r;
++			do r = jpeg_consume_input(global_cinfo);
++			while (r != JPEG_SUSPENDED && r != JPEG_REACHED_EOI);
++			if (r == JPEG_SUSPENDED && global_cinfo->output_scan_number &&
++			    global_cinfo->input_scan_number <= global_cinfo->output_scan_number)
++				break;	/* (nothing new to show yet) */
++		}
++#endif
  		/* jpeg_start_output */
 -		if (FALSE==jpeg_start_output(global_cinfo,global_cinfo->input_scan_number)){
 +		if (global_cinfo->buffered_image && FALSE==jpeg_start_output(global_cinfo,global_cinfo->input_scan_number)){
  susp0:
  			/* Suspended */
  			break;
-@@ -364,6 +399,7 @@
+@@ -364,6 +423,7 @@
  
  		case 4:
  		/* jpeg_finish_output */
@@ -193,7 +660,7 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  		if (FALSE==jpeg_finish_output(global_cinfo))
  		{
  			/* Suspended */
-@@ -374,6 +410,7 @@
+@@ -374,6 +434,7 @@
  			/* Some more scans awaited... */
  			goto new_scan;
  		}
@@ -308,7 +775,163 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  			title = display_url(f->ses->term, f->rq->url, 1);
 --- a/dip.c
 +++ b/dip.c
-@@ -1407,6 +1407,17 @@
+@@ -12,6 +12,12 @@
+ 
+ #include "links.h"
+ 
++#ifdef PSI_EPOC
++/* the gamma table for sRGB pictures, made at build time (web/links/mkdither.py) */
++#define PSI_WANT_IMG_GAMMA
++#include "dither_psi.inc"
++#endif
++
+ #ifdef HAVE_MATH_H
+ #include <math.h>
+ #endif /* HAVE_MATH_H */
+@@ -230,10 +236,31 @@
+ }
+ 
+ /* We assume unsigned holds at least 32 bits */
++#ifdef PSIWEB
++/* The scalers divide every output pixel by the same weight (the size of
++   the source, at most 256 * weight): with no divide instruction on the
++   ARM, that is a multiply by a reciprocal instead, which gives exactly
++   the same quotient while weight < 181 (fonts; pictures use the colour
++   scalers). */
++#define PSI_RECIP_OK(w) ((w) < 181)
++#define PSI_RECIP(w) (((1U << 23) + (w) - 1) / (w))
++#endif
++
+ static void emit_and_bias_col_gray(unsigned *my_restrict col_buf, unsigned char *my_restrict out,
+ 	size_t line_skip, size_t n, unsigned weight)
+ {
+ 	unsigned half=weight>>1;
++#ifdef PSIWEB
++	if (PSI_RECIP_OK(weight)) {
++		unsigned m = PSI_RECIP(weight);
++		for (;n;n--) {
++			*out=(unsigned char)((*col_buf*m)>>23);
++			out+=line_skip;
++			*col_buf++=half;
++		}
++		return;
++	}
++#endif
+ 
+ 	for (;n;n--) {
+ 		*out=*col_buf/weight;
+@@ -247,6 +274,16 @@
+ 	size_t n, unsigned weight)
+ {
+ 	unsigned half=weight>>1;
++#ifdef PSIWEB
++	if (PSI_RECIP_OK(weight)) {
++		unsigned m = PSI_RECIP(weight);
++		for (;n;n--) {
++			*out++=(unsigned char)((*row_buf*m)>>23);
++			*row_buf++=half;
++		}
++		return;
++	}
++#endif
+ 
+ 	for (;n;n--) {
+ 		*out++=*row_buf/weight;
+@@ -274,6 +311,29 @@
+ 
+ #ifdef USE_FP_SCALE
+ #define	op(x)	((x) * inv_weight)
++#elif defined(PSIWEB)
++/* The colour scaler divides three sums an output pixel by the same weight.
++   With no divide instruction, that is a division by an invariant
++   (Granlund and Montgomery): a 32x32 high multiply, done in 16-bit
++   pieces as the ARM710 has no long multiply, and two shifts. Exact for
++   every 32-bit dividend; larger sums still take the 64-bit division. */
++struct psi_div { unsigned long m; int s1, s2; };
++static void psi_div_init(struct psi_div *v, unsigned long d)
++{
++	int l = 0;
++	while (l < 32 && (1ULL << l) < d) l++;
++	v->m = (unsigned long)(((1ULL << 32) * ((1ULL << l) - d)) / d + 1);
++	v->s1 = l < 1 ? l : 1;
++	v->s2 = l > 1 ? l - 1 : 0;
++}
++static inline unsigned long psi_div(unsigned long n, const struct psi_div *v)
++{
++	unsigned long al = v->m & 0xffff, ah = v->m >> 16, bl = n & 0xffff, bh = n >> 16;
++	unsigned long p0 = al * bl, p1 = al * bh, p2 = ah * bl, p3 = ah * bh;
++	unsigned long t = p3 + (p1 >> 16) + (p2 >> 16) + (((p0 >> 16) + (p1 & 0xffff) + (p2 & 0xffff)) >> 16);
++	return (t + ((n - t) >> v->s1)) >> v->s2;
++}
++#define op(x)	((x) == (unsigned long)(x) ? psi_div((unsigned long)(x), &dv) : (x) / weight)
+ #else
+ #define op(x)	(sizeof(unsigned long) < sizeof(scale_t) && (x) == (unsigned long)(x) ? (unsigned long)(x) / weight : (x) / weight)
+ #endif
+@@ -287,6 +347,9 @@
+ 	scale_t half=(scale_t)weight / 2;
+ #ifdef USE_FP_SCALE
+ 	scale_t inv_weight = (scale_t)1 / weight;
++#elif defined(PSIWEB)
++	struct psi_div dv;
++	psi_div_init(&dv, weight);
+ #endif
+ 	for (;n;n--) {
+ 		out[0]=(unsigned short)op(col_buf[0]);
+@@ -314,6 +377,9 @@
+ 	scale_t half=(scale_t)weight / 2;
+ #ifdef USE_FP_SCALE
+ 	scale_t inv_weight = (scale_t)1 / weight;
++#elif defined(PSIWEB)
++	struct psi_div dv;
++	psi_div_init(&dv, weight);
+ #endif
+ 	for (;n;n--) {
+ 		out[0]=(unsigned short)op(row_buf[0]);
+@@ -1111,6 +1177,43 @@
+ {
+ 	unsigned char mask, cmask;
+ 
++#ifdef PSIWEB
++	/* x / 255 without a divide (exact for all x here, < 2^24), and grey
++	   text (all three channels the same) worked out once a pixel */
++#define PSI_D255(x) ({ unsigned x_ = (x), q_ = (x_ + (x_ >> 8) + 1) >> 8; q_ + (x_ - ((q_ << 8) - q_) >= 255); })
++	if (r0 == g0 && r0 == b0 && r255 == g255 && r255 == b255) {
++		for (;length;length--) {
++			unsigned short v;
++			mask=*alpha++;
++			if (((mask+1)&255)>=2) v = (unsigned short)PSI_D255(mask*r255+(255-mask)*r0+127);
++			else v = mask ? r255 : r0;
++			dest[0] = dest[1] = dest[2] = v;
++			dest+=3;
++		}
++		return;
++	}
++	for (;length;length--) {
++		mask=*alpha++;
++		if (((mask+1)&255)>=2) {
++			cmask=255-mask;
++			dest[0]=PSI_D255(mask*r255+cmask*r0+127);
++			dest[1]=PSI_D255(mask*g255+cmask*g0+127);
++			dest[2]=PSI_D255(mask*b255+cmask*b0+127);
++		}else{
++			if (mask) {
++				dest[0]=r255;
++				dest[1]=g255;
++				dest[2]=b255;
++			}else{
++				dest[0]=r0;
++				dest[1]=g0;
++				dest[2]=b0;
++			}
++		}
++		dest+=3;
++	}
++	return;
++#endif
+ 	for (;length;length--) {
+ 		mask=*alpha++;
+ 		if (((mask+1)&255)>=2) {
+@@ -1407,6 +1510,25 @@
  	unsigned short last_val;
  	const float_double inv_255=(float_double)(1/255.);
  	const float_double inv_65535=(float_double)(1/65535.);
@@ -317,6 +940,14 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
 +	   of its table cost about 20 million instructions, so keep the last */
 +	static unsigned short last_table[768];
 +	static float_double last_rg = -1, last_gg = -1, last_bg = -1;
++#if defined(PSI_BAKED_USER_GAMMA) && !defined(PSI_DITHER_CHECK)
++	/* the table for sRGB pictures, made at build time (mkdither.py) */
++	if (last_rg < 0) {
++		int i;
++		last_rg = last_gg = last_bg = (float_double)((float_double)PSI_BAKED_USER_GAMMA / (float)sRGB_gamma);
++		for (i = 0; i < 768; i++) last_table[i] = psi_img_gamma[i & 255];
++	}
++#endif
 +	if (cimg->buffer_bytes_per_pixel <= 4 && rg == last_rg && gg == last_gg && bg == last_bg) {
 +		cimg->gamma_table = mem_alloc(768 * sizeof(*(cimg->gamma_table)));
 +		memcpy(cimg->gamma_table, last_table, sizeof(last_table));
@@ -326,18 +957,25 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  
  	if (cimg->buffer_bytes_per_pixel<=4) {
  		/* 8-bit */
-@@ -1427,6 +1438,10 @@
+@@ -1427,6 +1549,17 @@
  			cmd_limit_16(last_val);
  			*ptr_16 = last_val;
  		}
 +#ifdef PSIWEB
 +		memcpy(last_table, cimg->gamma_table, sizeof(last_table));
 +		last_rg = rg; last_gg = gg; last_bg = bg;
++#if defined(PSI_DITHER_CHECK) && defined(PSI_BAKED_USER_GAMMA)
++		if (rg == (float_double)((float_double)PSI_BAKED_USER_GAMMA / (float)sRGB_gamma)) {
++			int i, bad = 0;
++			for (i = 0; i < 768; i++) bad += last_table[i] != psi_img_gamma[i & 255];
++			fprintf(stderr, "PSI_DITHER_CHECK: picture gamma table, %d entries differ\n", bad);
++		}
++#endif
 +#endif
  	}else{
  		int x_slow_fpu;
  		if (gamma_bits != 2) x_slow_fpu = !gamma_bits;
-@@ -1489,6 +1504,22 @@
+@@ -1489,6 +1622,22 @@
  	float_double a=input;
  	unsigned short retval;
  	const float_double inv_255=(float_double)(1/255.);
@@ -360,7 +998,7 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  
  	a*=inv_255;
  	a=fd_pow(a,gamma);
-@@ -1529,6 +1560,18 @@
+@@ -1529,6 +1678,18 @@
  {
  	int tries[3];
  	int try;
@@ -379,7 +1017,7 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  	if (style->flags & FF_MONOSPACED) {
  		tries[0] = FONT_MONOSPACED;
  		if (style->flags & FF_BOLD) {
-@@ -1557,9 +1600,10 @@
+@@ -1557,9 +1718,10 @@
  #define AB(v, key)	(letter_data[start + v].code > key)
  		BIN_SEARCH(font->length, EQ, AB, letter_number, result);
  		if (result >= 0)
@@ -392,7 +1030,46 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  }
  
  struct read_work {
-@@ -1790,6 +1834,26 @@
+@@ -1657,6 +1819,38 @@
+ 	unsigned char **ptrs;
+ 	struct read_work work;
+ 
++#ifdef PSIWEB
++	/* web/links/mkfont.py --rle: run-length glyphs instead of PNGs. A PNG
++	   glyph cost about 120,000 ARM instructions to unpack (libpng and zlib
++	   set-up, Huffman tables, CRCs, a row at a time); this is a few
++	   thousand, with the same pixels. */
++	if (png_length >= 5 && png_data[0] == 'R') {
++		const unsigned char *s = png_data + 5, *se = png_data + png_length;
++		unsigned char *o, *oe;
++		*x = (png_data[1] << 8) | png_data[2];
++		*y = (png_data[3] << 8) | png_data[4];
++		if ((unsigned)*x * (unsigned)*y > MAXINT) overalloc();
++		o = *dest = mem_alloc(*x * *y ? *x * *y : 1);
++		oe = o + *x * *y;
++		while (s < se) {
++			int t = *s++, n;
++			unsigned char v;
++			if (t >= 0x80) {
++				n = t - 0x7f;
++				if (n > se - s) n = (int)(se - s);
++				if (n > oe - o) n = (int)(oe - o);
++				for (; n; n--) *o++ = *s++;
++				continue;
++			}
++			n = (t & 0x3f) + 1;
++			v = t & 0x40 ? 255 : 0;
++			if (n > oe - o) n = (int)(oe - o);
++			for (; n; n--) *o++ = v;
++		}
++		while (o < oe) *o++ = 0;
++		return;
++	}
++#endif
+ 	work.pointer = png_data;
+ 	work.length = png_length;
+ 
+@@ -1790,6 +1984,26 @@
  	conv0 = (1 + sharpness) * contrast;
  	conv1 = (float)(-sharpness * (float)0.25 * contrast);
  
@@ -419,6 +1096,264 @@ Links 2.30 for PsiWeb (web/links). Applied by web/links/fetch.sh.
  	for (y0 = y; y0; y0--) {
  		for (x0 = *x; x0; x0--) {
  			/* Convolution */
+@@ -2141,11 +2355,61 @@
+ 		internal_error("destroy_font_cache: cache not freed due to locks");
+ }
+ 
++#ifdef PSIWEB
++/* Layout asks for the width of every character, often several times over:
++   the widths of the first 256 codes are remembered for the last few font
++   sizes (each was a glyph lookup and a division on the ARM). -1: not yet
++   known. */
++static struct psi_wc { int height, slot; unsigned aspect; short w[256]; } psi_wc[4];
++static int psi_wc_next, psi_wc_last;
++
++static short *psi_wtab(struct style *style)
++{
++	int slot = (style->flags & FF_MONOSPACED ? 2 : 0) | (style->flags & FF_BOLD ? 1 : 0), i;
++	struct psi_wc *c = &psi_wc[psi_wc_last];
++	if (c->height == style->height && c->slot == slot && c->aspect == aspect)
++		return c->w;
++	for (i = 0; i < 4; i++) {
++		c = &psi_wc[i];
++		if (c->height == style->height && c->slot == slot && c->aspect == aspect)
++			goto have;
++	}
++	i = psi_wc_next;
++	psi_wc_next = (psi_wc_next + 1) & 3;
++	c = &psi_wc[i];
++	c->height = style->height;
++	c->slot = slot;
++	c->aspect = aspect;
++	memset(c->w, 0xff, sizeof(c->w));
++	have:
++	psi_wc_last = i;
++	return c->w;
++}
++
++/* fills in tab[charcode] (charcode < 256, after g_get_width's mapping) */
++static int psi_wfill(struct style *style, short *tab, unsigned charcode)
++{
++	int x, y;
++	unsigned c = charcode;
++	if (!c || c == 0xad) return tab[charcode] = 0;
++	if (c == 0x01 || c == 0xa0) c = ' ';
++	load_metric(style, c, &x, &y);
++	return tab[charcode] = !(x && y) ? 0 : compute_width(x, y, style->height);
++}
++#endif
++
+ /* Returns 0 in case the char is not found. */
+ static inline int g_get_width(struct style *style, unsigned charcode)
+ {
+ 	int x, y, width;
+ 
++#ifdef PSIWEB
++	if (charcode < 256 && style->mono_space < 0) {
++		short *tab = psi_wtab(style);
++		int w = tab[charcode];
++		return w >= 0 ? w : psi_wfill(style, tab, charcode);
++	}
++#endif
+ 	if (!charcode || charcode == 0xad) return 0;
+ 	if (charcode == 0x01 || charcode == 0xa0) charcode = ' ';
+ 	if (style->mono_space >= 0) {
+@@ -2160,6 +2424,24 @@
+ int g_text_width(struct style *style, unsigned char *text)
+ {
+ 	int w = 0;
++#ifdef PSIWEB
++	if (style->mono_space < 0) {
++		short *tab = psi_wtab(style);
++		while (*text) {
++			unsigned u = *text;
++			int qw;
++			if (u < 0x80) {
++				text++;
++				if ((qw = tab[u]) < 0) qw = psi_wfill(style, tab, u);
++			} else {
++				GET_UTF_8(text, u);
++				qw = g_get_width(style, u);
++			}
++			w = safe_add(w, qw);
++		}
++		return w;
++	}
++#endif
+ 	while (*text) {
+ 		int u;
+ 		int qw;
+--- a/dither.c
++++ b/dither.c
+@@ -103,6 +103,14 @@
+ 
+ int slow_fpu = -1;
+ 
++#ifdef PSI_EPOC
++/* PsiWeb: the finished tables for its fixed screen settings, written by
++   web/links/mkdither.py at build time. Computing them took about 1,000
++   soft-float pow()s and 768 KB of scratch tables at every start. */
++#define PSI_WANT_DITHER
++#include "dither_psi.inc"
++#endif
++
+ /* EMPIRE IMAGINE FEAR */
+ #define LTABLES \
+ 	ir = in[0];\
+@@ -925,6 +933,29 @@
+ void init_dither(int depth)
+ {
+ 	table_16 = 1;
++#ifdef PSI_BAKED_GAMMA
++	if (depth == 130 && gamma_bits == 0 && display_red_gamma == PSI_BAKED_GAMMA &&
++	    display_green_gamma == PSI_BAKED_GAMMA && display_blue_gamma == PSI_BAKED_GAMMA &&
++	    user_gamma == PSI_BAKED_USER_GAMMA
++#ifdef PSI_DITHER_CHECK
++	    && 0
++#endif
++	    ) {
++		red_table = mem_realloc(red_table, sizeof(psi_red_table));
++		green_table = mem_realloc(green_table, sizeof(psi_green_table));
++		blue_table = mem_realloc(blue_table, sizeof(psi_blue_table));
++		memcpy(red_table, psi_red_table, sizeof(psi_red_table));
++		memcpy(green_table, psi_green_table, sizeof(psi_green_table));
++		memcpy(blue_table, psi_blue_table, sizeof(psi_blue_table));
++		memcpy(round_red_table, psi_round_red, sizeof(psi_round_red));
++		memcpy(round_green_table, psi_round_green, sizeof(psi_round_green));
++		memcpy(round_blue_table, psi_round_blue, sizeof(psi_round_blue));
++		table_16 = 0;
++		dither_fn_internal = dither_2byte_8;
++		round_fn = round_2byte_8;
++		goto tables_done;
++	}
++#endif
+ 	switch (depth) {
+ 		case 33:
+ 		/* 4bpp, 1Bpp */
+@@ -1100,6 +1131,19 @@
+ 	}
+ 
+ 	make_round_tables();
++#ifdef PSI_DITHER_CHECK
++	{
++		int i, bad = 0;
++		for (i = 0; i < 256; i++)
++			bad += red_table[i] != psi_red_table[i] || green_table[i] != psi_green_table[i] ||
++			       blue_table[i] != psi_blue_table[i] || round_red_table[i] != psi_round_red[i] ||
++			       round_green_table[i] != psi_round_green[i] || round_blue_table[i] != psi_round_blue[i];
++		fprintf(stderr, "PSI_DITHER_CHECK: table_16 %d, %d entries differ\n", table_16, bad);
++	}
++#endif
++#ifdef PSI_BAKED_GAMMA
++	tables_done:
++#endif
+ 	make_real_colors_table();
+ 
+ 	if (real_colors_table) {
+--- a/compress.c
++++ b/compress.c
+@@ -99,6 +99,9 @@
+ 	z.zfree = NULL;
+ 	z.opaque = NULL;
+ 	r = inflateInit2(&z, defl == 1 ? 15 : defl == 2 ? -15 : 15 + 16);
++#ifdef PSIWEB
++	if (r == Z_OK) inflateValidate(&z, 0);	/* no CRC: TLS or TCP has checked the data */
++#endif
+ 	init_failed:
+ 	switch (r) {
+ 		case Z_OK:		break;
+@@ -113,6 +116,9 @@
+ 							goto after_inflateend;
+ 						}
+ 						r = inflateInit2(&z, -15);
++#ifdef PSIWEB
++						if (r == Z_OK) inflateValidate(&z, 0);	/* no CRC: TLS or TCP has checked the data */
++#endif
+ 						skip_gzip_header = 1;
+ 						old_zlib = 1;
+ 						goto init_failed;
+@@ -187,6 +193,9 @@
+ 			case Z_STREAM_END:	r = inflateEnd(&z);
+ 						if (r != Z_OK) goto end_failed;
+ 						r = inflateInit2(&z, old_zlib ? -15 : defl ? 15 : 15 + 16);
++#ifdef PSIWEB
++						if (r == Z_OK) inflateValidate(&z, 0);	/* no CRC: TLS or TCP has checked the data */
++#endif
+ 						if (r != Z_OK) {
+ 							old_zlib = 0;
+ 							goto init_failed;
+--- a/sched.c
++++ b/sched.c
+@@ -77,11 +77,52 @@
+ 	return 1;
+ }
+ 
++#ifdef PSIWEB
++/* check_queue looks at every queued connection each time round, and each
++   look parsed its URL four or five times (host, port, protocol, keepalive
++   key): with BBC's 117 pictures queued, 70,000 parse_url calls. The
++   results are kept here for each connection, by its count (unique for the
++   life of the program, so an entry can never be taken for another
++   connection's). */
++struct psi_cinfo {
++	tcount count;
++	struct connection *c;
++	unsigned char *host;	/* get_host_name() */
++	unsigned char *kaid;	/* get_keepalive_id(), may be NULL */
++	int port;		/* get_port() */
++	void (*ph)(struct connection *);	/* get_protocol_handle() */
++};
++static struct psi_cinfo psi_cinfo[64];
++
++static struct psi_cinfo *psi_conn_info(struct connection *c)
++{
++	struct psi_cinfo *e = &psi_cinfo[(unsigned)c->count & 63];
++	if (e->host && e->c == c && e->count == c->count)
++		return e;
++	if (e->host) mem_free(e->host);
++	if (e->kaid) mem_free(e->kaid);
++	e->c = c;
++	e->count = c->count;
++	e->host = get_host_name(c->url);
++	e->kaid = get_keepalive_id(c->url);
++	e->port = get_port(c->url);
++	e->ph = get_protocol_handle(c->url);
++	return e;
++}
++#endif
++
+ static struct h_conn *is_host_on_list(struct connection *c)
+ {
+ 	unsigned char *ho;
+ 	struct h_conn *h;
+ 	struct list_head *lh;
++#ifdef PSIWEB
++	ho = psi_conn_info(c)->host;
++	if (!ho) return NULL;
++	foreach(struct h_conn, h, lh, h_conns) if (!strcmp(cast_const_char h->host, cast_const_char ho))
++		return h;
++	return NULL;
++#endif
+ 	if (!(ho = get_host_name(c->url))) return NULL;
+ 	foreach(struct h_conn, h, lh, h_conns) if (!strcmp(cast_const_char h->host, cast_const_char ho)) {
+ 		mem_free(ho);
+@@ -164,6 +205,16 @@
+ 	void (*ph)(struct connection *);
+ 	struct k_conn *h;
+ 	struct list_head *lh;
++#ifdef PSIWEB
++	struct psi_cinfo *e;
++	if (list_empty(keepalive_connections)) return NULL;
++	e = psi_conn_info(c);
++	if (e->port == -1 || !e->ph || !e->kaid) return NULL;
++	foreach(struct k_conn, h, lh, keepalive_connections)
++		if (h->protocol == e->ph && h->port == e->port && !strcmp(cast_const_char h->host, cast_const_char e->kaid))
++			return h;
++	return NULL;
++#endif
+ 	if ((po = get_port(c->url)) == -1) return NULL;
+ 	if (!(ph = get_protocol_handle(c->url))) return NULL;
+ 	if (!(ho = get_keepalive_id(c->url))) return NULL;
 --- a/connect.c
 +++ b/connect.c
 @@ -190,12 +190,46 @@

@@ -17,8 +17,8 @@ PNG     := $(LK)/libpng-1.6.43
 JPG     := $(LK)/jpeg-9f
 ZL      := $(TOP)/ssh/zlib
 O       ?= $(LK)/epoc
-# Links' fonts cut down by mkfont.py (Latin, 40 px masters); FONTC=$(SRC)/font_inc.c
-# builds with the full set
+# Links' fonts cut down by mkfont.py (Latin, 40 px masters, run-length glyphs
+# instead of PNGs); FONTC=$(SRC)/font_inc.c builds with the full set
 FONT_H  ?= 40
 FONTC   ?= $(O)/font_psi.c
 
@@ -49,13 +49,17 @@ LTC_SRCS := stream/chacha/chacha_crypt stream/chacha/chacha_ivctr32 stream/chach
 	stream/chacha/chacha_setup stream/chacha/chacha_done mac/poly1305/poly1305 hashes/sha2/sha256 hashes/sha2/sha512 \
 	misc/zeromem misc/burn_stack misc/crypt/crypt_argchk misc/compare_testvector
 
-LCFLAGS := $(ARCH) $(DEFS) -w -I$(LW)/epoc -I$(SRC) -I$(O)/inc -I$(PNG) -I$(JPG) -I$(ZL) \
+LCFLAGS := $(ARCH) $(DEFS) $(LXFLAGS) -w -I$(LW)/epoc -I$(SRC) -I$(O)/inc -I$(PNG) -I$(JPG) -I$(ZL) \
 	$(LIBC) -include $(LW)/epoc/psicompat.h
 CFLAGS_C := $(ARCH) $(DEFS) -fno-builtin -w $(LIBC)
-LTCFLAGS := $(ARCH) $(DEFS) -std=gnu99 -fno-builtin -w -I$(WEB)/tls -I$(WEB)/compat -I$(LTC)/headers $(LIBC) -DLTC_SOURCE
+# LTC_NO_ASM: libtomcrypt's portable byte-wise loads and stores. Otherwise,
+# as a little-endian 32-bit target, every LOAD32L/STORE32L in ChaCha20,
+# Poly1305 and SHA-256 is a 4-byte memcpy call (-fno-builtin): over a third
+# of the cost of decrypting a page.
+LTCFLAGS := $(ARCH) $(DEFS) -std=gnu99 -fno-builtin -w -I$(WEB)/tls -I$(WEB)/compat -I$(LTC)/headers $(LIBC) -DLTC_SOURCE -DLTC_NO_ASM
 
 LINKS_OBJS := $(addprefix $(O)/links/,$(LINKS_SRCS:=.o))
-PSI_OBJS   := $(O)/psi/psi_drv.o $(O)/psi/psi_os.o $(O)/psi/pwgrey.o $(O)/psi/pwnet.o \
+PSI_OBJS   := $(O)/psi/psi_drv.o $(O)/psi/psi_os.o $(O)/psi/pwgrey.o $(O)/psi/psi_str.o $(O)/psi/pwnet.o \
 	$(O)/psi/nsprintf.o $(O)/psi/tls13.o $(O)/psi/x25519.o $(O)/psi/pwrandom.o \
 	$(addprefix $(O)/ltc/,$(subst /,__,$(LTC_SRCS:=.o)))
 JPG_LIB    := $(O)/libjpeg.a
@@ -73,7 +77,11 @@ $(O)/inc/pnglibconf.h: $(LW)/epoc/pnglibconf.h
 $(O)/inc/jconfig.h: $(JPG)/jconfig.txt
 	@mkdir -p $(dir $@)
 	cp $< $@
-HDRS := $(O)/inc/pnglibconf.h $(O)/inc/jconfig.h $(LW)/epoc/config.h $(LW)/epoc/psicompat.h
+# dither.c's colour tables for PsiWeb's screen, made here instead of at every start
+$(O)/inc/dither_psi.inc: $(LW)/mkdither.py
+	@mkdir -p $(dir $@)
+	python3 $< $@
+HDRS := $(O)/inc/pnglibconf.h $(O)/inc/jconfig.h $(O)/inc/dither_psi.inc $(LW)/epoc/config.h $(LW)/epoc/psicompat.h
 
 $(O)/links/%.o: $(SRC)/%.c $(HDRS) $(SRC)/links.h $(SRC)/cfg.h
 	@mkdir -p $(dir $@)
@@ -83,7 +91,7 @@ $(O)/links/main.o: $(SRC)/main.c $(HDRS) $(SRC)/links.h
 	$(CC) -c $(LCFLAGS) -Dmain=links_main $< -o $@
 $(O)/font_psi.c: $(SRC)/font_inc.c $(LW)/mkfont.py
 	@mkdir -p $(dir $@)
-	python3 $(LW)/mkfont.py $< $@ --height $(FONT_H)
+	python3 $(LW)/mkfont.py $< $@ --height $(FONT_H) --rle
 # English only (mklang.py): language.c is compiled from a copy next to the
 # cut-down language.inc, as it includes "language.inc" from its own folder
 $(O)/lang/language.inc: $(SRC)/language.inc $(LW)/mklang.py
@@ -118,6 +126,9 @@ $(O)/psi/psi_os.o: $(LW)/epoc/psi_os.c $(HDRS) $(WEB)/engine/pwnet.h $(SRC)/link
 $(O)/psi/pwgrey.o: $(LW)/psi_grey.c $(WEB)/fb/pwback.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CFLAGS_C) -std=gnu99 -I$(WEB)/fb $< -o $@
+$(O)/psi/psi_str.o: $(LW)/psi_str.c
+	@mkdir -p $(dir $@)
+	$(CC) -c $(CFLAGS_C) $< -o $@
 $(O)/psi/nsprintf.o: $(WEB)/compat/nsprintf.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CFLAGS_C) -std=gnu99 -I$(WEB)/compat $< -o $@

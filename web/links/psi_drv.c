@@ -82,6 +82,45 @@ static inline void mark(int x0, int y0, int x1, int y1)
 	if (y1 > dy1) dy1 = y1;
 }
 
+/* The ARM710 (ARMv3) has no halfword loads or stores: a 16-bit pixel is
+ * two byte accesses. Fills and copies therefore go a word (two pixels) at
+ * a time. A source and destination that are 2 bytes apart in alignment
+ * are joined from two words, as glyph rows usually are. (Reads stay
+ * inside the aligned words holding the row, so inside the heap cell.) */
+static void fill16(unsigned short *d, unsigned short c, int n)
+{
+	unsigned int w = c | ((unsigned int)c << 16), *dw;
+	if (n <= 0) return;
+	if ((unsigned long)d & 2) *d++ = c, n--;
+	for (dw = (unsigned int *)d; n >= 8; n -= 8, dw += 4)
+		dw[0] = w, dw[1] = w, dw[2] = w, dw[3] = w;
+	for (; n >= 2; n -= 2) *dw++ = w;
+	if (n) *(unsigned short *)dw = c;
+}
+
+static void copy16(unsigned short *d, const unsigned short *s, int n)
+{
+	unsigned int *dw;
+	if (n <= 0) return;
+	if ((unsigned long)d & 2) *d++ = *s++, n--;
+	dw = (unsigned int *)d;
+	if (!((unsigned long)s & 2)) {
+		const unsigned int *sw = (const unsigned int *)s;
+		for (; n >= 2; n -= 2) *dw++ = *sw++;
+		s = (const unsigned short *)sw;
+	} else {
+		/* s[0] is the high half of the word at s - 1 (little-endian) */
+		const unsigned int *sw = (const unsigned int *)(s - 1);
+		unsigned int prev = *sw++, cur;
+		for (; n >= 2; n -= 2, s += 2) {
+			cur = *sw++;
+			*dw++ = (prev >> 16) | (cur << 16);
+			prev = cur;
+		}
+	}
+	if (n) *(unsigned short *)dw = *s;
+}
+
 #define TEST_INACTIVITY if (dev != current_virtual_device) return;
 #define TEST_INACTIVITY_0 if (dev != current_virtual_device) return 0;
 
@@ -146,7 +185,7 @@ static void psi_draw_bitmap(struct graphics_device *dev, struct bitmap *bmp, int
 	mark(x, y, x + xs, y + ys);
 	d = psi_fb + y * psi_w + x;
 	for (; ys; ys--) {
-		memcpy(d, data, xs * 2);
+		copy16(d, (const unsigned short *)data, xs);
 		data += bmp->skip;
 		d += psi_w;
 	}
@@ -154,28 +193,25 @@ static void psi_draw_bitmap(struct graphics_device *dev, struct bitmap *bmp, int
 
 static void psi_fill_area(struct graphics_device *dev, int x1, int y1, int x2, int y2, long color)
 {
-	unsigned short c = (unsigned short)color, *d;
-	int y, x, n;
+	unsigned short c = (unsigned short)color;
+	int y, n;
 
 	TEST_INACTIVITY
 	CLIP_FILL_AREA
 	mark(x1, y1, x2, y2);
 	n = x2 - x1;
-	for (y = y1; y < y2; y++) {
-		d = psi_fb + y * psi_w + x1;
-		for (x = 0; x < n; x++) d[x] = c;
-	}
+	for (y = y1; y < y2; y++)
+		fill16(psi_fb + y * psi_w + x1, c, n);
 }
 
 static void psi_draw_hline(struct graphics_device *dev, int x1, int y, int x2, long color)
 {
-	unsigned short c = (unsigned short)color, *d;
+	unsigned short c = (unsigned short)color;
 
 	TEST_INACTIVITY
 	CLIP_DRAW_HLINE
 	mark(x1, y, x2, y + 1);
-	d = psi_fb + y * psi_w;
-	for (; x1 < x2; x1++) d[x1] = c;
+	fill16(psi_fb + y * psi_w + x1, c, x2 - x1);
 }
 
 static void psi_draw_vline(struct graphics_device *dev, int x, int y1, int y2, long color)

@@ -77,6 +77,8 @@ enum { PF_FREE = 0, PF_SOCK, PF_PIPE };
 static struct {
 	int kind;
 	int live;		/* PF_SOCK: still the pwn connection */
+	int answered;		/* PF_SOCK: a reply has come on it (so a write
+				   now is a kept-alive connection's next request) */
 	int port, tls;
 	char host[128];
 } pfd[PSI_NFD];
@@ -158,7 +160,7 @@ int psi_read(int fd, void *buf, size_t n)
 	if (pfd[i].kind == PF_PIPE) { errno = EAGAIN; return -1; }
 	if (!pfd[i].live) { errno = ECONNRESET; return -1; }
 	r = pwn_read(buf, (int)n, 30000);
-	if (r > 0) { psi_net_bytes_in += r; return r; }
+	if (r > 0) { psi_net_bytes_in += r; pfd[i].answered = 1; return r; }
 	if (r == 0) { net_eof = 1; return 0; }
 	errno = r == PWN_TIMEOUT ? ETIMEDOUT : EINTR;
 	return -1;
@@ -171,8 +173,14 @@ int psi_write(int fd, const void *buf, size_t n)
 	if (pfd[i].kind == PF_PIPE) return (int)n;
 	if (!pfd[i].live) { errno = ECONNRESET; return -1; }
 	/* a kept-alive connection the server has since closed: Links then
-	   retries on a new one */
-	if (!pwn_is_open(pfd[i].host, pfd[i].port, pfd[i].tls)) {
+	   retries on a new one. Only for a connection that has already
+	   answered: on a new one, bytes waiting before the first request are
+	   the TLS 1.3 server's NewSessionTicket records (tls_read skips them),
+	   and pwn_is_open took them for a closed connection. That threw away
+	   nearly every new connection: BBC with pictures made 100 TLS
+	   connections (each about 13 million instructions of handshake, and
+	   a dial over the modem) where 3 do. */
+	if (pfd[i].answered && !pwn_is_open(pfd[i].host, pfd[i].port, pfd[i].tls)) {
 		end_live();
 		errno = ECONNRESET;
 		return -1;
@@ -219,6 +227,9 @@ int psi_pipe(int fd[2])
 
 /* ------------------------------------------------------------ the wait */
 
+#define PSI_NET_BATCH_MS	30	/* see psi_select */
+#define PSI_NET_BATCH_BYTES	2048
+
 static int scan(int n, fd_set *r, fd_set *w, fd_set *ro, fd_set *wo)
 {
 	int fd, k = 0;
@@ -246,14 +257,34 @@ int psi_select(int n, void *rv, void *wv, void *ev, void *tvv)
 	struct timeval *tv = tvv;
 	int ms = tv ? (int)(tv->tv_sec * 1000 + tv->tv_usec / 1000) : -1;
 	unsigned long t0 = pwb_ms();
-	int k;
+	int k, batched = 0;
 
 	(void)ev;
 	for (;;) {
 		int left, step;
 		FD_ZERO(&ro);
 		FD_ZERO(&wo);
-		if ((k = scan(n, r, w, &ro, &wo)) > 0) break;
+		if ((k = scan(n, r, w, &ro, &wo)) > 0) {
+			/* Over a modem the bytes come a few at a time, and each
+			   return from here costs a turn of Links' main loop (timers,
+			   this scan, a read call and the protocol's bookkeeping): at
+			   10 KB/s that was about 700 instructions a byte, more than
+			   formatting the page. If all there is to do is a trickle on
+			   the connection, let up to PSI_NET_BATCH_MS of it collect in
+			   the link's buffer first (once a call). */
+			if (!batched && ms != 0 && k == 1 && live_fd >= 0 && FD_ISSET(live_fd, &ro) &&
+			    pfd[live_fd - PSI_FD0].live && !net_eof && !tls_pending() &&
+			    pg_net_avail() < PSI_NET_BATCH_BYTES) {
+				int rest = ms < 0 ? PSI_NET_BATCH_MS : ms - (int)(pwb_ms() - t0);
+				if (rest > PSI_NET_BATCH_MS) rest = PSI_NET_BATCH_MS;
+				batched = 1;
+				if (rest > 0) {
+					pg_wait(rest, 0, 0);
+					continue;
+				}
+			}
+			break;
+		}
 		left = ms < 0 ? 1000 : ms - (int)(pwb_ms() - t0);
 		if (left <= 0) break;
 		step = left;

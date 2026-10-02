@@ -12,9 +12,15 @@ This writes a font_inc.c that Links uses unchanged, with:
   - glyphs re-sampled to a smaller master height (default 48 pixels), so
     there are fewer pixels to inflate and scale;
   - the gamma applied here: the PNGs hold linear ("photon") values and
-    say gAMA 1.0, so libpng does no gamma work per glyph.
+    say gAMA 1.0, so libpng does no gamma work per glyph;
+  - with --rle, each glyph as simple run-length data instead of a PNG (the
+    same size in all, but about 30 times cheaper to unpack than a PNG on the
+    ARM: no zlib, CRC or libpng set-up per glyph). Links' dip.c (PSIWEB)
+    reads both. The format: 'R', width and height (16-bit, big-endian),
+    then tokens: 0x00-0x3f a run of 1-64 zeros (paper), 0x40-0x7f a run of
+    1-64 255s (ink), 0x80-0xff 1-128 literal bytes follow.
 
-    mkfont.py SRC_FONT_INC_C OUT.c [--height 48] [--all]
+    mkfont.py SRC_FONT_INC_C OUT.c [--height 48] [--all] [--rle]
 """
 import io, re, struct, sys, zlib
 from PIL import Image
@@ -24,6 +30,7 @@ HEIGHT = 48
 if "--height" in args:
     HEIGHT = int(args[args.index("--height") + 1])
 ALL = "--all" in args
+RLE = "--rle" in args
 src, out = [a for a in args if not a.startswith("--") and not (args.index(a) > 0 and args[args.index(a) - 1] == "--height")][:2]
 
 KEEP = [(0x20, 0x17f),        # Basic Latin, Latin-1, Latin Extended-A
@@ -85,6 +92,32 @@ def png_grey(im):
             + chunk(b"gAMA", struct.pack(">I", 100000))
             + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
 
+def rle_grey(im):
+    """the run-length form (see above)"""
+    w, h = im.size
+    px = im.tobytes()
+    out = bytearray(b"R" + struct.pack(">HH", w, h))
+    lit = bytearray()
+    def flush():
+        while lit:
+            k = min(len(lit), 128)
+            out.append(0x80 + k - 1); out.extend(lit[:k]); del lit[:k]
+    i, n = 0, len(px)
+    while i < n:
+        v = px[i]
+        if v in (0, 255):
+            j = i
+            while j < n and px[j] == v and j - i < 64:
+                j += 1
+            if j - i >= 2 or not lit:
+                flush()
+                out.append((0 if v == 0 else 0x40) + (j - i) - 1)
+                i = j
+                continue
+        lit.append(v); i += 1
+    flush()
+    return bytes(out)
+
 # 2.2 from Links' glyphs (gAMA 0.45455) to linear, as libpng would have done
 LIN = [round(255 * (v / 255.0) ** (1 / 0.45455)) for v in range(256)]
 
@@ -109,7 +142,7 @@ for fi, (begin, length) in enumerate(fonts):
         nw = max(1, round(w * nh / h))
         if (nw, nh) != (w, h):
             im = im.resize((nw, nh), Image.LANCZOS)
-        png = png_grey(im)
+        png = rle_grey(im) if RLE else png_grey(im)
         # Links keeps the master's width and height for its metrics: scale
         # them with the picture, keeping the proportions
         new_letters.append(png)
@@ -118,7 +151,8 @@ for fi, (begin, length) in enumerate(fonts):
 
 with open(out, "w") as f:
     f.write("/* font_inc.c for PsiWeb, written by web/links/mkfont.py from Links' own:\n"
-            " * %s, master height %d px, gamma applied (gAMA 1.0) */\n" % ("all glyphs" if ALL else "Latin subset", HEIGHT))
+            " * %s, master height %d px, gamma applied (gAMA 1.0), %s */\n" %
+            ("all glyphs" if ALL else "Latin subset", HEIGHT, "run-length glyphs" if RLE else "PNG glyphs"))
     f.write('#include "cfg.h"\n\n#ifdef G\n\n#include "links.h"\n\n')
     for i, png in enumerate(new_letters):
         f.write("static_const unsigned char letter_%d[] = {" % i)
@@ -134,7 +168,7 @@ with open(out, "w") as f:
     f.write("};\n\n#endif\n")
 
 tot = sum(len(p) for p in new_letters)
-print("%d of %d glyphs, %d KB of PNG (was %d KB), master height %d" %
-      (len(new_table), len(table), tot // 1024, orig_bytes // 1024, HEIGHT))
+print("%d of %d glyphs, %d KB of %s (was %d KB of PNG), master height %d" %
+      (len(new_table), len(table), tot // 1024, "run-length data" if RLE else "PNG", orig_bytes // 1024, HEIGHT))
 for (b, l), name in zip(new_fonts, ("system", "normal", "bold", "monospaced")):
     print("  %-10s %4d glyphs, %4d KB" % (name, l, sum(len(p) for p in new_letters[b:b + l]) // 1024))

@@ -466,7 +466,7 @@ Each page ran in a fresh process with the 10 MB heap limit, using `web/links/emu
 
 **Notes**
 - The TLS 1.3 handshake costs about **13M instructions (0.9 s)**, mostly x25519.
-- **BBC with pictures: 87 connections.** `ichef.bbci.co.uk` closes the idle kept-alive connection while the Psion is busy between pictures, so nearly every picture needs a new TLS connection. About half of the 150 s is handshakes. A run without `--count`, which is several times faster, needed only 3 connections. Over the modem each new connection is also a dial.
+- **BBC with pictures: 87 connections.** `ichef.bbci.co.uk` closes the idle kept-alive connection while the Psion is busy between pictures, so nearly every picture needs a new TLS connection. About half of the 150 s is handshakes. A run without `--count`, which is several times faster, needed only 3 connections. Over the modem each new connection is also a dial. *(Phase 3 found the real cause, a bug in `psi_os.c`: see "The connection bug" there. The server was not closing anything.)*
 - No allocation failed on any page. The heap peaks are far below phase 1's PC figures (9.0 MB for BBC with pictures), for three reasons: there is no OpenSSL, colour JPEGs are decoded to grey, and the page uses smaller read buffers.
 - **Scrolling memory is still untested.** 30 Page Downs reached only about 5% of the BBC page (the page is very long without CSS). Phase 1's 17.7 MB after scrolling through every picture has not been retested here.
 
@@ -539,3 +539,159 @@ Phase 2 completed most of phase 1's items 1, 2, 3, 6 and 10, and part of 5 and 7
 | Device validation over a modem and over PPP | 3–5 |
 
 **Total: about 19 to 29 days**, against the 31 to 49 days estimated after phase 1.
+
+## Phase 3: performance
+
+Written 2 October 2026. Dan asked for the CPU cost to come down "significantly". Everything was profiled in the ARM harness first, the biggest costs were fixed, and each change was measured again. All the changes are in `web/links/`; the NetSurf build, `web/app`, `web/emu` and `dist/` are untouched.
+
+### Verdict
+
+Pages are 1.4 to 4.5 times cheaper (the picture page 4.5 times, cern 3.4, BBC 3, 68k.news 2.6, NPR 1.7, Wikipedia 1.4, where TLS is now half the cost), scrolling 2 to 3 times, start-up 30 times. All the screenshots are **identical to the pixel** with the phase 2 build, at both link speeds tested. No heap peak went up by more than 5 KB, and most went down; start-up's went from 1.07 MB to 313 KB.
+
+| Target | Phase 2 | Phase 3 | |
+|---|---|---|---|
+| Start-up < 1 s | 2.5 s | **0.08 s** | met |
+| 68k.news < 2 s | 5.4 s | **2.1 s** (2.5 s at 10 KB/s) | nearly |
+| Wikipedia < 2 s | 4.7 s | **3.5 s** | not met: 1.8 s of it is two TLS key exchanges |
+| BBC, pictures off, < 7 s | 20.0 s | **6.8 s** (10.9 s at 10 KB/s) | met on a fast link |
+| One screen of scrolling < 0.3 s | 0.4 to 1.0 s | **0.12 to 0.35 s** | met except 68k.news (0.35 s) |
+| Pictures decoded and dithered at least 2 times faster | 8.3 s, 4.3 s for Page Down | **1.8 s, 1.4 s** | met (4.6 and 3 times) |
+| BBC, pictures on, well under a minute | 158 s, and most pictures never arrived | **48.5 s** with all 117 pictures (3.9 MB) | met |
+
+Times are ARM instructions at 15 MIPS, as in phase 2. The 15 MIPS assumption still stands until a run on the 5mx.
+
+### How it was measured
+
+The phase 2 runs used the live network and the PC's clock, so two runs never did quite the same work, and a page could change between runs. `web/links/emu/run_links.py` (the copy of the harness) now has:
+
+| Option | What it does |
+|---|---|
+| `--record DIR` | Saves every connection's traffic to `DIR/net.json`. Random numbers are made deterministic, so even TLS can be played back. |
+| `--replay DIR` | Plays the traffic back instead of the network, with a **virtual clock**: instructions at 15 MIPS plus the time spent waiting. Runs are repeatable to the instruction, and Links' timers fire as they would on a 15 MIPS Psion. |
+| `--rate N` | With `--replay`: the data arrives at N bytes a second of virtual time (10000 for a modem). By default it all arrives at once. |
+| `--profile` | Instructions per function now come for each measured section (start-up, page, Page Down), and for the whole run. `PROFILE_FN=f1,f2` adds a breakdown by basic block inside those functions. |
+| `--incl f1,f2` | Instructions inside these functions, callees included. |
+| `--callers f1,f2` | As before. `CALLSITES=1` shows the exact call sites. |
+
+Start-up (up to `pwb_ready()`) is now measured as its own section.
+
+`web/links/emu/run_pages.sh` takes `NET=record` or `NET=replay` (`NETDIR`, default `build/links/net`). The recordings used here are in `build/links/net/`: the seven pages of phase 2, recorded on 2 October 2026, and `bbcpics` (BBC with pictures, recorded after the connection fix; `bbcpics-phase2` is the old one). For example:
+
+```
+NET=replay web/links/emu/run_pages.sh OUT                      # the phase 2 page set
+NET=replay RUN_OPTS="--rate 10000" web/links/emu/run_pages.sh OUT
+NET=replay web/links/emu/run_pages.sh OUT "bbcpics+=https://www.bbc.co.uk/"
+```
+
+The "before" figures come from the phase 2 sources, built unchanged into `build/links-orig/` and replayed on the same recordings. On a fast link they match phase 2's own figures to within a few per cent (the pages had changed a little since).
+
+### Results per page
+
+Fast link (all the data at once, as in phase 2): instructions, time at 15 MIPS, and heap peak.
+
+| Page | Before | After | Heap peak before / after |
+|---|---|---|---|
+| start-up | 38.1M, 2.54 s | **1.2M, 0.08 s** | 1072 / **313 KB** |
+| http://info.cern.ch/ | 14.5M, 0.97 s | **4.3M, 0.29 s** | 386 / 346 KB |
+| http://68k.news/ | 81.6M, 5.44 s | **31.5M, 2.10 s** | 807 / 767 KB |
+| the same, Page Down | 14.7M, 0.98 s | **5.2M, 0.35 s** | 826 / 786 KB |
+| https://text.npr.org/ | 42.2M, 2.82 s | **24.9M, 1.66 s** | 419 / 382 KB |
+| the same, Page Down | 5.5M, 0.37 s | **3.0M, 0.20 s** | 421 / 381 KB |
+| https://en.m.wikipedia.org/wiki/Psion | 71.1M, 4.74 s | **52.4M, 3.49 s** | 532 / 532 KB |
+| the same, Page Down | 7.5M, 0.50 s | **2.3M, 0.15 s** | 574 / 534 KB |
+| https://www.bbc.co.uk/, pictures off | 300.6M, 20.0 s | **101.4M, 6.76 s** | 2256 / 2246 KB |
+| the same, Page Down | 5.4M, 0.36 s | **1.9M, 0.12 s** | 1714 / 1676 KB |
+| local picture page, pictures on | 124.0M, 8.27 s | **27.3M, 1.82 s** | 1142 / 1142 KB |
+| the same, Page Down (progressive and 1600×1040 JPEGs) | 64.5M, 4.30 s | **21.3M, 1.42 s** | 1345 / 1345 KB |
+| the same, pictures off, then Show pictures | 20.5M + 111.7M, 8.8 s | **6.9M + 24.2M, 2.1 s** | 1163 / 1163 KB |
+
+At 10 KB/s (`--rate 10000`, about a modem link), where Links lays out the half-loaded page while it waits:
+
+| Page | Before | After |
+|---|---|---|
+| info.cern.ch | 17.0M, 1.13 s | **5.3M, 0.35 s** |
+| 68k.news | 109.4M, 7.29 s | **37.6M, 2.51 s** |
+| NPR | 42.2M, 2.82 s | **24.9M, 1.66 s** |
+| Wikipedia | 71.2M, 4.75 s | **52.5M, 3.50 s** |
+| BBC, pictures off | 210.2M, 14.0 s | **163.8M, 10.9 s** |
+| local picture page | 277.3M, 18.5 s | **43.7M, 2.91 s** |
+| Show pictures | 222.8M, 14.9 s | **41.2M, 2.75 s** |
+
+(At 10 KB/s the transfer itself takes longer than the CPU time: 4 s for 68k.news, 12 s for BBC.)
+
+**BBC with pictures** (`bbcpics`, 117 JPEGs):
+
+| | Before (phase 2 build, old recording) | After (new recording) |
+|---|---|---|
+| Load | 2366M, 158 s; 100 TLS connections; 1.06 MB in, so most pictures never arrived | **727M, 48.5 s**; 3 connections; 3.9 MB in, every picture |
+| Then 30 × Page Down | not comparable | 285M, 19.0 s (pictures decoded as they come into view) |
+| Heap peak | 2.8 MB | 6.3 MB at load; **10 MB after 30 screens, with 290 refused allocations** |
+
+The memory figure is the known problem of phase 1 item 4 (the bitmap of every picture drawn is kept), not a new one; it now shows because the pictures really arrive.
+
+### What the profiles showed
+
+Phase 2's estimates were right about the shape but not about the order. With the deterministic runs:
+
+1. **Glyphs** were most of a text page. Each new glyph (letter, size, style and colour) cost about 164,000 instructions, 120,000 of them in libpng and zlib unpacking a 40 px PNG master one row at a time (`inflate` rather than `inflate_fast`, a new Huffman table and two CRCs per glyph). 68k.news draws 240 of them.
+2. **Start-up** was 30 million instructions of soft-float `pow()` building dither tables that never change, plus 768 KB of scratch tables.
+3. **The HTML parser** went through a big page character by character, several times:
+   - the main loop's per-character tests ran through every byte of `<script>` and `<style>` (BBC: 336 KB of script and 181 KB of style);
+   - finding each tag in the element table did `strlen` on every name (316,000 calls on BBC);
+   - each `get_attr_val` call scanned all the tag's attributes again, and a tag's handler asks for several (BBC's 416 KB of tags were scanned about six times over: long class lists, SVG paths, srcsets);
+   - the tags were also parsed in full by `scan_http_equiv` and `find_form_for_input`.
+4. **Division.** The ARM710 has no divide instruction: the glyph scaler divided every output pixel, `mix_two_colors` every channel by 255, `compute_width` every character, and the picture scaler every channel.
+5. **The C library stand-ins.** `strcspn` called `strchr` for each byte; `strstr` compared the whole needle at each position. On ESTLIB they are probably no better.
+6. **TLS bulk decryption.** libtomcrypt saw a little-endian 32-bit target and made every 32-bit load and store a 4-byte `memcpy` call.
+7. **Pictures.** A progressive JPEG was decoded again (a full IDCT with block smoothing) after each of its scans. Worse, while a page loaded, every layout pass decoded every picture that had arrived so far in full, only for the `PSI_LAZY_IMAGES` patch to throw the result away; and `header_dimensions_known` filled each picture's buffer with the background first.
+8. **The connection bug** (below): 97 of BBC's 100 TLS connections were thrown away unused.
+9. **Over a slow link**, the main loop woke for every few bytes: 8,400 reads for 42 KB, about 700 instructions a byte.
+
+### The changes, and what each saved
+
+Figures are for the fast link, measured one change after another (so a gain is on top of those above it). "Same" means the screenshots were compared and are identical.
+
+| # | Change | Where | Gain |
+|---|---|---|---|
+| 1 | **Run-length glyphs.** `mkfont.py --rle` writes each 40 px master as simple run-length data ('R', width, height, then runs of paper, runs of ink and literal bytes) instead of a PNG. The data is about the same size (446 KB against 440 KB of PNG); `load_char` unpacks it in a few thousand instructions. Same pixels. | `mkfont.py`, `epoc.mk`, `dip.c` | 68k.news 81.6M → 59.9M, cern 14.5M → 7.7M, NPR 42.2M → 31.6M, 68k Page Down 14.7M → 8.2M |
+| 2 | **Colour tables made at build time.** `mkdither.py` computes dither.c's tables for PsiWeb's fixed settings (RGB565, gammas 2.2 and 1.0, 8-bit tables) the same way in double precision; `init_dither` copies them. A check build (`-DPSI_DITHER_CHECK`) confirmed all 1,536 entries are the same as those computed on the ARM. | `mkdither.py`, `dither.c` | start-up 38.1M → 2.7M; heap at start-up 1072 → 313 KB |
+| 3 | **Parser fast paths.** The main loop skips script and style bodies to the next `<` with `memchr`, and runs of ordinary text in a tight loop (exactly what the per-character code did with them). Element names' lengths are kept, and the first letter is checked before `casecmp`. `get_attr_val` steps over the values of attributes it was not asked for in a tight loop. `scan_http_equiv`, `find_form_for_input` and `skip_element` look for `<` with `memchr`. | `html.c`, `html_tbl.c` | BBC 292M → 233M (`parse_html` itself 43.7M → 7.3M) |
+| 4 | **`psi_str.c`**: `strlen`, `strchr` and `memchr` a word at a time; `strcspn` and `strspn` with a 256-bit table; `strstr` that finds the first character first. `psicompat.h` maps Links' calls to them, so the device no longer depends on how good ESTLIB's are. gcc 3.0 rebuilt the 0x01010101 and 0x80808080 constants inside every loop (8 instructions a word): an empty `asm` keeps them in registers. | `psi_str.c`, `epoc/psicompat.h` | part of 3, 5 and 6; 68k.news 49.9M → 44.4M from `strstr` alone |
+| 5 | **Word-at-a-time attribute values**: `parse_element` and `get_attr_val` find the closing quote 4 bytes at a time. **No gzip CRC**: `inflateValidate(&z, 0)`; TLS or TCP has already checked the data (15.5M on BBC). | `html.c`, `compress.c` | BBC 233M → 214M |
+| 6 | **Attribute memo.** For the element parse_html is handling, `get_attr_val` records where each attribute starts on the first call, then goes straight to the one asked for (or returns NULL). It is used only for that element, and rebuilt for each new one, so it can never point into another document; the result is exactly what the full scan returns. The value asked for is then copied in one go (it was copied a character at a time, with a `realloc` every 32). | `html.c` | BBC 214M → 187M |
+| 7 | **No divisions in glyphs and text.** Glyph widths are kept per font size (1 KB a size, the last four sizes). The glyph scaler divides by a reciprocal (exact for its weights, tested for every case). `mix_two_colors` divides by 255 with a shift and one correction (exact over its whole range, tested), and works out grey text once rather than three times. | `dip.c` | 68k.news 44.4M → 35.8M, cern 7.6M → 5.9M, BBC 178M → 172M |
+| 8 | **Faster drawing.** ARMv3 has no halfword loads or stores, so a 16-bit pixel was two byte accesses: fills and glyph copies now go a word at a time, joining words when the source and destination are 2 bytes apart. The 565 to 16-grey conversion uses small tables (r, g and b pre-multiplied, and the result for each of the 16 dither thresholds, 4 KB) instead of multiplies, and handles 8 pixels at a time with word stores when they are all paper or all ink. Same output as `pwgrey.c`, to the bit. | `psi_drv.c`, `psi_grey.c` | Page Down: 68k 6.7M → 5.2M, NPR 4.5M → 3.0M, BBC 3.5M → 1.9M, Wikipedia 3.8M → 2.3M |
+| 9 | **Progressive JPEGs** take in all the data there is before an output pass, so a picture decoded from the cache is shown once, not once a scan; over a slow link they still show as the data comes. **The sRGB picture gamma table** (768 soft-float `pow()`s) is made at build time too. | `jpeg.c`, `dip.c`, `mkdither.py` | pictures page 108M → 47M, its Page Down 62M → 21M, Show pictures 105M → 44M |
+| 10 | **Width lookups** find the size's table once per string, not once per character. | `dip.c` | 68k.news 34.2M → 31.5M |
+| 11 | **libtomcrypt's own byte-wise loads and stores** (`-DLTC_NO_ASM` for the TLS objects): no 4-byte `memcpy` calls in ChaCha20, Poly1305 and SHA-256. | `epoc.mk` | BBC with pictures 858M → 727M. BBC without pictures 164M → 101M, but only 4M of that is decryption: the rest is one layout pass fewer, because the page now arrives sooner (see "Timing" below) |
+| 12 | **Pictures during layout.** While `insert_image` only wants a picture's size, a JPEG stops once the size is known and its buffer is not filled with the background (it is freed at once). Before, every layout pass while the page loaded decoded each picture that had arrived. | `img.c`, `jpeg.c` | pictures page 47M → 27M, Show pictures 44M → 24M, BBC with pictures 1200M → 858M |
+| 13 | **The scheduler** keeps each queued connection's host, port and keepalive key, by its (unique) count. `check_queue` used to parse every queued URL four or five times on every pass: 70,000 `parse_url` calls with BBC's pictures queued. | `sched.c` | part of BBC with pictures |
+| 14 | **The connection bug** (below). | `epoc/psi_os.c` | BBC with pictures: 100 TLS connections → 3 |
+| 15 | **Fewer wake-ups over a slow link.** When all `psi_select` has to report is a trickle on the connection (under 2 KB waiting), it lets up to 30 ms more collect first, once per call. | `epoc/psi_os.c` | 68k.news at 10 KB/s 85.6M → 37.6M |
+| 16 | **The picture scaler divides by an invariant** (Granlund and Montgomery): a 32 × 32 high multiply in 16-bit pieces, as the ARM710 has no long multiply. Exact for every 32-bit dividend (140 million cases tested). | `dip.c` | 8 screens of BBC pictures 135M → 111M |
+
+**The connection bug.** `psi_write` asked `pwn_is_open()` before every write whether the server had closed the connection, and `pwn_is_open` takes any bytes waiting before a request as a sign that it has. On a new TLS 1.3 connection the server sends NewSessionTicket records straight after the handshake, so nearly every new connection was closed again before its first request, and Links retried on another. On BBC with pictures that was 100 TLS handshakes (about 13 million instructions each, and a dial each over the modem), and with `-retries 1` most pictures gave up. Phase 2 put this down to the server closing idle connections; it was this. Now the check is made only on a connection that has already answered, i.e. a kept-alive one being reused. `tls_read` already skips the tickets.
+
+**Compiler flags.** `-O3` was within 1% either way and made the code 200 KB bigger. `-Os` was up to 5% slower on TLS pages, 4% faster on pictures, and only 17 KB smaller. `-O2` stays. Hot loops were tuned by looking at gcc 3.0's output instead (constants kept in registers, no halfword accesses, no divisions, fewer calls).
+
+**Size.** `.text` (code and constant data) grew by 19 KB, from 1.676 MB to 1.695 MB, of which 6 KB is the run-length fonts. There are 9 KB more static variables (the grey tables, the width tables, the attribute memo and the scheduler's cache).
+
+### Timing: why the slow link costs more
+
+Links lays out the page while it loads: after each layout pass it waits 15 times as long as the pass took (at most 1 s before the first), then lays out everything that has arrived so far, decompressing it again from the start. On a fast link BBC is laid out twice; at 10 KB/s four times (124M of BBC's 164M). This is Links' own, sensible, policy (layout takes about 1/16 of the time while loading), and it means the fast-link figures are the floor. The CPU time also overlaps the transfer time, which is longer on a modem.
+
+### What is left
+
+In order of size:
+
+1. **TLS key exchange: 13.5 million instructions (0.9 s) a connection**, in `ssh/db/src/curve25519.c` (x25519 with 16-bit limbs and per-product carries, about 2,000 instructions a field multiply). It is 27M of Wikipedia's 52M (the redirect to en.wikipedia.org means two connections) and half of NPR. A field multiply with 13-bit limbs and no carries inside the column sums, or Karatsuba, or ARM assembly could perhaps halve it. TLS session resumption in `ssh/tls13.c` would avoid it for repeat visits. Both are outside `web/links/`.
+2. **TLS bulk decryption: about 120 instructions a byte.** On BBC with pictures, `__muldi3` (Poly1305's 64-bit products, with no long multiply) is 131M and ChaCha20 another 160M. A Poly1305 with 32 × 32 products done in 16-bit pieces, and a ChaCha20 that keeps its state in registers, could save about a third of BBC with pictures.
+3. **The HTML parser still parses every tag three times** (`parse_html`, `scan_http_equiv`, `find_form_for_input`): `parse_element` is 28M of BBC's 101M. A cache of tag ends for the current document, or stopping `scan_http_equiv` earlier, would remove two of the passes.
+4. **Partial layouts on a slow link** decompress and parse the whole page again each time. An incremental inflate in `compress.c` would save about 6M per pass on BBC.
+5. **Pictures:**
+   - every picture is decoded when it scrolls into view, and its bitmap kept: after 20 screens of BBC the 10 MB heap is full (phase 1 item 4, still to do: evict bitmaps, 4-bit grey storage);
+   - a grey path through `img.c` (1 byte a pixel instead of 3, no `gray_to_rgb`, `agx_24_to_48`, colour scaling and 565 rounding) would roughly halve the cost after the IDCT;
+   - photographs cost about 40 instructions a pixel pair in the grey conversion (`grey_pair`).
+6. **New glyphs** still cost about 40,000 instructions each (scale, sharpen, mix, round): 68k.news's Page Down is 0.35 s because it brings new sizes into view. Pre-rendering the few sizes PsiWeb uses would remove it.
+7. **TLS reads block** until a whole record has arrived (up to 16 KB, 1.6 s at 10 KB/s), during which Links cannot react to the pen or keys. Not a CPU cost, but worth fixing with the network work.
+8. **The 15 MIPS assumption**: still to be checked with one run on the 5mx.

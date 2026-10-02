@@ -8,6 +8,20 @@ A copy of web/emu/run_psiweb.py (NetSurf's harness) with, in addition:
                    Psion); malloc fails above it
   --profile [N]    instructions per function (needs --count): the top N
   --json FILE      per-page results (instructions, heap, bytes) as JSON
+  --record DIR     save every connection's traffic to DIR/net.json (random
+                   numbers are made deterministic, so TLS can be replayed)
+  --replay DIR     play DIR/net.json back instead of the network, with a
+                   virtual clock (instructions / 15 MIPS plus the time spent
+                   waiting): runs are repeatable, and Links' timers fire as
+                   they would on a 15 MIPS Psion. Implies --count.
+  --rate N         with --replay: the data comes in at N bytes a second of
+                   virtual time (e.g. 10000 for a modem link), as it would
+                   over the Psion's link; by default all at once
+  --vclock         the virtual clock without --replay
+  --callers f1,f2  who calls these functions (CALLSITES=1: the exact places)
+  --incl f1,f2     instructions spent inside these functions, callees
+                   included (per measured section)
+  --profile        per measured section, and for the whole run
 and per page: instructions from "open" (or "cmd") until the page is idle,
 the heap peak, and the bytes that came over the link.
 
@@ -31,6 +45,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BUILD = os.environ.get("PW_BUILD", os.path.join(HERE, "../../../build/links/epoc"))
 args = sys.argv[1:]
 COUNT = "--count" in args
+def optval(name):
+    return args[args.index(name) + 1] if name in args and args.index(name) + 1 < len(args) else None
+RECORD, REPLAY = optval("--record"), optval("--replay")
+RATE = float(optval("--rate")) if optval("--rate") else 0
+VCLOCK = bool(REPLAY) or "--vclock" in args
+if VCLOCK:
+    COUNT = True
 # --modem: behave like the WiRSa modem link on the Psion: the far end
 # closing shows up only as "NO CARRIER" in the data, never as a closed
 # flag, and pg_net_avail counts only bytes already taken from the port
@@ -43,11 +64,11 @@ HEAP_LIMIT = 10 * 1024 * 1024
 if "--heap-limit" in args:
     HEAP_LIMIT = int(args[args.index("--heap-limit") + 1])
 PROFILE = "--profile" in args
-PROFILE_N = 40
+PROFILE_N = int(os.environ.get("PROFILE_N", "40"))
 JSON = None
 if "--json" in args:
     JSON = args[args.index("--json") + 1]
-OPTVALS = [args[i + 1] for i, a in enumerate(args) if a in ("--proxy", "--trace", "--heap-limit", "--json", "--callers") and i + 1 < len(args)]
+OPTVALS = [args[i + 1] for i, a in enumerate(args) if a in ("--proxy", "--trace", "--heap-limit", "--json", "--callers", "--record", "--replay", "--incl", "--rate") and i + 1 < len(args)]
 SCRIPT = [a for a in args if not a.startswith("--") and a not in OPTVALS][0]
 
 MAP = open(os.path.join(BUILD, "psiweb-emu.map")).read()
@@ -87,10 +108,23 @@ def dbl_words(v): return struct.unpack(">II", struct.pack(">d", v))
 
 # ------------------------------------------------------------------ state
 T0 = time.time()
-state = {"exit": None, "busy": 0, "last_draw": time.time(), "fb4": 0, "cmd": 0, "arg": "",
+insns = [0]
+VT = {"t0": T0, "slept": 0.0}
+if REPLAY:
+    import json as _json
+    NETREC = _json.load(open(os.path.join(REPLAY, "net.json")))
+    VT["t0"] = NETREC.get("t0", T0)
+def now():
+    """the clock the Psion code sees: real, or virtual (--replay/--vclock)"""
+    if VCLOCK:
+        return VT["t0"] + insns[0] / 15e6 + VT["slept"]
+    return time.time()
+def sleep(s):
+    if VCLOCK: VT["slept"] += s
+    else: time.sleep(s)
+state = {"exit": None, "busy": 0, "last_draw": now(), "fb4": 0, "cmd": 0, "arg": "",
          "wait_until": 0, "idle": None, "queue": [], "script": open(SCRIPT).read().splitlines(),
          "ready": False}
-insns = [0]
 files, next_fd = {}, [10]
 mem = {"in_use": 0, "peak": 0, "arena": 0, "n": 0}
 net_bytes = {"in": 0, "out": 0, "dials": 0}
@@ -124,6 +158,9 @@ def page_start(what):
     live = struct.unpack("<I", rd(sym("rh_live"), 4))[0]
     wr(sym("rh_page_peak"), struct.pack("<I", live))
     cur["fails0"] = struct.unpack("<I", rd(sym("rh_fails"), 4))[0]
+    if PROFILE:
+        cur["blocks0"] = dict(blocks)
+    INCL["acc"].clear()
 
 def page_end():
     if not cur or "done" in cur:
@@ -138,13 +175,46 @@ def page_end():
            "heap_end": cur["heap_end"], "alloc_fails": cur["fails"],
            "wall": round(time.time() - cur["t0"], 1)}
     pages.append(rec)
+    if PROFILE:
+        prof_report(blocks, cur.get("blocks0", {}), "section: " + rec["what"])
+    if INCL["acc"]:
+        print("inclusive instructions (%s):" % rec["what"])
+        for f, v in sorted(INCL["acc"].items(), key=lambda x: -x[1]):
+            print("  %8.1fM %5.1f%%  %s" % (v / 1e6, 100.0 * v / max(n, 1), f))
+        rec["incl"] = dict(INCL["acc"])
     log("[page] %s: %.1fM instructions (~%.1f s at 15 MIPS), heap peak %d KB, %d bytes in, %d out, %d dials, %d failed allocations" %
         (rec["what"], n / 1e6, n / 15e6, rec["heap_peak"] // 1024, rec["bytes_in"], rec["bytes_out"], rec["dials"], rec["alloc_fails"]))
+
+INCL = {"acc": {}}
+def prof_byfn(blocks_, base):
+    import bisect
+    keys = [a for a, _ in SYMS]
+    byfn = {}
+    for addr, n in blocks_.items():
+        n -= base.get(addr, 0)
+        if n <= 0: continue
+        i = bisect.bisect_right(keys, addr) - 1
+        name = SYMS[i][1] if i >= 0 else "?"
+        byfn[name] = byfn.get(name, 0) + n
+    return byfn
+def prof_report(blocks_, base, title):
+    byfn = prof_byfn(blocks_, base)
+    # PROFILE_FN=f1,f2: also the instructions by basic block inside these
+    for fn in filter(None, os.environ.get("PROFILE_FN", "").split(",")):
+        a0 = sym(fn)
+        rows = sorted((a, n - base.get(a, 0)) for a, n in blocks_.items() if where(a).split("+")[0] == fn)
+        print("blocks of %s (address: instructions):" % fn)
+        for a, n in rows:
+            if n > 0: print("  %s %08x  %8.2fM" % (where(a), a, n / 1e6))
+    tot = sum(byfn.values()) or 1
+    print("instructions by function (self), %s, %.1fM:" % (title, tot / 1e6))
+    for name, n in sorted(byfn.items(), key=lambda x: -x[1])[:PROFILE_N]:
+        print("  %8.1fM %5.1f%%  %s" % (n / 1e6, 100.0 * n / tot, name))
 
 def script_step():
     """runs script lines until one produces input or has to wait"""
     while state["script"] and not state["queue"] and not state["cmd"]:
-        t = time.time()
+        t = now()
         if state["wait_until"] and t < state["wait_until"]:
             return
         state["wait_until"] = 0
@@ -190,26 +260,82 @@ def script_step():
 
 # ------------------------------------------------------------------ network
 net = {"sock": None, "rx": bytearray(), "closed": False, "eof": False}
+NETLOG = {"t0": T0, "conns": []}
+if RECORD:
+    import atexit, json as _json, base64 as _b64
+    def _save_net():
+        os.makedirs(RECORD, exist_ok=True)
+        out = {"t0": NETLOG["t0"], "conns": [{"host": c["host"], "port": c["port"],
+               "ev": [[e[0], _b64.b64encode(bytes(e[1])).decode() if e[0] == "rx" else e[1]] for e in c["ev"]]}
+               for c in NETLOG["conns"]]}
+        _json.dump(out, open(os.path.join(RECORD, "net.json"), "w"))
+    atexit.register(_save_net)
+def rec_ev(kind, data=None):
+    if RECORD and NETLOG["conns"]:
+        ev = NETLOG["conns"][-1]["ev"]
+        if kind == "rx" and ev and ev[-1][0] == "rx": ev[-1][1] += data
+        elif kind == "tx": ev.append(["tx", data])
+        elif kind == "rx": ev.append(["rx", bytearray(data)])
+        else: ev.append([kind, 0])
+replay = {"n": 0, "ev": [], "i": 0, "pending": bytearray(), "close": False, "t0": 0.0, "sent": 0}
+def replay_pump():
+    import base64 as _b64
+    ev, i = replay["ev"], replay["i"]
+    while i < len(ev) and ev[i][0] != "tx":
+        if ev[i][0] == "rx": replay["pending"] += _b64.b64decode(ev[i][1])
+        else: replay["close"] = True
+        i += 1
+    replay["i"] = i
+    replay_release()
+def replay_release():
+    """moves what has 'arrived' (--rate) to the receive buffer"""
+    p = replay["pending"]
+    n = len(p)
+    if RATE and n:
+        n = min(n, int((now() - replay["t0"]) * RATE) - replay["sent"])
+    if n > 0:
+        net["rx"] += p[:n]; del p[:n]; replay["sent"] += n
+    if not p and replay["close"]:
+        net["closed"] = True
+
 def rx_fill(timeout):
+    if REPLAY:
+        replay_release()
+        return
     s = net["sock"]
     if net["rx"] or s is None or net["closed"] or net["eof"]:
         if MODEM and not net["rx"] and timeout > 0:
-            time.sleep(min(timeout, 0.05))
+            sleep(min(timeout, 0.05))
         return
     r, _, _ = select.select([s], [], [], timeout)
     if r:
         d = s.recv(8192)
-        if d: net["rx"] += d
+        if d:
+            net["rx"] += d; rec_ev("rx", d)
         elif MODEM:
             net["rx"] += b"\r\nNO CARRIER\r\n"; net["eof"] = True
             log("(modem: NO CARRIER)")
-        else: net["closed"] = True
+        else:
+            net["closed"] = True; rec_ev("close")
 
 def pg_dial(host, port, why, maxlen):
-    if net["sock"]:
+    if net["sock"] and net["sock"] != "replay":
         net["sock"].close()
     net.update(sock=None, rx=bytearray(), closed=False, eof=False)
     log("dial %s:%d" % (host, port))
+    if REPLAY:
+        conns = NETREC["conns"]
+        if replay["n"] >= len(conns):
+            wr(why, b"replay: no more connections\0"); return u32(-1)
+        c = conns[replay["n"]]; replay["n"] += 1
+        if (c["host"], c["port"]) != (host, port):
+            log("REPLAY MISMATCH: wanted %s:%d, recorded %s:%d" % (host, port, c["host"], c["port"]))
+        replay.update(ev=c["ev"], i=0, pending=bytearray(), close=False, t0=now(), sent=0)
+        net["sock"] = "replay"
+        replay_pump()
+        return 0
+    if RECORD:
+        NETLOG["conns"].append({"host": host, "port": port, "ev": []})
     try:
         net["sock"] = socket.create_connection((host, port), timeout=15)
         net["sock"].settimeout(None)
@@ -223,7 +349,7 @@ def hc(op, a, b, c, d):
     if op == 1:                                      # exit
         state["exit"] = s32(a); uc.emu_stop(); return 0
     if op == 3:                                      # gettimeofday
-        t = time.time()
+        t = now()
         # PW_COARSE=1: whole seconds only, like the Psion's RTC (TTime and
         # gettimeofday have no finer step there)
         wr(a, struct.pack("<ii", int(t), 0 if os.environ.get("PW_COARSE") else int((t % 1) * 1e6))); return 0
@@ -291,9 +417,9 @@ def hc(op, a, b, c, d):
         log("[heap] in use %d KB, peak %d KB" % (a // 1024, b // 1024)); return 0
     # ---- pwback
     if op == 200: state["fb4"] = a; return 0
-    if op == 201: state["last_draw"] = time.time(); return 0
+    if op == 201: state["last_draw"] = now(); return 0
     if op == 202:                                    # next event
-        end_t = time.time() + (s32(b) if s32(b) >= 0 else 100) / 1000.0
+        end_t = now() + (s32(b) if s32(b) >= 0 else 100) / 1000.0
         while True:
             script_step()
             if state["queue"]:
@@ -301,8 +427,8 @@ def hc(op, a, b, c, d):
                 wr(a, struct.pack("<4i", t, code, x, y)); return 1
             if state["cmd"]:
                 wr(a, struct.pack("<4i", 5, 0, 0, 0)); return 1          # PWB_WAKE
-            if time.time() >= end_t: return 0
-            time.sleep(0.005)
+            if now() >= end_t: return 0
+            sleep(0.005)
     if op == 203:                                    # take command
         c_ = state["cmd"]
         if c_:
@@ -312,7 +438,7 @@ def hc(op, a, b, c, d):
     if op == 205: log("[title]", cstr(a)); return 0
     if op == 206: log("[url]", cstr(a)); return 0
     if op == 207:
-        state["busy"] = a; state["last_draw"] = time.time()
+        state["busy"] = a; state["last_draw"] = now()
         if a:
             state["insn0"] = insns[0]
             log("[busy] 1")
@@ -323,8 +449,11 @@ def hc(op, a, b, c, d):
                 extra = " (page: %.1fM instructions, ~%.1f s on a 5mx)" % (n / 1e6, n / 15e6)
             log("[busy] 0" + extra)
         return 0
-    if op == 208: state["ready"] = True; log("ready"); return 0
-    if op == 209: return int((time.time() - T0) * 1000) & 0xffffffff
+    if op == 208:
+        state["ready"] = True; log("ready")
+        if cur.get("what") == "start-up": page_end()
+        return 0
+    if op == 209: return int((now() - VT["t0"]) * 1000) & 0xffffffff
     if op == 210:                                    # config
         if PROXY:
             h, _, p = PROXY.partition(":")
@@ -343,7 +472,7 @@ def hc(op, a, b, c, d):
         net_bytes["dials"] += 1
         return pg_dial(cstr(a), b, c, d)
     if op == 301:
-        if net["sock"]: net["sock"].close()
+        if net["sock"] and net["sock"] != "replay": net["sock"].close()
         net.update(sock=None, closed=True); log("hang up"); return 0
     if op == 302:
         if not MODEM: rx_fill(0)                     # EPOC: only what was read already
@@ -353,15 +482,33 @@ def hc(op, a, b, c, d):
         net_bytes["in"] += n; return n
     if op == 304:
         if not net["sock"]: return u32(-1)
-        net["sock"].sendall(rd(a, b)); net_bytes["out"] += b; return b
+        net_bytes["out"] += b
+        if REPLAY:
+            if replay["i"] < len(replay["ev"]) and replay["ev"][replay["i"]][0] == "tx":
+                replay["i"] += 1
+            replay_pump()
+            return b
+        net["sock"].sendall(rd(a, b)); rec_ev("tx", b); return b
     if op == 305:                                    # wait(ms, net, kbd)
         ms = s32(a)
-        if not b: time.sleep(max(ms, 0) / 1000.0); return 0
+        if not b: sleep(max(ms, 0) / 1000.0); return 0
         if net["rx"] or net["closed"]: return 1
+        if REPLAY:
+            replay_release()
+            if net["rx"] or net["closed"]: return 1
+            wait = 60 if ms < 0 else ms / 1000.0
+            if RATE and replay["pending"]:   # until the next byte is due
+                due = replay["t0"] + (replay["sent"] + 1) / RATE - now()
+                wait = min(wait, max(due, 0.001))
+            sleep(wait)
+            replay_release()
+            return 1 if (net["rx"] or net["closed"]) else 0
         rx_fill(60 if ms < 0 else ms / 1000.0)
         return 1 if (net["rx"] or net["closed"]) else 0     # (never 'closed' in modem mode)
     if op == 306:
-        data = os.urandom(min(b, 64)); wr(a, data); return len(data)
+        n = min(b, 64)
+        data = bytes(n) if (RECORD or REPLAY) else os.urandom(n)   # repeatable TLS for replay
+        wr(a, data); return len(data)
     log("unknown hypercall", op)
     return 0
 
@@ -420,6 +567,31 @@ if "--trace" in args:
             return on_call
         uc.hook_add(UC_HOOK_CODE, mk(fn), begin=sym(fn), end=sym(fn))
 
+# --incl f1,f2: instructions inside these functions, callees included. The
+# return is caught at the caller's address with the same stack pointer, so
+# recursion is counted once.
+if "--incl" in args:
+    depth = {}
+    for fn in args[args.index("--incl") + 1].split(","):
+        def mk(fn):
+            def on_call(uc_, addr, size, user):
+                lr, sp = uc.reg_read(UC_ARM_REG_LR), uc.reg_read(UC_ARM_REG_SP)
+                d = depth.get(fn, 0)
+                if d == 0:
+                    depth[fn + "@"] = insns[0]
+                depth[fn] = d + 1
+                h = []
+                def on_ret(uc2, a2, s2, u2):
+                    if uc.reg_read(UC_ARM_REG_SP) != sp:
+                        return
+                    uc.hook_del(h[0])
+                    depth[fn] -= 1
+                    if depth[fn] == 0:
+                        INCL["acc"][fn] = INCL["acc"].get(fn, 0) + insns[0] - depth[fn + "@"]
+                h.append(uc.hook_add(UC_HOOK_CODE, on_ret, begin=lr, end=lr))
+            return on_call
+        uc.hook_add(UC_HOOK_CODE, mk(fn), begin=sym(fn), end=sym(fn))
+
 # --callers f1,f2: who calls these functions (counts by caller, at exit)
 if "--callers" in args:
     import atexit, collections
@@ -427,7 +599,8 @@ if "--callers" in args:
     for fn in args[args.index("--callers") + 1].split(","):
         def mk(fn):
             def on_call(uc_, addr, size, user):
-                callers[(fn, where(uc.reg_read(UC_ARM_REG_LR)).split("+")[0])] += 1
+                w = where(uc.reg_read(UC_ARM_REG_LR))
+                callers[(fn, w if os.environ.get("CALLSITES") else w.split("+")[0])] += 1
             return on_call
         uc.hook_add(UC_HOOK_CODE, mk(fn), begin=sym(fn), end=sym(fn))
     def report_callers():
@@ -489,6 +662,7 @@ uc.reg_write(UC_ARM_REG_R0, 1)
 uc.reg_write(UC_ARM_REG_R1, SCRATCH + 0x200)
 uc.reg_write(UC_ARM_REG_LR, DONE)
 SAMPLE = "--sample" in args
+page_start("start-up")                               # until pwb_ready()
 try:
     pc = sym("main")
     while state["exit"] is None:
@@ -513,17 +687,7 @@ if COUNT:
         (insns[0] // 1000000, insns[0] / 15e6))
 log("network: %d bytes in, %d out, %d dials; maths hypercalls %s" % (net_bytes["in"], net_bytes["out"], net_bytes["dials"], mathcalls))
 if PROFILE and blocks:
-    import bisect
-    keys = [a for a, _ in SYMS]
-    byfn = {}
-    for addr, n in blocks.items():
-        i = bisect.bisect_right(keys, addr) - 1
-        name = SYMS[i][1] if i >= 0 else "?"
-        byfn[name] = byfn.get(name, 0) + n
-    tot = sum(byfn.values()) or 1
-    print("instructions by function (self):")
-    for name, n in sorted(byfn.items(), key=lambda x: -x[1])[:PROFILE_N]:
-        print("  %8.1fM %5.1f%%  %s" % (n / 1e6, 100.0 * n / tot, name))
+    prof_report(blocks, {}, "whole run")
 if JSON:
     import json
     json.dump({"pages": pages, "total_insns": insns[0], "net": net_bytes, "heap_peak": mem["peak"],

@@ -80,4 +80,19 @@ int psi_pipe(int fd[2]);
 #define fcntl psi_fcntl
 #define pipe(f) psi_pipe(f)
 #define NO_SIGNAL_HANDLERS
+
+/* psi_str.c: word-at-a-time and table-driven versions of the string
+ * functions Links spends most time in (see there) */
+size_t psi_strlen(const char *s);
+void *psi_memchr(const void *s, int c, size_t n);
+char *psi_strchr(const char *s, int c);
+size_t psi_strcspn(const char *s, const char *reject);
+size_t psi_strspn(const char *s, const char *accept);
+char *psi_strstr(const char *h, const char *n);
+#define strlen psi_strlen
+#define memchr psi_memchr
+#define strchr psi_strchr
+#define strcspn psi_strcspn
+#define strspn psi_strspn
+#define strstr psi_strstr
 #endif
