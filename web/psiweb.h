@@ -137,6 +137,14 @@ typedef struct
 	/* display work (docs/display.md): app sets before the engine starts */
 	int display;                       /* PW_DISPLAY_* bits */
 
+	/* the page showing, for the app's scroll bar (EIKON's, beside the page)
+	   and its Pictures button: psiweb writes them before each new frame.
+	   Pixels; page_h 0 when there is nothing to scroll (no page, a frameset) */
+	volatile int page_h;               /* the whole page's height */
+	volatile int page_y;               /* the top of the view, down the page */
+	volatile int page_vh;              /* the view's height */
+	volatile int page_pics;            /* its pictures are shown (View > Show pictures) */
+
 	unsigned char fb[PW_MAX_H * PW_STRIDE];
 	} PwShared;
 

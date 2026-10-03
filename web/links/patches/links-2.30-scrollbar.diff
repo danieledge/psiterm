@@ -1,0 +1,86 @@
+PsiWeb's own vertical scroll bar for the page. Applied by web/links/fetch.sh after
+links-2.30-psion.diff.
+- links.h, session.c, html.c, html_gr.c, html_r.c (PSI_NO_BARS): the top frame keeps no
+  room for Links' vertical scroll bar, and Links draws none for it: PsiWeb.app shows
+  EIKON's scroll bar beside the page (psi_drv.c report_page, PW_CMD_SCROLL). The frames
+  of a frameset (they have names) keep Links' bars; a wide page's horizontal bar is
+  still Links'.
+
+--- a/links.h
++++ b/links.h
+@@ -2167,6 +2167,16 @@
+ #define PSI_NO_BARS 1
+ #endif
+ 
++/* The room a page keeps for its vertical scroll bar. PsiWeb.app has its own
++ * (EIKON's, beside the page), so the top frame keeps none and Links draws
++ * no vertical bar for it (session.c calculate_scrollbars); the frames of a
++ * frameset have a name and keep Links' bars. */
++#ifdef PSI_NO_BARS
++#define G_PAGE_SB_WIDTH(o)	((o)->framename ? G_SCROLL_BAR_WIDTH : 0)
++#else
++#define G_PAGE_SB_WIDTH(o)	G_SCROLL_BAR_WIDTH
++#endif
++
+ struct letter {
+ 	const unsigned char *begin; /* Begin in the byte stream (of PNG data) */
+ 	int length; /* Length (in bytes) of the PNG data in the byte stream */
+--- a/session.c
++++ b/session.c
+@@ -1457,6 +1457,13 @@
+ 	fd->hsbsize = 0, fd->vsbsize = 0;
+ 	if (!f)
+ 		return;
++#ifdef PSI_NO_BARS
++	/* the top frame's vertical bar is PsiWeb.app's (links.h G_PAGE_SB_WIDTH) */
++	if (!fd->parent) {
++		if (f->x > fd->xw) fd->hsb = 1;
++		goto sizes;
++	}
++#endif
+ 	if (f->opt.scrolling == SCROLLING_YES) {
+ 		fd->hsb = 1, fd->vsb = 1;
+ 	} else if (f->opt.scrolling == SCROLLING_AUTO) {
+@@ -1470,6 +1477,9 @@
+ 			goto x;
+ 		}
+ 	}
++#ifdef PSI_NO_BARS
++	sizes:
++#endif
+ 	if (fd->hsb) fd->hsbsize = fd->xw - fd->vsb * G_SCROLL_BAR_WIDTH;
+ 	if (fd->vsb) fd->vsbsize = fd->yw - fd->hsb * G_SCROLL_BAR_WIDTH;
+ 	if (fd->hsbsize < 0) fd->hsb = 0;
+--- a/html.c
++++ b/html.c
+@@ -2096,7 +2096,7 @@
+ 	if (!table_level) {
+ 		limit = par_format.width - (par_format.leftmargin + par_format.rightmargin) * gf_val(1, G_HTML_MARGIN);
+ 	} else {
+-		limit = gf_val(d_opt->xw - 2, d_opt->xw - G_SCROLL_BAR_WIDTH - 2 * G_HTML_MARGIN * d_opt->margin);
++		limit = gf_val(d_opt->xw - 2, d_opt->xw - G_PAGE_SB_WIDTH(d_opt) - 2 * G_HTML_MARGIN * d_opt->margin);
+ 	}
+ 	if (!F) {
+ 		if (*w > limit) {
+--- a/html_gr.c
++++ b/html_gr.c
+@@ -926,7 +926,7 @@
+ 	int lm = margin;
+ 
+ 	if (par_format.implicit_pre_wrap) {
+-		int limit = d_opt->xw - G_SCROLL_BAR_WIDTH;
++		int limit = d_opt->xw - G_PAGE_SB_WIDTH(d_opt);
+ 		if (table_level) limit -= 2 * G_HTML_MARGIN * d_opt->margin;
+ 		if (limit < 0) limit = d_opt->xw;
+ 		if (width > limit)
+--- a/html_r.c
++++ b/html_r.c
+@@ -1326,7 +1326,7 @@
+ #ifdef G
+ 	} else {
+ 		struct g_part *rp;
+-		if ((rp = g_format_html_part(start, end, par_format.align, par_format.leftmargin, screen->opt.xw - G_SCROLL_BAR_WIDTH, head, 1, bg, bgcolor, screen))) {
++		if ((rp = g_format_html_part(start, end, par_format.align, par_format.leftmargin, screen->opt.xw - G_PAGE_SB_WIDTH(&screen->opt), head, 1, bg, bgcolor, screen))) {
+ 			int w = screen->opt.xw;
+ 			int h = screen->opt.yw;
+ 			screen->x = rp->x;

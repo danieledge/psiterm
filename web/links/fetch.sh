@@ -43,6 +43,7 @@ if [ ! -f links-2.30/.psion-patched ]; then
 	for p in "$HERE"/patches/*.diff; do
 		echo "== patch $(basename "$p")"
 		patch -d links-2.30 -p1 -s < "$p"
+		basename "$p" >> links-2.30/.psion-patches
 	done
 	touch links-2.30/.psion-patched
 fi

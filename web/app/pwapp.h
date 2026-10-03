@@ -20,6 +20,8 @@
 #include <eikdialg.h>
 #include <eikdialg.hrh>
 #include <fbs.h>
+#include <eiksbfrm.h>
+#include <eiksbobs.h>
 
 extern "C" {
 #include <psiweb.h>
@@ -76,7 +78,7 @@ private:
 	};
 
 class CPwUpdateProgress;
-class CPwView : public CCoeControl
+class CPwView : public CCoeControl, public MEikScrollBarObserver
 	{
 public:
 	~CPwView();
@@ -100,7 +102,16 @@ public:
 	TBool Updating() const { return iUpdState == PW_UPD_RUNNING; }
 	void StopUpdate() { if (iShared) { iShared->net.quit = 1; RingEngine(); } }   // the updater gives up and says so
 	void RingEngine();                       // (0.81) something for the engine in the chunk: wake it
+	TBool PicturesShown() const;             // this page's pictures are shown (the Pictures button)
 private:
+	// the page's scroll bar: EIKON's, beside the page (the engine says where
+	// the page is: psiweb.h page_*)
+	void LayoutL();                          // the bar and the page's room in Rect()
+	void UpdateScrollBarL();                 // the thumb where the engine says the page is
+	void ScrollTo(TInt aY);
+	void HandleScrollEventL(CEikScrollBar* aScrollBar, TEikScrollEvent aEventType);
+	TInt CountComponentControls() const;
+	CCoeControl* ComponentControl(TInt aIndex) const;
 	static TInt StartCallback(TAny* aSelf);
 	void Draw(const TRect& aRect) const;
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
@@ -155,6 +166,13 @@ private:
 	TFileName iUpdateFile;
 	CIdle* iAsker;             // shows the engine's questions outside Tick
 	TBool iAsking;             // one of its dialogs is up
+	CEikScrollBarFrame* iSBFrame;   // the page's scroll bar
+	TRect iPageArea;           // the room the engine draws in (Rect() less the bar)
+	TInt iSbH, iSbY, iSbVh;    // what the bar shows: the page's height, the view's top and height
+	TInt iEngH, iEngY, iEngVh; // ...and what the engine last said (it may not have caught up)
+	TBool iSbDragging;         // the thumb is being dragged: the engine's place waits
+	TBool iSbPen;              // the pen went down on the bar: its events are the bar's
+	TInt iPics;                // page_pics last seen (-1: not yet)
 	};
 
 // A page or the proxy needs a user name and password (HTTP authentication,
@@ -278,6 +296,7 @@ class CPwAppUi : public CEikAppUi
 public:
 	void ConstructL();
 	~CPwAppUi();
+	void ShowPicturesState(TBool aOn);  // the Pictures button pressed in or not
 private:
 	// Reading mode (ssh/psidisp.h): on while PsiWeb is in front with the
 	// tick on; off in the background, at switch-on and on closing

@@ -25,17 +25,17 @@ Install `dist/PsiWeb.sis` (to D: if you have a CF card). PsiWeb is on the Extras
 | Ctrl+R, Ctrl+H | reload, home page |
 | Up / Down, Fn+Up / Fn+Down | scroll a line / a screen |
 | Left / Right | scroll a wide page sideways |
-| Ctrl+M, Shift+Ctrl+M | zoom in / out (they cycle round the sizes) |
+| Ctrl+M, Shift+Ctrl+M | zoom in / out (they cycle round the sizes); the Zoom in and Zoom out icons beside the screen do the same |
 | Ctrl+T | show or hide the toolbar (the page takes its room) |
-| Ctrl+I | show the pictures of this page |
+| Ctrl+I | show the pictures of this page, or take them away (as the Pictures button) |
 | Shift+Ctrl+Q | page information (title, address, status, free memory, connection) |
 | Ctrl+U | disconnect (hang up and free the serial port) |
 | Ctrl+K | preferences: home page, pictures, proxy |
 | Shift+Ctrl+H | help on PsiWeb |
 | Shift+Ctrl+A | about PsiWeb |
-| pen | tap links, buttons, form fields and the scroll bars |
+| pen | tap links, buttons and form fields; the scroll bar beside the page (EIKON's) scrolls it |
 
-The toolbar (Open, Back, Home, Zoom) and the menus (File, View, Go, Tools) follow the EIKON style guide, as PsiTerm's and PsiMail's do. Links' own menus, dialogs and bars are never shown: everything goes through PsiWeb.app.
+The toolbar (Open, Back, Home, Pictures - pressed in while the page's pictures show) and the menus (File, View, Go, Tools) follow the EIKON style guide, as PsiTerm's and PsiMail's do. Links' own menus, dialogs and bars are never shown: everything goes through PsiWeb.app.
 
 **Passwords.** A page (or the proxy) that asks for a user name and password brings up PsiWeb's *User name and password* dialog. HTTP Basic and Digest (MD5 and SHA-256) are both understood. PsiWeb keeps the answer until it closes.
 

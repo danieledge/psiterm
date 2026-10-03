@@ -3,6 +3,8 @@
 // See psiweb.h.
 
 #include <e32keys.h>
+#include <eikkeys.h>
+#include <eikscrlb.h>
 #include <e32hal.h>
 #include <eikchlst.h>
 #include <eikedwin.h>
@@ -151,6 +153,7 @@ CPwView::~CPwView()
 	{
 	StartBusyCancel();
 	StopEngine();
+	delete iSBFrame;
 	delete iAsker;
 	delete iStarter;
 	delete iTimer;
@@ -168,8 +171,14 @@ void CPwView::ConstructL(const TRect& aRect, const TPwSettings& aSettings)
 	CreateBackedUpWindowL(iCoeEnv->RootWin(), EGray16);
 	SetRectL(aRect);
 	EnableDragEvents();
+	iPics = -1;
+	// the page's scroll bar, as the built-in programs have it: always there
+	// (dimmed when the page fits), beside the page
+	iSBFrame = new(ELeave) CEikScrollBarFrame(this, this);
+	iSBFrame->SetScrollBarVisibilityL(CEikScrollBarFrame::EOff, CEikScrollBarFrame::EOn);
+	LayoutL();
 
-	TSize size = aRect.Size();
+	TSize size = iPageArea.Size();
 	if (size.iWidth > PW_MAX_W) size.iWidth = PW_MAX_W;
 	if (size.iHeight > PW_MAX_H) size.iHeight = PW_MAX_H;
 	iBitmap = new(ELeave) CFbsBitmap;
@@ -369,7 +378,8 @@ void CPwView::SetPageRectL(const TRect& aRect)
 		StopEngine();
 		}
 	SetRectL(aRect);
-	TSize size = aRect.Size();
+	LayoutL();
+	TSize size = iPageArea.Size();
 	if (size.iWidth > PW_MAX_W) size.iWidth = PW_MAX_W;
 	if (size.iHeight > PW_MAX_H) size.iHeight = PW_MAX_H;
 	iShared->width = size.iWidth;
@@ -382,6 +392,132 @@ void CPwView::SetPageRectL(const TRect& aRect)
 		}
 	else
 		DrawNow();
+	}
+
+// ----- the page's scroll bar --------------------------------------------------------
+
+// The bar takes its breadth from the right of Rect(); the engine draws in
+// what is left (iPageArea, at the window's origin)
+void CPwView::LayoutL()
+	{
+	TEikScrollBarModel hModel(0, 0, 0);
+	TEikScrollBarModel vModel(iSbH, iSbH > 0 ? iSbVh : 0, iSbH > 0 ? iSbY : 0);
+	TRect inclusive(Rect());
+	TRect client(Rect());
+	TEikScrollBarFrameLayout layout;
+	layout.iTilingMode = TEikScrollBarFrameLayout::EInclusiveRectConstant;
+	iSBFrame->TileL(&hModel, &vModel, client, inclusive, layout);
+	iPageArea = client;
+	}
+
+TInt CPwView::CountComponentControls() const
+	{
+	return iSBFrame ? iSBFrame->CountComponentControls() : 0;
+	}
+
+CCoeControl* CPwView::ComponentControl(TInt aIndex) const
+	{
+	return iSBFrame->ComponentControl(aIndex);
+	}
+
+// The engine has said where the page is (psiweb.h page_*): the thumb goes
+// there, unless the pen is dragging it. Only a change from the engine moves
+// it, so a tap on the bar is not undone while the engine catches up.
+void CPwView::UpdateScrollBarL()
+	{
+	PwShared* s = iShared;
+	TInt h = 0, y = 0, vh = 0;
+	if (s && iRunning && !iShowMsg && s->page_h > 0 && s->page_vh > 0)
+		{
+		h = s->page_h;
+		y = s->page_y;
+		vh = s->page_vh;
+		}
+	if (iSbDragging || (h == iEngH && y == iEngY && vh == iEngVh))
+		return;
+	iEngH = h;
+	iEngY = y;
+	iEngVh = vh;
+	if (h == iSbH && y == iSbY && vh == iSbVh)
+		return;
+	iSbH = h;
+	iSbY = y;
+	iSbVh = vh;
+	CEikScrollBar* sb = iSBFrame->GetScrollBarHandle(CEikScrollBar::EVertical);
+	if (!sb)
+		return;
+	TEikScrollBarModel model(h, h > 0 ? vh : 0, h > 0 ? y : 0);
+	sb->SetModelL(&model);
+	sb->DrawNow();
+	}
+
+// The pen on the bar: the arrows move a few lines, the shaft a screen (as
+// Fn+Up and Fn+Down), the thumb where it is put
+void CPwView::HandleScrollEventL(CEikScrollBar* aScrollBar, TEikScrollEvent aEventType)
+	{
+	if (!iRunning || iSbH <= 0 || iUpdState == PW_UPD_RUNNING)
+		return;
+	TInt line = iSbVh / 8 < 16 ? 16 : iSbVh / 8;
+	TInt y = iSbY;
+	switch (aEventType)
+		{
+	case EEikScrollUp:
+		y -= line;
+		break;
+	case EEikScrollDown:
+		y += line;
+		break;
+	case EEikScrollPageUp:
+		y -= iSbVh - line;
+		break;
+	case EEikScrollPageDown:
+		y += iSbVh - line;
+		break;
+	case EEikScrollTop:
+	case EEikScrollHome:
+		y = 0;
+		break;
+	case EEikScrollBottom:
+	case EEikScrollEnd:
+		y = iSbH;
+		break;
+	case EEikScrollThumbDragVert:
+		iSbDragging = ETrue;
+		y = aScrollBar->ThumbPosition();
+		break;
+	case EEikScrollThumbReleaseVert:
+		iSbDragging = EFalse;
+		y = aScrollBar->ThumbPosition();
+		break;
+	default:
+		return;
+		}
+	ScrollTo(y);
+	}
+
+void CPwView::ScrollTo(TInt aY)
+	{
+	if (aY > iSbH - iSbVh) aY = iSbH - iSbVh;
+	if (aY < 0) aY = 0;
+	if (aY == iSbY && !iSbDragging)
+		return;
+	iSbY = aY;
+	CEikScrollBar* sb = iSBFrame->GetScrollBarHandle(CEikScrollBar::EVertical);
+	if (sb && !iSbDragging)
+		{
+		sb->SetModelThumbPosition(aY);
+		sb->DrawNow();
+		}
+	TBuf<12> arg;
+	arg.Num(aY);
+	Command(PW_CMD_SCROLL, arg);
+	}
+
+// the page's pictures are showing: on every page (Preferences), or asked
+// for this one (View > Show pictures, the Pictures button)
+TBool CPwView::PicturesShown() const
+	{
+	return iSettings.iImages || (iRunning && iShared && iShared->page_pics);
 	}
 
 void CPwView::EngineEnded()
@@ -585,8 +721,17 @@ void CPwView::Tick()
 		TRAPD(err, UpdateTickL());
 		(void)err;
 		}
+	if (s && iRunning && s->page_pics != iPics)
+		{
+		iPics = s->page_pics;
+		((CPwAppUi*)iEikonEnv->EikAppUi())->ShowPicturesState(PicturesShown());
+		}
 	if (!s || s->frame_seq == iLastFrame || iUpdState == PW_UPD_RUNNING)
+		{
+		TRAPD(se, UpdateScrollBarL());
+		(void)se;
 		return;
+		}
 	iLastFrame = s->frame_seq;
 	iFrameAt = User::TickCount();
 	TInt y0 = s->dirty_y0, y1 = s->dirty_y1;
@@ -612,6 +757,8 @@ void CPwView::Tick()
 	ActivateGc();
 	SystemGc().BitBlt(r.iTl, iBitmap, r);
 	DeactivateGc();
+	TRAPD(se, UpdateScrollBarL());
+	(void)se;
 	}
 
 // ----- the engine's questions (Links phase 5) --------------------------------------
@@ -952,7 +1099,7 @@ void CPwView::Draw(const TRect& aRect) const
 		gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 		gc.SetBrushColor(KRgbWhite);
 		gc.SetPenStyle(CGraphicsContext::ENullPen);
-		gc.DrawRect(Rect());
+		gc.DrawRect(iPageArea);
 		gc.SetPenStyle(CGraphicsContext::ESolidPen);
 		gc.SetPenColor(KRgbBlack);
 		const CFont* font = iEikonEnv->TitleFont();
@@ -965,7 +1112,10 @@ void CPwView::Draw(const TRect& aRect) const
 		gc.DiscardFont();
 		return;
 		}
-	gc.BitBlt(aRect.iTl, iBitmap, aRect);
+	TRect r(aRect);
+	r.Intersection(iPageArea);           // (the scroll bar draws itself)
+	if (!r.IsEmpty())
+		gc.BitBlt(r.iTl, iBitmap, r);
 	}
 
 void CPwView::PushEvent(TInt aType, TInt aCode, TInt aX, TInt aY)
@@ -1011,6 +1161,13 @@ TKeyResponse CPwView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 	TUint mods = aKeyEvent.iModifiers;
 	if (code == EKeyMenu)
 		return EKeyWasNotConsumed;
+	// the Zoom in and Zoom out icons beside the screen: as View > Zoom in
+	// and Zoom out (Ctrl+M, Shift+Ctrl+M)
+	if (code == (TUint)EEikSidebarZoomInKey || code == (TUint)EEikSidebarZoomOutKey)
+		{
+		iEikonEnv->EikAppUi()->HandleCommandL(code == (TUint)EEikSidebarZoomInKey ? EPwCmdZoomIn : EPwCmdZoomOut);
+		return EKeyWasConsumed;
+		}
 	AddEntropy(code);
 	if (mods & EModifierCtrl)
 		{
@@ -1057,6 +1214,16 @@ void CPwView::HandlePointerEventL(const TPointerEvent& aEvent)
 	{
 	TPoint p = aEvent.iPosition;
 	AddEntropy(p.iX * 1000 + p.iY);
+	// the pen went down on the scroll bar: it has the pen until it comes up
+	if (aEvent.iType == TPointerEvent::EButton1Down)
+		iSbPen = !iPageArea.Contains(p);
+	if (iSbPen)
+		{
+		CCoeControl::HandlePointerEventL(aEvent);
+		if (aEvent.iType == TPointerEvent::EButton1Up)
+			iSbPen = EFalse;
+		return;
+		}
 	switch (aEvent.iType)
 		{
 	case TPointerEvent::EButton1Down:
@@ -1237,6 +1404,11 @@ void CPwAppUi::ConstructL()
 	LoadSettings(settings);
 	TRAPD(pics, ToolbarPicturesL());
 	(void)pics;                              // (no PsiWeb.mbm: words only)
+	// the Pictures button stays pressed in while the page's pictures show
+	CEikButtonBase* picsButton = iToolBar ? (CEikButtonBase*)iToolBar->ControlById(EPwCmdImages) : NULL;
+	if (picsButton)
+		picsButton->SetBehavior(EEikButtonLatches);
+	ShowPicturesState(settings.iImages);
 	if (iToolBar && !settings.iToolbar)
 		iToolBar->MakeVisible(EFalse);       // remembered from last time
 	iView = new(ELeave) CPwView;
@@ -1312,6 +1484,20 @@ void CPwAppUi::ButtonPictureL(TInt aId, TInt aIcon)
 	b->LayoutComponentsL();
 	}
 
+// the Pictures button pressed in (the page's pictures show) or not
+void CPwAppUi::ShowPicturesState(TBool aOn)
+	{
+	CEikButtonBase* b = iToolBar ? (CEikButtonBase*)iToolBar->ControlById(EPwCmdImages) : NULL;
+	if (!b)
+		return;
+	CEikButtonBase::TState st = aOn ? CEikButtonBase::ESet : CEikButtonBase::EClear;
+	if (b->State() == st)
+		return;
+	b->SetState(st);
+	if (iToolBar->IsVisible())
+		b->DrawNow();
+	}
+
 void CPwAppUi::ToolbarPicturesL()
 	{
 	if (!iToolBar)
@@ -1319,7 +1505,7 @@ void CPwAppUi::ToolbarPicturesL()
 	ButtonPictureL(EPwCmdOpen, EMbmToolOpen);
 	ButtonPictureL(EPwCmdBack, EMbmToolBack);
 	ButtonPictureL(EPwCmdHome, EMbmToolHome);
-	ButtonPictureL(EPwCmdZoomIn, EMbmToolZoom);
+	ButtonPictureL(EPwCmdImages, EMbmToolPictures);
 	}
 
 // the page's room: ClientRect() keeps the toolbar's width back even when
@@ -1479,6 +1665,7 @@ void CPwAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 			iView->Settings().iToolbar ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPwCmdReading,
 			(iView->Settings().iDisplay & KPwDisplayReading) ? EEikMenuItemSymbolOn : 0);
+		aMenuPane->SetItemButtonState(EPwCmdImages, iView->PicturesShown() ? EEikMenuItemSymbolOn : 0);
 		}
 	}
 
@@ -1625,6 +1812,11 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 	{
 	TPwSettings& st = iView->Settings();
 	PwShared* sh = iView->Shared();
+	// the Zoom in and Zoom out icons beside the screen come as EIKON's own
+	// zoom commands (or as their keys: CPwView::OfferKeyEventL)
+	if (aCommand == EEikCmdZoomIn) aCommand = EPwCmdZoomIn;
+	else if (aCommand == EEikCmdZoomOut) aCommand = EPwCmdZoomOut;
+	else if (aCommand == EEikCmdZoomNormal) aCommand = EPwCmdZoomNormal;
 	switch (aCommand)
 		{
 	case EEikCmdExit:
@@ -1696,12 +1888,20 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 		break;
 		}
 	case EPwCmdImages:
-		// View > Show pictures: fetches the pictures of the page showing
-		// (pictures on every page is in Preferences)
+		{
+		// View > Show pictures (a tick box) and the Pictures button: the
+		// pictures of the page showing, on or off (pictures on every page is
+		// in Preferences). The button shows what the page has come to.
+		TBool on = iView->PicturesShown();
 		if (!iView->EngineRunning())
 			iView->Command(PW_CMD_IMAGES, _L("1"));   // (says why not)
 		else if (st.iImages)
 			iEikonEnv->InfoMsg(_L("Pictures are already shown on every page"));
+		else if (sh->page_pics)
+			{
+			iView->Command(PW_CMD_IMAGES, _L("0"));
+			on = EFalse;
+			}
 		else
 			{
 			TBuf<16> u;
@@ -1709,9 +1909,14 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 			if (u.Length() == 0 || u.Left(6).Compare(_L("about:")) == 0)
 				iEikonEnv->InfoMsg(_L("No pictures to show"));
 			else
+				{
 				iView->Command(PW_CMD_IMAGES, _L("1"));
+				on = ETrue;
+				}
 			}
+		ShowPicturesState(on);
 		break;
+		}
 	case EPwCmdToggleToolbar:
 		st.iToolbar = !st.iToolbar;
 		SaveSettings(st);
@@ -1742,6 +1947,7 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 		if (dlg->ExecuteLD(R_PW_PREFS_DIALOG))
 			{
 			SaveSettings(st);
+			ShowPicturesState(st.iImages);   // (pictures on every page, or not)
 			RestartEngineL();
 			}
 		break;
