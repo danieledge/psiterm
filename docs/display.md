@@ -85,6 +85,19 @@ table 0 12 26 42 60 78 98 118 137 157 177 195 213 229 243 255
 
 ### How to calibrate
 
+**The simple way (0.82):** Tools > Debug > Display calibration... opens on *Which looks best?*. A test picture (`app/ptcalpic.h`, drawn by `tools/mkcalpic.py`) and a line of coloured terminal text, drawn four ways side by side:
+
+| Key | Version | Settings |
+|---|---|---|
+| 1 | Standard | gamma 1.00, curve 35 |
+| 2 | Lighter shadows | gamma 1.60, curve 35 |
+| 3 | Darker shadows | gamma 0.60, curve 35 |
+| 4 | As before | calibration off |
+
+Look at the doorway and the tree (dark detail), the clouds (near white) and the ball (smooth shading). 1–4 or Left/Right choose, **Enter** uses that version in all three programs, **Esc** closes, and **A** opens the detailed settings below. The other settings (pictures' dither, Reading mode) are kept.
+
+**The detailed way:**
+
 1. On the Psion, set the screen contrast as you normally use it (Control panel), and switch the backlight to how you read.
 2. In PsiTerm: Tools > Debug > **Display calibration...**. The screen shows:
    - the 16 levels as bars, each as it is;

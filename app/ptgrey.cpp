@@ -1,5 +1,12 @@
 // PTGREY.CPP - Tools > Debug > Display calibration... (docs/display.md)
 //
+// It opens on "Which looks best?" (0.82): the same test picture and the same
+// coloured terminal text drawn four ways, side by side - standard, lighter
+// shadows, darker shadows, and calibration off (as before). Keys 1-4 or
+// Left/Right choose, Enter uses that one in all three programs, Esc closes,
+// and A opens the detailed settings below for fine adjustment.
+//
+// The detailed settings:
 // A full-screen page, as a test card: the 16 levels as bars, then ramps
 // drawn the way PsiMail and PsiWeb will draw pictures (error diffusion, or
 // the ordered pattern) and plain greys (text, rules, terminal colours) with
@@ -29,6 +36,7 @@
 #include <fbs.h>
 #include "psiterm.h"
 #include "psidisp.h"
+#include "ptcalpic.h"
 
 enum
 	{
@@ -54,13 +62,15 @@ CPtGreyScreen* CPtGreyScreen::NewL(MPtGreyObserver& aObserver)
 	}
 
 CPtGreyScreen::CPtGreyScreen(MPtGreyObserver& aObserver)
-	: iObserver(aObserver), iField(EGreyLevels), iLevel(7)
+	: iObserver(aObserver), iField(EGreyLevels), iLevel(7), iSimple(ETrue)
 	{
 	}
 
 CPtGreyScreen::~CPtGreyScreen()
 	{
 	delete iRamps;
+	for (TInt i = 0; i < KChoices; i++)
+		delete iPics[i];
 	}
 
 void CPtGreyScreen::ConstructL()
@@ -72,7 +82,255 @@ void CPtGreyScreen::ConstructL()
 	iRamps = new(ELeave) CFbsBitmap;
 	User::LeaveIfError(iRamps->Create(TSize(screen.iWidth, KRampRows), EGray16));
 	MakeRampsL();
+	// the four versions, and the one in use now chosen
+	for (TInt i = 0; i < KChoices; i++)
+		Version(iGrey, i, iVersions[i]);
+	if (!iGrey.on)
+		iChoice = 3;
+	else if (iGrey.gamma == iVersions[1].gamma && iGrey.curve == iVersions[1].curve)
+		iChoice = 1;
+	else if (iGrey.gamma == iVersions[2].gamma && iGrey.curve == iVersions[2].curve)
+		iChoice = 2;
+	MakeChoicesL();
 	ActivateL();
+	}
+
+// ----- "Which looks best?" ---------------------------------------------------
+
+_LIT(KChoice0, "Standard");
+_LIT(KChoice1, "Lighter shadows");
+_LIT(KChoice2, "Darker shadows");
+_LIT(KChoice3, "As before (off)");
+
+// Version aWhich of the greys: Dan's other settings (pictures, Reading mode)
+// kept, the curve set afresh. Gamma above 1 takes the levels to look darker
+// than their numbers, so every grey is drawn a level or so lighter.
+void CPtGreyScreen::Version(const PsiGrey& aNow, TInt aWhich, PsiGrey& aOut)
+	{
+	aOut = aNow;
+	aOut.on = 1;
+	aOut.bright = 0;
+	for (TInt k = 0; k < 16; k++)
+		aOut.nudge[k] = 0;
+	aOut.curve = PSIGREY_STD_CURVE;
+	aOut.gamma = PSIGREY_STD_GAMMA;
+	if (aWhich == 1)
+		aOut.gamma = 160;
+	else if (aWhich == 2)
+		aOut.gamma = 60;
+	else if (aWhich == 3)
+		aOut.on = 0;
+	psigrey_compute(&aOut, GreyPow);
+	}
+
+// The test picture as each version sets it out (error diffusion or the
+// ordered pattern, as chosen in the detailed settings), as PsiMail and
+// PsiWeb would
+void CPtGreyScreen::MakeChoicesL()
+	{
+	const TInt w = PtCalPicW, h = PtCalPicH;
+	static const TUint8 KBayer[16] = { 8, 136, 40, 168, 200, 72, 232, 104, 56, 184, 24, 152, 248, 120, 216, 88 };
+	HBufC8* rowBuf = HBufC8::NewLC((w + 1) / 2 + 4);
+	TPtr8 row = rowBuf->Des();
+	TInt* err = (TInt*)User::AllocLC(sizeof(TInt) * 2 * (w + 2));
+	for (TInt c = 0; c < KChoices; c++)
+		{
+		if (!iPics[c])
+			{
+			iPics[c] = new(ELeave) CFbsBitmap;
+			User::LeaveIfError(iPics[c]->Create(TSize(w, h), EGray16));
+			}
+		unsigned char lv[16], cal[256];
+		psigrey_levels(&iVersions[c], lv);
+		psigrey_nearest(lv, cal);
+		Mem::FillZ(err, sizeof(TInt) * 2 * (w + 2));
+		for (TInt y = 0; y < h; y++)
+			{
+			TInt* ec = err + ((y & 1) ? (w + 2) : 0);
+			TInt* en = err + ((y & 1) ? 0 : (w + 2));
+			Mem::FillZ(en, sizeof(TInt) * (w + 2));
+			row.SetLength((w + 1) / 2);
+			row.FillZ();
+			TBool back = (y & 1) != 0;
+			TInt fwd = 0;
+			for (TInt i = 0; i < w; i++)
+				{
+				TInt x = back ? w - 1 - i : i;
+				TInt step = back ? -1 : 1;
+				TInt v = PtCalPic[y * w + x];
+				TInt q;
+				if (!iGrey.dither)
+					{
+					TInt k = 0;
+					while (k < 15 && v >= lv[k + 1])
+						k++;
+					q = k;
+					if (k < 15 && v > lv[k]
+						&& (v - lv[k]) * 255 / (lv[k + 1] - lv[k]) + KBayer[(y & 3) * 4 + (x & 3)] >= 255)
+						q = k + 1;
+					}
+				else
+					{
+					TInt t = v + ec[x + 1] + fwd;
+					if (t < 0) t = 0;
+					if (t > 255) t = 255;
+					q = cal[t];
+					TInt e = t - lv[q];
+					fwd = (e * 7) >> 4;
+					TInt e3 = (e * 3) >> 4, e5 = (e * 5) >> 4;
+					en[x + 1 - step] += e3;
+					en[x + 1] += e5;
+					en[x + 1 + step] += e - fwd - e3 - e5;
+					}
+				row[x >> 1] = (TUint8)(row[x >> 1] | (q << ((x & 1) * 4)));
+				}
+			iPics[c]->SetScanLine(row, y);
+			}
+		}
+	CleanupStack::PopAndDestroy(2);          // err, rowBuf
+	}
+
+// A terminal colour as PsiTerm shows it (CTermView::CellColours, with the
+// standard "dark greys" for coloured text): aCal the version's table, or
+// NULL for calibration off
+static TInt TermGrey(TInt aR, TInt aG, TInt aB, const TUint8* aCal)
+	{
+	TUint x = aR * 30 + aG * 59 + aB * 11;
+	if (aCal)
+		return aCal[(x * 5243u) >> 19];
+	return (TInt)((x * 9869u) >> 24);
+	}
+
+struct TTermSample { const TText* iText; TUint8 iR, iG, iB; };
+
+void CPtGreyScreen::DrawChoices(CWindowGc& aGc) const
+	{
+	TRect all = Rect();
+	TInt w = all.Width();
+	const CFont* title = iEikonEnv->LegendFont();
+	const CFont* small = iEikonEnv->AnnotationFont();
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.SetPenColor(KRgbBlack);
+	aGc.UseFont(title);
+	aGc.DrawText(_L("Which looks best?"), TPoint(4, title->AscentInPixels() + 2));
+	aGc.UseFont(small);
+	_LIT(KKeys, "1-4: choose   Enter: use it   Esc: close   A: detailed settings");
+	aGc.DrawText(KKeys, TPoint(w - 4 - small->TextWidthInPixels(KKeys), title->AscentInPixels() + 2));
+
+	// coloured terminal text: on the white, then as backgrounds (a tmux
+	// bar, a selection) with light text
+	static const TTermSample KOnWhite[] =
+		{
+		{ _S("red"), 205, 0, 0 }, { _S("green"), 0, 205, 0 }, { _S("blue"), 0, 0, 238 },
+		{ _S("cyan"), 0, 205, 205 }, { _S("grey"), 128, 128, 128 },
+		};
+	static const TTermSample KBacks[] =
+		{
+		{ _S("blue"), 0, 0, 238 }, { _S("red"), 205, 0, 0 }, { _S("green"), 0, 205, 0 },
+		{ _S("yellow"), 205, 205, 0 },
+		};
+	TInt panelW = w / KChoices;
+	TInt picY = 18;
+	TInt lineH = small->HeightInPixels() + 3;
+	for (TInt c = 0; c < KChoices; c++)
+		{
+		TInt x0 = c * panelW;
+		TInt px = x0 + (panelW - PtCalPicW) / 2;
+		aGc.BitBlt(TPoint(px, picY), iPics[c]);
+		unsigned char lv[16], cal[256];
+		psigrey_levels(&iVersions[c], lv);
+		psigrey_nearest(lv, cal);
+		const TUint8* tab = iVersions[c].on ? cal : NULL;
+		TInt y = picY + PtCalPicH + 3;
+		TInt x = px;
+		aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+		for (TUint i = 0; i < sizeof(KOnWhite) / sizeof(KOnWhite[0]); i++)
+			{
+			TPtrC word(KOnWhite[i].iText);
+			TInt fg = TermGrey(KOnWhite[i].iR, KOnWhite[i].iG, KOnWhite[i].iB, tab);
+			fg = (fg * 6 + 7) / 15;              // coloured text on the white: dark greys
+			TInt tw = small->TextWidthInPixels(word) + 4;
+			aGc.SetBrushColor(KRgbWhite);
+			aGc.SetPenColor(TRgb::Gray16(fg));
+			aGc.DrawText(word, TRect(x, y, x + tw, y + lineH), small->AscentInPixels() + 1, CGraphicsContext::ELeft, 1);
+			x += tw;
+			}
+		y += lineH;
+		x = px;
+		for (TUint j = 0; j < sizeof(KBacks) / sizeof(KBacks[0]); j++)
+			{
+			TPtrC word(KBacks[j].iText);
+			TInt bg = TermGrey(KBacks[j].iR, KBacks[j].iG, KBacks[j].iB, tab);
+			TInt fg = 15;
+			TInt diff = fg - bg;
+			if (diff < 6)
+				fg = 0;                          // keep enough contrast to read
+			TInt tw = small->TextWidthInPixels(word) + 6;
+			aGc.SetBrushColor(TRgb::Gray16(bg));
+			aGc.SetPenColor(TRgb::Gray16(fg));
+			aGc.DrawText(word, TRect(x, y, x + tw, y + lineH), small->AscentInPixels() + 1, CGraphicsContext::ECenter, 0);
+			x += tw;
+			}
+		y += lineH + 2;
+		// the name, and a frame round the one chosen
+		TBuf<32> name;
+		name.Num(c + 1);
+		name.Append(_L("  "));
+		name.Append(c == 0 ? KChoice0() : c == 1 ? KChoice1() : c == 2 ? KChoice2() : KChoice3());
+		TBool on = c == iChoice;
+		TRect label(x0 + 3, y, x0 + panelW - 3, y + lineH + 1);
+		aGc.SetBrushColor(on ? KRgbBlack : KRgbWhite);
+		aGc.SetPenColor(on ? KRgbWhite : KRgbBlack);
+		aGc.DrawText(name, label, small->AscentInPixels() + 2, CGraphicsContext::ECenter, 0);
+		if (on)
+			{
+			aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+			aGc.SetPenColor(KRgbBlack);
+			aGc.DrawRect(TRect(x0 + 1, picY - 3, x0 + panelW - 1, label.iBr.iY + 2));
+			aGc.DrawRect(TRect(x0 + 2, picY - 2, x0 + panelW - 2, label.iBr.iY + 1));
+			}
+		}
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.SetPenColor(KRgbBlack);
+	TInt hy = all.iBr.iY - 4;
+	aGc.DrawText(_L("Look at the doorway and the tree (dark), the clouds (light) and the ball (smooth)"),
+		TPoint(4, hy));
+	aGc.DiscardFont();
+	}
+
+TKeyResponse CPtGreyScreen::ChoiceKeyL(TInt aCode)
+	{
+	switch (aCode)
+		{
+	case EKeyEscape:
+		iObserver.GreyScreenDone(EFalse, iGrey);
+		break;
+	case EKeyEnter:
+		iObserver.GreyScreenDone(ETrue, iVersions[iChoice]);
+		break;
+	case EKeyLeftArrow:
+		iChoice = (iChoice + KChoices - 1) % KChoices;
+		DrawNow();
+		break;
+	case EKeyRightArrow:
+	case EKeyTab:
+		iChoice = (iChoice + 1) % KChoices;
+		DrawNow();
+		break;
+	case 'a':
+	case 'A':
+		iSimple = EFalse;                    // the detailed settings
+		DrawNow();
+		break;
+	default:
+		if (aCode >= '1' && aCode < '1' + KChoices)
+			{
+			iChoice = aCode - '1';
+			DrawNow();
+			}
+		break;
+		}
+	return EKeyWasConsumed;
 	}
 
 // the table from the settings, and the ramps drawn with it
@@ -156,6 +414,8 @@ TKeyResponse CPtGreyScreen::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCod
 	if (aType != EEventKey)
 		return EKeyWasConsumed;              // (everything stops here: the menus too)
 	TInt code = aKeyEvent.iCode;
+	if (iSimple)
+		return ChoiceKeyL(code);
 	TBool shift = (aKeyEvent.iModifiers & EModifierShift) != 0;
 	TInt delta = 0;
 	switch (code)
@@ -274,6 +534,11 @@ void CPtGreyScreen::Draw(const TRect& /*aRect*/) const
 	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 	gc.SetBrushColor(KRgbWhite);
 	gc.DrawRect(all);
+	if (iSimple)
+		{
+		DrawChoices(gc);
+		return;
+		}
 
 	// the title
 	const CFont* title = iEikonEnv->LegendFont();

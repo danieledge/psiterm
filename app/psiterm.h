@@ -833,9 +833,14 @@ public:
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
 private:
 	enum { KRampRows = 72 };
+	enum { KChoices = 4 };             // "Which looks best?": the four versions
 	CPtGreyScreen(MPtGreyObserver& aObserver);
 	void ConstructL();
 	void Draw(const TRect& aRect) const;
+	void DrawChoices(CWindowGc& aGc) const;
+	TKeyResponse ChoiceKeyL(TInt aCode);
+	void MakeChoicesL();
+	static void Version(const PsiGrey& aNow, TInt aWhich, PsiGrey& aOut);
 	void DrawField(CWindowGc& aGc, TInt aField, const TDesC& aText, TInt& aX, TInt aY) const;
 	void Changed();
 	void MakeRampsL();
@@ -845,6 +850,10 @@ private:
 	TInt iField;
 	TInt iLevel;
 	CFbsBitmap* iRamps;
+	TBool iSimple;                     // "Which looks best?" (A: the detailed settings)
+	TInt iChoice;                      // 0..KChoices-1
+	PsiGrey iVersions[KChoices];
+	CFbsBitmap* iPics[KChoices];       // the test picture as each version draws it
 	};
 
 class CPsiTermAppUi : public CEikAppUi, public MPtGreyObserver
