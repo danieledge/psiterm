@@ -32,7 +32,7 @@ static const TRegOk KReadable[]=
 	{ERegLcdCtl,4},{ERegLcdSt,4},{ERegLcdDbar1,4},{ERegLcdT0,4},{ERegLcdT1,4},{ERegLcdT2,4},
 	{ERegPwrSr,4},{ERegPwrCnt,4},
 	{ERegIntSr,4},{ERegIntRsr,4},{ERegIntEns,4},
-	{ERegU2Fcr,4},{ERegU2Lcr,4},{ERegU2Con,1},{ERegU2Flg,1},{ERegU2IntM,1},
+	{ERegU2Fcr,4},{ERegU2Ubrcr,4},{ERegU2Con,1},{ERegU2Flg,1},{ERegU2IntM,1},
 	{ERegTc1Load,4},{ERegTc1Val,4},{ERegTc1Ctrl,1},
 	{ERegTc2Load,4},{ERegTc2Val,4},{ERegTc2Ctrl,1},
 	{ERegRtcL,4},{ERegRtcU,4},

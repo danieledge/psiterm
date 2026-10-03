@@ -44,7 +44,7 @@ static const TRegShow KShow[]=
 	{ERegLcdT0,4,"LCDT0"},{ERegLcdT1,4,"LCDT1"},{ERegLcdT2,4,"LCDT2"},
 	{ERegPwrSr,4,"PWRSR"},{ERegPwrCnt,4,"PWRCNT"},
 	{ERegIntSr,4,"INTSR"},{ERegIntRsr,4,"INTRSR"},{ERegIntEns,4,"INTENS"},
-	{ERegU2Fcr,4,"UART2 FCR"},{ERegU2Lcr,4,"UART2 LCR"},{ERegU2Con,1,"UART2 CON"},
+	{ERegU2Fcr,4,"UART2 FCR"},{ERegU2Ubrcr,4,"UART2 UBRCR"},{ERegU2Con,1,"UART2 CON"},
 	{ERegU2Flg,1,"UART2 FLG"},{ERegU2IntM,1,"UART2 INTM"},
 	{ERegTc1Load,4,"TC1 LOAD"},{ERegTc1Val,4,"TC1 VALUE"},{ERegTc1Ctrl,1,"TC1 CTRL"},
 	{ERegTc2Load,4,"TC2 LOAD"},{ERegTc2Val,4,"TC2 VALUE"},{ERegTc2Ctrl,1,"TC2 CTRL"},

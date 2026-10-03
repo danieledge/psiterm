@@ -74,7 +74,7 @@ CPU mode in the driver: 1b (UND)
   - `MEMCFG1 = 00921010`, `DRAMCFG = 00000081`, `PWRCNT = 00000004`.
   - From one read to the next a second later, `PWRSR`, `TC2 VALUE` and `RTC LOW` change.
 - Screen: the frame buffer is at virtual `58003020`, so the palette is at `58003000`.
-- Not modelled by the emulator: `LCDST`, `LCDDBAR1`, `LCDT0`–`2` and `UART2 LCR` read `0` or `ffffffff`. The emulator doesn't model `UBRCR` either. On a real 5mx they should hold real values.
+- Not modelled by the emulator: `LCDST`, `LCDDBAR1`, `LCDT0`–`2` and `UART2 UBRCR` (the serial speed, 0x708) read `0` or `ffffffff`. On a real 5mx they should hold real values.
 
 **The palette**
 - **The System screen uses 4 greys.** Its palette is `100f 000a 0005 0000`, then zeros: bits-per-pixel code 1, with 4 entries in use.
