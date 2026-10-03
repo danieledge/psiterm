@@ -1,0 +1,74 @@
+21:36:02 PsiKernTest 0.4. Choose a test from the Read or Write menus.
+21:36:02 Log: D:\PsiKern.log (the last one: PsiKern.old)
+21:36:11 > Machine and driver
+21:36:11 Machine: SERIES5mx, ROM 1.05(260)
+21:36:11 Processor: ARM 710T, 36864 kHz, speed factor 2000
+21:36:11 Display 640x240, 16 colours
+21:36:11 RAM 16384 KB, free 3060 KB; ROM 16384 KB
+21:36:12 < Machine and driver: 0
+21:36:12 > Load the driver
+21:36:12 Load driver: -11
+21:36:12 Open channel: -1
+21:36:12 < Load the driver: -1
+21:36:12 > Speed
+21:36:13 Loop: 2000000 turns in 328 ms
+21:36:13 Memory copy: 8 MB in 296 ms (27675 KB a second)
+21:36:13 ROM code: 200000 calls in 593 ms
+21:36:13 < Speed: 0
+21:36:13 > Load the driver
+21:36:13 Load driver: -11
+21:36:13 Open channel: -1
+21:36:13 < Load the driver: -1
+21:36:13 > Load the driver
+21:36:13 Load driver: -11
+21:36:14 Open channel: -1
+21:36:14 < Load the driver: -1
+21:36:14 > Load the driver
+21:36:14 Load driver: -11
+21:36:14 Open channel: -1
+21:36:14 < Load the driver: -1
+21:36:14 > Load the driver
+21:36:14 Load driver: -11
+21:36:14 Open channel: -1
+21:36:14 < Load the driver: -1
+21:36:14 > Load the driver
+21:36:14 Load driver: -11
+21:36:14 Open channel: -1
+21:36:14 < Load the driver: -1
+21:36:14 > Load the driver
+21:36:14 Load driver: -11
+21:36:14 Open channel: -1
+21:36:14 < Load the driver: -1
+21:36:14 > Load the driver
+21:36:14 Load driver: -11
+21:36:15 Open channel: -1
+21:36:15 < Load the driver: -1
+21:36:15 All tests done: 0 (the log has every result)
+21:36:27 > Machine and driver
+21:36:28 Machine: SERIES5mx, ROM 1.05(260)
+21:36:28 Processor: ARM 710T, 36864 kHz, speed factor 2000
+21:36:28 Display 640x240, 16 colours
+21:36:28 RAM 16384 KB, free 2952 KB; ROM 16384 KB
+21:36:28 < Machine and driver: 0
+21:36:28 > Load the driver
+21:36:28 Load driver: -11
+21:36:28 Open channel: -1
+21:36:28 < Load the driver: -1
+21:36:28 > Speed
+21:36:29 Loop: 2000000 turns in 328 ms
+21:36:29 Memory copy: 8 MB in 312 ms (26256 KB a second)
+21:36:29 ROM code: 200000 calls in 578 ms
+21:36:29 < Speed: 0
+21:36:29 > Load the driver
+21:36:30 Load driver: -11
+21:36:30 Open channel: -1
+21:36:30 < Load the driver: -1
+21:36:30 > Load the driver
+21:36:30 Load driver: -11
+21:36:30 Open channel: -1
+21:36:30 < Load the driver: -1
+21:36:30 > Load the driver
+21:36:30 Load driver: -11
+21:36:30 Open channel: -1
+21:36:30 < Load the driver: -1
+21:36:30 Read tests done

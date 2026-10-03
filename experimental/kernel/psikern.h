@@ -9,8 +9,11 @@
 // until the Psion restarts, so with one name a newer harness found the old
 // driver (-11), which then refused it (-5). Each version loads beside the
 // last instead.
-_LIT(KPsiKernName,"PsiKern03");
-_LIT(KPsiKernFile,"PSIKERN.LDD");      // \System\Libs\ on any drive
+_LIT(KPsiKernName,"PsiKern05");
+// The file name carries the version too: EPOC knows a loaded driver by its
+// file name, so a new PSIKERN.LDD was taken as the old one, still loaded
+// (-11), and the new name was never installed (-1).
+_LIT(KPsiKernFile,"PSIKERN5.LDD");     // \System\Libs\ on any drive
 const TInt KPsiKernMajor=0;
 const TInt KPsiKernMinor=3;
 const TInt KPsiKernBuild=1;

@@ -32,7 +32,7 @@ const TInt KMaxLines=40;
 const TInt KLineLen=80;
 _LIT(KLogName,"PsiKern.log");
 _LIT(KOldName,"PsiKern.old");
-_LIT(KPsiKtVersion,"0.4");
+_LIT(KPsiKtVersion,"0.5");
 
 // the ROM the driver's ordinals come from (ekern_rom.def)
 const TInt KRomMajor=1, KRomMinor=5, KRomBuild=260;
@@ -555,6 +555,7 @@ TInt CPsiKtAppUi::OpenDriver()
 	if (err!=KErrNone || !go)
 		return KErrCancel;
 	TInt r=User::LoadLogicalDevice(KPsiKernFile);
+	TInt load=r;
 	TBuf<KLineLen> l;
 	l.Format(_L("Load driver: %d"),r);
 	Say(l);
@@ -563,7 +564,7 @@ TInt CPsiKtAppUi::OpenDriver()
 		r=iKern.Open();
 		l.Format(_L("Open channel: %d"),r);
 		Say(l);
-		if (r==KErrNotSupported)
+		if (r==KErrNotSupported || (r==KErrNotFound && load==KErrAlreadyExists))
 			Say(_L("Another version of the driver is still loaded: restart the Psion"));
 		}
 	if (r==KErrNone)
@@ -1281,8 +1282,15 @@ void CPsiKtAppUi::EverythingL()
 		return;
 		}
 	iAll=ETrue;
+	CheckL();
+	if (!iKernOpen)
+		{
+		iAll=EFalse;
+		Say(_L("Stopped: the driver is not available, so only the speed test can run"));
+		Say(_L("If another version is loaded, restart the Psion and try again"));
+		return;
+		}
 	TRAPD(err,
-		CheckL();
 		SpeedL();
 		RegistersL();
 		PaletteL();
