@@ -86,7 +86,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.82");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.83");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -595,8 +595,12 @@ void CTermView::Layout()
 	iCacheValid = EFalse;
 	vterm_set_size(iVt, iRows, iCols);
 	vterm_screen_flush_damage(iScreen);
-	if (iSshActive && iShared)
+	if (iSshActive && iShared && iShared->mode == 0)
 		{
+		// (0.83) an SSH session only: an update or an upload never takes the
+		// flag, and while it was up psiglue's waits ended at once and took
+		// in no data, so every reply came out "cut short" - as when Update
+		// ended a tmux session and the tab strip went
 		iShared->rows = iRows;
 		iShared->cols = iCols;
 		iShared->resized = 1;

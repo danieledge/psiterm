@@ -764,8 +764,15 @@ static void run_speed_test(void)
    the source is HTTPS (GitHub) and the raw link otherwise. */
 static int g_tls;
 
+extern int pg_take_resize(void);
+extern int pg_rx_errors(int *last);
+
 static int io_read(unsigned char *buf, int max, int timeout_ms)
 {
+	/* (0.83) a resize means nothing to an update or an upload, and a flag
+	   left up ends psiglue's waits at once, before they take in any data:
+	   every reply then came out "cut short" (psiterm.cpp Layout) */
+	pg_take_resize();
 	if (g_tls)
 		return tls_read(buf, max, timeout_ms);   /* >0, 0 closed, -1 error, -2 cancelled */
 	if (pg_net_avail() == 0) {
@@ -811,6 +818,7 @@ static long http_request(const char *path, long rfrom, long rlen, char *why, int
 {
 	PsiShared *s = pg_shared();
 	char req[384];
+	pg_take_resize();
 	if (pg_dial(why, whymax) != 0)
 		return -2;
 	if (g_tls && tls_connect(s->host, why, whymax) != 0) {
@@ -1143,6 +1151,16 @@ static int run_update(void)
 fail:
 	sprintf(msg, "\r\nUpdate failed: %s\r\n", why);
 	pg_out_write(msg, strlen(msg));
+	{
+		/* (0.83) bytes the serial port lost (overruns, framing): if there
+		   were any, the link itself is dropping data, so say so */
+		int last = 0, errs = pg_rx_errors(&last);
+		if (errs > 0) {
+			sprintf(msg, "(The serial line lost data %d times, last error %d: try 57600 baud,\r\n"
+				" or RTS/CTS on at both ends if the modem and cable have them.)\r\n", errs, last);
+			pg_out_write(msg, strlen(msg));
+		}
+	}
 	return 2;
 }
 

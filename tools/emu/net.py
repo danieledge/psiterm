@@ -38,6 +38,7 @@ so the addresses typed on the Psion can be short.
 """
 import os, sys, time, shutil, socket, subprocess, tempfile, getpass
 
+TOP = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, '..', '..'))
 WORK = os.path.abspath(os.environ.get('EMU_NET_DIR', os.path.join(REPO, 'build', 'emu', 'net')))
@@ -390,6 +391,37 @@ class Ctx:
         os.rmdir(self.sockdir)
 
 
+# PsiTerm's Tools > Update PsiTerm from a local server through the modem:
+# ssh/test/chunksrv.py serves UPDSRV_ROOT (version.txt, PsiTerm.sis and its
+# .sig, signed by the caller with the release key, never committed) in
+# 16 KB pieces, and cuts one short and garbles another, so the retries run.
+def test_update(ctx):
+    root = os.environ.get('UPDSRV_ROOT')
+    if not root or not os.path.isfile(os.path.join(root, 'PsiTerm.sis.sig')):
+        return False, 'set UPDSRV_ROOT to a folder with version.txt, PsiTerm.sis and PsiTerm.sis.sig'
+    port = free_port()
+    log = os.path.join(WORK, 'update-http.log')
+    ctx.procs.start('chunksrv', [sys.executable, os.path.join(TOP, 'ssh', 'test', 'chunksrv.py'), str(port)],
+                    log, env=dict(os.environ, UPDSRV_ROOT=root))
+    if not wait_port(port):
+        return False, 'chunksrv.py did not start'
+    card = os.path.join(WORK, 'update.img')
+    make_card('psiterm', card, 'EMU_PKG_TERM')
+    mlog = ctx.modem('update', redirect='127.0.0.1:%d' % port)
+    # Menu, Left to Tools, Down four times to Update PsiTerm..., Enter; in the
+    # dialog Right twice to Local server, Down to its address, any name, OK
+    s = Script(52).key(MENU).key(14).key(17).key(17).key(17).key(17).key(ENTER).wait(2)
+    s.key(15).key(15).key(17).type('srv').key(ENTER)
+    out = emulate('update', card, ctx.sock, s, secs=int(os.environ.get('UPDATE_SECS', '260')))
+    try:
+        sent = open(mlog, 'rb').read().count(b'-> ')
+    except OSError:
+        sent = 0
+    size = os.path.getsize(os.path.join(root, 'PsiTerm.sis'))
+    ok = grep(mlog, 'X-Total: %d' % size) and grep(os.path.join(out, 'log'), 'serial-rx UART2')
+    return ok, out
+
+
 # PsiKernTest's Write > Serial link with the modem (experimental/kernel): the
 # dialogue with each modem. (The bridge has no baud rate, and the emulator
 # doesn't model UBRCR, so the speed itself is only tested on the 5mx.)
@@ -427,7 +459,7 @@ def test_kernwirsafast(ctx):
 
 
 TESTS = {'at': test_at, 'web': test_web, 'mail': test_mail, 'ssh': test_ssh, 'proxy': test_proxy,
-         'kern': test_kern, 'kernwirsa': test_kernwirsa, 'kernwirsafast': test_kernwirsafast}
+         'update': test_update, 'kern': test_kern, 'kernwirsa': test_kernwirsa, 'kernwirsafast': test_kernwirsafast}
 ALL = ['at', 'web', 'mail', 'ssh']             # (proxy needs the Internet: asked for by name)
 
 
