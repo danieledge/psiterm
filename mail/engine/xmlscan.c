@@ -118,7 +118,17 @@ void xs_feed(XmlScan *x, const char *in, int n)
 			break;
 		case S_ENT:
 			if (c == ';') { entity(x); x->st = S_TEXT; }
-			else if (x->elen < (int)sizeof(x->ent) - 1) x->ent[x->elen++] = c;
+			else if (c == '<' || c == '&' || c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
+			         x->elen >= (int)sizeof(x->ent) - 1) {
+				/* not an entity after all (an unterminated "&"): the text
+				   as it was, and this byte again as text - the rest of the
+				   reply used to be swallowed looking for the ';' */
+				put(x, "&", 1);
+				put(x, x->ent, x->elen);
+				x->st = S_TEXT;
+				i--;
+			}
+			else x->ent[x->elen++] = c;
 			break;
 		case S_TAG:
 			/* attribute values are kept (xs callers may look at x->tag),

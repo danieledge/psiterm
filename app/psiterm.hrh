@@ -111,7 +111,7 @@ enum TPsiTermCommands
 	EPtCmdStatusLine,
 
 	// the toolbar: View > Show toolbar (Shift+Ctrl+B), its first button (SSH
-	// to..., or Disconnect while a session is up) and its two pop-up buttons
+	// to..., or End SSH while a session is up) and its two pop-up buttons
 	EPtCmdToolbar,
 	EPtCmdTbConnect,
 	EPtCmdTbSnippets,

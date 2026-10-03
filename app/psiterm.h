@@ -69,13 +69,17 @@ struct TPsiSettings
 // so a snippet can also be any key sequence (e.g. ^Bc = tmux new window).
 // ---------------------------------------------------------------------------
 const TInt KMaxSnippets = 20;
+// how many of them go on the Snippets menu and the toolbar's pop-up after
+// "Manage snippets...": a half-VGA menu holds 8 items (EIKON style guide)
+const TInt KMenuSnippets = 7;
 
 struct TSnippet
 	{
 	TBuf<24> iName;
 	TBuf<120> iText;
 	TInt iEnter;          // 1 = press Enter after the text
-	TInt iKey;            // Shift+Ctrl hotkey: 0 none, else 'A'..'Z' or '0'..'9'
+	TInt iKey;            // Shift+Ctrl hotkey: 0 none, else a letter from KSnippetKeys
+	                      // (digits were allowed before 0.79; a saved digit loads as none)
 	};
 
 class CSnippetList : public CBase
@@ -98,9 +102,16 @@ private:
 	CArrayFixFlat<TSnippet>* iEntries;
 	};
 
-// Hotkeys a snippet can use: Shift+Ctrl + a digit or a letter the menus
-// don't already use (E H S T C V P are menu shortcuts)
+// Hotkeys a snippet can use: Shift+Ctrl + a letter the menus don't already
+// use (E H S T C V P are menu shortcuts). Never digits: the style guide's
+// shortcuts are all Ctrl+letter or Shift+Ctrl+letter.
 TInt SnippetKeyCount();
+
+// Saves a whole data file safely (into "<name>~", then swapped in), so a
+// flat battery mid-write never leaves a half-written file. psiterm.cpp;
+// used by every data file PsiTerm writes (settings, hosts, keys, snippets,
+// the log's choices).
+TInt SafeWrite(RFs& aFs, const TDesC& aName, const TDesC8& aData);
 TInt SnippetKeyAt(TInt aIndex);          // 0 = none
 TInt SnippetKeyIndex(TInt aKey);
 void SnippetKeyName(TInt aKey, TDes& aText);
@@ -473,7 +484,7 @@ public:
 	HBufC* DebugTextLC() const;        // collected output as editor text
 	void StopTool();
 	TBool InstallPending() const { return iInstallPending; }
-	void RunAfterDisconnectL(TInt aCommand);   // disconnect SSH, then run aCommand
+	void RunAfterDisconnectL(TInt aCommand);   // end SSH, then run aCommand
 	TInt Cols() const { return iCols; }
 	TInt Rows() const { return iRows; }
 	TPsiSettings& Settings() { return iSettings; }
@@ -488,9 +499,10 @@ public:
 	void ScreenshotL();                 // after a short delay (menu gone)
 	void SendScreenshotsL();
 	static TInt ShotCallback(TAny* aSelf);
-	void DisconnectSsh();
+	void DisconnectSsh();              // File > End SSH: asks psissh to stop (twice: ends it now)
 	void SshProcessEnded();
 	TBool SshActive() const { return iSshActive; }
+	TBool SshQuitting() const { return iQuitAsked; }   // asked to stop, not yet gone
 	TBool ReconnectWaiting() const { return iReconnectWait; }
 	// (0.68) the Psion was switched back on: psissh checks the link is still there
 	void LinkSwitchedOn() { if (iSshActive && iShared) iShared->switch_on++; }
@@ -571,6 +583,13 @@ private:
 	void PumpSsh();
 	void AddKeyEntropy(TUint aCode);
 	TBool SeedFileExists();
+	// Ending psissh: AskQuit sets the quit flag and arms a watchdog; if the
+	// program has not gone when it fires (wedged in a wait that nothing
+	// completes), EndSshNow kills it and gives NIFMAN its timers back. A
+	// second End SSH / Stop while it is being asked ends it at once.
+	void AskQuit();
+	void EndSshNow();
+	static TInt QuitCallback(TAny* aSelf);
 
 private:
 	TPsiSettings iSettings;
@@ -611,7 +630,7 @@ private:
 	void Tick();
 	static TInt TickCallback(TAny* aSelf);
 	void StartTick();
-	void SyncToolbar();       // the first toolbar button: SSH to..., or Disconnect
+	void SyncToolbar();       // the first toolbar button: SSH to..., or End SSH
 	TInt iTbBusy;             // what it shows now (-1 = not yet set)
 	short* iSbCols;
 	TInt iLinesPushed;    // absolute number of the top screen row
@@ -752,7 +771,10 @@ private:
 	TBuf8<64> iSshPassword;   // saved password for the next launch, then wiped
 	// auto-reconnect
 	TBuf8<64> iReconnectPw;   // the saved password of this session (RAM only)
-	TBool iUserQuit;          // Disconnect was chosen: don't reconnect
+	TBool iUserQuit;          // End SSH was chosen: don't reconnect
+	CPeriodic* iQuitTimer;    // the watchdog after a quit was asked for
+	TBool iQuitAsked;         // quit = 1 has been set for this psissh
+	TBool iKilled;            // the watchdog (or a second End SSH) killed it
 	TBool iReconnecting;      // the current/next launch is a reconnect
 	TBool iReconnectWait;     // counting down to the next attempt
 	TInt iReconnectTries;
@@ -775,6 +797,7 @@ private:
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
 	void HandleSwitchOnEventL(CCoeControl* aDestination);
+	void HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination);   // a backup is starting: close the log
 	TBool ConfirmDisconnectL(TInt aCommand);
 	void LoadSettings(TPsiSettings& aSettings);
 	void SshToL();
@@ -783,7 +806,7 @@ private:
 public:
 	// the toolbar (View > Show toolbar hides it: the terminal takes its room)
 	void ShowToolBarL(TBool aShow);
-	void SetConnectButton(TBool aBusy);     // SSH to... <-> Disconnect
+	void SetConnectButton(TBool aBusy);     // SSH to... <-> End SSH
 	TBool ToolbarShown() const;
 private:
 	void ToolbarPicturesL();

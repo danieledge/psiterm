@@ -38,7 +38,7 @@ RESOURCE EIK_APP_INFO
 	}
 
 // The standard toolbar: the program's name, four buttons for the pen, the
-// clock. SSH to... (Disconnect while a session is up, as the built-in Email
+// clock. SSH to... (End SSH while a session is up, as the built-in Email
 // program's Open / Close mailbox), and Snippets, Keys and Files (each pops up
 // a choice). Files has the File menu's transfer commands for the pen; it
 // replaced Zoom in 0.75, as the sidebar's zoom icons zoom PsiTerm (they send
@@ -99,13 +99,14 @@ RESOURCE TOOLBAR r_pt_toolbar
 	}
 
 // the toolbar's pop-ups (no shortcuts: they're for the pen). Snippets gets
-// your snippets added at run time; Keys has what the 5mx keyboard lacks or
-// what is awkward to press with the pen in hand
+// your snippets added at run time (the line under "Manage snippets..." too,
+// only when there are some: DynInitMenuPaneL); Keys has what the 5mx
+// keyboard lacks or what is awkward to press with the pen in hand
 RESOURCE MENU_PANE r_pt_snippets_popup
 	{
 	items=
 		{
-		MENU_ITEM { command=EPtCmdSnippets; txt="Manage snippets..."; flags=EEikMenuItemSeparatorAfter; }
+		MENU_ITEM { command=EPtCmdSnippets; txt="Manage snippets..."; }
 		};
 	}
 
@@ -183,24 +184,28 @@ RESOURCE MENU_BAR r_pt_menubar
 
 // File: the connection, file transfer and the session log (0.74), the
 // login key, Close (as the built-in Email program:
-// Close mailbox / Disconnect ... Close)
+// Close mailbox / Disconnect ... Close). "End SSH" is the one name for
+// ending the session: here, on the toolbar button and in the help.
+// Connect has no "...": it dials and then shows what it found, asking
+// nothing. Install login key... can ask which key.
 RESOURCE MENU_PANE r_pt_term_menu
 	{
 	items=
 		{
 		MENU_ITEM { command=EPtCmdSsh; txt="SSH to..."; },
-		MENU_ITEM { command=EPtCmdSshDisconnect; txt="Disconnect SSH"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdConnect; txt="Connect..."; },
+		MENU_ITEM { command=EPtCmdSshDisconnect; txt="End SSH"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdConnect; txt="Connect"; },
 		MENU_ITEM { command=EPtCmdHangup; txt="Hang up modem"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdInstallKey; txt="Install login key on server"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdInstallKey; txt="Install login key on server..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { cascade=r_pt_files_popup; txt="Files"; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
 		};
 	}
 
-// Tools: preferences and settings, the terminal, the rarely used Debug
-// tools in a cascade, Update (as PsiMail and PsiWeb: "Update <program>..."
-// asks where from, then fetches), then About last
+// Tools: preferences and settings, the terminal, Update (as PsiMail and
+// PsiWeb: "Update <program>..." asks where from, then fetches), the rarely
+// used Debug tools in a cascade low in the pane (the style guide puts
+// cascades near the bottom), then Help and About last
 RESOURCE MENU_PANE r_pt_tools_menu
 	{
 	items=
@@ -209,8 +214,8 @@ RESOURCE MENU_PANE r_pt_tools_menu
 		MENU_ITEM { command=EPtCmdLoginKey; txt="SSH keys..."; },
 		MENU_ITEM { command=EPtCmdConnSettings; txt="Connection settings..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdReset; txt="Reset terminal"; },
-		MENU_ITEM { cascade=r_pt_debug_menu; txt="Debug"; },
-		MENU_ITEM { command=EPtCmdUpdate; txt="Update PsiTerm..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdUpdate; txt="Update PsiTerm..."; },
+		MENU_ITEM { cascade=r_pt_debug_menu; txt="Debug"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdHelp; txt="Help on PsiTerm"; },
 		MENU_ITEM { command=EPtCmdAbout; txt="About PsiTerm"; }
 		};
@@ -233,11 +238,14 @@ RESOURCE MENU_PANE r_pt_debug_menu
 	}
 
 // Results of the Debug tools (speed test, serial info, sending screenshots,
-// updating) - shown here rather than in the terminal
+// updating) - shown here rather than in the terminal. NotifyEsc: without it
+// EIKON closes the window on Esc without asking OkToExitL (SDK eikdials),
+// so the job ran on with its output spilling into the terminal; with it Esc
+// is Stop (and a second Esc ends the job at once), or Close when it is done.
 RESOURCE DIALOG r_pt_tool_dialog
 	{
 	title="PsiTerm";
-	flags=EEikDialogFlagWait;
+	flags=EEikDialogFlagWait|EEikDialogFlagNotifyEsc;
 	buttons=r_pt_tool_buttons;
 	items=
 		{
@@ -286,8 +294,8 @@ RESOURCE MENU_PANE r_pt_scroll_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPtCmdScrollUp; txt="Back"; extratxt="Shift+PgUp"; },
-		MENU_ITEM { command=EPtCmdScrollDown; txt="Forward"; extratxt="Shift+PgDn"; },
+		MENU_ITEM { command=EPtCmdScrollUp; txt="Back"; extratxt="Shift+Pg Up"; },
+		MENU_ITEM { command=EPtCmdScrollDown; txt="Forward"; extratxt="Shift+Pg Dn"; },
 		MENU_ITEM { command=EPtCmdScrollEnd; txt="To live screen"; }
 		};
 	}
@@ -305,14 +313,15 @@ RESOURCE MENU_PANE r_pt_keys_menu
 		};
 	}
 
-// Claude Code: its keys and the most used commands
+// Claude Code: its keys and the most used commands (no line between them:
+// the style guide has no separators inside cascades)
 RESOURCE MENU_PANE r_pt_claude_menu
 	{
 	items=
 		{
 		MENU_ITEM { command=EPtCmdClaudeEsc; txt="Interrupt"; extratxt="Esc"; },
 		MENU_ITEM { command=EPtCmdClaudeEscEsc; txt="Rewind"; extratxt="Esc Esc"; },
-		MENU_ITEM { command=EPtCmdClaudeMode; txt="Switch mode"; extratxt="Shift+Tab"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdClaudeMode; txt="Switch mode"; extratxt="Shift+Tab"; },
 		MENU_ITEM { command=EPtCmdClaudeClear; txt="/clear"; },
 		MENU_ITEM { command=EPtCmdClaudeCompact; txt="/compact"; },
 		MENU_ITEM { command=EPtCmdClaudeResume; txt="/resume"; },
@@ -320,12 +329,15 @@ RESOURCE MENU_PANE r_pt_claude_menu
 		};
 	}
 
-// Snippets: "Manage snippets..." plus your snippets, added at run time
+// Snippets: "Manage snippets..." plus the first seven of your snippets,
+// added at run time (eight items at most on a half-VGA menu; the rest are
+// sent from the dialog or by their shortcut keys). The line under "Manage
+// snippets..." is added then too, only when there are some.
 RESOURCE MENU_PANE r_pt_snippets_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPtCmdSnippets; txt="Manage snippets..."; flags=EEikMenuItemSeparatorAfter; }
+		MENU_ITEM { command=EPtCmdSnippets; txt="Manage snippets..."; }
 		};
 	}
 
@@ -666,7 +678,8 @@ RESOURCE ARRAY r_pt_empty_array
 	items={ LBUF { txt="-"; } };
 	}
 
-// About box
+// About box. The "(c)" lines are replaced at run time with the real (c)
+// sign (0xa9 in the Psion's fonts), as PsiMail's are: CAboutDialog.
 RESOURCE DIALOG r_pt_about_dialog
 	{
 	title="About PsiTerm";
@@ -743,11 +756,14 @@ RESOURCE DIALOG r_pt_test_dialog
 RESOURCE TBUF r_pt_tbuf_send_title { buf="Send file"; }
 
 // While a file moves: what, how far, and Stop. The window closes itself
-// when the transfer ends; an infoprint then says how it went.
+// when the transfer ends; an infoprint then says how it went. NotifyEsc:
+// Stop is the Cancel button, and without the flag EIKON closes the window
+// on it without calling OkToExitL (SDK eikdials), so psissh was never told
+// to stop and the transfer went on behind "the SSH connection has gone".
 RESOURCE DIALOG r_pt_xfer_dialog
 	{
 	title="Sending file";
-	flags=EEikDialogFlagWait;
+	flags=EEikDialogFlagWait|EEikDialogFlagNotifyEsc;
 	buttons=r_pt_xfer_buttons;
 	items=
 		{

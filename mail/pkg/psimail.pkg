@@ -1,9 +1,9 @@
-; PsiMail 0.78 installer for Psion Series 5mx (EPOC R5)
+; PsiMail 0.79 installer for Psion Series 5mx (EPOC R5)
 ; PsiMail.app: screen, menus, settings.  psimail.exe: the mail engine.
 ; pmbutton.exe: the Email icon below the screen opens PsiMail (a preference);
 ; PsiMail starts it whenever PsiMail opens with that preference on.
 &EN
-#{"PsiMail"},(0x01000A7C),0,78,0
+#{"PsiMail"},(0x01000A7C),0,79,0
 "psimail.app"-"!:\System\Apps\PsiMail\PsiMail.app"
 "psimail.rsc"-"!:\System\Apps\PsiMail\PsiMail.rsc"
 "psimail.mbm"-"!:\System\Apps\PsiMail\PsiMail.mbm"
@@ -14,8 +14,12 @@
 ; (the mail itself, in \System\Data\PsiMail on the memory disk or the internal
 ; disk, is the user's and stays; so does Store.log, should a store move have failed)
 ""-"C:\System\Apps\PsiMail\PsiMail.ini",FN
+""-"C:\System\Apps\PsiMail\PsiMail.ini.bak",FN
+""-"C:\System\Apps\PsiMail\PsiMail.ini~",FN
 ""-"C:\System\Apps\PsiMail\Calendar.ini",FN
+""-"C:\System\Apps\PsiMail\Calendar.ini~",FN
 ""-"C:\System\Apps\PsiMail\Update.ini",FN
+""-"C:\System\Apps\PsiMail\Update.ini~",FN
 ; present while the Email icon opens PsiMail: removed with the program, so
 ; the icon is the built-in Email's again (and pmbutton.exe stops)
 ""-"C:\System\Apps\PsiMail\Button.ini",FN

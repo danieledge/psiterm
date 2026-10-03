@@ -44,8 +44,29 @@ static time_t started;
 static char out[PSI_TQ_OUT_SIZE];
 static unsigned int outlen;
 static int truncated;
+/* As sftp.c: CHANNEL_OPENs the server has not answered (a request gives up
+   on one after TQ_SECS, and the next may send another), and channels we
+   have let go of that Dropbear still holds, whose going is not ours. */
+static int opens_pending;
+#define DETACHED_MAX 4
+static struct Channel *detached[DETACHED_MAX];
 
 static PsiShared *sh(void) { return pg_shared(); }
+
+static void note_detached(struct Channel *c)
+{
+	int i;
+	for (i = 0; i < DETACHED_MAX; i++)
+		if (!detached[i]) { detached[i] = c; return; }
+}
+
+static int is_detached(const struct Channel *c)
+{
+	int i;
+	for (i = 0; i < DETACHED_MAX; i++)
+		if (detached[i] == c) { detached[i] = NULL; return 1; }
+	return 0;
+}
 
 /* the shared text: "C" lines are the clients (when each was last active and
    its session), "W" lines the windows of every session (the name last, as
@@ -132,6 +153,7 @@ static void open_channel(void)
 		return;
 	}
 	encrypt_packet();
+	opens_pending++;
 	ch_state = TQ_OPENING;
 	ch = NULL;
 	close_when_open = 0;
@@ -140,25 +162,51 @@ static void open_channel(void)
 	started = time(NULL);
 }
 
+/* sends CLOSE on a channel and stops Dropbear moving data on it */
+static void send_close(struct Channel *c)
+{
+	if (c->sent_close) return;
+	CHECKCLEARTOWRITE();
+	buf_putbyte(ses.writepayload, SSH_MSG_CHANNEL_CLOSE);
+	buf_putint(ses.writepayload, c->remotechan);
+	encrypt_packet();
+	c->sent_eof = 1;
+	c->sent_close = 1;
+	c->readfd = -1;
+	c->writefd = -1;
+}
+
 static void close_channel(void)
 {
 	if (!ch) return;
 	if (ch->await_open) { close_when_open = 1; return; }
 	if (ch->sent_close) return;
-	CHECKCLEARTOWRITE();
-	buf_putbyte(ses.writepayload, SSH_MSG_CHANNEL_CLOSE);
-	buf_putint(ses.writepayload, ch->remotechan);
-	encrypt_packet();
-	ch->sent_eof = 1;
-	ch->sent_close = 1;
-	ch->readfd = -1;
-	ch->writefd = -1;
+	send_close(ch);
 	ch_state = TQ_CLOSING;
+	started = time(NULL);             /* the wait for the server's close starts now */
+}
+
+/* lets go of the channel in hand without waiting for the server */
+static void detach_channel(void)
+{
+	if (ch) note_detached(ch);
+	ch = NULL;
+	ch_state = TQ_NONE;
 }
 
 static int tq_chan_init(struct Channel *c)
 {
 	char cmd[1100];
+	if (opens_pending > 0) opens_pending--;
+	if (ch_state != TQ_OPENING || ch) {
+		/* the answer to an open that was given up on (no reply in TQ_SECS):
+		   nothing waits for it - close it, and ignore its going */
+		c->errfd = -1;
+		c->extrabuf = NULL;
+		send_close(c);
+		note_detached(c);
+		return 0;
+	}
 	ch = c;
 	c->errfd = -1;                    /* stderr: not wanted */
 	c->extrabuf = NULL;
@@ -179,7 +227,18 @@ static int tq_chan_init(struct Channel *c)
 static void tq_chan_cleanup(const struct Channel *c)
 {
 	int was = ch_state;
-	(void)c;
+	if (is_detached(c))
+		return;                       /* a channel let go of earlier: nothing of ours */
+	if (c != ch) {
+		/* an open the server refused: the one a request waits for, if no
+		   other open is still out */
+		if (opens_pending > 0) opens_pending--;
+		if (ch_state == TQ_OPENING && !ch && opens_pending == 0) {
+			ch_state = TQ_NONE;
+			if (op) finish(PSI_TQ_NO_EXEC);
+		}
+		return;
+	}
 	ch = NULL;
 	ch_state = TQ_NONE;
 	if (op && was != TQ_CLOSING) {
@@ -242,8 +301,15 @@ void psi_tq_loop(void)
 	running = 1;
 	if (!s) return;
 	if (!op) {
-		if (s->tq_req == s->tq_ack || ch_state == TQ_CLOSING)
-			return;                   /* nothing asked (or the last channel is still going) */
+		if (s->tq_req == s->tq_ack)
+			return;                   /* nothing asked */
+		if (ch_state == TQ_CLOSING) {
+			/* the last channel is still going: wait for the server's
+			   close, but not for ever - then leave it to Dropbear */
+			if (time(NULL) - started <= TQ_SECS)
+				return;
+			detach_channel();
+		}
 		op = s->tq_op;
 		serving = s->tq_req;
 		if (op != PSI_TQ_LIST && op != PSI_TQ_SELECT) {
@@ -257,14 +323,20 @@ void psi_tq_loop(void)
 	}
 	if (time(NULL) - started > TQ_SECS) {
 		finish(PSI_TQ_TIMEOUT);
-		close_channel();
+		if (ch)
+			close_channel();          /* the command ran on and on: ended */
+		else
+			ch_state = TQ_NONE;       /* no answer to the open: the next request may try again; a late answer is closed on arrival (tq_chan_init) */
 	}
 }
 
 /* psissh is ending (the connection went) */
 void psi_tq_session_ended(void)
 {
+	int i;
 	ch = NULL;
 	ch_state = TQ_NONE;
+	opens_pending = 0;
+	for (i = 0; i < DETACHED_MAX; i++) detached[i] = NULL;
 	if (op) finish(PSI_TQ_LINK);
 }

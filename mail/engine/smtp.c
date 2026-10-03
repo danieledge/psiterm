@@ -117,8 +117,21 @@ static int fail(char *why, int whymax, int r, const char *what)
 	return PM_RES_FAILED;
 }
 
+/* The point of no return: the whole message has gone and the final "." is
+   about to. From here a lost connection or a timed-out reply no longer
+   means "not sent" - the server may have taken it - so a marker file says
+   so (send_outbox reads it and never sends such a message again by itself). */
+static void mark_sent(const char *path)
+{
+	FILE *f;
+	if (!path || !(f = fopen(path, "w"))) return;
+	fprintf(f, "%ld\n", pm_time());
+	fclose(f);
+}
+
 /* rcpts: addresses separated by newlines */
-int smtp_send(int acct, const char *mime_path, const char *from, const char *rcpts, char *why, int whymax)
+int smtp_send(int acct, const char *mime_path, const char *from, const char *rcpts, const char *sent_mark,
+              char *why, int whymax)
 {
 	PmShared *s = pm_shared();
 	PmAccount *a = &s->acct[acct];
@@ -218,8 +231,16 @@ int smtp_send(int acct, const char *mime_path, const char *from, const char *rcp
 		if (pm_cancelled()) { fclose(f); return fail(why, whymax, PMN_CANCEL, "sending"); }
 	}
 	fclose(f);
+	mark_sent(sent_mark);
 	if (pmn_write(bol ? ".\r\n" : "\r\n.\r\n", bol ? 3 : 5) != 0) return fail(why, whymax, -1, "sending");
-	if ((r = reply(0)) != 250) return fail(why, whymax, r, "Message refused");
+	r = reply(0);
+	if (r > 0 && r != 250) {
+		/* the server said no: it has not taken the message after all */
+		if (sent_mark) remove(sent_mark);
+		return fail(why, whymax, r, "Message refused");
+	}
+	/* (r < 0: the line went, or the reply never came - the marker stays) */
+	if (r != 250) return fail(why, whymax, r, "waiting for the server to accept the message");
 	command("QUIT");
 	/* no hang-up: after its 221 the server closes, the modem sees that and
 	   drops the call itself (a modem-mode pg_dial copes if it has not yet) */

@@ -69,10 +69,20 @@ int st_check_account(int acct)
 		have[strcspn(have, "\r\n")] = 0;
 	}
 	if (strcmp(have, want)) {
-		if (have[0]) pm_rmtree(dir);           /* another account's mail: start afresh */
+		char tmp[190];
+		/* another account's mail: start afresh. Only when the file really
+		   names one (user@host): a short or odd line is a damaged file, not
+		   another account, and must not throw the outbox and pending.txt away */
+		if (strchr(have, '@') && strchr(have, '@') > have && strchr(have, '@')[1]) pm_rmtree(dir);
 		pm_mkdir(pm_shared()->store_dir);
 		pm_mkdir(dir);
-		if ((f = fopen(path, "w")) != 0) { fprintf(f, "%s\n", want); fclose(f); }
+		/* written whole, then put in place: a partial file would read as
+		   "another account" at the next start */
+		snprintf(tmp, sizeof(tmp), "%saccount.new", dir);
+		if ((f = fopen(tmp, "w")) != 0) {
+			fprintf(f, "%s\n", want);
+			if (pm_fclose(f) != 0 || pm_replace(tmp, path) != 0) { remove(tmp); pm_log("store: could not write %s", path); }
+		}
 		st_changed();
 	}
 	snprintf(path, sizeof(path), "%soutbox", dir);
@@ -237,6 +247,34 @@ int st_pending_add(int acct, const char *line)
 	return 0;
 }
 
+/* Takes one line out again - the change has reached the server. The first
+   line equal to it goes (the newest copy would do as well: they are the
+   same change); the file goes when nothing is left. 0 ok */
+int st_pending_drop(int acct, const char *line)
+{
+	char dir[160], path[190], tmp[190];
+	static char l[512];
+	FILE *f, *out;
+	int dropped = 0, kept = 0;
+	st_acct_dir(acct, dir, sizeof(dir));
+	snprintf(path, sizeof(path), "%spending.txt", dir);
+	snprintf(tmp, sizeof(tmp), "%spending.new", dir);
+	if (!(f = fopen(path, "r"))) return 0;
+	if (!(out = fopen(tmp, "w"))) { fclose(f); return -1; }
+	while (fgets(l, sizeof(l), f)) {
+		l[strcspn(l, "\r\n")] = 0;
+		if (!l[0]) continue;
+		if (!dropped && !strcmp(l, line)) { dropped = 1; continue; }
+		fprintf(out, "%s\n", l);
+		kept++;
+	}
+	fclose(f);
+	if (pm_fclose(out) != 0) { remove(tmp); return -1; }
+	if (!kept) { remove(tmp); remove(path); return 0; }
+	if (pm_replace(tmp, path) != 0) { remove(tmp); return -1; }
+	return 0;
+}
+
 /* Replays changes made while offline, in order. Lines the server refuses are
    dropped (the message may have gone); a lost connection keeps the rest. */
 int st_pending_replay(int acct, char *why, int whymax)
@@ -305,14 +343,29 @@ int st_pin_check(const char *hostport, const char *fp)
 	return r;
 }
 
+/* The old pins and the new one go to a temporary file that takes pins.txt's
+   place when complete: a pin cut short by a full card would read as "the
+   certificate has changed" rather than as a first visit. 0 ok, -1 not saved */
 int st_pin_save(const char *hostport, const char *fp)
 {
-	char path[160];
-	FILE *f;
+	char path[160], tmp[160];
+	static char line[200];
+	FILE *f, *out;
 	pm_mkdir(pm_shared()->store_dir);
 	snprintf(path, sizeof(path), "%spins.txt", pm_shared()->store_dir);
-	if (!(f = fopen(path, "a"))) return -1;
-	fprintf(f, "%s\t%s\n", hostport, fp);
-	fclose(f);
+	snprintf(tmp, sizeof(tmp), "%spins.new", pm_shared()->store_dir);
+	if (!(out = fopen(tmp, "w"))) return -1;
+	if ((f = fopen(path, "r")) != 0) {
+		while (fgets(line, sizeof(line), f)) {
+			char *t = strchr(line, '\t');
+			if (t && (int)(t - line) == (int)strlen(hostport) && !strncmp(line, hostport, t - line))
+				continue;                     /* this host's old pin: replaced below */
+			fputs(line, out);
+			if (line[strlen(line) - 1] != '\n') fputc('\n', out);
+		}
+		fclose(f);
+	}
+	fprintf(out, "%s\t%s\n", hostport, fp);
+	if (pm_fclose(out) != 0 || pm_replace(tmp, path) != 0) { remove(tmp); return -1; }
 	return 0;
 }

@@ -28,6 +28,7 @@ static int gRaw = 0;
 static long long now_us(void) { struct timeval tv; gettimeofday(&tv, NULL); return tv.tv_sec * 1000000LL + tv.tv_usec; }
 
 PsiShared* pg_shared(void) { return &g; }
+int pg_take_link_doubt(void) { return 0; }   /* (no switch-on on a PC) */
 
 static void restore_tty(void) { if (gRaw) tcsetattr(0, TCSANOW, &gOld); }
 /* test hook: SIGUSR1 simulates PsiTerm switching to the large font */

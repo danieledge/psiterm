@@ -135,6 +135,17 @@ int main()
 	CHECK(Has(t, "did not start"));
 	CHECK(Has(t, "Could not look up raw.githubusercontent.com (-3006)"));
 
+	// the port could not be set up for the PPP start command
+	Blank(t); t.net_mode = 1; t.net_up = 0; t.dial = 1; t.ppp = 5; t.port_err = -6; t.net_after = 0;
+	pg_lt_report(&t); Dump("dialled, port not set up", t);
+	CHECK(Has(t, "Did not send ATDT777 - could not set the serial port up (-6)"));
+
+	// the last test's lookup never ended (abandoned to NetDial): said plainly
+	Blank(t); t.net_mode = 1; t.net_up = 1; t.dns = -14;
+	pg_lt_report(&t); Dump("lookup still out", t);
+	CHECK(Has(t, "has not ended yet - test again in a minute"));
+	CHECK(!Has(t, "Could not look up"));
+
 	// every line fits the result dialog's labels (reserve_length 80)
 	Blank(t); t.port = PG_PORT_FAIL; t.port_err = -2147483647L;
 	strcpy(t.host, "a-very-long-host-name-that-goes-on-and-on.example.com");
@@ -145,6 +156,10 @@ int main()
 	for (int i = 0; i < t.nlines; i++)
 		CHECK(strlen(t.line[i]) < PG_LT_LINE);
 	CHECK(t.nlines <= PG_LT_LINES);
+	t.ppp = 5; t.port_err = -2147483647L;
+	pg_lt_report(&t);
+	for (int i = 0; i < t.nlines; i++)
+		CHECK(strlen(t.line[i]) < PG_LT_LINE);
 
 	printf("%d checks, %d failed\n", checks, fails);
 	return fails ? 1 : 0;

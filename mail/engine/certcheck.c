@@ -81,16 +81,17 @@ static int tlv(const unsigned char **p, const unsigned char *end, const unsigned
 {
 	const unsigned char *q = *p;
 	int tag, l;
-	if (q + 2 > end) return -1;
+	/* (lengths compared as lengths, never as pointers that could wrap) */
+	if (end - q < 2) return -1;
 	tag = *q++;
 	l = *q++;
 	if (l & 0x80) {
 		int nb = l & 0x7f;
-		if (nb < 1 || nb > 3 || q + nb > end) return -1;
+		if (nb < 1 || nb > 3 || nb > end - q) return -1;
 		l = 0;
 		while (nb--) l = (l << 8) | *q++;
 	}
-	if (l < 0 || q + l > end) return -1;
+	if (l < 0 || l > end - q) return -1;
 	*val = q;
 	*len = l;
 	*p = q + l;
@@ -109,20 +110,26 @@ static int oid_is(const unsigned char *v, int l, const unsigned char *oid, int o
 	return l == ol && !memcmp(v, oid, ol);
 }
 
-/* UTCTime / GeneralizedTime -> seconds since 1970 */
+/* UTCTime / GeneralizedTime -> seconds since 1970; 0 for a date before
+   then, -1 for one that cannot be read (which fails the certificate: a
+   date the parser can't read must not switch the check off) */
 static long der_time(int tag, const unsigned char *v, int l)
 {
-	int y, mo, d, h, mi, s = 0, i = 0;
+	int y, mo, d, h, mi, s = 0, i = 0, k, digits;
 	static const int cum[12] = { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
 	long days;
+	if (tag == 0x17 && l >= 12) { digits = 10; i = 2; }
+	else if (tag == 0x18 && l >= 14) { digits = 12; i = 4; }
+	else return -1;
+	for (k = 0; k < digits; k++) if (v[k] < '0' || v[k] > '9') return -1;
 #define D2(k) ((v[k] - '0') * 10 + (v[(k) + 1] - '0'))
-	if (tag == 0x17 && l >= 12) { y = D2(0); y += y < 50 ? 2000 : 1900; i = 2; }
-	else if (tag == 0x18 && l >= 14) { y = D2(0) * 100 + D2(2); i = 4; }
-	else return 0;
+	if (tag == 0x17) { y = D2(0); y += y < 50 ? 2000 : 1900; }
+	else y = D2(0) * 100 + D2(2);
 	mo = D2(i); d = D2(i + 2); h = D2(i + 4); mi = D2(i + 6);
-	if (l >= i + 10 && v[i + 8] >= '0' && v[i + 8] <= '9') s = D2(i + 8);
+	if (l >= i + 10 && v[i + 8] >= '0' && v[i + 8] <= '9' && v[i + 9] >= '0' && v[i + 9] <= '9') s = D2(i + 8);
 #undef D2
-	if (mo < 1 || mo > 12 || y < 1970) return 0;
+	if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60) return -1;
+	if (y < 1970) return 0;
 	days = (y - 1970) * 365L + (y - 1969) / 4 + cum[mo - 1] + (d - 1);
 	if (mo > 2 && y % 4 == 0) days++;
 	return days * 86400L + h * 3600L + mi * 60L + s;
@@ -319,9 +326,11 @@ static int host_matches(const Cert *c, const char *host)
 	while (p < end && (tag = tlv(&p, end, &v, &l)) >= 0) {
 		char name[128];
 		if (tag != 0x82 || l <= 0 || l >= (int)sizeof(name)) continue;   /* dNSName */
+		if (memchr(v, 0, l)) continue;        /* "host\0.evil" would match after the copy */
 		memcpy(name, v, l); name[l] = 0;
 		if (!pm_strcasecmp(name, host)) return 1;
-		if (name[0] == '*' && name[1] == '.') {
+		/* "*.example.com" matches one label; "*.com" matches nothing (RFC 6125 6.4.3) */
+		if (name[0] == '*' && name[1] == '.' && strchr(name + 2, '.')) {
 			const char *dot = strchr(host, '.');
 			if (dot && dot != host && !pm_strcasecmp(dot + 1, name + 2)) return 1;
 		}
@@ -395,14 +404,33 @@ static void remember(const Cert *c)
 	if ((f = fopen(path, g_nknown == 1 ? "w" : "a")) != 0) { fprintf(f, "%s\n", hex); fclose(f); }
 }
 
-/* 1 if the chain from the leaf reaches a built-in root */
-static int chain_ok(void)
+/* a certificate's own dates, if the Psion's clock looks set (after 2024);
+   0 ok, else the reason */
+static const char *dates_bad(const Cert *c, long now)
+{
+	if (c->not_after < 0 || c->not_before < 0) return "its certificate's dates could not be read";
+	if (now <= 1704067200L) return 0;
+	if (c->not_after && now > c->not_after) return "its certificate has expired (is the Psion's clock right?)";
+	if (c->not_before && now + 86400L < c->not_before) return "its certificate is not valid yet (is the Psion's clock right?)";
+	return 0;
+}
+
+/* 1 if the chain from the leaf reaches a built-in root. Every certificate
+   on the way must be in date (RFC 5280 6.1), the remembered intermediates
+   too: certs.txt saves the signature check, not the dates. */
+static int chain_ok(long now)
 {
 	int cur = 0, depth, i, j;
 	int path[MAX_CERTS], np = 0;
 	for (depth = 0; depth < MAX_CERTS; depth++) {
 		Cert *c = &g_cert[cur];
+		const char *bad;
 		path[np++] = cur;
+		if ((bad = dates_bad(c, now)) != 0) {
+			if (cur) snprintf(g_problem, sizeof(g_problem), "a certificate in its chain is out of date");
+			else pm_copy(g_problem, bad, sizeof(g_problem));
+			return 0;
+		}
 		if (cur && known(c)) goto trusted;
 		/* issued by a root we know? */
 		for (i = 0; i < (int)(sizeof(k_roots) / sizeof(k_roots[0])); i++) {
@@ -444,16 +472,17 @@ const char *tlsv_certificate(const unsigned char *msg, int len)
 	g_ncert = 0;
 	if (len < 4) return "bad certificate message";
 	ctx = *p++;
+	if (ctx > end - p) return "bad certificate message";
 	p += ctx;
-	if (p + 3 > end) return "bad certificate message";
+	if (end - p < 3) return "bad certificate message";
 	list = (p[0] << 16) | (p[1] << 8) | p[2];
 	p += 3;
-	if (p + list > end) return "bad certificate message";
+	if (list > end - p) return "bad certificate message";
 	end = p + list;
-	while (p + 3 <= end && g_ncert < MAX_CERTS) {
+	while (end - p >= 3 && g_ncert < MAX_CERTS) {
 		int cl = (p[0] << 16) | (p[1] << 8) | p[2], el;
 		p += 3;
-		if (p + cl + 2 > end) break;
+		if ((long)cl + 2 > end - p) break;
 		if (n + cl <= CHAIN_MAX) {
 			memcpy(g_chain + n, p, cl);
 			if (parse_cert(&g_cert[g_ncert], g_chain + n, cl) == 0) g_ncert++;
@@ -469,20 +498,10 @@ const char *tlsv_certificate(const unsigned char *msg, int len)
 	fingerprint(&g_cert[0]);
 
 	now = pm_time();
-	g_trusted = chain_ok();
+	g_trusted = chain_ok(now);               /* (the dates of every certificate on the way too) */
 	if (g_trusted && !host_matches(&g_cert[0], g_host)) {
 		g_trusted = 0;
 		snprintf(g_problem, sizeof(g_problem), "its certificate is for a different name");
-	}
-	/* dates only if the Psion's clock looks set (after 2024) */
-	if (g_trusted && now > 1704067200L) {
-		if (g_cert[0].not_after && now > g_cert[0].not_after) {
-			g_trusted = 0;
-			snprintf(g_problem, sizeof(g_problem), "its certificate has expired (is the Psion's clock right?)");
-		} else if (g_cert[0].not_before && now + 86400L < g_cert[0].not_before) {
-			g_trusted = 0;
-			snprintf(g_problem, sizeof(g_problem), "its certificate is not valid yet (is the Psion's clock right?)");
-		}
 	}
 	if (!g_trusted) {
 		/* the user may have chosen to trust this server's key */

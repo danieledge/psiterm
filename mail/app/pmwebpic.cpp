@@ -196,9 +196,10 @@ void CPmView::ShowWebPicturesL()
 	// on the modem every web site is a call of its own: say so first
 	if (iSettings->iNetMode == 0 && iWebHosts > 1)
 		{
+		// the statement first, the question last (style guide 5)
 		TBuf<120> what;
 		what.Format(_L("%d pictures on %d web sites: %d calls on the modem"), iWebCount, iWebHosts, iWebHosts);
-		if (!iEikonEnv->QueryWinL(_L("Get the web pictures?"), what))
+		if (!iEikonEnv->QueryWinL(what, _L("Get the web pictures?")))
 			return;
 		}
 	iWebUid = iMsgUid;

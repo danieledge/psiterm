@@ -49,7 +49,7 @@ Each rule gives its source and how the code complies.
 | S11 | C32 can still hold an exclusive port briefly after another process closes it, so retry `Open` on `KErrInUse` before giving up. | Symbian BTComm notes (later OS) **[inferred for ER5]** | **fixed:** 3 retries, 300 ms apart |
 | S12 | Call `UserHal::ResetAutoSwitchOffTimer()` while data flows. | csapi-000 | ✓ `KeepAwake` |
 | S13 | `RTimer::After` and `User::After` stop counting while the Psion is off. Check the link again after switch-on, rather than trusting a timer that was running. | e32/eutimer | ✓ switch-on recheck |
-| S14 | Use large reads; avoid one request per character. | csapi-000, "Optimizing data transfers" | ✓ 16 KB reads |
+| S14 | Use large reads; avoid one request per character. | csapi-000, "Optimizing data transfers" | ✓ one timed `Read` of up to 1 KB per turn (`gRx`), never a byte at a time; the driver's receive buffer is 16 KB |
 | S15 | Do not use BREAK or RING on the 5mx. | csapi-003 | ✓ not used |
 
 ### 2.2 Sockets (ESOCK / TCP)
@@ -66,7 +66,7 @@ Each rule gives its source and how the code complies.
 | N8 | An empty host name "resolves" to the Psion's own address. Reject it. | tcpip/tcpdns | **fixed:** `NetConnect` now refuses an empty name |
 | N9 | The first lookup or connect can start a dial-up and NetDial's dialogs. Handle `KErrCancel` (the user cancelled), `KErrNetUnreach` (-190), `KErrAccessDenied` (port reserved), and the NetDial codes -3001 to -3006 and -3050 to -3057. | tcpsock; nd_err.h; in_iface.h | ✓ mostly: errors are reported with their number. A friendlier message per code would help (see 3.4). |
 | N10 | Check whether a link is already up before dialling: `RNif::NetworkActive`, or enumerate interfaces with `KSoInetEnumInterfaces`. | nifman.h; tcputils | ✓ `NifActive`, then `LinkUp` |
-| N11 | If you call `RNif::DisableTimers(ETrue)`, undo it on every exit path, including crashes. Otherwise the link never idles out. | nifman.h **[inferred]** | ✓ `NifRelease`; the apps call `PsiLinkTimersBack()` when an engine has crashed |
+| N11 | If you call `RNif::DisableTimers(ETrue)`, undo it on every exit path, including crashes. Otherwise the link never idles out. | nifman.h **[inferred]** | ✓ `NifRelease`; the apps call `PsiLinkTimersBack()` when an engine has crashed. By design, on the Psion Internet route `pg_hangup` only closes the TCP connection: the timers stay off until `NetClose` (the engine's own idle release, `IDLE_RELEASE_NET_MS` = 20 min in PsiMail), so a sync's several connections do not each risk the idle hang-up |
 | N12 | Keep long, quiet sessions alive. Either set `KSoTcpKeepAlive` (interval undocumented) or run an application keepalive. | tcputils | ✓ SSH uses `-K` (about 30 s). PsiMail and PsiWeb connections are short. |
 | N13 | Use one `RSocketServ` with enough message slots. The default of 8 covers one socket plus a resolver. | esserv | ✓ |
 | N14 | Make every ESOCK call from the thread that opened the session. | e32/euasyn | ✓ the engine's main thread |

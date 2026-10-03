@@ -121,7 +121,7 @@ please report them via [GitHub issues](https://github.com/danieledge/psiterm/iss
 * Attachments: Message > Attachments > Open opens one in its own program
   (Word, Sketch and so on); Save (Ctrl+S) puts it in
   `D:\Documents\Attachments\` (your files, so in your Documents).
-* File > Save as Word file (Shift+Ctrl+S): the open message as a Psion Word
+* File > Printing > Save as Word file (Shift+Ctrl+S): the open message as a Psion Word
   file (header, text, bold/italic/underline, headings, lists), through the
   Word engine itself (CWordModel), so the built-in Word opens it.
 * File > Printing: Page setup, Print setup, Print preview and Print
@@ -218,7 +218,7 @@ save the upload time).
 | New mail | Alert for new mail | Sound & message, Message only, Off |
 | | Check for new mail | Off, every 10, 15 or 30 minutes, every hour |
 | | If not connected | Wait for a connection, or Connect |
-| | Send waiting mail when connected | Yes, No |
+| | Send waiting mail when connected | No, Yes |
 | | Show detailed progress | every engine and link step, for finding connection problems |
 
 **Tools > Calendar settings**: see [The calendar](#the-calendar).
@@ -326,9 +326,9 @@ lists, anniversaries, more than one calendar account.
 | Ctrl+P / Shift+Ctrl+P / Shift+Ctrl+V | print / print setup / print preview |
 | Shift+Ctrl+U / Shift+Ctrl+F | unread / flagged |
 | Ctrl+S | save an attachment (Message > Attachments > Open / Save) |
-| Shift+Ctrl+S | save the open message as a Word file (File > Save as Word file) |
+| Shift+Ctrl+S | save the open message as a Word file (File > Printing > Save as Word file) |
 | Ctrl+I / Ctrl+G / Ctrl+B / Ctrl+F | inbox / go to folder / outbox / find |
-| Ctrl+Y / Shift+Ctrl+G | check this folder / get older messages (File > Folder, with Create new / Rename / Delete) |
+| Shift+Ctrl+X / Shift+Ctrl+G | check this folder / get older messages (File > Folder, with Create new / Rename / Delete) |
 | Ctrl+M / Shift+Ctrl+M | zoom in / out (three sizes, going round) |
 | Ctrl+T / Shift+Ctrl+T / Shift+Ctrl+L | show the toolbar / title bar / folder list |
 | Shift+Ctrl+Q / Shift+Ctrl+B | status information / sort |

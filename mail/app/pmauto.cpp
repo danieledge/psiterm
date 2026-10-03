@@ -227,8 +227,10 @@ void CPmPrefsDialog::NewMailInitL()
 	if (c > 4) c = 0;
 	SetChoiceListCurrentItem(EPmDlgCheckEvery, c);
 	SetChoiceListCurrentItem(EPmDlgCheckConnect, (v & KPmViewCheckConnect) ? 1 : 0);
-	SetChoiceListCurrentItem(EPmDlgAutoSend, (v & KPmViewNoAutoSend) ? 1 : 0);
-	SetChoiceListCurrentItem(EPmDlgDetailed, (v & KPmViewDetailedProgress) ? 0 : 1);   // (0.75: Yes, No)
+	// (r_pm_yes_no_array is No, Yes - the one order every yes/no list in
+	// the suite has; the stored bits keep their meaning)
+	SetChoiceListCurrentItem(EPmDlgAutoSend, (v & KPmViewNoAutoSend) ? 0 : 1);
+	SetChoiceListCurrentItem(EPmDlgDetailed, (v & KPmViewDetailedProgress) ? 1 : 0);
 	SetLineDimmedNow(EPmDlgCheckConnect, c == 0);
 	}
 
@@ -239,9 +241,9 @@ void CPmPrefsDialog::NewMailSave()
 	v |= (ChoiceListCurrentItem(EPmDlgCheckEvery) << KPmViewCheckShift) & KPmViewCheckMask;
 	if (ChoiceListCurrentItem(EPmDlgCheckConnect) == 1)
 		v |= KPmViewCheckConnect;
-	if (ChoiceListCurrentItem(EPmDlgAutoSend) == 1)
+	if (ChoiceListCurrentItem(EPmDlgAutoSend) == 0)      // No: don't send by itself
 		v |= KPmViewNoAutoSend;
-	if (ChoiceListCurrentItem(EPmDlgDetailed) == 0)
+	if (ChoiceListCurrentItem(EPmDlgDetailed) == 1)      // Yes
 		v |= KPmViewDetailedProgress;
 	iSettings.iView = v;
 	}

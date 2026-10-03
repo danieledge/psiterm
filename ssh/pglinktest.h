@@ -67,7 +67,8 @@ typedef struct
 	/* ---- out: Psion Internet ---- */
 	int net_up;            /* 1 up, 0 down, -1 the Psion would not say */
 	int need_dial;         /* down, and 'dial' was not set: ask, then call again */
-	int ppp;               /* 0 not sent, 1 CONNECT, 2 no CONNECT, 3 port busy, 4 no modem */
+	int ppp;               /* 0 not sent, 1 CONNECT, 2 no CONNECT, 3 port busy, 4 no modem,
+	                          5 the port could not be set up (port_err) */
 	int dns;               /* 1 not tried, 0 looked up, else the EPOC error */
 	unsigned long addr;    /* the address looked up */
 	int net_after;         /* after dialling: 1 up, 0 not, -1 unknown */
@@ -75,6 +76,16 @@ typedef struct
 	/* ---- out: the result, in plain sentences ---- */
 	int nlines;
 	char line[PG_LT_LINES][PG_LT_LINE];
+
+	/* ---- the run (pglinktest.cpp runs the test in a thread of its own, so
+	   the app keeps drawing, beating and taking Esc meanwhile) ---- */
+	volatile int abort_test;   /* the app sets 1: give up at the next step (Esc) */
+	volatile int done;         /* the test sets 1 when it has finished */
+	char busy[80];             /* the latest progress text, for the busy message */
+	volatile int busy_seq;     /* +1 each time busy changes */
+	void* lookup;              /* pg_lt_lookup_new(): the name lookup's requests,
+	                              made by the app's thread so they outlive the test's */
+	int lookup_leaked;         /* a lookup never completed: 'lookup' must not be freed */
 	} PgLinkTest;
 
 #ifdef __cplusplus
@@ -82,8 +93,16 @@ extern "C" {
 #endif
 /* Runs the test (blocking, a few seconds; up to 90 s when it dials) and
  * fills in the result lines. Never leaves the port, a socket or a request
- * open. Returns 0, or -1 if it could not start (no memory). */
+ * open, except a name lookup that NetDial would not complete: that one is
+ * abandoned in 'lookup' (lookup_leaked). Gives up at the next step when
+ * abort_test is set. Returns 0, or -1 if it could not start (no memory). */
 int pg_link_test(PgLinkTest* aTest);
+
+/* The name lookup's requests, allocated in the calling thread's heap (the
+ * app's) so they outlive the thread that runs the test. Free with
+ * pg_lt_lookup_free - never when lookup_leaked is set. */
+void* pg_lt_lookup_new(void);
+void pg_lt_lookup_free(void* aLookup);
 
 /* The pure parts (no EPOC calls), for the host test. */
 int pg_lt_classify(const unsigned char* aData, int aLen, char* aFirst, int aFirstMax);

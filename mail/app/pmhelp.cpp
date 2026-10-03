@@ -85,7 +85,7 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "everyone and Ctrl+W forwards. Type addresses separated by commas.\n"
 	  "\n"
 	  "In the text, Ctrl+B, Ctrl+I and Ctrl+U make bold, italic and underlined text, which is sent as "
-	  "HTML with a plain copy for older programs. The Attachments button adds files from the Psion (up "
+	  "HTML with a plain copy for older programs. The Add file button adds files from the Psion (up "
 	  "to 8). When you forward a message that has attachments, PsiMail asks whether to forward them too.\n"
 	  "\n"
 	  "Send puts the message in the Outbox and sends it straight away when you are online. Save as "
@@ -126,11 +126,11 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "addresses, address and web page go into the Contacts program's own fields. A card whose email "
 	  "address is in Contacts already is left as it is.\n"
 	  "\n"
-	  "To send your own card, press the Attachments button when writing a message and choose Add my "
+	  "To send your own card, press the Add file button when writing a message and choose Add my "
 	  "contact card: your name and address go with the message as a .vcf file." },
 
 	{ "Saving a message as a Word file",
-	  "File > Save as Word file (Shift+Ctrl+S) saves the open message as a file the Psion's Word "
+	  "File > Printing > Save as Word file (Shift+Ctrl+S) saves the open message as a file the Psion's Word "
 	  "program opens: the subject, From, To, Cc and Date, then the text with its bold, italic and "
 	  "underlining, headings, lists and quotes as PsiMail shows them. It goes in the Documents folder "
 	  "to begin with, named after the subject. Pictures are shown in the file as [Picture]." },
@@ -148,7 +148,7 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "Edit > Move to folder (Ctrl+X) moves the selected message. View > Go to (Ctrl+G) opens any "
 	  "folder, and Ctrl+I goes straight to the Inbox.\n"
 	  "\n"
-	  "File > Folder > Check this folder (Ctrl+Y) fetches new messages for the open folder alone; Get "
+	  "File > Folder > Check this folder (Shift+Ctrl+X) fetches new messages for the open folder alone; Get "
 	  "older messages (Shift+Ctrl+G) brings in the next 50 older ones. Check mail fetches every folder "
 	  "and sends what is waiting in the Outbox." },
 
@@ -245,12 +245,13 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "Del: delete (to the Trash)\n"
 	  "\n"
 	  "Shift+Ctrl+C: check mail (send & receive)\n"
-	  "Ctrl+Y / Shift+Ctrl+G: check this folder / get older messages\n"
+	  "Shift+Ctrl+X / Shift+Ctrl+G: check this folder / get older messages\n"
 	  "Ctrl+U / Esc / Shift+Ctrl+W: disconnect / stop / work offline\n"
 	  "Ctrl+N / Ctrl+R / Shift+Ctrl+R / Ctrl+W: create new / reply / reply to all / forward\n"
-	  "Ctrl+D / Ctrl+X / Shift+Ctrl+E: delete / move to folder / archive\n"
+	  "Ctrl+D / Ctrl+X / Shift+Ctrl+E / Ctrl+Z: delete / move to folder / archive / undo\n"
 	  "Shift+Ctrl+U / Shift+Ctrl+F: unread / flagged\n"
-	  "Ctrl+S: save an attachment\n"
+	  "Ctrl+S / Shift+Ctrl+S: save an attachment / save as Word file\n"
+	  "Ctrl+P / Shift+Ctrl+P / Shift+Ctrl+V: print / print setup / print preview\n"
 	  "Ctrl+I / Ctrl+G / Ctrl+B / Ctrl+F: Inbox / go to folder / Outbox / find\n"
 	  "Ctrl+M / Shift+Ctrl+M: zoom in / out\n"
 	  "Ctrl+T / Shift+Ctrl+T / Shift+Ctrl+L: toolbar / title bar / folder list\n"

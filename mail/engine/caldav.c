@@ -67,10 +67,11 @@ static void path_of(const char *name, char *out, int max) { snprintf(out, max, "
 static void just_path(const char *href, char *out, int max)
 {
 	const char *p = href;
-	if (!pm_strncasecmp(p, "http://", 7) || !pm_strncasecmp(p, "https://", 8)) {
-		p = strchr(p + 8, '/');
-		if (!p) p = "/";
-	}
+	if (!pm_strncasecmp(p, "http://", 7)) p = strchr(p + 7, '/');
+	else if (!pm_strncasecmp(p, "https://", 8)) p = strchr(p + 8, '/');
+	/* (the scheme skipped by its own length: "http://" alone used to be
+	   read one byte past its end) */
+	if (!p) p = "/";
 	pm_copy(out, p, max);
 }
 

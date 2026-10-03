@@ -234,10 +234,14 @@ static int read_record(int *len, int timeout_ms)
 		if (n > REC_MAX - 5) { g_err = "record too big"; return -1; }
 		if ((r = read_exact(g_rec, n, timeout_ms)) < 0) return r;
 		if (hdr[0] == 20) continue;            /* ChangeCipherSpec: ignored in 1.3 */
-		if (!g_encrypted || hdr[0] != 23) {
+		if (!g_encrypted) {
 			*len = n;
 			return hdr[0];
 		}
+		/* once the keys are on, everything but CCS comes encrypted (RFC 8446
+		   section 5): a plaintext alert or handshake record here is an
+		   injection, not the server */
+		if (hdr[0] != 23) { g_err = "unexpected plaintext record"; return -1; }
 		if (aead_open(&g_rd, hdr, 5, g_rec, n) != 0) { g_err = "data damaged in transit"; return -1; }
 		n -= 16;
 		while (n > 0 && g_rec[n - 1] == 0) n--; /* padding */
@@ -247,9 +251,11 @@ static int read_record(int *len, int timeout_ms)
 	}
 }
 
+static unsigned char g_out[5 + 16384 + 1 + 16];   /* one record being sent */
+
 static int write_record(int type, const unsigned char *data, int len)
 {
-	static unsigned char out[5 + 16384 + 1 + 16];
+	unsigned char *out = g_out;
 	if (len > 16384) return -1;
 	if (!g_encrypted) {
 		out[0] = (unsigned char)type; out[1] = 3; out[2] = (type == 22) ? 1 : 3;
@@ -270,6 +276,21 @@ static int write_record(int type, const unsigned char *data, int len)
 
 static void put16(unsigned char *p, int v) { p[0] = (unsigned char)(v >> 8); p[1] = (unsigned char)v; }
 
+/* Forgets the connection: the traffic keys, and every buffer that held
+   plaintext or key material. Called after each connection by the users of
+   this file, and by tls_connect before the next one. */
+void tls_close(void)
+{
+	memset(&g_rd, 0, sizeof(g_rd));
+	memset(&g_wr, 0, sizeof(g_wr));
+	memset(g_app, 0, sizeof(g_app));
+	memset(g_rec, 0, sizeof(g_rec));
+	memset(g_out, 0, sizeof(g_out));
+	g_encrypted = 0;
+	g_app_pos = g_app_len = 0;
+	g_closed = 1;
+}
+
 int tls_connect(const char *host, char *why, int whymax)
 {
 	static unsigned char ch[512];
@@ -277,11 +298,14 @@ int tls_connect(const char *host, char *why, int whymax)
 	unsigned char priv[32], pub[32], shared[32], zero[32], secret[32], derived[32];
 	unsigned char hs_secret[32], c_hs[32], s_hs[32], th[32], fin[32], empty_hash[32];
 	unsigned char server_pub[32];
+	unsigned char master[32], c_ap[32], s_ap[32], fkey[32], msg[36];
 	hash_state transcript, tmp;
 	int n = 0, ext_start, hlen = 0, got_sh = 0, type, len;
 	int hn = (int)strlen(host);
+	int ret = -1;
 	static const unsigned char basepoint[32] = { 9 };
 
+	tls_close();                         /* nothing of the last connection survives */
 	g_err = "handshake failed";
 	g_encrypted = 0;
 	g_closed = 0;
@@ -385,11 +409,9 @@ int tls_connect(const char *host, char *why, int whymax)
 
 	/* ---- key schedule up to the handshake keys */
 	dropbear_curve25519_scalarmult(shared, priv, server_pub);
-	memset(priv, 0, 32);
 	hkdf_extract(zero, zero, 32, secret);                        /* early secret */
 	hkdf_label(secret, "derived", empty_hash, 32, derived, 32);
 	hkdf_extract(derived, shared, 32, hs_secret);                /* handshake secret */
-	memset(shared, 0, 32);
 	tmp = transcript; sha256_done(&tmp, th);
 	hkdf_label(hs_secret, "c hs traffic", th, 32, c_hs, 32);
 	hkdf_label(hs_secret, "s hs traffic", th, 32, s_hs, 32);
@@ -411,7 +433,6 @@ int tls_connect(const char *host, char *why, int whymax)
 		mt = hs[0];
 		mlen = (hs[1] << 16) | (hs[2] << 8) | hs[3];
 		if (mt == 20) {                                          /* server Finished */
-			unsigned char fkey[32];
 			tmp = transcript; sha256_done(&tmp, th);
 			hkdf_label(s_hs, "finished", NULL, 0, fkey, 32);
 			hmac_sha256(fkey, 32, th, 32, NULL, 0, fin);
@@ -443,37 +464,53 @@ int tls_connect(const char *host, char *why, int whymax)
 
 	/* ---- application keys (transcript up to server Finished) */
 	tmp = transcript; sha256_done(&tmp, th);
-	{
-		unsigned char master[32], c_ap[32], s_ap[32];
-		hkdf_label(hs_secret, "derived", empty_hash, 32, derived, 32);
-		hkdf_extract(derived, zero, 32, master);
-		hkdf_label(master, "c ap traffic", th, 32, c_ap, 32);
-		hkdf_label(master, "s ap traffic", th, 32, s_ap, 32);
+	hkdf_label(hs_secret, "derived", empty_hash, 32, derived, 32);
+	hkdf_extract(derived, zero, 32, master);
+	hkdf_label(master, "c ap traffic", th, 32, c_ap, 32);
+	hkdf_label(master, "s ap traffic", th, 32, s_ap, 32);
 
-		/* client Finished, still under the handshake keys */
-		{
-			unsigned char fkey[32], msg[36];
-			static const unsigned char ccs[6] = { 20, 3, 3, 0, 1, 1 };
-			pg_serial_write(ccs, 6);                         /* middlebox compatibility */
-			hkdf_label(c_hs, "finished", NULL, 0, fkey, 32);
-			hmac_sha256(fkey, 32, th, 32, NULL, 0, fin);
-			msg[0] = 20; msg[1] = 0; msg[2] = 0; msg[3] = 32;
-			memcpy(msg + 4, fin, 32);
-			if (write_record(22, msg, 36) != 0) { g_err = "could not send"; goto fail; }
-		}
-		set_keys(&g_rd, s_ap);
-		set_keys(&g_wr, c_ap);
-		memset(master, 0, 32);
+	/* client Finished, still under the handshake keys */
+	{
+		static const unsigned char ccs[6] = { 20, 3, 3, 0, 1, 1 };
+		pg_serial_write(ccs, 6);                         /* middlebox compatibility */
+		hkdf_label(c_hs, "finished", NULL, 0, fkey, 32);
+		hmac_sha256(fkey, 32, th, 32, NULL, 0, fin);
+		msg[0] = 20; msg[1] = 0; msg[2] = 0; msg[3] = 32;
+		memcpy(msg + 4, fin, 32);
+		if (write_record(22, msg, 36) != 0) { g_err = "could not send"; goto fail; }
 	}
-	memset(hs_secret, 0, 32);
-	return 0;
+	set_keys(&g_rd, s_ap);
+	set_keys(&g_wr, c_ap);
+	ret = 0;
+	goto done;
 
 fail:
 	if (why) {
 		strncpy(why, g_err ? g_err : "TLS failed", whymax - 1);
 		why[whymax - 1] = 0;
 	}
-	return -1;
+	tls_close();                         /* no keys left from a handshake that failed */
+done:
+	/* every secret of the handshake goes, whichever way it ended: only the
+	   traffic keys in g_rd/g_wr remain, until tls_close */
+	memset(priv, 0, sizeof(priv));
+	memset(shared, 0, sizeof(shared));
+	memset(secret, 0, sizeof(secret));
+	memset(derived, 0, sizeof(derived));
+	memset(hs_secret, 0, sizeof(hs_secret));
+	memset(c_hs, 0, sizeof(c_hs));
+	memset(s_hs, 0, sizeof(s_hs));
+	memset(master, 0, sizeof(master));
+	memset(c_ap, 0, sizeof(c_ap));
+	memset(s_ap, 0, sizeof(s_ap));
+	memset(fkey, 0, sizeof(fkey));
+	memset(fin, 0, sizeof(fin));
+	memset(msg, 0, sizeof(msg));
+	memset(&transcript, 0, sizeof(transcript));
+	memset(&tmp, 0, sizeof(tmp));
+	memset(hs, 0, sizeof(hs));
+	memset(ch, 0, sizeof(ch));
+	return ret;
 }
 
 int tls_write(const void *buf, int len)

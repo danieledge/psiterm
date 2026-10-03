@@ -64,6 +64,8 @@ void CPmView::EngineStoppedL(const TDesC& aWhy)
 	if (iRunning)
 		{
 		status.Format(_L("The mail engine stopped (%S) and was started again"), &iEngineNote);
+		if (iKeptCmds)
+			status.AppendFormat(_L(" - %d waiting command%s kept"), iKeptCmds, iKeptCmds == 1 ? _S("") : _S("s"));
 		if (bodyWaiting)
 			Cmd(PM_CMD_BODY, iFolder, iMsgUid, KNullDesC8);      // the text, again
 		}
@@ -71,7 +73,7 @@ void CPmView::EngineStoppedL(const TDesC& aWhy)
 		{
 		status.Format(_L("The mail engine stopped (%S) - use Tools > Restart mail engine"), &iEngineNote);
 		if (bodyWaiting)
-			iBodyError = _L("Not downloaded - the mail engine stopped. Tools > Restart mail engine starts it again");
+			iBodyError = _L("Not downloaded - the mail engine stopped - Tools > Restart mail engine starts it again");
 		}
 	SetStatus(status);
 	iReaderUid = 0;                          // the reader laid out again with what it has

@@ -78,7 +78,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.78");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.79");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
@@ -269,12 +269,33 @@ void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSetti
 	iAttParts = new(ELeave) CDesC8ArrayFlat(4);
 
 	TInt r = iChunk.CreateGlobal(_L(PSI_SHARED_NAME), sizeof(PmShared), sizeof(PmShared));
+	TBool wasThere = EFalse;
 	if (r == KErrAlreadyExists)
+		{
 		r = iChunk.OpenGlobal(_L(PSI_SHARED_NAME), EFalse);
+		wasThere = ETrue;
+		}
 	User::LeaveIfError(r);
 	iChunkOpen = ETrue;
 	iShared = (PmShared*)iChunk.Base();
-	Mem::FillZ(iShared, sizeof(PmShared));
+	// The chunk was there already: the last PsiMail's engine may still be
+	// on it (the app crashed, or was closed from the task list, under 20 s
+	// ago - the engine quits by itself once it sees that process has gone).
+	// Zeroing the chunk under it would make it carry on - seeing a live
+	// app and a fresh heartbeat - beside the engine started here, the two
+	// sharing one command queue and the old one holding the serial port.
+	// So it is asked to quit, and FinishStartL waits for it (tick by tick,
+	// up to 6 s) before the chunk is cleared - as PsiTerm does with psissh.
+	if (wasThere && iShared->magic == PM_MAGIC && iShared->state != PM_STATE_EXITED)
+		{
+		iShared->quitting = 1;
+		iShared->net.quit = 1;
+		iOldEngineUntil = User::TickCount() + 64 * 6;
+		if (!iOldEngineUntil)
+			iOldEngineUntil = 1;
+		}
+	else
+		Mem::FillZ(iShared, sizeof(PmShared));
 
 	CreateNativeL();
 	iNativeMode = (TMode)-1;
@@ -296,6 +317,28 @@ void CPmView::ConstructL(const TRect& aRect, TPmSettings& aSettings, TPmCalSetti
 // folders and the Inbox, and the calendar.
 void CPmView::FinishStartL()
 	{
+	if (iOldEngineUntil)
+		{
+		// the last PsiMail's engine was asked to quit (ConstructL): not yet
+		// gone and not yet 6 s - next tick
+		TUint now = User::TickCount();
+		if (iShared->state != PM_STATE_EXITED && now - iOldEngineUntil >= 0x80000000u)
+			{
+			if (!iOldEngineNoted)
+				{
+				iOldEngineNoted = ETrue;
+				iEikonEnv->BusyMsgL(_L("Waiting for the last mail engine to stop..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0));
+				}
+			return;
+			}
+		if (iOldEngineNoted)
+			iEikonEnv->BusyMsgCancel();
+		iOldEngineNoted = EFalse;
+		iOldEngineUntil = 0;
+		if (iShared->state != PM_STATE_EXITED)
+			KillStrayEngines();               // wedged in a wait the line never ends: killed by name
+		Mem::FillZ(iShared, sizeof(PmShared));
+		}
 	iStartPending = EFalse;
 	AccountChangedL();                        // the folders and the list, from the card
 	TRAPD(re, ReopenL());                     // where the last session was closed
@@ -409,11 +452,44 @@ void CPmView::CopySettingsToShared()
 	iCoeEnv->FsSession().MkDirAll(dir);
 	}
 
+// psimail.exe, named like this one, that is not ours: the last PsiMail's
+// engine that did not quit when asked (FinishStartL). The kernel reclaims
+// its handles; NIFMAN's timers are given back from here.
+void CPmView::KillStrayEngines()
+	{
+	TFindProcess find(_L("psimail.exe*"));    // (the match ignores case: "psimail*" would be this app too)
+	TFullName name;
+	TProcessId me = RProcess().Id();
+	TInt killed = 0;
+	while (find.Next(name) == KErrNone)
+		{
+		RProcess p;
+		if (p.Open(find) != KErrNone)
+			continue;
+		if (p.Id() != me && p.ExitType() == EExitPending)
+			{
+			p.Kill(0);
+			killed++;
+			}
+		p.Close();
+		}
+	if (killed)
+		PsiLinkTimersBack();
+	}
+
 void CPmView::StartEngineL()
 	{
 	if (iRunning)
 		return;
 	PmShared* s = iShared;
+	// Commands the last engine left in the queue (it stopped - a crash, or
+	// Restart - with them waiting) are kept for this one, with their
+	// numbers: so is the done count, so everything the app remembers by
+	// sequence number (iDoneSeen, the timed check's iAutoCmd) stays right.
+	// The one it was running (cmd_tail - 1) is not run again: pmrecover.cpp
+	// asks for a message's text again; anything else the user does again.
+	TUint head = s->cmd_head, tail = s->cmd_tail;
+	TBool keep = s->magic == PM_MAGIC && head != tail && head - tail <= PM_CMDQ;
 	Mem::FillZ(s, sizeof(PmShared));
 	s->magic = PM_MAGIC;
 	s->net.magic = PSI_SHARED_MAGIC;
@@ -421,7 +497,23 @@ void CPmView::StartEngineL()
 	s->net.dial_prefix[0] = 'A'; s->net.dial_prefix[1] = 'T';
 	s->net.dial_prefix[2] = 'D'; s->net.dial_prefix[3] = 'T'; s->net.dial_prefix[4] = 0;
 	CopySettingsToShared();
-	iDoneSeen = 0;
+	iKeptCmds = 0;
+	if (keep)
+		{
+		for (TUint i = tail; i != head; i++)
+			s->cmd[i % PM_CMDQ] = iSent[i % PM_CMDQ];
+		s->cmd_tail = tail;
+		s->cmd_head = head;
+		s->done_seq = tail;                  // (the one in flight counts as done: its outcome is lost)
+		iDoneSeen = tail;
+		iKeptCmds = (TInt)(head - tail);
+		}
+	else
+		iDoneSeen = 0;
+	// a timed check that was running, or whose number this restart has
+	// passed, is over; one still queued keeps its number
+	if (!keep || (TInt)(iAutoCmd - tail) <= 0)
+		iAutoCmd = 0;
 	// (0.75) who the app is, so the engine quits only once it has really gone,
 	// and why the last engine ended, for psimail.log (engine/pmepoc.cpp)
 	{
@@ -469,15 +561,32 @@ void CPmView::StartEngineL()
 		}
 	}
 
-void CPmView::StopEngine()
+void CPmView::AskEngineToStop()
+	{
+	iClosing = ETrue;
+	if (!iRunning)
+		return;
+	iShared->quitting = 1;
+	iShared->net.quit = 1;
+	}
+
+void CPmView::StopEngine(TBool aWait)
 	{
 	if (!iRunning)
 		return;
 	iShared->quitting = 1;
 	iShared->net.quit = 1;
-	// give it a few seconds to log out and hang up
-	for (TInt i = 0; i < 60 && iShared->state != PM_STATE_EXITED; i++)
-		User::After(100000);
+	if (aWait && iShared->state != PM_STATE_EXITED)
+		{
+		// give it a few seconds to log out and hang up - saying so, as the
+		// style guide asks of anything that keeps the user waiting (Close
+		// drives this wait from a timer instead: CPmAppUi::BeginExitL)
+		TRAPD(be, iEikonEnv->BusyMsgL(_L("Stopping the mail engine..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
+		for (TInt i = 0; i < 60 && iShared->state != PM_STATE_EXITED; i++)
+			User::After(100000);
+		if (be == KErrNone)
+			iEikonEnv->BusyMsgCancel();
+		}
 	if (iWatcher)
 		iWatcher->Cancel();
 	if (iShared->state != PM_STATE_EXITED)
@@ -487,6 +596,15 @@ void CPmView::StopEngine()
 		}
 	iProcess.Close();
 	iRunning = EFalse;
+	}
+
+// Tools > Restart mail engine, and the update window's way out of an
+// engine stuck in a wait the line never ends
+void CPmView::RestartEngineL()
+	{
+	StopEngine();
+	StartEngineL();
+	SettingsChanged();
 	}
 
 void CPmView::EngineEnded()
@@ -1709,7 +1827,8 @@ void CPmView::SaveDraftL(CPmDraft& aDraft, TBool aSend)
 	// remembered and reported, and the half-written file thrown away
 	TInt r = KErrNone;
 #define PMW(d) do { TInt e_ = f.Write(d); if (r == KErrNone) r = e_; } while (0)
-	TBuf<600> h;
+	HBufC* hb = HBufC::NewLC(600);          // (on the heap: the app thread's stack is small)
+	TPtr h = hb->Des();
 	h = _L("#PSIMAIL1\n");
 	PMW(h);
 	h = _L("To: "); h.Append(aDraft.iTo); h.Append('\n'); PMW(h);
@@ -1749,7 +1868,7 @@ void CPmView::SaveDraftL(CPmDraft& aDraft, TBool aSend)
 	TInt e = f.Flush();
 	if (r == KErrNone) r = e;
 #undef PMW
-	CleanupStack::PopAndDestroy();      // f
+	CleanupStack::PopAndDestroy(2);     // f, hb
 	if (r != KErrNone)
 		{
 		fs.Delete(tmp);
@@ -1765,6 +1884,13 @@ void CPmView::SaveDraftL(CPmDraft& aDraft, TBool aSend)
 		User::Leave(r);
 		}
 	fs.Delete(err);
+	// sent again by hand: the "may already have been sent" marker goes too
+	// (engine/smtp.c), so the engine will send this copy
+	{
+	TFileName snt(path.Left(path.Length() - 4));
+	snt.Append(_L(".snt"));
+	fs.Delete(snt);
+	}
 	aDraft.iFileNo = no;
 	if (aSend)
 		{
@@ -1808,6 +1934,9 @@ void CPmView::DeleteOutboxL()
 		}
 	p = dir; p.AppendFormat(_L("%04d.err"), no); fs.Delete(p);
 	p = dir; p.AppendNum(no); p.Append(_L(".err")); fs.Delete(p);
+	// (and the "may have been sent" marker, engine/smtp.c)
+	p = dir; p.AppendFormat(_L("%04d.snt"), no); fs.Delete(p);
+	p = dir; p.AppendNum(no); p.Append(_L(".snt")); fs.Delete(p);
 	LoadOutboxL();
 	Render();
 	}
@@ -1850,16 +1979,36 @@ void CPmView::TickL()
 		}
 	if (s->done_seq != iDoneSeen)
 		{
-		iDoneSeen = s->done_seq;
-		TBool changed = s->changed_seq != iChangedSeen;
-		iChangedSeen = s->changed_seq;
-		PmCmd cmd = iSent[(iDoneSeen - 1) % PM_CMDQ];
-		TInt res = s->last_res;
-		HandleResultL(cmd);
-		// (OK, OFFLINE and failures reload in HandleResultL)
-		if (changed && (res == PM_RES_CANCELLED || res == PM_RES_UNTRUSTED ||
-			res == PM_RES_NEED_PASS || res == PM_RES_LOGIN_FAILED))
-			ReloadL();
+		// Every command that has finished since the last tick, in order: two
+		// can finish between ticks (an offline FLAG then a MOVE; a SEND that
+		// fails fast then a SYNC), and only the last one's outcome used to
+		// be acted on. Each one's outcome is in the engine's ring (psimail.h
+		// PmDone); it is copied over last_* for the handlers, which read
+		// those. (The engine writes last_* too, but nothing reads them except
+		// this path, which takes the ring's copy every time.)
+		TUint upto = s->done_seq;
+		if (upto - iDoneSeen > PM_CMDQ)
+			iDoneSeen = upto - PM_CMDQ;      // (can't happen: the queue is that long)
+		while (iDoneSeen != upto)
+			{
+			iDoneSeen++;
+			const PmDone& d = s->done[(iDoneSeen - 1) % PM_CMDQ];
+			s->last_op = d.op;
+			s->last_res = d.res;
+			s->last_uid = d.uid;
+			s->update_ready = d.update_ready;
+			Mem::Copy(s->last_msg, d.msg, sizeof(s->last_msg));
+			Mem::Copy(s->last_file, d.file, sizeof(s->last_file));
+			TBool changed = s->changed_seq != iChangedSeen;
+			iChangedSeen = s->changed_seq;
+			PmCmd cmd = iSent[(iDoneSeen - 1) % PM_CMDQ];
+			TInt res = d.res;
+			HandleResultL(cmd);
+			// (OK, OFFLINE and failures reload in HandleResultL)
+			if (changed && (res == PM_RES_CANCELLED || res == PM_RES_UNTRUSTED ||
+				res == PM_RES_NEED_PASS || res == PM_RES_LOGIN_FAILED))
+				ReloadL();
+			}
 		redraw = ETrue;
 		}
 	else if (s->changed_seq != iChangedSeen && !s->busy)
@@ -2346,6 +2495,8 @@ TKeyResponse CPmView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 	{
 	if (aType != EEventKey)
 		return EKeyWasNotConsumed;
+	if (iClosing)
+		return EKeyWasConsumed;              // (closing: the engine is stopping)
 	TUint code = aKeyEvent.iCode;
 	AddEntropy(code);
 	if (aKeyEvent.iModifiers & EModifierCtrl)
@@ -2438,7 +2589,10 @@ void CPmView::OpenWebL(const TDesC& aUrl)
 	cmd->SetTailEndL(url8);
 	EikDll::StartAppL(*cmd);
 	CleanupStack::PopAndDestroy();          // cmd
-	Toast(_L("Opening in PsiWeb..."));
+	// what is going on, bottom left as the style guide has busy messages
+	// (not an infoprint): PsiWeb takes a few seconds to appear. Working()
+	// keeps it up for 5 s with the engine idle (pmstatus.cpp)
+	Working(_L("Opening in PsiWeb..."));
 	}
 
 void CPmView::ViewAsWebPageL()
@@ -3248,8 +3402,85 @@ void CPmAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
 		iView->Shared()->net.switch_on++;
 	}
 
+// A PsiWin backup (robustness notes, section 5): files must be closed
+// while it runs, and the engine keeps psimail.log and the store open, so
+// it is stopped for the backup and started again when that ends. (The
+// backup uses the serial port, so the modem route was not in use anyway.)
+// (CEikAppUi's and CCoeAppUi's own HandleSystemEventL are private on ER5,
+// as HandleSwitchOnEventL's is, so neither can be chained to: the other
+// event they would act on, the System screen's shutdown, is handled here
+// in full - Close, as from the menu)
+void CPmAppUi::HandleSystemEventL(const TWsEvent& aEvent)
+	{
+	TApaSystemEvent event = *(TApaSystemEvent*)aEvent.EventData();
+	switch (event)
+		{
+	case EApaSystemEventShutdown:
+		HandleCommandL(EEikCmdExit);     // settings saved, the engine stopped, then Exit (BeginExitL)
+		break;
+	case EApaSystemEventBackupStarting:
+		if (iView && !iExiting)
+			{
+			iBackupStopped = iView->EngineRunning();
+			iView->StopEngine();
+			}
+		break;
+	case EApaSystemEventBackupComplete:
+		if (iView && iBackupStopped && !iExiting)
+			{
+			iBackupStopped = EFalse;
+			iView->StartEngineL();
+			iView->SettingsChanged();
+			}
+		break;
+	default:
+		break;
+		}
+	}
+
+// Close: the engine is asked to stop and the app closes once it has - a
+// timer looks every 100 ms, with a busy message up, rather than a 6 s wait
+// in the UI thread. Commands and keys are ignored meanwhile (iExiting).
+void CPmAppUi::BeginExitL()
+	{
+	if (iExiting)
+		return;
+	iExiting = ETrue;
+	iView->AskEngineToStop();
+	if (iView->EngineExited())
+		{
+		iView->StopEngine(EFalse);
+		Exit();
+		return;
+		}
+	TRAPD(be, iEikonEnv->BusyMsgL(_L("Closing..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
+	(void)be;
+	iExitStart = User::TickCount();
+	if (!iExitTimer)
+		iExitTimer = CPeriodic::NewL(CActive::EPriorityStandard);
+	iExitTimer->Cancel();
+	iExitTimer->Start(100000, 100000, TCallBack(ExitCallback, this));
+	}
+
+TInt CPmAppUi::ExitCallback(TAny* aSelf)
+	{
+	((CPmAppUi*)aSelf)->ExitTick();
+	return 1;
+	}
+
+void CPmAppUi::ExitTick()
+	{
+	if (!iView->EngineExited() && User::TickCount() - iExitStart < 64 * 6)
+		return;                              // still logging out or hanging up
+	iExitTimer->Cancel();
+	iEikonEnv->BusyMsgCancel();
+	iView->StopEngine(EFalse);               // gone, or killed after 6 s
+	Exit();
+	}
+
 CPmAppUi::~CPmAppUi()
 	{
+	delete iExitTimer;
 	delete iSoon;
 	if (iView)
 		{
@@ -3378,51 +3609,106 @@ static void Scramble(PmAccount& aAcct)
 		aAcct.pass[i] ^= (char)(0x5a + i * 7);
 	}
 
-void CPmAppUi::LoadSettings()
+// one settings file: ETrue if it held a whole TPmSettings
+static TBool ReadSettingsFile(RFs& aFs, const TDesC& aFile, TPmSettings& aSettings)
 	{
-	Mem::FillZ(&iSettings, sizeof(iSettings));
-	iSettings.iBaudIndex = 4;           // 115200, as PsiTerm recommends
 	RFile file;
-	if (file.Open(iCoeEnv->FsSession(), KIniFile, EFileRead) != KErrNone)
-		{
-		UseSharedLink(iCoeEnv->FsSession(), iSettings, NULL);
-		return;
-		}
+	if (file.Open(aFs, aFile, EFileRead | EFileShareReadersOnly) != KErrNone)
+		return EFalse;
+	TBool ok = EFalse;
 	TPckgBuf<TUint32> magic;
 	TPckgBuf<TInt> size;
 	if (file.Read(magic) == KErrNone && magic() == KIniMagic &&
 		file.Read(size) == KErrNone && size() == (TInt)sizeof(TPmSettings))
 		{
-		TPckg<TPmSettings> s(iSettings);
-		if (file.Read(s) != KErrNone || s.Length() != (TInt)sizeof(TPmSettings))
-			Mem::FillZ(&iSettings, sizeof(iSettings));
-		else
-			for (TInt i = 0; i < PM_MAX_ACCOUNTS; i++)
-				Scramble(iSettings.iAccounts[i]);
+		TPckg<TPmSettings> s(aSettings);
+		ok = file.Read(s) == KErrNone && s.Length() == (TInt)sizeof(TPmSettings);
 		}
 	file.Close();
+	return ok;
+	}
+
+void CPmAppUi::LoadSettings()
+	{
+	RFs& fs = iCoeEnv->FsSession();
+	Mem::FillZ(&iSettings, sizeof(iSettings));
+	iSettings.iBaudIndex = 4;           // 115200, as PsiTerm recommends
+	// the file, or the last one SaveSettings kept beside it (PsiMail.ini.bak)
+	// should this one be missing or short
+	TBool ok = ReadSettingsFile(fs, KIniFile, iSettings);
+	if (!ok)
+		{
+		Mem::FillZ(&iSettings, sizeof(iSettings));
+		iSettings.iBaudIndex = 4;
+		TFileName bak(KIniFile);
+		bak.Append(_L(".bak"));
+		ok = ReadSettingsFile(fs, bak, iSettings);
+		if (!ok)
+			{
+			Mem::FillZ(&iSettings, sizeof(iSettings));
+			iSettings.iBaudIndex = 4;
+			}
+		}
+	if (ok)
+		for (TInt i = 0; i < PM_MAX_ACCOUNTS; i++)
+			Scramble(iSettings.iAccounts[i]);
 	if (iSettings.iAcct < 0 || iSettings.iAcct >= PM_MAX_ACCOUNTS)
 		iSettings.iAcct = 0;
-	UseSharedLink(iCoeEnv->FsSession(), iSettings, NULL);
+	UseSharedLink(fs, iSettings, NULL);
+	}
+
+// A settings file written safely (robustness notes, section 4; PsiTerm's
+// SafeWrite): the parts go to <file>~, every write and the flush checked,
+// and only a complete file takes the old one's place, in one file-server
+// call. A full C:, a flat battery or a switch-off between the writes used
+// to leave a short PsiMail.ini, which LoadSettings reads as "no settings":
+// every account and password gone. With aBackup, the old file is kept as
+// <file>.bak first (and LoadSettings falls back to it).
+static TInt SafeWriteFile(RFs& aFs, const TDesC& aFile, const TDesC8* const* aParts, TInt aCount, TBool aBackup)
+	{
+	TFileName tmp(aFile);
+	tmp.Append('~');
+	RFile f;
+	TInt r = f.Replace(aFs, tmp, EFileWrite);
+	if (r != KErrNone)
+		return r;
+	for (TInt i = 0; i < aCount && r == KErrNone; i++)
+		r = f.Write(*aParts[i]);
+	if (r == KErrNone)
+		r = f.Flush();
+	f.Close();
+	if (r != KErrNone)
+		{
+		aFs.Delete(tmp);
+		return r;                            // the old file is still there, whole
+		}
+	if (aBackup)
+		{
+		TFileName bak(aFile);
+		bak.Append(_L(".bak"));
+		aFs.Replace(aFile, bak);             // (none yet: nothing to keep)
+		}
+	r = aFs.Replace(tmp, aFile);
+	if (r != KErrNone)
+		aFs.Delete(tmp);
+	return r;
 	}
 
 void CPmAppUi::SaveSettings()
 	{
 	RFs& fs = iCoeEnv->FsSession();
 	fs.MkDirAll(KIniFile);
-	RFile file;
-	if (file.Replace(fs, KIniFile, EFileWrite) != KErrNone)
-		return;
 	TPckgBuf<TUint32> magic(KIniMagic);
 	TPckgBuf<TInt> size(sizeof(TPmSettings));
-	file.Write(magic);
-	file.Write(size);
 	for (TInt i = 0; i < PM_MAX_ACCOUNTS; i++)
 		Scramble(iSettings.iAccounts[i]);
-	file.Write(TPckgC<TPmSettings>(iSettings));
+	TPckgC<TPmSettings> body(iSettings);
+	const TDesC8* parts[3] = { &magic, &size, &body };
+	TInt r = SafeWriteFile(fs, KIniFile, parts, 3, ETrue);
 	for (TInt i2 = 0; i2 < PM_MAX_ACCOUNTS; i2++)
 		Scramble(iSettings.iAccounts[i2]);
-	file.Close();
+	if (r != KErrNone)
+		iEikonEnv->InfoMsg(r == KErrDiskFull ? _L("Settings not saved - no room left on C:") : _L("Settings not saved - C: could not be written"));
 	}
 
 // ----- calendar settings (a file of their own, so mail settings stay put)
@@ -3506,17 +3792,15 @@ void CPmAppUi::SaveCalSettings()
 	{
 	RFs& fs = iCoeEnv->FsSession();
 	fs.MkDirAll(KCalIniFile);
-	RFile file;
-	if (file.Replace(fs, KCalIniFile, EFileWrite) != KErrNone)
-		return;
 	TPckgBuf<TUint32> magic(KCalIniMagic);
 	TPckgBuf<TInt> size(sizeof(TPmCalSettings));
-	file.Write(magic);
-	file.Write(size);
 	ScrambleCal(iCalSettings.iCal);
-	file.Write(TPckgC<TPmCalSettings>(iCalSettings));
+	TPckgC<TPmCalSettings> body(iCalSettings);
+	const TDesC8* parts[3] = { &magic, &size, &body };
+	TInt r = SafeWriteFile(fs, KCalIniFile, parts, 3, EFalse);   // (temp + Replace: never a short file)
 	ScrambleCal(iCalSettings.iCal);
-	file.Close();
+	if (r != KErrNone)
+		iEikonEnv->InfoMsg(_L("Calendar settings not saved - C: could not be written"));
 	}
 
 void CPmAppUi::EditCalendarL()
@@ -4056,7 +4340,7 @@ void CPmView::StartInstallerL(const TDesC& aFile)
 		iEikonEnv->EikAppUi()->HandleCommandL(EEikCmdExit);
 		return;
 		}
-	TBuf<200> m;
+	TBuf<KMaxFileName + 80> m;               // (aFile is a TFileName: Format panics rather than clips)
 	m.Format(_L("Could not start the installer (%d) - open %S from the System screen"), err, &aFile);
 	iEikonEnv->InfoWinL(_L("Update downloaded"), m);
 	StartEngineL();
@@ -4105,13 +4389,12 @@ void CPmAppUi::UpdateL()
 		src.AppendFormat(_L(":%d"), port);
 		}
 	fs.MkDirAll(KUpdIniFile);
-	if (f.Replace(fs, KUpdIniFile, EFileWrite) == KErrNone)
-		{
-		TBuf8<60> b;
-		b.Copy(src);
-		f.Write(b);
-		f.Close();
-		}
+	{
+	TBuf8<60> b;
+	b.Copy(src);
+	const TDesC8* parts[1] = { &b };
+	SafeWriteFile(fs, KUpdIniFile, parts, 1, EFalse);   // (temp + Replace; the choice is asked again if it fails)
+	}
 	// saved to the CF card if there is one: C: is small
 	TVolumeInfo vol;
 	TBool card = fs.Volume(vol, EDriveD) == KErrNone && vol.iFree > 600 * 1024;
@@ -4179,6 +4462,14 @@ void CPmView::UpdateDialogL()
 		}
 	}
 
+void CPmView::UpdateEnded(const TDesC& aLine)
+	{
+	iUpdEnded = ETrue;
+	iUpdRes = PM_RES_CANCELLED;
+	iUpdReady = EFalse;
+	UpdateLine(aLine);
+	}
+
 void CPmUpdateProgress::SetSizeAndPositionL(const TSize& aSize)
 	{
 	TSize screen = iEikonEnv->ScreenDevice()->SizeInPixels();
@@ -4233,6 +4524,22 @@ TBool CPmUpdateProgress::OkToExitL(TInt /*aButtonId*/)
 	{
 	if (iFinished)
 		return ETrue;
+	TUint now = User::TickCount();
+	if (iStopAt && now - iStopAt >= 64 * 3 && iView.EngineRunning())
+		{
+		// Stop was pressed 3 s ago and the engine has not given up (a wait
+		// the line never ends): Tools > Restart mail engine is behind this
+		// window, so it is offered here
+		if (iEikonEnv->QueryWinL(_L("The mail engine has not stopped"), _L("Restart the mail engine?")))
+			{
+			iView.RestartEngineL();
+			iView.UpdateEnded(_L("Stopped - the mail engine was started again"));
+			FinishL(iView.UpdateLog());
+			}
+		return EFalse;
+		}
+	if (!iStopAt)
+		iStopAt = now ? now : 1;
 	iView.StopUpdate();                      // Stop (or Esc): ask the engine to give up, stay open
 	return EFalse;
 	}
@@ -4665,6 +4972,8 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 
 void CPmAppUi::HandleCommandL(TInt aCommand)
 	{
+	if (iExiting)
+		return;                              // closing: the engine is stopping (BeginExitL)
 	if (aCommand == EEikCmdZoomIn || aCommand == EEikCmdZoomOut ||
 		aCommand == EPmCmdZoomIn || aCommand == EPmCmdZoomOut)
 		{
@@ -4696,8 +5005,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 	case EEikCmdExit:
 		iSettings.iSpare[1] = iView->WhereToken();   // (reopened here next time)
 		SaveSettings();
-		iView->StopEngine();
-		Exit();
+		BeginExitL();
 		break;
 	case EPmCmdSendRecv:
 		if (iView->OpInFlight(PM_CMD_SENDRECV))
@@ -5014,9 +5322,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 		}
 	case EPmCmdRestart:
-		iView->StopEngine();
-		iView->StartEngineL();
-		iView->SettingsChanged();
+		iView->RestartEngineL();
 		break;
 	case EPmCmdBack:
 		break;

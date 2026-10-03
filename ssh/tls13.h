@@ -6,4 +6,5 @@ int tls_write(const void *buf, int len);
 int tls_read(void *buf, int max, int timeout_ms);           /* >0 bytes, 0 closed, <0 error */
 const char *tls_error(void);
 int tls_pending(void);                                     /* decrypted bytes waiting */
+void tls_close(void);                                      /* after the connection: wipes the keys and buffers */
 #endif

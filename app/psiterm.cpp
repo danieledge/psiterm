@@ -25,6 +25,7 @@
 #include <eikbtpan.h>
 #include <eiktbar.h>
 #include <eikimage.h>
+#include <apgtask.h>        // TApaSystemEvent: a backup starting
 #include "psiterm.h"
 #include "ptxfer.h"
 #include "pticons.h"
@@ -78,7 +79,7 @@ const TInt KClipMax = 16384;            // most text copied/pasted at once
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.78");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.79");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -99,7 +100,8 @@ static TPtrC LeftSafe(const TDesC& aText, TInt aMax)
 
 // Saves a whole data file safely: into "<name>~" first, then swapped in, so
 // a flat battery mid-write never leaves a half-written (or empty) file
-static TInt SafeWrite(RFs& aFs, const TDesC& aName, const TDesC8& aData)
+// (declared in psiterm.h: ptxfer.cpp uses it for Log.ini too)
+TInt SafeWrite(RFs& aFs, const TDesC& aName, const TDesC8& aData)
 	{
 	aFs.MkDirAll(aName);
 	TFileName tmp(aName);
@@ -352,6 +354,9 @@ CTermView::~CTermView()
 	delete iXferMem;
 	if (iSshActive && iShared)
 		{
+		// closing with a session up: psissh gets 3 s to hang up and go; the
+		// wait is in this thread, so say so (bottom left, as busy messages go)
+		TRAP_IGNORE(iEikonEnv->BusyMsgL(_L("Ending SSH..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
 		iShared->quit = 1;
 		for (TInt i = 0; i < 30 && iSshProcess.ExitType() == EExitPending; i++)
 			User::After(100000);
@@ -360,6 +365,7 @@ CTermView::~CTermView()
 			iSshProcess.Kill(0);
 			PsiLinkTimersBack();         // it never got to give NIFMAN its timers back
 			}
+		iEikonEnv->BusyMsgCancel();
 		}
 	delete iPump;
 	delete iWatcher;
@@ -367,6 +373,7 @@ CTermView::~CTermView()
 	delete iPendingIdle;
 	delete iTick;
 	delete iReconnectTimer;
+	delete iQuitTimer;
 	delete iDebugText;
 	if (iSshActive)
 		iSshProcess.Close();
@@ -621,7 +628,7 @@ void CTermView::SizeAtZoom(TInt aZoom, TInt& aCols, TInt& aRows) const
 	}
 
 // the toolbar's first button follows the connection: SSH to... when idle,
-// Disconnect while a session is up or a reconnect is counting down
+// End SSH while a session is up or a reconnect is counting down
 void CTermView::SyncToolbar()
 	{
 	TInt busy = (iSshActive || iReconnectWait) ? 1 : 0;
@@ -789,12 +796,15 @@ void CTermView::RunToolDialogL()
 		}
 	}
 
+// Stop (or Esc) in the tool window: asks the job to end, under the watchdog;
+// a second Stop ends it at once (AskQuit), so the window can always close
 void CTermView::StopTool()
 	{
 	if (iSshActive && iShared)
 		{
-		iShared->quit = 1;
-		AppendDebug(_L8("\r\nStopping...\r\n"));
+		if (!iQuitAsked)
+			AppendDebug(_L8("\r\nStopping...\r\n"));
+		AskQuit();
 		}
 	}
 
@@ -818,7 +828,7 @@ void CTermView::StartInstallerL()
 		iEikonEnv->EikAppUi()->HandleCommandL(EEikCmdExit);
 		return;
 		}
-	TBuf<160> m;
+	TBuf<KMaxFileName + 80> m;           // (iUpdateFile is a TFileName: Format panics if it cannot fit)
 	m.Format(_L("The installer did not start (%d) - open %S from the System screen"), err, &iUpdateFile);
 	iEikonEnv->InfoWinL(_L("Update downloaded"), m);
 	}
@@ -1140,7 +1150,8 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 	else if (iSshActive)
 		{
 		TInt state = iShared ? iShared->state : PSI_STATE_STARTING;
-		if (iLaunchMode == 1) aText.Append(_L("Running the speed test..."));
+		if (iQuitAsked) aText.Append(_L("Ending SSH..."));   // (the watchdog ends it if it will not stop)
+		else if (iLaunchMode == 1) aText.Append(_L("Running the speed test..."));
 		else if (iLaunchMode == 2) aText.Append(_L("Updating PsiTerm..."));
 		else if (iLaunchMode == 3) aText.Append(_L("Sending screenshots..."));
 		else if (iLaunchMode == 4) aText.Append(_L("Making an SSH key..."));
@@ -3227,6 +3238,11 @@ void CTermView::StartSshL()
 		return;
 	if (iSettings.iSshHost.Length() == 0 || iSettings.iSshUser.Length() == 0)
 		return;
+	// the user asked for this session: it is not a reconnect, whatever a
+	// failed retry may have left behind, and a countdown to one stops
+	if (iReconnectWait)
+		CancelReconnect(_L8("\r\n[Reconnect cancelled]\r\n"));
+	iReconnecting = EFalse;
 	if (!SeedFileExists() && iKeyCount < KEntropyKeysNeeded)
 		{
 		// first ever SSH: gather randomness from the user's typing
@@ -3595,10 +3611,14 @@ void CTermView::LaunchSshL(TInt aMode)
 			PsiShared* old = (PsiShared*)iChunk.Base();
 			if (old->magic == PSI_SHARED_MAGIC && old->state != PSI_STATE_EXITED)
 				{
+				// (up to 5.5 s in this thread: say so, bottom left)
+				TRAP_IGNORE(iEikonEnv->BusyMsgL(_L("Stopping the old SSH program..."), EHLeftVBottom,
+					TTimeIntervalMicroSeconds32(0)));
 				old->quit = 1;
 				for (TInt w = 0; w < 50 && old->state != PSI_STATE_EXITED; w++)
 					User::After(100000);
 				User::After(500000);           // let it hang up and let go
+				iEikonEnv->BusyMsgCancel();
 				}
 			}
 		}
@@ -3607,12 +3627,18 @@ void CTermView::LaunchSshL(TInt aMode)
 		TBuf8<64> msg;
 		msg.Format(_L8("\r\n[SSH: could not set up shared memory (%d)]\r\n"), r);
 		LocalMessage(msg);
+		if (iReconnecting)
+			CancelReconnect(_L8("[Could not reconnect - use SSH to... to try again]\r\n"));
 		ApplySerialSettings();
 		return;
 		}
 	iChunkOpen = ETrue;
 	iShared = (PsiShared*)iChunk.Base();
 	Mem::FillZ(iShared, sizeof(PsiShared));
+	iQuitAsked = EFalse;
+	iKilled = EFalse;
+	if (iQuitTimer)
+		iQuitTimer->Cancel();
 	TmuxQueryReset();
 	iShared->magic = PSI_SHARED_MAGIC;
 	iShared->rows = iRows;
@@ -3757,6 +3783,11 @@ void CTermView::LaunchSshL(TInt aMode)
 		iChunk.Close();
 		iChunkOpen = EFalse;
 		iShared = NULL;
+		// a reconnect that could not start: say so and stop the retries,
+		// rather than stay half in "reconnecting" (the next failure to dial
+		// would then begin an unasked retry chain)
+		if (iReconnecting)
+			CancelReconnect(_L8("[Could not reconnect - use SSH to... to try again]\r\n"));
 		ApplySerialSettings();
 		return;
 		}
@@ -3831,7 +3862,59 @@ void CTermView::DisconnectSsh()
 	if (iReconnectWait)
 		CancelReconnect(_L8("\r\n[Reconnect cancelled]\r\n"));
 	if (iSshActive && iShared)
-		iShared->quit = 1;
+		AskQuit();
+	}
+
+// Asks psissh to stop (quit = 1) and arms the watchdog. psissh normally
+// hangs up and goes within a few seconds; one wedged in a wait nothing
+// completes (a lost receive signal, a stuck ESOCK call) never would, and
+// without this "SSH to", Connect and the Debug tools stayed "Not available
+// while SSH is connected" for good, the tool window could not close, and
+// the serial port or the PPP session stayed taken until PsiTerm was closed.
+// Asked a second time (End SSH or Stop again) it ends the program at once.
+const TInt KQuitWatchdog = 10 * 1000000;   // 10 s: more than a hang-up and a socket close take
+
+void CTermView::AskQuit()
+	{
+	if (!iSshActive || !iShared)
+		return;
+	if (iQuitAsked)
+		{
+		EndSshNow();
+		return;
+		}
+	iQuitAsked = ETrue;
+	iShared->quit = 1;
+	if (!iQuitTimer)
+		iQuitTimer = CPeriodic::New(CActive::EPriorityStandard);
+	if (!iQuitTimer)
+		return;                              // (no memory for the timer: the old behaviour)
+	iQuitTimer->Cancel();
+	iQuitTimer->Start(KQuitWatchdog, KQuitWatchdog, TCallBack(QuitCallback, this));
+	}
+
+TInt CTermView::QuitCallback(TAny* aSelf)
+	{
+	CTermView* self = (CTermView*)aSelf;
+	if (self->iQuitTimer)
+		self->iQuitTimer->Cancel();
+	self->EndSshNow();
+	return 0;
+	}
+
+// Kills psissh. Its Logon then completes and SshProcessEnded does the rest:
+// the state, the toolbar, the tool window, NIFMAN's timers and the message.
+void CTermView::EndSshNow()
+	{
+	if (iQuitTimer)
+		iQuitTimer->Cancel();
+	if (!iSshActive)
+		return;
+	if (iSshProcess.ExitType() == EExitPending)
+		{
+		iKilled = ETrue;
+		iSshProcess.Kill(0);
+		}
 	}
 
 // ----- auto-reconnect ----------------------------------------------------------
@@ -3895,7 +3978,17 @@ void CTermView::ReconnectNowL()
 	iReconnectWait = EFalse;
 	iReconnecting = ETrue;
 	iSshPassword = iReconnectPw;
-	LaunchSshL();
+	// a launch that leaves (no memory for the chunk or the watcher) must not
+	// leave "reconnecting" set with no session and nothing said
+	TRAPD(err, LaunchSshL());
+	if (err != KErrNone)
+		{
+		TBuf8<80> m;
+		m.Format(_L8("\r\n[Could not reconnect (%d) - use SSH to... to try again]\r\n"), err);
+		CancelReconnect(m);
+		if (!iSshActive)
+			ApplySerialSettings();
+		}
 	}
 
 void CTermView::SshProcessEnded()
@@ -3909,6 +4002,11 @@ void CTermView::SshProcessEnded()
 	TInt stage = iShared ? iShared->state : -1;
 	TInt exitCode = iShared ? iShared->exit_code : -1;
 	TInt lost = iShared ? iShared->lost_link : 0;
+	TBool killed = iKilled;
+	iKilled = EFalse;
+	iQuitAsked = EFalse;
+	if (iQuitTimer)
+		iQuitTimer->Cancel();
 	iSshProcess.Close();
 	iShared = NULL;
 	if (iChunkOpen)
@@ -3925,8 +4023,8 @@ void CTermView::SshProcessEnded()
 	iLastRx = 0;
 	iRxTail.Zero();
 	TBuf8<160> msg;
-	if (type == EExitPanic)
-		PsiLinkTimersBack();             // (0.68) the crash skipped psissh's own clean-up
+	if (type == EExitPanic || killed)
+		PsiLinkTimersBack();             // (0.68) the crash (or the kill) skipped psissh's own clean-up
 	if (type == EExitPanic)
 		{
 		static const char* const KStage[] = { "starting", "dialling", "setting up encryption", "connected", "finished" };
@@ -3935,6 +4033,8 @@ void CTermView::SshProcessEnded()
 		const char* st = (stage >= 0 && stage <= 4) ? KStage[stage] : "unknown";
 		msg.Format(_L8("\r\n[SSH program crashed: %S %d, while %s]\r\n"), &cat, reason, st);
 		}
+	else if (killed)
+		msg.Copy(_L8("\r\n[SSH program did not stop and was ended]\r\n"));   // (the watchdog, or End SSH twice)
 	else if (iLaunchMode != 0)
 		msg.Zero();                      // the tool has said how it went
 	else
@@ -4429,12 +4529,13 @@ static void AddSnippetL(CArrayFixFlat<TSnippet>& aList, const TDesC& aName,
 	aList.AppendL(s);
 	}
 
-// A few useful ones to start with; all can be edited or deleted
+// A few useful ones to start with; all can be edited or deleted. Their keys
+// are letters from the command (cLaude, coNtinue, tmuX): never digits
 void CSnippetList::AddDefaultsL()
 	{
-	AddSnippetL(*iEntries, _L("Claude Code"), _L("claude"), 1, '1');
-	AddSnippetL(*iEntries, _L("Claude: continue"), _L("claude --continue"), 1, '2');
-	AddSnippetL(*iEntries, _L("tmux: attach"), _L("tmux new -A -s psion"), 1, '3');
+	AddSnippetL(*iEntries, _L("Claude Code"), _L("claude"), 1, 'L');
+	AddSnippetL(*iEntries, _L("Claude: continue"), _L("claude --continue"), 1, 'N');
+	AddSnippetL(*iEntries, _L("tmux: attach"), _L("tmux new -A -s psion"), 1, 'X');
 	AddSnippetL(*iEntries, _L("Git status"), _L("git status"), 1, 0);
 	AddSnippetL(*iEntries, _L("Disk space"), _L("df -h"), 1, 0);
 	}
@@ -4473,7 +4574,7 @@ void CSnippetList::Load()
 			s.iEnter = data[pos++] ? 1 : 0;
 			s.iKey = data[pos++];
 			if (SnippetKeyIndex(s.iKey) < 0)
-				s.iKey = 0;
+				s.iKey = 0;                  // (a digit from before 0.79, or a letter a menu took: none)
 			TRAPD(err, iEntries->AppendL(s));
 			if (err != KErrNone)
 				break;
@@ -4508,11 +4609,12 @@ TInt CSnippetList::Save()
 	return r;
 	}
 
-// Shortcut keys: Shift+Ctrl + 1..9, 0, then the letters the menus leave
-// free (H is EIKON's "Help on program" key, so it stays free too). A saved
-// snippet on a letter the menu has since taken loses its key when loaded
-// (0.71 took B for View > Show toolbar).
-static const char KSnippetKeys[] = "1234567890FGIJLNOQRWXYZ";
+// Shortcut keys: Shift+Ctrl + the letters the menus leave free (H is
+// EIKON's "Help on program" key, so it stays free too). Never digits: the
+// style guide's shortcuts are all Ctrl+letter or Shift+Ctrl+letter (0.79
+// dropped 1-9 and 0). A saved snippet on a key no longer here loses its key
+// when loaded (0.71 took B for View > Show toolbar; a digit loads as none).
+static const char KSnippetKeys[] = "FGIJLNOQRWXYZ";
 
 TInt SnippetKeyCount()
 	{
@@ -4864,6 +4966,25 @@ void CAboutDialog::PreLayoutDynInitL()
 	// legend font is smaller than the bold line under it)
 	((CEikLabel*)Control(EPtDlgAbout1))->SetFont(iEikonEnv->TitleFont());
 	SetLabelL(EPtDlgAbout1, title);
+	// the (c) sign (0xa9 in the Psion's fonts, as PsiMail's About has it)
+	// rather than the resource's "(c)"; the lines keep their resource
+	// lengths, as these are shorter
+	TBuf<80> who(_L("SSH terminal for the Psion Series 5mx - "));
+	who.Append(TChar(0xa9));
+	who.Append(_L(" 2026 Dan Edge"));
+	SetLabelL(EPtDlgAbout2, who);
+	TBuf<80> credit(_L("Dropbear SSH "));
+	credit.Append(TChar(0xa9));
+	credit.Append(_L(" Matt Johnston, libvterm "));
+	credit.Append(TChar(0xa9));
+	credit.Append(_L(" Paul Evans - MIT"));
+	SetLabelL(EPtDlgAbout4, credit);
+	credit.Copy(_L("zlib "));
+	credit.Append(TChar(0xa9));
+	credit.Append(_L(" Gailly and Adler; Terminus font "));
+	credit.Append(TChar(0xa9));
+	credit.Append(_L(" Dimitar Zhekov - SIL OFL"));
+	SetLabelL(EPtDlgAbout7, credit);
 	SetLabelL(EPtDlgAboutStatus, iStatus);
 	}
 
@@ -4876,14 +4997,30 @@ void CConnDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPtDlgLink))->SetCurrentItem(iSettings.iNetMode ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgReconnect))->SetCurrentItem(iSettings.iAutoReconnect ? 1 : 0);
 	SetEdwinTextL(EPtDlgPppStart, &iSettings.iPppStart);
+	// Test is dimmed while SSH runs (see TestL); the dialog's other lines
+	// stay, as the settings apply when SSH ends
+	if (iView && iView->SshActive())
+		{
+		CEikCommandButtonBase* b = ButtonPanel()->ButtonById(EPtBidTest);
+		if (b)
+			b->SetDimmed(ETrue);
+		}
 	}
 
 // Test: tries the values shown (not yet saved). PsiTerm's own terminal
 // holds the port while SSH is not running: it lets go for the test and
-// opens it again with the saved settings. While SSH runs, its engine has
-// the port, and the test says the port is in use.
+// opens it again with the saved settings. Not while SSH runs: the test is
+// synchronous and runs in this thread for up to 20 s (90 s with a dial),
+// during which nothing bumps psissh's heartbeat, so after 45 s psissh
+// would decide PsiTerm had gone and end the live session (and on the modem
+// route the test could only say that the port is in use anyway).
 void CConnDialog::TestL()
 	{
+	if (iView && iView->SshActive())
+		{
+		iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
+		return;
+		}
 	TBuf<40> ppp;
 	GetEdwinText(ppp, EPtDlgPppStart);
 	ppp.TrimAll();
@@ -5099,7 +5236,7 @@ void CPsiTermAppUi::ConstructL()
 
 // ----- the toolbar ---------------------------------------------------------------
 // The standard EIKON toolbar on the right (psiterm.rss r_pt_toolbar): the
-// name, SSH to... / Disconnect, Snippets, Keys and Files (pop-ups), the clock.
+// name, SSH to... / End SSH, Snippets, Keys and Files (pop-ups), the clock.
 
 // a toolbar button's picture, from PsiTerm.mbm (made by tools/mkicons.py):
 // 24x20, in the middle of its side, the words beside it as the built-in
@@ -5140,14 +5277,15 @@ void CPsiTermAppUi::ToolbarPicturesL()
 	ButtonPictureL(EPtCmdTbFiles, EMbmToolFiles);
 	}
 
-// the first button: SSH to... when idle, Disconnect while a session is up
-// (as PsiMail's last button, and the built-in Email program's Open / Close
-// mailbox)
+// the first button: SSH to... when idle, End SSH while a session is up (as
+// PsiMail's last button, and the built-in Email program's Open / Close
+// mailbox). "End SSH" is the command's one name: the File menu and the help
+// say the same ("Disconnect" was too wide for the dense font anyway)
 void CPsiTermAppUi::SetConnectButton(TBool aBusy)
 	{
 	if (!iToolBar)
 		return;
-	TPtrC text(aBusy ? _L("End\nSSH") : _L("SSH to"));   // ("Disconnect" is too wide for the dense font)
+	TPtrC text(aBusy ? _L("End\nSSH") : _L("SSH to"));
 	TRAPD(err, ButtonPictureL(EPtCmdTbConnect, aBusy ? EMbmToolDisconnect : EMbmToolSsh, &text));
 	if (err != KErrNone)
 		{
@@ -5525,15 +5663,28 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 
 // The Debug tools need the serial port: offer to end the SSH session first.
 // (Statement, then the question, as the style guide has confirmations.)
-// Returns ETrue if the tool can run now; if the user agrees to disconnect,
+// Returns ETrue if the tool can run now; if the user agrees to end SSH,
 // the command is run again by itself once the session has ended.
 TBool CPsiTermAppUi::ConfirmDisconnectL(TInt aCommand)
 	{
 	if (!iView->SshActive())
 		return ETrue;
-	if (iEikonEnv->QueryWinL(_L("SSH is connected"), _L("Disconnect, then continue?")))
+	if (iEikonEnv->QueryWinL(_L("SSH is connected"), _L("End SSH, then continue?")))
 		iView->RunAfterDisconnectL(aCommand);
 	return EFalse;
+	}
+
+// A backup (PsiWin) is starting: apparc says so with a system event, and
+// open files must be closed for it. The session log is the one file this
+// program keeps open in the user's folders, so it stops (and says so). The
+// rest goes to CONE as before (EIKON's own HandleSystemEventL, which closes
+// the program on EApaSystemEventShutdown, is private, so this is the hook).
+void CPsiTermAppUi::HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination)
+	{
+	if (aEvent.Type() == EEventUser && iView && PtLogging(*iView)
+		&& *(TApaSystemEvent*)aEvent.EventData() == EApaSystemEventBackupStarting)
+		TRAP_IGNORE(PtLogCommandL(*iView));   // (with the log on, the command stops it)
+	CEikAppUi::HandleWsEventL(aEvent, aDestination);
 	}
 
 // Connects to saved host aIndex (from the SSH to... list)
@@ -5676,9 +5827,14 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		}
 	if (aMenuId == R_PT_SNIPPETS_MENU || aMenuId == R_PT_SNIPPETS_POPUP)
 		{
-		// your snippets, each with its hotkey shown on the right (not on the
-		// toolbar's pop-up: it is for the pen)
-		for (TInt i = 0; i < iSnippets->Count() && i < KMaxSnippets; i++)
+		// the first KMenuSnippets of your snippets (a pane holds 8 items: the
+		// rest are sent from Manage snippets... or by their keys), each with
+		// its hotkey shown on the right (not on the toolbar's pop-up: it is
+		// for the pen). The line under Manage snippets... only when there
+		// are some, so an empty menu does not end in a line.
+		if (iSnippets->Count() > 0)
+			aMenuPane->ItemData(EPtCmdSnippets).iFlags |= EEikMenuItemSeparatorAfter;
+		for (TInt i = 0; i < iSnippets->Count() && i < KMenuSnippets; i++)
 			{
 			const TSnippet& sn = iSnippets->At(i);
 			CEikMenuPane::TItem::SData item;
@@ -5787,7 +5943,11 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPtCmdTbConnect:                     // the toolbar's first button
 		if (iView->SshActive() || iView->ReconnectWaiting())
-			iView->DisconnectSsh();
+			{
+			if (iView->SshQuitting())
+				iEikonEnv->InfoMsg(_L("Ending the SSH program now"));
+			iView->DisconnectSsh();           // (End SSH: as the File menu's)
+			}
 		else
 			SshToL();
 		break;
@@ -5797,11 +5957,18 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		ToolbarPopupL(aCommand);
 		break;
 	case EPtCmdSsh:     SshToL(); break;
-	case EPtCmdSshDisconnect:
+	case EPtCmdSshDisconnect:               // File > End SSH (Shift+Ctrl+D)
 		if (!iView->SshActive())
-			iEikonEnv->InfoMsg(_L("Nothing to disconnect"));
+			iEikonEnv->InfoMsg(_L("Nothing to end - SSH is not connected"));
 		else
+			{
+			// the first time asks psissh to stop; while it is still being
+			// asked (the watchdog ends it after 10 s) a second End SSH ends
+			// it at once
+			if (iView->SshQuitting())
+				iEikonEnv->InfoMsg(_L("Ending the SSH program now"));
 			iView->DisconnectSsh();
+			}
 		break;
 	case EPtCmdSpeedTest:
 		if (!ConfirmDisconnectL(aCommand))
