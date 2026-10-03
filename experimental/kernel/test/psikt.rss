@@ -1,10 +1,39 @@
-// psikt.rss - PsiKernTest's resources (a File > Close menu)
+// psikt.rss - PsiKernTest's resources
 NAME PSKT
 #include <eikdef.rh>
 #include <eikmenu.rh>
+#include <eikcmds.hrh>
+#include "psikt.hrh"
 RESOURCE RSS_SIGNATURE { }
 RESOURCE TBUF { buf=""; }
 RESOURCE EIK_APP_INFO { menubar=r_pskt_menubar; hotkeys=r_pskt_hotkeys; }
 RESOURCE HOTKEYS r_pskt_hotkeys { control= { HOTKEY { command=EEikCmdExit; key='e'; } }; }
-RESOURCE MENU_BAR r_pskt_menubar { titles= { MENU_TITLE { menu_pane=r_pskt_file_menu; txt="File"; } }; }
+RESOURCE MENU_BAR r_pskt_menubar
+	{
+	titles=
+		{
+		MENU_TITLE { menu_pane=r_pskt_file_menu; txt="File"; },
+		MENU_TITLE { menu_pane=r_pskt_read_menu; txt="Read"; },
+		MENU_TITLE { menu_pane=r_pskt_write_menu; txt="Write"; }
+		};
+	}
 RESOURCE MENU_PANE r_pskt_file_menu { items= { MENU_ITEM { command=EEikCmdExit; txt="Close"; } }; }
+RESOURCE MENU_PANE r_pskt_read_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPsiKtCmdReadAll; txt="All read tests"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPsiKtCmdCheck; txt="Machine and driver"; },
+		MENU_ITEM { command=EPsiKtCmdRegisters; txt="Registers"; },
+		MENU_ITEM { command=EPsiKtCmdPalette; txt="Palette"; },
+		MENU_ITEM { command=EPsiKtCmdSpeed; txt="CPU and memory speed"; }
+		};
+	}
+RESOURCE MENU_PANE r_pskt_write_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPsiKtCmdInvert; txt="Invert the screen (3 s)"; },
+		MENU_ITEM { command=EPsiKtCmdCurves; txt="Grey curves (35 s)"; }
+		};
+	}

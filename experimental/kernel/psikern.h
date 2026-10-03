@@ -8,7 +8,7 @@
 _LIT(KPsiKernName,"PsiKern");          // the device's name (Install)
 _LIT(KPsiKernFile,"PSIKERN.LDD");      // \System\Libs\ on any drive
 const TInt KPsiKernMajor=0;
-const TInt KPsiKernMinor=1;
+const TInt KPsiKernMinor=2;
 const TInt KPsiKernBuild=1;
 const TInt KPsiKernMagic=0x504B;       // "PK", the top half of EVersion's answer
 
@@ -22,6 +22,11 @@ enum TPsiKernControl
 	ERead8=3,       // a1=offset -> the byte (0..255)
 	ELatchHigh=4,   // -> top 16 bits of the last ERead32
 	EInvert=5,      // a1=1 inverts the LCD palette, 0 puts it back -> 0 or an error
+	// (0.2)
+	EPalRead=6,     // a1=entry 0..15 -> the 16-bit palette entry (read only)
+	EPalCheck=7,    // -> 0 if the 32 bytes look like a 16-grey palette, else KErrCorrupt
+	EPalSet=8,      // a1=entry<<8 | grey level 0..15: sets that entry's level -> 0 or an error
+	ERestore=9,     // puts the palette back as it was before the first write -> 0
 	};
 
 // Register offsets from the Windermere's register base (virtual 0x58000000
@@ -59,6 +64,10 @@ public:
 		}
 	inline TInt Read8(TInt aOffset) { return DoControl(ERead8,(TAny*)aOffset); }
 	inline TInt Invert(TBool aOn) { return DoControl(EInvert,(TAny*)(aOn?1:0)); }
+	inline TInt PalRead(TInt aEntry) { return DoControl(EPalRead,(TAny*)aEntry); }
+	inline TInt PalCheck() { return DoControl(EPalCheck); }
+	inline TInt PalSet(TInt aEntry,TInt aLevel) { return DoControl(EPalSet,(TAny*)((aEntry<<8)|(aLevel&15))); }
+	inline TInt Restore() { return DoControl(ERestore); }
 	};
 
 #endif

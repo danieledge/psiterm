@@ -1,0 +1,16 @@
+// psikt.hrh - PsiKernTest's commands
+#ifndef PSIKT_HRH
+#define PSIKT_HRH
+
+enum TPsiKtCommand
+	{
+	EPsiKtCmdCheck=0x1000,     // machine, ROM, driver, version, CPU mode
+	EPsiKtCmdRegisters,        // two register snapshots, a second apart
+	EPsiKtCmdPalette,          // read the palette and check it
+	EPsiKtCmdSpeed,            // CPU and memory speed (no driver)
+	EPsiKtCmdReadAll,          // all four above
+	EPsiKtCmdInvert,           // write: invert the palette for 3 s
+	EPsiKtCmdCurves            // write: grey curves, 5 s each
+	};
+
+#endif

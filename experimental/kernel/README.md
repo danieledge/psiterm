@@ -1,8 +1,8 @@
 # PsiKern: an experimental kernel driver for the 5mx
 
-**Emulator only.** This is not part of PsiTerm, PsiMail or PsiWeb. It is never put in a `.sis`, never released and never loaded by the apps. It is item 2 of the shortlist in [`docs/experimental-hacks.md`](../../docs/experimental-hacks.md): can we run our own code in the EPOC R5 kernel, using only the 2002 SDK?
+**Experimental.** This is not part of PsiTerm, PsiMail or PsiWeb, and is never released or loaded by the apps. It is item 2 of the shortlist in [`docs/experimental-hacks.md`](../../docs/experimental-hacks.md): can we run our own code in the EPOC R5 kernel, using only the 2002 SDK?
 
-The answer is yes. In the emulator, with the real 5mx ROM 1.05(260), the driver loads, opens a channel, runs in a privileged CPU mode, reads hardware registers, and changes the LCD palette and puts it back.
+The answer is yes. In the emulator, with the real 5mx ROM 1.05(260), the driver loads, opens a channel and runs in a privileged CPU mode. It reads hardware registers, and changes the LCD palette and puts it back. **PsiKernTest** is the harness that tries the same on a real 5mx.
 
 ## What is here
 
@@ -12,60 +12,115 @@ The answer is yes. In the emulator, with the real 5mx ROM 1.05(260), the driver 
 | `ldd/kern.h` | The kernel classes `DLogicalDevice` and `DLogicalChannel`, rebuilt by hand, because the SDK has no kernel headers. |
 | `psikern.h` | `RPsiKern`, the user-side handle, and the register offsets. |
 | `ekern_rom.def` | The EKERN exports the driver needs, with the **5mx ROM's** ordinals. |
-| `test/psikt.*` | `PSIKT.APP` (PsiKernTest), a bare EIKON app that runs the steps and shows each one on screen. |
-| `build.sh` | Builds both into `build/kernel-pkg/`. |
+| `test/psikt.*` | PsiKernTest (`PSIKT.APP`), the test harness. |
+| `psikt.pkg` | Its installer. |
+| `build.sh` | Builds all of it into `build/kernel-pkg/`, including `PsiKernTest.sis`. |
 
 ## What the driver does
 
 All requests go through `DoControl`, and every answer is its return value, so the driver never touches user memory.
 
-- **Version and CPU mode.** Version returns the magic number `0x504B` and 0.1. CPU mode returns the CPSR mode bits: in the emulator it is `0x1b` (UND), a privileged mode, not user mode (`0x10`).
+- **Version and CPU mode.** Version returns the magic number `0x504B` and 0.2. CPU mode returns the CPSR mode bits.
 - **Register reads.** It reads a fixed list of Windermere registers at virtual `0x58000000` and up: memory, LCD, power, interrupt status, UART2, timers, RTC and port data. Only registers without read side effects are on the list: no data, FIFO or end-of-interrupt registers. Any other offset gets `KErrArgument`.
-- **One write: invert the palette.** It inverts the 16 grey levels in the LCD palette. The palette is the 32 bytes of RAM just before the frame buffer, and the LCD controller reads it every frame. The driver saves the bytes first. It puts them back on request and when the channel closes. This writes RAM only, never a register.
+- **Palette reads.** It reads the 16 entries of the LCD palette, which is the 32 bytes of RAM just before the frame buffer. The LCD controller reads it every frame.
+- **Palette writes, the only writes.** It inverts the palette or sets single entries. Before the first write it checks that the 32 bytes look like a palette, and refuses if they don't:
+  - only the level bits are set, plus the bits-per-pixel code in entry 0;
+  - the levels of the entries in use run one way only.
 
-The test app runs the invert only if `\PSIKERN.WR` exists on C: or D:.
+  It keeps a copy of the palette and puts it back on request and when the channel closes. It writes RAM only, never a register.
+
+## PsiKernTest, the harness
+
+Nothing runs by itself. Each test is a menu command.
+
+| Menu | Test | What it does |
+|---|---|---|
+| Read | All read tests | The four below, in turn. |
+| Read | Machine and driver | Shows the machine, ROM, processor clock, display and RAM. Loads the driver, then shows its version and the CPU mode. |
+| Read | Registers | Reads every register on the list, then again a second later, and shows what changed. |
+| Read | Palette | Shows the screen address and the palette, and whether the palette passes the check. |
+| Read | CPU and memory speed | Times a loop and a memory copy. Doesn't use the driver. |
+| Write | Invert the screen (3 s) | Asks first, then inverts the screen and puts it back. |
+| Write | Grey curves (35 s) | Asks first, then shows a 16-grey ramp under six palettes for 5 s each, and puts the palette back. |
+
+**Built-in safety**
+
+- **ROM check.** The driver is loaded only on a 5mx with ROM 1.05(260), checked with `UserHal::MachineInfo`, because its kernel imports are by ordinal.
+- **The log.** It is `PsiKern.log` on D: (the CF card) if there is one, otherwise C:. Before each step a line `> step` is written and flushed to the disk, and after it `< step: result`. If a step takes the machine down, the next start says which step it was, and asks before running it again. The previous run's log is kept as `PsiKern.old`.
+- **Write tests ask first,** and run only if the palette check passes.
+
+### On the 5mx
+
+1. Back up C: (PsiWin, or copy it to the CF card).
+2. Install `build/kernel-pkg/PsiKernTest.sis`, preferably to D:.
+3. Open PsiKernTest from Extras and run Read > All read tests. Send back `D:\PsiKern.log`.
+4. Only if the palette check passes: Write > Invert the screen, then Write > Grey curves.
+5. To remove it: restart the Psion (the driver stays loaded until then), then remove PsiKernTest with Control panel > Add/remove.
 
 ## Results in the emulator (3 October 2026)
 
+**Machine and driver**
+
 ```
-LoadLogicalDevice: 0      Open channel: 0
-Version: 504b0001         CPU mode in driver: 1b (UND, privileged)
-PWRCNT = 00000004         PWRSR = 00000096
-LCDCTL = 00000003         MEMCFG1 = 00921010   DRAMCFG = 00000081
-UART2 CON = 01  FLG = 10  TC1 VALUE = 0000013f RTC LOW = 0000a4ec
-Palette inverted: 0 (3 s) Palette restored: 0  Channel closed. Done.
+Machine: SERIES5 MX, ROM 1.05(260)
+Processor: ARM 710T, 36864 kHz, speed factor 2000
+Display 640x240, 16 colours;  RAM 16384 KB;  ROM 17408 KB
+Load driver: 0   Open channel: 0   Driver version 0.2
+CPU mode in the driver: 1b (UND)
 ```
 
-The screen turned white on black for 3 s, then went back to normal.
+**Registers and the screen**
+- Registers:
+  - `MEMCFG1 = 00921010`, `DRAMCFG = 00000081`, `PWRCNT = 00000004`.
+  - From one read to the next a second later, `PWRSR`, `TC2 VALUE` and `RTC LOW` change.
+- Screen: the frame buffer is at virtual `58003020`, so the palette is at `58003000`.
+- Not modelled by the emulator: `LCDST`, `LCDDBAR1`, `LCDT0`–`2` and `UART2 LCR` read `0` or `ffffffff`. The emulator doesn't model `UBRCR` either. On a real 5mx they should hold real values.
 
-Some registers read `0` or `ffffffff` (`LCDST`, `LCDDBAR1`, `LCDT0`–`2`, `UART2 LCR`). The emulator does not model them; on a real 5mx they should hold real values. Expect other differences on the device too: the emulator does not model `UBRCR`, for example.
+**The palette**
+- **The System screen uses 4 greys.** Its palette is `100f 000a 0005 0000`, then zeros: bits-per-pixel code 1, with 4 entries in use.
+- **16-grey windows** (PsiTerm, PsiMail, this harness) use `200e 000d 000c … 0008 0007 0007 0006 … 0000`.
+  - EPOC's palette leaves out one of the 16 hardware levels and uses level 7 twice.
+  - On this hardware the high levels are dark: black is level 14, and level 15 is never used.
+  - With all 16 levels, black gets darker and greys 7 and 8 become different. The "All 16 levels" curve shows this in the emulator.
+  - Whether the 5mx's panel shows the difference is one of the questions for the device.
+- **Invert and every grey curve worked,** and the palette was put back each time.
+
+**Timing**
+- The tick is 15625 µs (64 a second), as the HAL says. The apps' "64 ticks a second" holds.
+- The emulator's own timing is not real time: it counted about 300 ticks in a 1 s wait. Its loop and memory speeds mean nothing, so only the 5mx can give real figures.
 
 ## How the kernel contract was recovered
 
 The SDK ships `ekern.lib`, but it is built for the **Series 5** kernel, `EKERN[100000b9].EXE`. The 5mx ROM's kernel is `EKERN[100000ba].EXE`, and its export ordinals are different. A driver linked against the SDK's library loads but calls the wrong functions.
 
 - **Ordinals.** The ordinals in `ekern_rom.def` were read from the export table of the kernel in the ROM image. `build.sh` turns them into `psiekern.lib` with `dlltool`. (No ROM bytes are in this repo.) EUSER's ordinals match the SDK, so its `euser.lib` is used as it is.
-- **Class layouts.** The SDK has no kernel headers. `DLogicalDevice` (0x28 bytes) and `DLogicalChannel` were rebuilt from the ROM's own `Video.ldd`, which derives from both, from the EKERN functions it imports, and from the mangled names in the SDK's `ekern.lib`. `kern.h` says which facts are proven and which are not. The fields we use are `iVersion`, `iParseMask`, `iUnitsMask` and `iDevice`.
-- **Checking the build.** The import table of `psikern.ldd` should show imports from `EKERN[100000ba]` at ordinals 63, 141, 302, 321, 339, 557, 558, 565 and 566, and nothing else from EKERN. (`ekern_rom.def` also lists 99 and 101, `DoControl` and `DoCreateL` of `DLogicalChannel`; the current driver does not import them.)
+- **Class layouts.** The SDK has no kernel headers. `DLogicalDevice` (0x28 bytes) and `DLogicalChannel` were rebuilt from:
+  - the ROM's own `Video.ldd`, which derives from both;
+  - the EKERN functions it imports;
+  - the mangled names in the SDK's `ekern.lib`.
 
-## Building and running
+  `kern.h` says which facts are proven and which are not. The fields we use are `iVersion`, `iParseMask`, `iUnitsMask` and `iDevice`.
+- **Checking the build.** The import table of `psikern.ldd` should show imports from `EKERN[100000ba]` at ordinals 63, 141, 302, 321, 339, 557, 558, 565 and 566, and nothing else from EKERN. `ekern_rom.def` also lists 99 and 101 (`DoControl` and `DoCreateL` of `DLogicalChannel`); the current driver doesn't import them.
+
+## Building and running in the emulator
 
 ```
 tools/docker/psibuild "experimental/kernel/build.sh"
 node --experimental-strip-types tools/emu/mkcard.ts psikern build/emu/kcard.img
-EMU_CARD=build/emu/kcard.img EMU_SECS=70 tools/emu/run.sh kern "46 tap 335 215"
+EMU_CARD=build/emu/kcard.img EMU_SECS=130 tools/emu/run.sh kern \
+    "46 tap 335 215" "54 148" "55 15" "56 3"
 ```
 
-The tap at 46 s starts PSIKT from the Extras bar. Its lines appear from about 47 s and finish by 48 s, in `build/emu/kern/s-04*.png`.
+- **Starting it:** the tap at 46 s starts PsiKernTest from the Extras bar.
+- **Running a test:** Menu (148), then Right (15) to reach Read, and Enter (3) for All read tests.
+- **The menu bar reopens on the last pane used,** so later key sequences have to allow for that.
 
-`build.sh` links `ldd/` and `test/` into the SDK's `ptproj/` as `psikernldd` and `psikerntest`. The `.marm` makefiles it generates there are not committed.
+`build.sh` links `ldd/` and `test/` into the SDK's `ptproj/` as `psikernldd` and `psikerntest`. The `.marm` makefiles it generates there are not committed. `PsiKernTest.sis` goes to `build/kernel-pkg/` only, never to `dist/`.
 
 ## Risks on a real 5mx
 
-Don't do this unless Dan decides to. If he does:
-
 - **A fault in the driver takes the whole machine down.** Nothing in the kernel catches it.
-- **C: is a RAM disk.** A hard reset can lose it, so back up C: first.
+- **C: is a RAM disk.** A hard reset can lose it, so back up C: first. The log goes on D: so that it survives.
 - **A driver can't be unloaded** once it is loaded. To remove it, restart the machine.
-- **Never write registers.** The driver writes only the palette, which is RAM. Writing power, clock, memory or UART registers could hang the machine or corrupt C:, and the emulator can't show what they do to real hardware.
-- **The ROM version must be 1.05(260).** On any other ROM, the ordinals in `ekern_rom.def` must be checked again first.
+- **Never write registers.** The driver writes only the palette, which is RAM, and only after the palette check. Writing power, clock, memory or UART registers could hang the machine or corrupt C:, and the emulator can't show what they do to real hardware.
+- **The ROM version must be 1.05(260).** The harness checks it. For any other ROM, the ordinals in `ekern_rom.def` must be read again first.

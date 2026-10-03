@@ -9,10 +9,13 @@
 //  - EVersion, ECpuMode: proves the driver loaded and runs in a privileged mode;
 //  - ERead32/ERead8/ELatchHigh: reads a fixed list of Windermere registers
 //    that have no read side effects (no data, FIFO or end-of-interrupt ones);
-//  - EInvert: the one write. It inverts the 16 grey levels in the LCD
+//  - EInvert, EPalSet: the only writes. They change grey levels in the LCD
 //    palette (the 32 bytes before the frame buffer, which the LCD controller
-//    reads every frame), and puts the saved bytes back on EInvert 0 and when
-//    the channel closes. It writes RAM only, never a register.
+//    reads every frame), and put the saved bytes back on ERestore (or
+//    EInvert 0) and when the channel closes. They write RAM only, never a
+//    register, and only after EPalCheck's test has passed on those bytes, so
+//    a wrong guess about where the palette is writes nothing.
+//  - EPalRead, EPalCheck: read the palette and say whether it looks like one.
 // It never touches user memory: every answer is DoControl's return value.
 #include "kern.h"
 #include <e32svr.h>
@@ -72,11 +75,14 @@ protected:
 	virtual TInt DoControl(TInt aFunction,TAny* a1,TAny* a2);
 private:
 	TUint8* Palette();
+	static TBool LooksLikePalette(const TUint8* aP);
+	TInt Snapshot();
 	TInt Invert(TBool aOn);
+	TInt SetEntry(TInt aEntry,TInt aLevel);
 	void Restore();
 private:
 	TUint32 iLatch;                    // the last ERead32
-	TUint8* iPalette;                  // non-NULL while inverted
+	TUint8* iPalette;                  // non-NULL while we have written it
 	TUint8 iSaved[KPaletteBytes];      // the palette as we found it
 	TUint8 iWritten[KPaletteBytes];    // what we put there
 	};
@@ -156,6 +162,29 @@ TInt DPsiKernChannel::DoControl(TInt aFunction,TAny* a1,TAny* /*a2*/)
 		return iLatch>>16;
 	case EInvert:
 		return Invert(off!=0);
+	case EPalRead:
+		{
+		if (off<0 || off>15)
+			return KErrArgument;
+		TUint8* p=Palette();
+		if (!p)
+			return KErrNotSupported;
+		return p[off*2] | (p[off*2+1]<<8);
+		}
+	case EPalCheck:
+		{
+		if (iPalette)
+			return KErrNone;            // (ours now: it was checked before the first write)
+		TUint8* p=Palette();
+		if (!p)
+			return KErrNotSupported;
+		return LooksLikePalette(p) ? KErrNone : KErrCorrupt;
+		}
+	case EPalSet:
+		return SetEntry((off>>8)&0xff,off&15);
+	case ERestore:
+		Restore();
+		return KErrNone;
 	default:
 		return KErrNotSupported;
 		}
@@ -172,6 +201,70 @@ TUint8* DPsiKernChannel::Palette()
 	return (TUint8*)info().iScreenAddress-KPaletteBytes;
 	}
 
+// The test before any write: 16 little-endian entries, each a grey level in
+// bits 0-3 and nothing else set, but for entry 0's bits-per-pixel code in
+// bits 12-13 (0: 2 entries in use, 1: 4, 2: 16). The levels of the entries
+// in use run one way (never back), from one end to a different one. In the
+// emulator, the System screen (4 greys) has 100f 000a 0005 0000 and zeros,
+// and a 16-grey app 200e 000d .. 0008 0007 0007 0006 .. 0000.
+// Anything else and these are not the palette: no write.
+TBool DPsiKernChannel::LooksLikePalette(const TUint8* aP)
+	{
+	TUint e0=aP[0] | (aP[1]<<8);
+	TUint code=(e0>>12)&3;
+	if (code==3)
+		return EFalse;
+	TInt used=code==0 ? 2 : code==1 ? 4 : 16;
+	TInt up=0, down=0;
+	TInt prev=-1;
+	for (TInt i=0; i<16; i++)
+		{
+		TUint e=aP[i*2] | (aP[i*2+1]<<8);
+		TUint extra=e & ~(i==0 ? 0x300fu : 0x000fu);
+		if (extra)
+			return EFalse;
+		TInt level=e&15;
+		if (i<used && prev>=0)
+			{
+			if (level>prev) up++;
+			if (level<prev) down++;
+			}
+		if (i<used)
+			prev=level;
+		}
+	return (up==0) != (down==0);       // one way only, and not all the same
+	}
+
+// Before the first write: check the bytes and keep them.
+TInt DPsiKernChannel::Snapshot()
+	{
+	if (iPalette)
+		return KErrNone;
+	TUint8* p=Palette();
+	if (!p)
+		return KErrNotSupported;
+	if (!LooksLikePalette(p))
+		return KErrCorrupt;
+	for (TInt i=0; i<KPaletteBytes; i++)
+		iWritten[i]=iSaved[i]=p[i];
+	iPalette=p;
+	return KErrNone;
+	}
+
+TInt DPsiKernChannel::SetEntry(TInt aEntry,TInt aLevel)
+	{
+	if (aEntry<0 || aEntry>15 || aLevel<0 || aLevel>15)
+		return KErrArgument;
+	TInt r=Snapshot();
+	if (r!=KErrNone)
+		return r;
+	TInt i=aEntry*2;
+	iWritten[i]=(TUint8)((iSaved[i]&0xf0)|aLevel);
+	iWritten[i+1]=iSaved[i+1];
+	iPalette[i]=iWritten[i];
+	return KErrNone;
+	}
+
 TInt DPsiKernChannel::Invert(TBool aOn)
 	{
 	if (!aOn)
@@ -179,22 +272,15 @@ TInt DPsiKernChannel::Invert(TBool aOn)
 		Restore();
 		return KErrNone;
 		}
-	if (iPalette)
-		return KErrInUse;
-	TUint8* p=Palette();
-	if (!p)
-		return KErrNotSupported;
-	TInt i;
-	for (i=0; i<KPaletteBytes; i++)
-		iSaved[i]=p[i];
-	for (i=0; i<KPaletteBytes; i+=2)
+	TInt r=Snapshot();
+	if (r!=KErrNone)
+		return r;
+	for (TInt e=0; e<16; e++)
 		{
-		iWritten[i]=(TUint8)((iSaved[i]&0xf0)|(15-(iSaved[i]&0x0f)));
-		iWritten[i+1]=iSaved[i+1];
+		r=SetEntry(e,15-(iSaved[e*2]&0x0f));
+		if (r!=KErrNone)
+			return r;
 		}
-	iPalette=p;
-	for (i=0; i<KPaletteBytes; i++)
-		p[i]=iWritten[i];
 	return KErrNone;
 	}
 

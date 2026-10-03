@@ -1,6 +1,7 @@
 #!/bin/bash
 # Builds the experimental kernel driver PSIKERN.LDD and its test app
-# PSIKT.APP into build/kernel-pkg/. EMULATOR ONLY: never ship these.
+# PSIKT.APP, and PsiKernTest.sis for a 5mx, into build/kernel-pkg/. Never
+# put these in dist/ or a release.
 #   tools/docker/psibuild "experimental/kernel/build.sh"
 set -e
 : "${PSION_SDK:?set PSION_SDK to your psion_cpp_sdk_linux directory}"
@@ -44,5 +45,7 @@ echo "== PSIKT.APP"
 
 P=$TOP/build/kernel-pkg
 rm -rf "$P"; mkdir -p "$P"
-cp "$REL/psikern.ldd" "$REL/psikt.app" "$REL/psikt.rsc" "$P/"
+cp "$REL/psikern.ldd" "$REL/psikt.app" "$REL/psikt.rsc" "$HERE/psikt.pkg" "$P/"
+# (for a 5mx: a local file only, never in dist/ or a release)
+( cd "$P" && wine "$EPOCROOT/epoc32/tools/makesis.exe" psikt.pkg PsiKernTest.sis > /dev/null )
 ls -la "$P"
