@@ -35,8 +35,10 @@ RESOURCE EIK_APP_INFO
 	}
 
 // The standard toolbar: the program's name, four buttons for the pen (Open
-// an address, Back, the Home page, Zoom - which cycles the sizes), the
-// clock. The pictures come from PsiWeb.mbm (web/tools/mkicons.py):
+// an address, Back, the Home page, Pictures - the page's pictures on or
+// off, pressed in while they show, as View > Show pictures), the clock.
+// Zoom is on the View menu, its keys and the Zoom icons beside the screen.
+// The pictures come from PsiWeb.mbm (web/tools/mkicons.py):
 // CPwAppUi::ConstructL puts them on. View > Show toolbar (Ctrl+T) hides it
 // and the page takes its room.
 RESOURCE TOOLBAR r_pw_toolbar
@@ -54,7 +56,7 @@ RESOURCE TOOLBAR r_pw_toolbar
 		TBAR_BUTTON { id=EPwCmdOpen; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Open"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
 		TBAR_BUTTON { id=EPwCmdBack; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Back"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
 		TBAR_BUTTON { id=EPwCmdHome; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Home"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
-		TBAR_BUTTON { id=EPwCmdZoomIn; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Zoom"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPwCmdImages; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Pictures"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
 		TBAR_CTRL
 			{
 			type=EEikCtSpacer;
@@ -140,9 +142,10 @@ RESOURCE MENU_PANE r_pw_file_menu
 		};
 	}
 
-// View: zoom (in and out cycle round the sizes), the toolbar tick box, Show
-// pictures (0.62: a command - the pictures of the page showing; pictures on
-// every page is in Preferences), then Page info (the Email program's Status
+// View: zoom (in and out cycle round the sizes; also the Zoom icons beside
+// the screen), the toolbar tick box, Show pictures (a tick box: the
+// pictures of the page showing, as the Pictures button; pictures on every
+// page is in Preferences), then Page info (the Email program's Status
 // information, on its key)
 RESOURCE MENU_PANE r_pw_view_menu
 	{
@@ -153,7 +156,7 @@ RESOURCE MENU_PANE r_pw_view_menu
 		MENU_ITEM { command=EPwCmdZoomNormal; txt="Normal size"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPwCmdToggleToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPwCmdReading; txt="Reading mode"; flags=EEikMenuItemCheckBox; },
-		MENU_ITEM { command=EPwCmdImages; txt="Show pictures"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdImages; txt="Show pictures"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPwCmdPageInfo; txt="Page information..."; }
 		};
 	}

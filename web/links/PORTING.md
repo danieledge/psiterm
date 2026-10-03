@@ -200,7 +200,7 @@ Screenshots are in `build/links/shots/`, with copies in this session's scratchpa
 - **No CSS.** BBC, Wikipedia and similar pages show "Skip to content" and long navigation lists first. Hidden menus are shown. Pictures in flex grids are stacked one above another.
 - **Page width.** The BBC page is wider than the screen (see its horizontal scroll bar), because of picture widths and tables.
 - **Simple sites look right:** 68k.news, text.npr.org and info.cern.ch.
-- **Links' own scroll bars** are drawn in grey, and pages have a 1-character margin. Both are fine on the Psion.
+- **Links' own scroll bars** are drawn in grey, and pages have a 1-character margin. Both are fine on the Psion. (Later the page's vertical bar became EIKON's, drawn by PsiWeb.app beside the page: `patches/links-2.30-scrollbar.diff`, `psi_drv.c` `report_page` and `PW_CMD_SCROLL`.)
 
 ### CPU (indicative only)
 

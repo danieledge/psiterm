@@ -74,12 +74,14 @@ static inline void mark(int x0, int y0, int x1, int y1);
 static void check_heap(int busy);
 static void save_progress(void);
 static void load_start(void);
+static void report_page(void);
 
 static void present_bh(void *p)
 {
 	(void)p;
 	if (!dirty) return;
 	dirty = 0;
+	report_page();			/* (before the frame: the app reads them with it) */
 	pwb_present(psi_fb, psi_w, dx0, dy0, dx1, dy1);
 }
 
@@ -534,6 +536,51 @@ static void report_state(int force)
 		safe_strncpy(last_status_txt, st, sizeof(last_status_txt));
 		pwb_set_status(cast_const_char st);
 	}
+	report_page();
+}
+
+/* The page's place for PsiWeb.app's scroll bar (EIKON's, beside the page:
+ * Links draws no vertical bar for the top frame, see links.h
+ * G_PAGE_SB_WIDTH), and whether its pictures are shown (the Pictures
+ * button and View > Show pictures). Written before each frame is
+ * presented, so the app has them with the frame. A frameset, or no page,
+ * is page_h 0: nothing for the bar to scroll. */
+int psi_show_pictures(struct session *ses);
+
+static void report_page(void)
+{
+#ifdef PSI_EPOC
+	PwShared *s = (PwShared *)pwb_shared();
+	struct session *ses = psi_ses();
+	struct f_data_c *fd = ses ? ses->screen : NULL;
+	int h = 0, y = 0, vh = 0;
+	if (!s) return;
+	if (fd && fd->f_data && fd->vs && !fd->f_data->frame_desc) {
+		vh = fd->yw - fd->hsb * G_SCROLL_BAR_WIDTH;
+		h = fd->f_data->y;
+		y = fd->vs->view_pos;
+		if (vh < 1) vh = 1;
+		if (h < vh) h = vh;
+		if (y > h - vh) y = h - vh;
+		if (y < 0) y = 0;
+	}
+	s->page_h = h;
+	s->page_y = y;
+	s->page_vh = vh;
+	s->page_pics = ses ? psi_show_pictures(ses) : 0;
+#endif
+}
+
+/* PsiWeb.app's scroll bar: the top of the view to y (pixels; Links keeps it
+ * within the page) */
+static void scroll_to(struct session *ses, int y)
+{
+	struct f_data_c *fd = ses->screen;
+	if (!fd || !fd->f_data || !fd->vs || fd->f_data->frame_desc) return;
+	fd->vs->view_pos = y;
+	draw_graphical_doc(ses->term, fd, 1);	/* (it clamps view_pos) */
+	fd->vs->orig_view_pos = fd->vs->view_pos;
+	report_page();
 }
 
 /* ---------- messages for PsiWeb.app ---------- */
@@ -1012,6 +1059,7 @@ static void run_command(int cmd, char *arg)
 	case PW_CMD_PAGEUP:	send_key(KBD_PAGE_UP, 0); break;
 	case PW_CMD_PAGEDOWN:	send_key(KBD_PAGE_DOWN, 0); break;
 	case PW_CMD_TOP:	send_key(KBD_HOME, 0); break;
+	case PW_CMD_SCROLL:	scroll_to(ses, atoi(arg)); break;
 	case PW_CMD_BOTTOM:	send_key(KBD_END, 0); break;
 	case PW_CMD_ZOOM: {
 		int pct = atoi(arg), fs;

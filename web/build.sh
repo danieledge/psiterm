@@ -25,6 +25,11 @@ SIS=${PSIWEB_SIS:-$TOP/dist/PsiWeb.sis}
 if [ "$ENGINE" = links ]; then
 	LK=$TOP/build/links
 	[ -f "$LK/links-2.30/.psion-patched" ] || "$HERE/links/fetch.sh" "$LK"
+	# a patch added since the sources were unpacked (fetch.sh lists those applied)
+	for p in "$HERE"/links/patches/*.diff; do
+		grep -qx "$(basename "$p")" "$LK/links-2.30/.psion-patches" 2>/dev/null || {
+			echo "build/links/links-2.30 lacks $(basename "$p"): move it away and build again"; exit 1; }
+	done
 	echo "== psiweb.exe (Links)"
 	make -f "$HERE/links/epoc.mk" -j4 PSION_SDK="$PSION_SDK" exe > "$TOP/build/web-links.log" 2>&1 \
 		|| { grep -E "error|undefined" "$TOP/build/web-links.log" | head -30; exit 1; }
