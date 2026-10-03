@@ -70,10 +70,10 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "Pictures on the web are not fetched unless you ask: a newsletter's pictures would tell the "
 	  "sender when you read it. A message with some says \"Pictures from the web are not shown - "
 	  "Show them\" at the top; Show them (or Message > Web > Show web pictures) fetches them. "
-	  "Tools > Preferences > Web pictures: Ask, Always or Never. On the modem each web site is a "
+	  "Tools > Preferences > Screen > Web pictures: Ask, Always or Never. On the modem each web site is a "
 	  "call of its own.\n"
 	  "\n"
-	  "Tools > Preferences > Show pictures chooses what is shown: Yes, Only attached files (nothing "
+	  "Tools > Preferences > Screen > Show pictures chooses what is shown: Yes, Only attached files (nothing "
 	  "from inside the HTML), or No. Whatever the setting, an attached picture can still be saved or "
 	  "opened with Message > Attachments.\n"
 	  "\n"
@@ -86,7 +86,7 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "can also choose the ordered pattern instead). The same greys are used by PsiTerm and PsiWeb. "
 	  "A change applies to pictures set out after it.\n"
 	  "\n"
-	  "Tools > Preferences > Reading mode: While reading a message raises the screen's contrast and "
+	  "Tools > Preferences > Screen > Reading mode: While reading a message raises the screen's contrast and "
 	  "keeps the backlight on while a message is open and PsiMail is in front. Your own settings "
 	  "come back in the list, in the background, on closing, or when the Psion is switched off." },
 

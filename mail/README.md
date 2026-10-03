@@ -294,7 +294,7 @@ lists, anniversaries, more than one calendar account.
   pictures would tell the sender when, and where, you read it. A message
   with some says "Pictures from the web are not shown - Show them" at the
   top; Show them, or Message > Web > Show web pictures, fetches them for that
-  message. Tools > Preferences > Web pictures: Ask (the default), Always or
+  message. Tools > Preferences > Screen > Web pictures: Ask (the default), Always or
   Never (`engine/webpics.c`, `app/pmwebpic.cpp`).
 * Even when asked, PsiMail never fetches spacers or tracking pixels, sends
   no password with the pictures, and keeps to at most 16 pictures, 300 KB

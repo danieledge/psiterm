@@ -3,7 +3,7 @@
 &EN
 ; Two-digit versions from 0.54 on (as PsiTerm and PsiMail): the EPOC
 ; installer compares major.minor only, so 0,5,3 looked the same as any 0,5,x.
-#{"PsiWeb"},(0x01000A7A),0,65,0
+#{"PsiWeb"},(0x01000A7A),0,66,0
 "psiweb.app"-"!:\System\Apps\PsiWeb\PsiWeb.app"
 "psiweb.rsc"-"!:\System\Apps\PsiWeb\PsiWeb.rsc"
 "psiweb.aif"-"!:\System\Apps\PsiWeb\PsiWeb.aif"

@@ -727,7 +727,8 @@ RESOURCE ARRAY r_pm_prefs_pages
 	items=
 		{
 		PAGE { text="General"; id=EPmPagePrefsGeneral; lines=r_pm_prefs_lines; },
-		PAGE { text="New mail"; id=EPmPagePrefsNewMail; lines=r_pm_prefs_newmail_lines; }
+		PAGE { text="New mail"; id=EPmPagePrefsNewMail; lines=r_pm_prefs_newmail_lines; },
+		PAGE { text="Screen"; id=EPmPagePrefsScreen; lines=r_pm_prefs_screen_lines; }
 		};
 	}
 
@@ -793,12 +794,21 @@ RESOURCE ARRAY r_pm_prefs_lines
 			control=NUMBER_EDITOR { min=0; max=50; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Keep mail on"; id=EPmDlgStore;
 			control=CHOICELIST { array_id=r_pm_store_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Email icon opens"; id=EPmDlgEmailButton;
+			control=CHOICELIST { array_id=r_pm_email_button_array; }; }
+		};
+	}
+
+// (0.82) pictures and the screen: a page of their own, so the dialog fits
+// the 240-pixel screen; Screen greys... (the button) belongs with them
+RESOURCE ARRAY r_pm_prefs_screen_lines
+	{
+	items=
+		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Show pictures"; id=EPmDlgPictures;
 			control=CHOICELIST { array_id=r_pm_pictures_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Web pictures"; id=EPmDlgWebPictures;
 			control=CHOICELIST { array_id=r_pm_web_pictures_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Email icon opens"; id=EPmDlgEmailButton;
-			control=CHOICELIST { array_id=r_pm_email_button_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Reading mode"; id=EPmDlgReading;
 			control=CHOICELIST { array_id=r_pm_reading_array; }; }
 		};

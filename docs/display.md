@@ -13,7 +13,7 @@ Every change can be turned off. All standards are as listed.
 | Reading mode: notches of contrast, light on | the same screen (*Reading mode: contrast +N*, *light on / light as set*) | +1, light on | `PsiGrey.ini` |
 | Reading mode in PsiTerm | View > Reading mode (tick box) | off | `PsiTerm.ini`, a new byte at the end (v14, bit 0) |
 | Reading mode in PsiWeb | View > Reading mode (tick box, Shift+Ctrl+R) | off | `PsiWeb.ini`, a new byte at the end (bit 0) |
-| Reading mode in PsiMail | Tools > Preferences > General > Reading mode (*Off / While reading a message*) | off | `TPmSettings::iView` bit 20 (0x100000), a spare bit: the struct's size is unchanged |
+| Reading mode in PsiMail | Tools > Preferences > Screen > Reading mode (*Off / While reading a message*) | off | `TPmSettings::iView` bit 20 (0x100000), a spare bit: the struct's size is unchanged |
 | PsiWeb text: sharp or scaled | PsiWeb: Tools > Preferences > Text (*Sharp / Scaled (as before)*) | sharp | `PsiWeb.ini` byte, bit 1 |
 | PsiTerm coloured text: dark or lighter greys | PsiTerm: Tools > Preferences > Coloured text | dark greys | `PsiTerm.ini` v14 byte, bit 1 |
 | Direct screen access | not built: see below | off | – |

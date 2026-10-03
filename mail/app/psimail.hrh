@@ -192,7 +192,8 @@ enum TPmPages
 	EPmPageCalServer,
 	EPmPageCalAgenda,
 	EPmPagePrefsGeneral,     // Preferences (0.74: two pages)
-	EPmPagePrefsNewMail
+	EPmPagePrefsNewMail,
+	EPmPagePrefsScreen
 	};
 
 // Connection settings > Test (0.74): the button, and the result dialog's lines

@@ -192,12 +192,14 @@ static TInt PgLinkRunThreadL(PgLinkTest* aTest, CEikonEnv* aEnv)
 	TPgLinkStacked stacked;
 	stacked.iAppUi = (CCoeAppUi*)aEnv->AppUi();   // (CCoeAppUiBase*: every EIKON app UI is a CCoeAppUi)
 	stacked.iControl = keys;
+	// (0.84) the cleanup item first, then onto the control stack: pushing it
+	// inside a TRAP unbalanced the cleanup stack at the TRAP's end, and EPOC
+	// panics then (E32USER-CBase 71). Taking a control off the stack that
+	// never got on is harmless.
+	CleanupStack::PushL(TCleanupItem(PgLinkUnstack, &stacked));
 	TRAPD(err, stacked.iAppUi->AddToStackL(keys, ECoeStackPriorityAlert, ECoeStackFlagRefusesFocus));
-	if (err == KErrNone)
-		TRAP(err, CleanupStack::PushL(TCleanupItem(PgLinkUnstack, &stacked)));
 	if (err != KErrNone)
 		{
-		stacked.iAppUi->RemoveFromStack(keys);   // (harmless if it never got on)
 		thread.Kill(0);                  // never ran: not left suspended
 		User::Leave(err);
 		}
