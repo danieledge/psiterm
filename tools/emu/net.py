@@ -373,6 +373,16 @@ class Ctx:
             raise RuntimeError('hostmodem did not start')
         return log
 
+    def wirsa(self, name, mode):
+        """tools/emu/fakewirsa.py on the bridge socket instead of hostmodem"""
+        if os.path.exists(self.sock):
+            os.remove(self.sock)
+        log = os.path.join(WORK, name + '-modem.log')
+        self.procs.start('fakewirsa', [sys.executable, '-u', os.path.join(HERE, 'fakewirsa.py'), self.sock, mode], log)
+        if not wait_path(self.sock):
+            raise RuntimeError('fakewirsa did not start')
+        return log
+
     def close(self):
         self.procs.stop_all()
         if os.path.exists(self.sock):
@@ -380,7 +390,44 @@ class Ctx:
         os.rmdir(self.sockdir)
 
 
-TESTS = {'at': test_at, 'web': test_web, 'mail': test_mail, 'ssh': test_ssh, 'proxy': test_proxy}
+# PsiKernTest's Write > Serial link with the modem (experimental/kernel): the
+# dialogue with each modem. (The bridge has no baud rate, and the emulator
+# doesn't model UBRCR, so the speed itself is only tested on the 5mx.)
+def kern_serial(ctx, name, modem_log, secs=50):
+    card = os.path.join(WORK, 'kern.img')
+    make_card('psikern', card, 'EMU_PKG_KERN')
+    # PsiKernTest from the Extras bar; Menu, Right twice to Write, Down four
+    # times to "Serial link with the modem", Enter, then Yes to the question
+    s = Script(46).tap(335, 215).at(54).key(148).key(15).key(15)
+    s.key(17).key(17).key(17).key(17).key(ENTER).wait(5).key(ord('Y'))
+    return emulate(name, card, ctx.sock, s, secs=secs)
+
+
+def test_kern(ctx):
+    log = ctx.modem('kern')
+    out = kern_serial(ctx, 'kern', log)
+    # (hostmodem logs what it sends: ATI's first line, ten times at each speed)
+    try:
+        n = open(log, 'rb').read().count(b'Atom modem 1.1')
+    except OSError:
+        n = 0
+    return n >= 20, out
+
+
+def test_kernwirsa(ctx):
+    log = ctx.wirsa('kernwirsa', 'stock')
+    out = kern_serial(ctx, 'kernwirsa', log)
+    return grep(log, "AT$SB=230400 -> b'ERROR'") and grep(log, "ATI -> "), out
+
+
+def test_kernwirsafast(ctx):
+    log = ctx.wirsa('kernwirsafast', 'fast')
+    out = kern_serial(ctx, 'kernwirsafast', log, secs=100)    # (two 5 s switches)
+    return grep(log, 'AT$SB=230400 -> switching') and grep(log, 'AT$SB=115200 -> switching'), out
+
+
+TESTS = {'at': test_at, 'web': test_web, 'mail': test_mail, 'ssh': test_ssh, 'proxy': test_proxy,
+         'kern': test_kern, 'kernwirsa': test_kernwirsa, 'kernwirsafast': test_kernwirsafast}
 ALL = ['at', 'web', 'mail', 'ssh']             # (proxy needs the Internet: asked for by name)
 
 

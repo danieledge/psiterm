@@ -32,7 +32,7 @@ const TInt KMaxLines=40;
 const TInt KLineLen=80;
 _LIT(KLogName,"PsiKern.log");
 _LIT(KOldName,"PsiKern.old");
-_LIT(KPsiKtVersion,"0.6");
+_LIT(KPsiKtVersion,"0.7");
 
 // the ROM the driver's ordinals come from (ekern_rom.def)
 const TInt KRomMajor=1, KRomMinor=5, KRomBuild=260;
@@ -425,6 +425,7 @@ private:
 	TBool RomOk();
 	TBool Ask(const TDesC& aFirst, const TDesC& aSecond);
 	void SerialProblemL(TInt aErr);
+	void AtiTen(TPsiKtSerial& aPort, const TDesC& aSpeed);
 	void EverythingL();
 	TBool PaletteReady();
 	void ReadPalette();
@@ -446,6 +447,7 @@ private:
 	TBool iPicking;                   // keys 0-6 choose a curve
 	TInt iReapplied;                  // how often EPOC set its own again
 	TBool iAll;                       // Test everything: asked once, at the start
+	TInt iAtiOk, iAtiClean;           // the last AtiTen
 	CPeriodic* iKeeper;
 	};
 
@@ -1064,17 +1066,46 @@ static TBool Clean(const TDesC8& aReply)
 	return ETrue;
 	}
 
-// 230400 with the Atom modem: AT$SB=230400 at 115200, then UART2's divider
-// to 1, then ATI ten times. Back to 115200 at the end, or if anything fails
-// (the Atom goes back by itself 15 s after a speed change that nothing at
-// the new speed confirms).
+// ATI ten times: how many answered with OK, how many clean, bytes, time
+void CPsiKtAppUi::AtiTen(TPsiKtSerial& aPort, const TDesC& aSpeed)
+	{
+	TBuf8<1024> reply;
+	TInt ok=0, clean=0, ms=0, bytes=0;
+	for (TInt n=0; n<10; n++)
+		{
+		TUint t0=User::TickCount();
+		TInt rr=aPort.Talk(_L8("ATI\r"),reply,4000);
+		ms+=TicksToMs(User::TickCount()-t0);
+		bytes+=reply.Length();
+		if (rr==KErrNone) ok++;
+		if (rr==KErrNone && Clean(reply)) clean++;
+		}
+	TBuf<KLineLen> l;
+	l.Format(_L("%S: ATI ten times: %d answered, %d clean, %d bytes in %d ms"),&aSpeed,ok,clean,bytes,ms);
+	Say(l);
+	iAtiOk=ok;
+	iAtiClean=clean;
+	}
+
+// The serial link with the modem, the Atom or the WiRSa:
+//  1. at 115200: AT, then ATI ten times (answers, clean, bytes, time);
+//  2. AT$SB=230400, and what the modem does with it:
+//     - OK at 115200 (the Atom): it switches now; UART2's divider to 1;
+//     - "SWITCHING ... IN 5 SECONDS" (a WiRSa with 230400 in its firmware):
+//       it switches 5 s later and answers at the new speed; the divider
+//       to 1 at 5.3 s;
+//     - ERROR (a stock WiRSa: its firmware stops at 115200): done;
+//  3. at 230400: AT, then ATI ten times;
+//  4. AT$SB=115200 and the divider back to 3 (at once, or after 5.3 s).
+// If the modem stops answering at 230400, the divider goes back to 3: the
+// Atom goes back by itself after 15 s; a WiRSa must be switched off and on.
 void CPsiKtAppUi::SerialFastL()
 	{
-	_LIT(KStep,"Serial 230400");
+	_LIT(KStep,"Serial with the modem");
 	TInt r=OpenDriver();
 	if (r!=KErrNone)
 		return;
-	if (!Ask(_L("The Atom modem must be connected and idle"),_L("Try 230400 with it?")))
+	if (!Ask(_L("The modem (Atom or WiRSa) must be connected and idle"),_L("Test the serial link with it?")))
 		return;
 	if (!BeginStepL(KStep))
 		return;
@@ -1094,35 +1125,52 @@ void CPsiKtAppUi::SerialFastL()
 		r=port.Talk(_L8("AT\r"),reply,2000);
 	if (r!=KErrNone)
 		{
-		l.Format(_L("No modem answers at 115200: %d"),r);
-		Say(l);
+		Say(_L("No modem answers at 115200"));
+		Say(_L("Check it is on, connected, and set to 115200 (AT$SB=115200)"));
 		port.Close();
 		EndStep(KStep,r);
 		return;
 		}
 	Say(_L("115200: the modem answers"));
-	TUint t0=User::TickCount();
-	r=port.Talk(_L8("ATI\r"),reply,3000);
-	TInt slowMs=TicksToMs(User::TickCount()-t0);
-	TInt slowLen=reply.Length();
-	l.Format(_L("115200: ATI, %d bytes in %d ms: %d"),slowLen,slowMs,r);
-	Say(l);
-	r=port.Talk(_L8("AT$SB=230400\r"),reply,2000);
-	if (r!=KErrNone)
+	AtiTen(port,_L("115200"));
+	TInt slowClean=iAtiClean;
+	// 230400?
+	TUint sent=User::TickCount();
+	r=port.Talk(_L8("AT$SB=230400\r"),reply,1500);
+	TBool wirsa=reply.Find(_L8("SWITCHING"))>=0;
+	ReplyLine(reply,shown);
+	iLog.Line(shown);
+	if (r==KErrGeneral)
 		{
-		ReplyLine(reply,shown);
-		l.Format(_L("The modem refused AT$SB=230400: %d %S"),r,&shown);
+		Say(_L("The modem refused 230400: its firmware stops at 115200 (a stock WiRSa does)"));
+		port.Close();
+		l.Format(_L("115200 result: %d of 10 clean"),slowClean);
+		Say(l);
+		EndStep(KStep,slowClean==10 ? KErrNone : KErrGeneral);
+		return;
+		}
+	if (r!=KErrNone && !wirsa)
+		{
+		l.Format(_L("No clear answer to AT$SB=230400 (%d): stopping"),r);
 		Say(l);
 		port.Close();
 		EndStep(KStep,r);
 		return;
 		}
-	User::After(300000);                     // (the Atom switches after its OK)
+	if (wirsa)
+		{
+		Say(_L("The WiRSa switches in 5 s..."));
+		TInt waited=TicksToMs(User::TickCount()-sent);
+		if (waited<5300)
+			User::After((5300-waited)*1000);
+		}
+	else
+		User::After(300000);                 // (the Atom switches after its OK)
 	iLog.Line(_L("> UBRCR 1"));
 	r=iKern.UbrcrSet(1);
 	l.Format(_L("UART2 at 230400: %d"),r);
 	Say(l);
-	TInt ok=0, clean=0, fastMs=0, fastLen=0;
+	TBool fastOk=EFalse;
 	if (r==KErrNone)
 		{
 		r=port.Talk(_L8("AT\r"),reply,2000);
@@ -1133,38 +1181,39 @@ void CPsiKtAppUi::SerialFastL()
 		Say(l);
 		if (r==KErrNone)
 			{
-			for (TInt n=0; n<10; n++)
-				{
-				t0=User::TickCount();
-				TInt rr=port.Talk(_L8("ATI\r"),reply,3000);
-				fastMs+=TicksToMs(User::TickCount()-t0);
-				fastLen+=reply.Length();
-				if (rr==KErrNone) ok++;
-				if (Clean(reply)) clean++;
-				}
-			l.Format(_L("230400: ATI ten times: %d answered, %d clean, %d bytes in %d ms"),
-				ok,clean,fastLen,fastMs);
-			Say(l);
+			AtiTen(port,_L("230400"));
+			fastOk=iAtiClean==10;
 			// back to 115200 at both ends
-			r=port.Talk(_L8("AT$SB=115200\r"),reply,2000);
-			User::After(300000);
+			sent=User::TickCount();
+			port.Talk(_L8("AT$SB=115200\r"),reply,1500);
+			if (wirsa)
+				{
+				TInt waited=TicksToMs(User::TickCount()-sent);
+				if (waited<5300)
+					User::After((5300-waited)*1000);
+				}
+			else
+				User::After(300000);
 			}
 		}
 	iKern.UbrcrSet(3);
 	iLog.Line(_L("< UBRCR 3"));
 	r=port.Talk(_L8("AT\r"),reply,2000);
-	if (r!=KErrNone)
+	if (r!=KErrNone && !wirsa)
 		{
-		Say(_L("Waiting 16 s for the modem to go back to 115200 by itself..."));
+		Say(_L("Waiting 16 s for the Atom to go back to 115200 by itself..."));
 		User::After(16000000);
 		r=port.Talk(_L8("AT\r"),reply,2000);
 		}
-	l.Format(_L("Back at 115200: the modem %S"),r==KErrNone ? &_L("answers") : &_L("does not answer"));
-	Say(l);
+	if (r==KErrNone)
+		Say(_L("Back at 115200: the modem answers"));
+	else if (wirsa)
+		Say(_L("The WiRSa does not answer at 115200: switch it off and on"));
+	else
+		Say(_L("Back at 115200: the modem does not answer"));
 	port.Close();
-	if (ok==10 && clean==10)
-		Say(_L("230400 works with the Atom"));
-	EndStep(KStep,ok==10 && clean==10 ? KErrNone : KErrGeneral);
+	Say(fastOk ? _L("230400 works with this modem") : _L("230400 did not work cleanly"));
+	EndStep(KStep,fastOk ? KErrNone : KErrGeneral);
 	}
 
 // Why the serial port could not be opened, and what to do: on the screen
@@ -1210,7 +1259,7 @@ TBool CPsiKtAppUi::Ask(const TDesC& aFirst, const TDesC& aSecond)
 // The 230400 test needs the Atom: without it, it says so and goes on.
 void CPsiKtAppUi::EverythingL()
 	{
-	if (!iEikonEnv->QueryWinL(_L("All tests: screen, and 230400 with the Atom"),
+	if (!iEikonEnv->QueryWinL(_L("All tests: screen, and the serial link with the modem"),
 		_L("Back up C: first. Run them all?")))
 		return;
 	if (iKeepCurve>=0)

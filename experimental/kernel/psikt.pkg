@@ -1,8 +1,8 @@
-; PsiKernTest 0.6 for the Psion Series 5mx, ROM 1.05(260) only. EXPERIMENTAL.
+; PsiKernTest 0.7 for the Psion Series 5mx, ROM 1.05(260) only. EXPERIMENTAL.
 ; A kernel driver (PsiKern.ldd) and its test harness. Never released: built
 ; by experimental/kernel/build.sh into build/kernel-pkg/ only. See README.md.
 &EN
-#{"PsiKernTest"},(0x0100FA11),0,6,0
+#{"PsiKernTest"},(0x0100FA11),0,7,0
 "psikt.app"-"!:\System\Apps\PsiKT\PsiKT.app"
 "psikt.rsc"-"!:\System\Apps\PsiKT\PsiKT.rsc"
 "psikern.ldd"-"!:\System\Libs\PsiKern6.ldd"
