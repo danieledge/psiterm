@@ -69,7 +69,7 @@ $(O)/psi/psi_drv.o: psi_drv.c $(HDRS) $(WEB)/fb/pwback.h $(SRC)/links.h
 $(O)/psi/psi_mem.o: psi_mem.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(OPT) -Wall $< -o $@
-$(O)/psi/psi_grey.o: psi_grey.c $(WEB)/fb/pwback.h
+$(O)/psi/psi_grey.o: psi_grey.c $(WEB)/fb/pwback.h $(TOP)/ssh/psigrey.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(OPT) -w -std=gnu99 -I$(WEB)/fb $< -o $@
 $(O)/psi/psi_digest.o: psi_digest.c

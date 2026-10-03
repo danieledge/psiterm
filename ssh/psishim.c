@@ -77,11 +77,13 @@ extern int psi_sftp_read(void*, int);
 extern int psi_sftp_write(const void*, int);
 extern int psi_sftp_pending(void);
 extern int psi_sftp_running(void);
+extern int psi_sftp_busy(void);
 extern void psi_sftp_session_ended(void);
 /* from tmuxq.c */
 extern int psi_tq_read(void*, int);
 extern int psi_tq_write(const void*, int);
 extern int psi_tq_running(void);
+extern int psi_tq_busy(void);
 extern void psi_tq_session_ended(void);
 
 static FILE psi_tty_file;                    /* marker for "/dev/tty" */
@@ -440,6 +442,14 @@ int psi_pipe(int fds[2])
 	return 0;
 }
 
+/* (0.81) PsiTerm rings psissh's doorbell when it posts a request, and
+   pg_wait then returns at once (psibell.h) */
+static int bells_on(void)
+{
+	PsiShared *s = pg_shared();
+	return s && s->bell_magic == PSI_BELL_MAGIC && !s->eng_bell.broken;
+}
+
 int psi_select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv)
 {
 	int wantNet = r && FD_ISSET(PSI_FD_NET, r);
@@ -455,8 +465,11 @@ int psi_select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv)
 	ms = tv ? (int)(tv->tv_sec * 1000 + tv->tv_usec / 1000) : -1;
 	if (wantW || (wantSig && psi_sig_pending) || sftpOut)
 		ms = 0;
-	else if ((psi_sftp_running() || psi_tq_running()) && (ms < 0 || ms > 250))
-		ms = 250;                      /* look for file transfer and tmux requests 4 times a second */
+	else if ((psi_sftp_busy() || psi_tq_busy()) && (ms < 0 || ms > 250))
+		ms = 250;                      /* a file transfer or tmux request in hand: its time limits and Stop */
+	else if ((psi_sftp_running() || psi_tq_running()) && !bells_on() && (ms < 0 || ms > 250))
+		ms = 250;                      /* look for file transfer and tmux requests 4 times a second
+		                                  (with the doorbell (0.81), PsiTerm's ring ends the wait) */
 
 	if (pg_take_link_doubt() && ses.authstate.authdone) {
 		/* switched back on with no carrier detect to ask (psiglue): send a

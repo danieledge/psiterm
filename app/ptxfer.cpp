@@ -260,6 +260,7 @@ TBool CPtXferDialog::OkToExitL(TInt aButtonId)
 	PsiShared* s = iView.XferShared();
 	if (s)
 		s->xfer_cancel = 1;
+	iView.RingSsh();
 	iStopping = ETrue;
 	ShowProgressL(ETrue);
 	return EFalse;
@@ -287,6 +288,7 @@ static TInt RunXferL(CTermView& aView, TInt aOp, const TDesC8& aRemote, const TD
 	s->xfer_total = 0;
 	TUint req = s->xfer_req + 1;
 	s->xfer_req = req;                   // last: psissh starts now
+	aView.RingSsh();
 	// a quick request (a folder list on a fast link) needs no window
 	for (TInt i = 0; i < 8; i++)
 		{

@@ -233,7 +233,8 @@ RESOURCE MENU_PANE r_pt_debug_menu
 		MENU_ITEM { command=EPtCmdCheckTabs; txt="Check tmux tabs"; },
 		MENU_ITEM { command=EPtCmdScreenshot; txt="Screenshot"; },
 		MENU_ITEM { command=EPtCmdSendShots; txt="Send screenshots"; },
-		MENU_ITEM { command=EPtCmdSendSize; txt="Type screen size"; }
+		MENU_ITEM { command=EPtCmdSendSize; txt="Type screen size"; },
+		MENU_ITEM { command=EPtCmdGreyCal; txt="Display calibration..."; }
 		};
 	}
 
@@ -284,7 +285,8 @@ RESOURCE MENU_PANE r_pt_view_menu
 		MENU_ITEM { command=EPtCmdZoomOut; txt="Zoom out"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdBold; txt="Bold text"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPtCmdStatusLine; txt="Show status line"; flags=EEikMenuItemCheckBox; },
-		MENU_ITEM { command=EPtCmdToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdReading; txt="Reading mode"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { cascade=r_pt_font_menu; txt="Font"; },
 		MENU_ITEM { cascade=r_pt_scroll_menu; txt="Scroll"; }
 		};
@@ -627,8 +629,16 @@ RESOURCE DIALOG r_pt_appearance_dialog
 		DLG_LINE { type=EEikCtChoiceList; prompt="Cursor"; id=EPtDlgCursor; control=CHOICELIST { array_id=r_pt_cursor_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Blinking cursor"; id=EPtDlgBlink; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Beep on bell"; id=EPtDlgBell; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Start screen"; id=EPtDlgStartScreen; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Start screen"; id=EPtDlgStartScreen; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Coloured text"; id=EPtDlgColourText; control=CHOICELIST { array_id=r_pt_colour_text_array; }; }
 		};
+	}
+
+// docs/display.md: colours meant for a black background are made dark
+// enough to read on the Psion's white (the standard), or as before 0.81
+RESOURCE ARRAY r_pt_colour_text_array
+	{
+	items={ LBUF { txt="Dark greys"; }, LBUF { txt="Lighter greys"; } };
 	}
 
 RESOURCE ARRAY r_pt_theme_array

@@ -19,12 +19,18 @@
 #include <eikbutb.h>
 #include <badesca.h>
 
+class CFbsBitmap;
+
 extern "C" {
 #include "psishared.h"
 }
+#include "psibell.h"           // (0.81) doorbells with psissh: power
 
 #include "vterm.h"
 #include "termsb.h"
+
+#include "psigrey.h"
+#include "psidisp.h"
 
 #include <psiterm.rsg>
 #include "psiterm.hrh"
@@ -60,7 +66,12 @@ struct TPsiSettings
 	TInt iTmuxTabs;       // 1 = draw tmux's window list as tabs
 	TBuf<40> iPppStart;   // Psion Internet: sent to the modem first (empty = nothing)
 	TInt iToolbar;        // 1 = the toolbar is showing (0.71: saved as one more byte, v13)
+	TInt iDisplay;        // v14 (docs/display.md): KPtDisplay* bits
 	};
+
+// TPsiSettings::iDisplay bits (all 0 is the standard)
+const TInt KPtDisplayReading = 1;      // View > Reading mode
+const TInt KPtDisplayLightText = 2;    // Preferences > Coloured text: lighter greys (as before 0.81)
 
 // ---------------------------------------------------------------------------
 // Snippets (C:\System\Apps\PsiTerm\Snippets.dat): named text to send, each
@@ -488,6 +499,7 @@ public:
 	TInt Cols() const { return iCols; }
 	TInt Rows() const { return iRows; }
 	TPsiSettings& Settings() { return iSettings; }
+	void SetGreys(const PsiGrey& aGrey);   // the calibration (PsiGrey.ini): colours are drawn again
 
 	// SSH (Dropbear in psissh.exe)
 	void StartSshL();
@@ -505,7 +517,9 @@ public:
 	TBool SshQuitting() const { return iQuitAsked; }   // asked to stop, not yet gone
 	TBool ReconnectWaiting() const { return iReconnectWait; }
 	// (0.68) the Psion was switched back on: psissh checks the link is still there
-	void LinkSwitchedOn() { if (iSshActive && iShared) iShared->switch_on++; }
+	void LinkSwitchedOn() { if (iSshActive && iShared) { iShared->switch_on++; RingSsh(); } }
+	void RingSsh();          // (0.81) something for psissh in the chunk: ring its doorbell
+	void SetForeground(TBool aForeground);   // (0.81) in front or behind: the tick's pace
 	TBool ModemOnline() const;
 	TBool SshLoggedIn() const;
 	TBool InTmux() const { return iTabRow >= 0; }
@@ -620,8 +634,12 @@ private:
 	TInt Theme(TInt aGrey) const;                   // theme mapping of a grey 0..15
 	TRgb Grey(TInt aGrey) const { return TRgb::Gray16(Theme(aGrey)); }
 	void ThemePair(TInt aFg, TInt aBg, TInt& aThemedFg, TInt& aThemedBg) const;
+	TUint8 iGreyCal[256];     // 8-bit grey -> level, from the calibration (ssh/psigrey.h)
+	TBool iGreyOn;            // the calibration is on (else the old mapping, exactly)
 	TInt iStatusH;            // status line height in pixels (0 = off)
-	CPeriodic* iTick;         // 0.5 s: clock, status line, cursor blink
+	CPeriodic* iTick;         // 0.5 s (2 s when nothing moves: TickBusy): clock, status line, cursor blink
+	TBool iForeground;        // (0.81) PsiTerm is in front: the tick draws (CPsiTermAppUi::HandleWsEventL)
+	TInt iTickUs;             // the tick's period now
 	TBool iBlinkHidden;       // cursor in the "off" half of a blink
 	TBuf<120> iStatusDrawn;   // what the status line shows now
 	TTime iReconnectAt;       // when the next reconnect attempt starts
@@ -630,6 +648,7 @@ private:
 	void Tick();
 	static TInt TickCallback(TAny* aSelf);
 	void StartTick();
+	TBool TickBusy() const;
 	void SyncToolbar();       // the first toolbar button: SSH to..., or End SSH
 	TInt iTbBusy;             // what it shows now (-1 = not yet set)
 	short* iSbCols;
@@ -735,6 +754,17 @@ private:
 	RProcess iSshProcess;
 	CSshWatcher* iWatcher;
 	CPeriodic* iPump;
+	// (0.81) power: the pump looks every tick only while output flows; then
+	// it waits on the doorbell psissh rings (psibell.h), with a slow tick
+	// for the heartbeat. Keys and requests ring psissh's bell.
+	CPsiBellWaiter* iBellWaiter;
+	TPsiBellRinger iSshRinger;
+	TBool iPumpQuiet;         // the pump is on its slow tick, the bell armed
+	TInt iPumpIdle;           // ticks with nothing from psissh
+	void PumpFast();
+	void PumpQuiet();
+	static TInt BellCallback(TAny* aSelf);
+	TUint iUserAt;            // tick of the last key typed (tmux window list: how often)
 	TUint8 iEntropy[PSI_ENTROPY_SIZE];
 	TInt iEntropyPos;
 	TInt iEntropyFill;
@@ -788,12 +818,51 @@ private:
 // ---------------------------------------------------------------------------
 // EIKON application framework classes
 // ---------------------------------------------------------------------------
-class CPsiTermAppUi : public CEikAppUi
+// Tools > Debug > Display calibration (ptgrey.cpp): a full-screen test card
+class MPtGreyObserver
+	{
+public:
+	virtual void GreyScreenDone(TBool aSave, const PsiGrey& aGrey) = 0;
+	};
+
+class CPtGreyScreen : public CCoeControl
+	{
+public:
+	static CPtGreyScreen* NewL(MPtGreyObserver& aObserver);
+	~CPtGreyScreen();
+	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
+private:
+	enum { KRampRows = 72 };
+	CPtGreyScreen(MPtGreyObserver& aObserver);
+	void ConstructL();
+	void Draw(const TRect& aRect) const;
+	void DrawField(CWindowGc& aGc, TInt aField, const TDesC& aText, TInt& aX, TInt aY) const;
+	void Changed();
+	void MakeRampsL();
+	void TimeBlitsL();                 // T: window server against direct screen writes
+	MPtGreyObserver& iObserver;
+	PsiGrey iGrey;
+	TInt iField;
+	TInt iLevel;
+	CFbsBitmap* iRamps;
+	};
+
+class CPsiTermAppUi : public CEikAppUi, public MPtGreyObserver
 	{
 public:
 	void ConstructL();
 	~CPsiTermAppUi();
+	void GreyScreenDone(TBool aSave, const PsiGrey& aGrey);
 private:
+	// Reading mode (View > Reading mode; ssh/psidisp.h): on while PsiTerm
+	// is in front, off in the background, at switch-on and on closing
+	void UpdateReading(TBool aEnterOnly = EFalse);
+	void GreyScreenL();
+	TPsiReading iReading;
+	TBool iForeground;
+	CPtGreyScreen* iGreyScreen;
+	CIdle* iGreyCloser;
+	static TInt GreyCloseCallback(TAny* aSelf);
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
 	void HandleSwitchOnEventL(CCoeControl* aDestination);

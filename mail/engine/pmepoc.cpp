@@ -19,6 +19,9 @@ void pmn_idle_tick(void);
 void pm_log(const char* aFmt, ...);
 extern PsiShared* pg_shared();
 extern int pg_attach();
+extern int pg_bells();
+extern int pg_bell_wait(int aMs);
+extern void pg_ring_app();
 void pm_loop(int (*housekeeping)(void));
 extern int pm_replace_busy;              // (pmmain.c) the last pm_replace failed because the file was in use
 }
@@ -278,9 +281,31 @@ extern "C" void pm_log(const char* aFmt, ...)
 	gLogLen += n + tn;
 	}
 
+// (0.81) Nothing to do. The app's news first: a command has finished,
+// files have changed, the line has gone - its doorbell (psibell.h), which
+// it waits on when it has nothing going on. Then, with the doorbells, wait
+// until the app rings (a command, quit, Stop, a switch-on) for up to 2 s
+// (housekeeping), instead of looking 10 times a second.
+static TUint gRungDone = 0, gRungChanged = 0;
+static TInt gRungOnline = -1, gRungBusy = -1, gRungState = -1;
+
 extern "C" void pm_idle(int aMs)
 	{
-	User::After(aMs * 1000);
+	PmShared* s = pm_shared();
+	if (s->done_seq != gRungDone || s->changed_seq != gRungChanged || s->online != gRungOnline
+		|| s->busy != gRungBusy || s->state != gRungState)
+		{
+		gRungDone = s->done_seq;
+		gRungChanged = s->changed_seq;
+		gRungOnline = s->online;
+		gRungBusy = s->busy;
+		gRungState = s->state;
+		pg_ring_app();
+		}
+	if (pg_bells())
+		pg_bell_wait(2000);
+	else
+		User::After(aMs * 1000);
 	}
 
 // ----- housekeeping: about once a second ------------------------------------

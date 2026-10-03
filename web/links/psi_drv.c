@@ -39,12 +39,19 @@ enum {
 };
 
 #define POLL_MS		20	/* input poll while active */
+#define POLL_QUIET_MS	2000	/* (0.81) ...and with nothing happening: PsiWeb.app's ring wakes it */
+#define QUIET_AFTER_MS	1000	/* nothing for this long: quiet */
 #define STATUS_MS	250	/* title/url/status/busy report */
 
 static unsigned short *psi_fb;
 static int psi_w, psi_h;
 static int dirty, dx0, dy0, dx1, dy1;
 static struct timer *poll_timer;
+static uttime last_active;		/* input, a command or an answer last taken */
+static int in_poll;
+#ifdef PSI_EPOC
+extern int psi_quiet_ok(void);		/* psi_os.c: the app rings the doorbell */
+#endif
 static uttime last_status;
 static int mods;			/* KBD_SHIFT | KBD_CTRL | KBD_ALT */
 static int mouse_x, mouse_y, mouse_down;
@@ -190,6 +197,92 @@ static void pack_row(unsigned char *d, const unsigned short *s, int n)
 	for (; n > 0; n--) *d++ = t[*s++];
 }
 
+/* Pictures by error diffusion (docs/display.md): once packed to v, each
+ * row is Floyd-Steinberg dithered (serpentine) to the calibrated levels
+ * and stored as lv[level], a v that psi_grey.c's frame conversion turns
+ * back into that same level with no further dithering. Done once per
+ * picture, not at every redraw. Rows come all at once (register_bitmap)
+ * or in strips (commit_strip), top to bottom; the error is carried from
+ * one strip to the next when it follows on, and starts again otherwise
+ * (a picture redrawn from the top, another picture). The errors are
+ * words (the ARM710 has no halfword loads), two rows; if they cannot be
+ * had, the picture is only rounded. */
+int pw_grey_diffuse(const unsigned char **levels, const unsigned char **nearest);
+static int *fs_err;			/* two rows of (width + 2) */
+static int fs_w = -1, fs_next = -1, fs_serp;
+static const struct bitmap *fs_bmp;
+
+static void fs_forget(void)
+{
+	fs_bmp = NULL;
+	fs_next = -1;
+}
+
+static void fs_rows(const struct bitmap *bmp, unsigned char *row, int top, int lines, size_t stride)
+{
+	const unsigned char *lvt, *cal;
+	int *ec, *en, *t;
+	int w = bmp->x, y, x;
+	if (!pw_grey_diffuse(&lvt, &cal) || w <= 0) return;
+	if (bmp != fs_bmp || top != fs_next || w != fs_w || !fs_err) {
+		if (w != fs_w || !fs_err) {
+			if (fs_err) mem_free(fs_err);
+			fs_err = mem_alloc_mayfail(sizeof(int) * 2 * (size_t)(w + 2));
+			fs_w = fs_err ? w : -1;
+		}
+		if (!fs_err) {			/* no memory: the nearest level only */
+			for (y = 0; y < lines; y++, row += stride)
+				for (x = 0; x < w; x++) row[x] = lvt[cal[row[x]]];
+			fs_forget();
+			return;
+		}
+		memset(fs_err, 0, sizeof(int) * 2 * (size_t)(w + 2));
+		fs_serp = 0;
+		fs_bmp = bmp;
+	}
+	ec = fs_err;
+	en = fs_err + w + 2;
+	for (y = 0; y < lines; y++, row += stride) {
+		/* of each pixel's error 7/16 goes on to the next (fwd), 3/16 back
+		   and down, 5/16 down, 1/16 on and down: the row below is built
+		   up in dn1 and dn2 and written once per pixel (as mail/engine/
+		   img/pmimg.c). Two loops with pointers, one each way, so gcc 3.0
+		   keeps everything in registers (about 25 instructions a pixel) */
+		int fwd = 0, dn1 = 0, dn2 = 0, v, l, e, d7, e3, e5;
+#define FS_PIXEL(p, ei, eo) \
+		v = *(p) + *(ei) + fwd; \
+		if (v < 0) v = 0; else if (v > 255) v = 255; \
+		l = lvt[cal[v]]; \
+		*(p) = (unsigned char)l; \
+		e = v - l; \
+		d7 = (e * 7) >> 4; e3 = (e * 3) >> 4; e5 = (e * 5) >> 4; \
+		fwd = d7; \
+		*(eo) = dn1 + e3; \
+		dn1 = dn2 + e5; \
+		dn2 = e - d7 - e3 - e5;
+		if (!fs_serp) {
+			unsigned char *p = row, *pe = row + w;
+			int *ei = ec + 1, *eo = en;		/* ec[x + 1], en[x] */
+			for (; p < pe; p++, ei++, eo++) { FS_PIXEL(p, ei, eo) }
+			*eo = dn1;				/* en[w] */
+		} else {
+			unsigned char *p = row + w - 1;
+			int *ei = ec + w, *eo = en + w + 1;	/* ec[x + 1], en[x + 2] */
+			for (; p >= row; p--, ei--, eo--) { FS_PIXEL(p, ei, eo) }
+			*eo = dn1;				/* en[1] */
+		}
+#undef FS_PIXEL
+		t = ec; ec = en; en = t;
+		memset(en, 0, sizeof(int) * (size_t)(w + 2));
+		fs_serp = !fs_serp;
+	}
+	if (ec != fs_err) {			/* keep the incoming row first */
+		memcpy(fs_err, ec, sizeof(int) * (size_t)(w + 2));
+		memset(fs_err + w + 2, 0, sizeof(int) * (size_t)(w + 2));
+	}
+	fs_next = top + lines;
+}
+
 static int psi_get_empty_bitmap(struct bitmap *dest)
 {
 	size_t n;
@@ -222,6 +315,9 @@ static void psi_register_bitmap(struct bitmap *bmp)
 	s = bmp->data;
 	for (y = 0; y < bmp->y; y++, d += bmp->x, s += bmp->skip)
 		pack_row(d, (const unsigned short *)s, bmp->x);
+	fs_forget();
+	fs_rows(bmp, bmp->data, 0, bmp->y, (size_t)bmp->x);
+	fs_forget();
 	psi_pic_bytes -= n;			/* (2n before, n now) */
 	bmp->data = mem_realloc(bmp->data, n);	/* (shrinking: in place) */
 	bmp->flags = (void *)2;			/* packed */
@@ -230,6 +326,7 @@ static void psi_register_bitmap(struct bitmap *bmp)
 
 static void psi_unregister_bitmap(struct bitmap *bmp)
 {
+	if (bmp == fs_bmp) fs_forget();
 	if (bmp->flags && bmp->data)
 		psi_pic_bytes -= (size_t)bmp->x * (size_t)bmp->y * (PACKED(bmp) ? 1 : 2);
 	if (bmp->data) mem_free(bmp->data);
@@ -260,6 +357,7 @@ static void psi_commit_strip(struct bitmap *bmp, int top, int lines)
 	for (y = 0; y < lines; y++)
 		pack_row((unsigned char *)bmp->data + (size_t)(top + y) * bmp->x,
 			(const unsigned short *)(strip_buf + (size_t)y * bmp->skip), bmp->x);
+	fs_rows(bmp, (unsigned char *)bmp->data + (size_t)top * bmp->x, top, lines, (size_t)bmp->x);
 	if (strip_size > 65536) {		/* (a wide picture's: give it back) */
 		mem_free(strip_buf);
 		strip_buf = NULL;
@@ -873,8 +971,11 @@ static void key_event(int down, int c)
 }
 
 /* a load is starting: say busy now, as it may finish before the next report */
+int pw_grey_check(void);
+
 static void load_start(void)
 {
+	pw_grey_check();		/* PsiGrey.ini changed (Display calibration)? */
 	psi_mem_page_start();
 	too_big_said = 0;
 	last_busy = 1;
@@ -919,6 +1020,9 @@ static void run_command(int cmd, char *arg)
 		fs = (dds.font_size * pct + 50) / 100;
 		if (fs < 6) fs = 6;
 		ses->ds.font_size = fs;
+#ifdef PSI_STRIKES
+		psi_set_font_base(fs);		/* at 100% the pre-drawn fonts, else all scaled */
+#endif
 		html_interpret_recursive(ses->screen);
 		draw_formatted(ses);
 		break;
@@ -959,15 +1063,42 @@ static void run_command(int cmd, char *arg)
 	}
 }
 
+/* (0.81) The input poll's pace: every 20 ms while anything happens, and
+   every 2 s once nothing has for a second - the engine's wait (psi_os.c)
+   then lets the CPU halt, and PsiWeb.app's doorbell ends it at once when
+   there is input (psi_poll_soon). Loading or saving is "happening". */
+static int poll_ms(void)
+{
+#ifdef PSI_EPOC
+	if (psi_quiet_ok() && last_busy == 0 && list_empty(queue) && list_empty(downloads) &&
+	    get_time() - last_active >= QUIET_AFTER_MS)
+		return POLL_QUIET_MS;
+#endif
+	return POLL_MS;
+}
+
+static void poll_fn(void *p);
+
+/* PsiWeb.app has rung: take its input now, not at the next slow poll */
+void psi_poll_soon(void)
+{
+	if (in_poll || !poll_timer)
+		return;			/* (in the poll: it looks again anyway) */
+	kill_timer(poll_timer);
+	poll_timer = install_timer(0, poll_fn, NULL);
+}
+
 static void poll_fn(void *p)
 {
 	pwb_event ev;
 	char arg[512];
-	int n, cmd;
+	int n, cmd, quiet;
 	uttime now;
 
 	(void)p;
-	poll_timer = install_timer(POLL_MS, poll_fn, NULL);
+	quiet = poll_ms() != POLL_MS;
+	poll_timer = install_timer(quiet ? POLL_QUIET_MS : POLL_MS, poll_fn, NULL);
+	in_poll = 1;
 
 	if (!home_done) {
 		struct session *ses = psi_ses();
@@ -1006,19 +1137,30 @@ static void poll_fn(void *p)
 			break;
 		case PWB_QUIT:
 			terminate_loop = 1;
+			in_poll = 0;
 			return;
 		case PWB_WAKE:
 			break;
 		}
 	}
-	while ((cmd = pwb_take_command(arg, sizeof(arg))) != 0)
+	while ((cmd = pwb_take_command(arg, sizeof(arg))) != 0) {
 		run_command(cmd, arg);
+		n++;
+	}
 	take_answers();
 
 	now = get_time();
+	if (n > 0)
+		last_active = now;
 	if (now - last_status >= STATUS_MS) {
 		last_status = now;
 		report_state(0);
+	}
+	in_poll = 0;
+	if (quiet && poll_ms() == POLL_MS && poll_timer) {
+		/* input after a quiet spell: the quick pace from now */
+		kill_timer(poll_timer);
+		poll_timer = install_timer(POLL_MS, poll_fn, NULL);
 	}
 }
 
@@ -1055,6 +1197,7 @@ static unsigned char *psi_init_driver(unsigned char *param, unsigned char *displ
 	dds.display_images = pwb_load_images() ? 1 : 0;
 #endif
 	last_status = get_time();
+	last_active = last_status;		/* (quick while starting) */
 	poll_timer = install_timer(POLL_MS, poll_fn, NULL);
 	return NULL;
 }

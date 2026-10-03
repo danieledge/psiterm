@@ -7,6 +7,12 @@ does (`ATDT host:port`, `CONNECT`, `+++`, `ATH`, `NO CARRIER`). It adds the one
 thing a three-wire link lacks: **output pacing**, so the Psion is not
 overrun even though there is no RTS/CTS.
 
+It can also be **PsiWeb's web proxy**. Dial `psiproxy` instead of a server
+and the Atom fetches pages itself, does the TLS for `https://`, simplifies
+the HTML as it streams and gzips it for the line. The 36 MHz Psion then does
+no TLS and lays out a fraction of the page. See
+[The web proxy for PsiWeb](#the-web-proxy-for-psiweb).
+
 MIT licence, as the rest of the repository (see `LICENSE` at the top).
 
 ## Contents
@@ -16,6 +22,7 @@ MIT licence, as the rest of the repository (see `LICENSE` at the top).
 - [Flashing](#flashing)
 - [First set-up (WiFi)](#first-set-up-wifi)
 - [Settings for PsiTerm, PsiMail and PsiWeb](#settings-for-psiterm-psimail-and-psiweb)
+- [The web proxy for PsiWeb](#the-web-proxy-for-psiweb)
 - [AT command reference](#at-command-reference)
 - [Pacing in detail](#pacing-in-detail)
 - [Status LED and button](#status-led-and-button)
@@ -36,7 +43,8 @@ has the same problem.
 This firmware handles it at the other end:
 
 1. Everything from the server goes into a large buffer in the ESP32's RAM
-   (128 KB, or the most the heap allows after WiFi).
+   (up to 128 KB, as much as the heap allows after WiFi and the web proxy's
+   needs).
 2. The buffer is sent to the Psion at a **paced rate below the line rate**, in
    small bursts with gaps between them. This is a token bucket. A 16-byte
    burst cannot overrun the Psion's 16-byte FIFO even if its interrupt is held
@@ -175,8 +183,166 @@ In each app, go to **Tools > Connection settings**:
 | Psion Internet: first send | not used (this firmware has no PPP) |
 
 Then press **Test** (Ctrl+T). It should say *"The modem answered OK at 115200
-baud"* and *"Modem: Atom modem 1.0 (Psion-tuned)"*. If you changed the
+baud"* and *"Modem: Atom modem 1.1 (Psion-tuned)"*. If you changed the
 modem's speed with `AT$SB`, set the same baud rate in the apps.
+
+For the web proxy, also set PsiWeb's **Tools > Preferences**: *Use a proxy*
+**Yes**, *Proxy host* **psiproxy**, *Proxy port* **8080**.
+
+## The web proxy for PsiWeb
+
+A modern front page is about 1 MB of HTML, scripts and styles, sent over TLS.
+On a 36 MHz Psion the TLS alone takes seconds, and Links has to parse and lay
+out all of it. The Atom has a 240 MHz CPU, hardware AES and WiFi, so it can do
+that work instead.
+
+### Using it
+
+1. In PsiWeb: **Tools > Preferences**, *Use a proxy* **Yes**, *Proxy host*
+   **psiproxy**, *Proxy port* **8080**.
+2. Open any page, `http://` or `https://`.
+
+PsiWeb then dials `ATDT psiproxy:8080`. The modem recognises the name and
+opens no TCP connection. It answers `CONNECT` and is itself the HTTP proxy at
+the other end of the line. Any port is accepted, and `psiproxy` alone works
+too. Every other dial (PsiTerm, PsiMail, PsiWeb without a proxy) works exactly
+as before.
+
+The call stays up between pages (HTTP keep-alive), whatever the site, so
+PsiWeb dials once and then fetches page after page. `http://psiproxy/` shows
+the proxy's status: its mode, the requests so far, bytes in and out, and the
+Atom's free memory.
+
+### What it does
+
+For each request from PsiWeb (an absolute address; Links sends `https://`
+ones to the proxy as plain requests):
+
+- **Fetches the page**, over TLS for `https://`. Certificates are checked
+  against the Mozilla root certificates (`src/cabundle.h`) and the server's
+  name. The connection to a server is kept for the next request to it.
+- **Follows redirects** (up to 6), and remembers sites that moved from
+  `http://` to `https://`, so the next `http://` request to them goes to
+  `https://` straight away. A page reached through a redirect gets a
+  `<base href>` so its relative links still work.
+- **Unpacks gzip or deflate** if a server sends it, though the proxy asks for
+  plain pages. This uses the ESP32 ROM's inflater with a 32 KB window.
+- **Simplifies HTML as it streams** (`src/htmlsimp.cpp`): a state machine
+  with fixed buffers (about 5 KB), so a page of any size uses the same memory.
+  - Dropped, with their content: `script`, `style`, inline JSON, `noscript`,
+    `svg`, `math`, `iframe`, `template`, `object`, `video`, `audio`, `canvas`,
+    comments, and anything marked `hidden` or `style="display:none"`.
+  - Dropped tags: `link`, `meta` (except the character set and refresh),
+    `source`, `picture`, `span`, `font`, custom elements, form fields outside
+    a form, tracking pixels, and `.svg` pictures (Links cannot draw them; their
+    alt text stays).
+  - Attributes: only what Links uses (`href`, `src`, `alt`, `width`, `height`,
+    `name`, `value`, `type`, `action`, `method` and the like). Lazy-loaded
+    pictures (`data-src`) get their real address. `javascript:` links lose it.
+  - HTML5 blocks (`section`, `article`, `header`, `nav`, `figure`...) become
+    `<div>`, which Links breaks lines for. Empty elements are left out. Runs
+    of white space become one.
+  - Kept: text, headings, paragraphs, lists, links, pictures, tables, forms,
+    `pre`, the title and the character set.
+- **Gzips the simplified HTML for the line** (`src/gzip.cpp`), because PsiWeb
+  accepts gzip. This is deflate with fixed codes and a 4 KB window, in 16 KB
+  of RAM. It makes the HTML about a third of the size. When the server is slow,
+  the proxy flushes what it has, so PsiWeb can show the top of the page while
+  the rest comes.
+- **Passes everything else through unchanged**: pictures, files, error
+  pages, cookies (`Set-Cookie`), `WWW-Authenticate` and caching headers.
+
+`https://` links in pages are left as they are. PsiWeb sends every address to
+the proxy, so they come back through it anyway, and the Psion never does TLS.
+
+If the proxy cannot fetch a page, PsiWeb shows a short *Page not loaded* page
+that gives the reason: the server could not be reached, or the certificate
+was not trusted.
+
+### Results
+
+Measured on 3 October 2026 with PsiWeb's ARM code in the harness
+(`web/links/emu/run_links.py`), replaying recorded traffic.
+
+- *Line* is the bytes that crossed the serial line.
+- *CPU* is the Psion's instructions, as seconds at 15 MIPS.
+- *Time* is the Psion's time from the request to the page being laid out:
+  CPU, plus waiting for data arriving at the modem's paced 5500 bytes/s.
+- *Direct* is PsiWeb fetching through the modem as before, with Links doing
+  TLS and gzip itself. *Proxy* is through `psiproxy`.
+
+| Page | Direct: line, CPU, time, heap peak | Proxy: line, CPU, time, heap peak |
+|---|---|---|
+| www.bbc.co.uk (950 KB of HTML) | 114 KB, 6.5 s, 27.5 s, 2182 KB | 26.6 KB, 2.6 s, 9.3 s, 672 KB |
+| en.wikipedia.org/wiki/Psion | 32 KB, 2.2 s, 9.6 s, 532 KB | 6.8 KB, 0.7 s, 4.7 s, 448 KB |
+| news.ycombinator.com | 10.6 KB, 2.2 s, 6.6 s, 711 KB | 5.3 KB, 1.5 s, 5.0 s, 688 KB |
+| info.cern.ch | 0.9 KB, 0.2 s, 3.4 s, 350 KB | 0.6 KB, 0.2 s, 3.4 s, 378 KB |
+
+These times leave out the proxy's own fetch. On a PC that took 0.1 to 1 s;
+on the Atom, add the TLS handshake, about 1 to 2 s for a new server.
+
+The simplifier on its own (saved pages, `make -C hosttest test PAGES=...`):
+
+| Page | HTML | Simplified | Text only (`AT$PX=2`) | Simplified and gzipped |
+|---|---|---|---|---|
+| bbc.co.uk | 949 KB | 57 KB (6.0 %) | 39 KB (4.1 %) | 20 KB |
+| theguardian.com | 1636 KB | 99 KB (6.0 %) | 58 KB (3.5 %) | 44 KB |
+| en.m.wikipedia.org (Psion Series 5) | 128 KB | 33 KB (26 %) | 23 KB (18 %) | 13 KB |
+| news.ycombinator.com | 34 KB | 15 KB (43 %) | 15 KB (43 %) | 5 KB |
+
+The harness figures above were taken before form fields outside forms were
+dropped, which took BBC from 71 KB to 57 KB.
+
+### Modes
+
+| `AT$PX=` | The proxy |
+|---|---|
+| `1` | on: simplified pages (the default) |
+| `2` | on: text only. Pictures become their alt text, and `nav`, `aside` and `footer` are dropped |
+| `3` | on: pages unchanged. The proxy does only the TLS, and passes on the Psion's own gzip |
+| `0` | off. `psiproxy` is then an ordinary name to dial |
+
+`AT$PZ=0` stops the proxy gzipping pages (`AT$PZ=1`, the default, gzips them
+when PsiWeb accepts gzip, which it always does). Save either setting with
+`AT&W`.
+
+### Security
+
+With the proxy, the Atom sees your pages in plain text: it does the TLS, not
+the Psion. Use it only with your own modem on your own WiFi. The Psion-to-Atom
+line is a serial cable. Servers' certificates are checked on the Atom against
+the Mozilla roots in `src/cabundle.h`. To update them, run
+`python3 tools/mkcabundle.py > src/cabundle.h` on a PC with current roots,
+then rebuild.
+
+### Memory
+
+The ESP32 has 320 KB of RAM for data, and WiFi takes much of it. The proxy
+needs:
+
+| Part | RAM | When |
+|---|---|---|
+| The modem object with the proxy and simplifier | about 25 KB | always |
+| A TLS connection (mbedTLS, 16 KB record buffers) | about 50 KB | while it is open |
+| The gzip writer | 16 KB | while a simplified page is sent |
+| The gzip reader | 43 KB | only for a server that sends gzip unasked |
+
+The ring to the Psion is therefore no longer simply as big as possible. The
+firmware takes the largest of 128, 96, 64, 48 or 32 KB that leaves 120 KB
+free, and the USB console prints the result at start-up. `ATI` shows the free
+memory, and the USB console logs each TLS handshake with its time and memory,
+and each request (`proxy: GET https://... -> 200, 950998 bytes in, 26577 out,
+217 ms`). The proxy adds to the ring only when 12 KB of it is free, so
+pacing and TCP back-pressure work as for any connection.
+
+### Limits
+
+- A request head (with its cookies) must fit in 4 KB, and a form's body with
+  it.
+- No `CONNECT` tunnels: the proxy fetches `https://` itself.
+- Cookies set by a redirect itself are not passed on; the final page's are.
+- Pictures are passed through as they are, not scaled or converted.
+- One page at a time, as PsiWeb asks for them.
 
 ## AT command reference
 
@@ -190,6 +356,7 @@ last until power-off; **`AT&W` saves them**.
 |---|---|
 | `AT` | `OK` |
 | `ATDT host:port` | Opens a TCP connection and answers `CONNECT <baud>`; `NO CARRIER` if it cannot. `ATDThost:port`, `ATD host:port`, `ATDP…` and `ATDT"host:port"` also work. With no port, 23 is used |
+| `ATDT psiproxy:8080` | The modem's own [web proxy](#the-web-proxy-for-psiweb) (any port): `CONNECT`, then HTTP proxy requests are answered by the modem |
 | `ATDT777` (digits only) | `NO CARRIER`: phone numbers mean PPP, which this firmware does not do |
 | `+++` | Quiet for the guard time, `+++`, then quiet again: back to command mode with the connection still up (`OK`). The pluses are not passed to the server |
 | `ATO` | Back to the connection (`CONNECT`), or `NO CARRIER` if it has gone |
@@ -197,7 +364,7 @@ last until power-off; **`AT&W` saves them**.
 | `ATE0` / `ATE1` | Echo off / on (on by default, as the WiRSa) |
 | `ATV0` / `ATV1` | Result codes as digits (0 OK, 1 CONNECT, 3 NO CARRIER, 4 ERROR) / as words |
 | `ATQ0` / `ATQ1` | Result codes on / off |
-| `ATI` | Name and version, WiFi network and IP address, baud and pacing |
+| `ATI` | Name and version, WiFi network and IP address, baud and pacing, the web proxy, free memory |
 | `ATZ` | Back to the saved settings |
 | `AT&F` | Factory settings, **keeping the WiFi network** (not saved until `AT&W`) |
 | `AT&W` | Saves the settings in flash (NVS) |
@@ -228,6 +395,8 @@ reached the Psion, or at once if the WiFi drops.
 | `AT$PACE?` | The pacing in force, and the buffer size |
 | `AT$SWAP=0/1` | Swaps the Atom's RX and TX pins (see [Wiring](#wiring-to-the-psion-cable)) |
 | `AT$DCD=`n | The GPIO for an emulated DCD; `-1` (the default) for none |
+| `AT$PX=`n / `AT$PX?` | The web proxy: `1` on (simplified pages, the default), `2` text only, `3` pages unchanged (TLS only), `0` off. See [The web proxy](#the-web-proxy-for-psiweb) |
+| `AT$PZ=0/1` / `AT$PZ?` | Whether the web proxy gzips pages on the line (`1`, the default) |
 
 ## Pacing in detail
 
@@ -312,27 +481,67 @@ DCD on all the time.
 - `pio run` builds the firmware. `arduino-cli compile --fqbn
   espressif:esp32:m5stack-atom .` builds it the Arduino way, with no warnings
   at `--warnings all`.
-- `make -C hosttest test` runs the unit tests on a PC: the AT parser, `+++`
-  with guard times (too soon, too slow, four pluses, data straight after),
-  `NO CARRIER` on close and on a WiFi drop, and pacing under bursts. The
-  pacing tests check the rate, the largest burst, buffer back-pressure with a
-  small ring, and that every byte arrives in order. They use a simulated
-  clock, UART, TCP server, WiFi and NVS (`hosttest/fakehal.h`). The modem code
-  (`src/modem.cpp`) is the same file the Atom runs.
+- `make -C hosttest test` runs the unit tests on a PC (it needs zlib).
+  - `test_modem`: the AT parser, `+++` with guard times (too soon, too slow,
+    four pluses, data straight after), `NO CARRIER` on close and on a WiFi
+    drop, and pacing under bursts. The pacing tests check the rate, the
+    largest burst, buffer back-pressure with a small ring, and that every
+    byte arrives in order.
+  - `test_proxy`: the simplifier (what goes and what stays, the same output
+    whatever pieces the page comes in, garbage, unclosed tags) and the proxy
+    through the whole modem. This covers keep-alive, `https://`, redirects
+    and the `http://` to `https://` memory, `POST` and 303, chunked, gzip and
+    deflate from the server, pictures passed through, bodies that end at the
+    close, `HEAD`, unreachable servers, `Connection: close` then
+    `NO CARRIER`, back-pressure with a 16 KB ring, the gzip on the line
+    (flushed while the server is slow), `AT$PX` and `AT$PZ`, and the settings
+    record keeping its size. Regression checks cover a body with bytes after
+    its length, a pass-through body cut short (the call ends), a page that
+    grows fourfold in the simplifier with a small ring, window-wide
+    back-references in gzip and deflate, Content-Length with chunked, a
+    response head over 16 KB, requests that arrive faster than the proxy
+    can take them, and a hidden element with no end tag.
+  - `test_proxy_tinfl`: the same proxy tests with the inflater the Atom uses
+    (tinfl from miniz 1.15, as in the ESP32 ROM; `hosttest/tinfl/`, public
+    domain) in place of zlib, so its 32 KB wrapping window is tested too.
+  - `make -C hosttest test PAGES=folder` adds real saved pages: `bbc.html`,
+    `guardian.html`, `wiki.html` and `hn.html` (save them with `curl -L
+    --compressed -A "Mozilla/5.0" -o bbc.html https://www.bbc.co.uk/` and
+    the like). Each must come out well-formed for Links, keep its key text,
+    and shrink below a set share. BBC is also sent through the whole modem,
+    gzipped and chunked as a CDN sends it.
+
+  They use a simulated clock, UART, TCP server, web server, WiFi and NVS
+  (`hosttest/fakehal.h`). The modem code (`src/modem.cpp`, `proxy.cpp`,
+  `htmlsimp.cpp`, `gzip.cpp`) is the same code the Atom runs.
 - `make -C hosttest hostmodem` builds the modem as a PC program on a Unix
   socket, for the Psion emulator's serial bridge (`--serial-bridge-socket`).
   With it, PsiTerm's **Test** button and PsiWeb's dial were checked against
   this firmware's own code. `HOSTMODEM_REDIRECT=host:port` sends every dial
-  to a local test server.
+  to a local test server. Dialling `psiproxy` runs the web proxy against the
+  real sites. Its TLS uses the PC's OpenSSL 3 (`libssl.so.3`, loaded at run
+  time, so no OpenSSL headers are needed), with the system's root
+  certificates. `HOSTPROXY_REDIRECT=host:port` sends the proxy's fetches to a
+  local server instead.
+- `hosttest/hostmodem --tcp 8080` is the web proxy alone on
+  `127.0.0.1:8080`: each TCP connection is a `psiproxy` call. Point a browser,
+  `curl -x`, or PsiWeb's ARM harness at it.
+- `python3 tools/emu/net.py proxy` (from the top of the repository) is the
+  end-to-end test in the Psion emulator. PsiWeb sets *Use a proxy* to
+  `psiproxy`, 8080, and opens a real site (`EMU_PROXY_URL`, by default
+  `news.ycombinator.com`) through the host modem. It needs the Internet.
 
-`src/modem.cpp` and `src/modem.h` are plain C++ with no Arduino calls.
-`src/main.cpp` is the Atom's side: UART2, WiFi, `WiFiClient`, `Preferences`,
-the LED and the button.
+`src/modem.cpp`, `proxy.cpp`, `htmlsimp.cpp` and `gzip.cpp` are plain C++
+with no Arduino calls. `src/main.cpp` is the Atom's side: UART2, WiFi,
+`WiFiClient` and `WiFiClientSecure` (TLS), `Preferences`, the LED and the
+button. `src/cabundle.h` holds the root certificates, made by
+`tools/mkcabundle.py`.
 
 ## Not supported
 
 - **PPP** (the apps' "Psion Internet" route with `ATDT777`). Use the modem
-  route; the apps do their own TCP and TLS over it.
+  route; the apps do their own TCP and TLS over it (or, for PsiWeb, the
+  [web proxy](#the-web-proxy-for-psiweb) does).
 - Incoming connections (`ATA`, listening). Telnet option negotiation: the
   connection is a raw TCP stream, as SSH and TLS need.
 - RTS/CTS, DTR and DSR: the base has no wires for them.

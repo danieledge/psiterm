@@ -126,6 +126,11 @@ enum TPsiTermCommands
 	// to file; it replaced Zoom - the sidebar has zoom icons)
 	EPtCmdTbFiles,
 
+	// display work (docs/display.md): View > Reading mode (tick box) and
+	// Tools > Debug > Display calibration...
+	EPtCmdReading,
+	EPtCmdGreyCal,
+
 	EPtCmdSnippet0 = 0x1400,  // ... EPtCmdSnippet0 + KMaxSnippets - 1: send snippet N
 	EPtCmdHost0 = 0x1500      // ... + KMaxHosts - 1: connect to saved host N (welcome screen)
 	};
@@ -179,7 +184,8 @@ enum TPsiTermDialogControls
 	EPtDlgRemoteList,
 	EPtDlgLogFile,           // Log to file
 	EPtDlgLogText,
-	EPtDlgLogExisting
+	EPtDlgLogExisting,
+	EPtDlgColourText         // Preferences > Coloured text (docs/display.md)
 	};
 
 enum TPsiTermDialogButtons

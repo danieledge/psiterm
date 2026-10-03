@@ -62,7 +62,7 @@ static void TestBasics()
 	CHECK(Has(r.Got(), "ERROR"));
 	r.TypeRun("ATI\r");
 	g = r.Got();
-	CHECK(g.find("\r\nAtom modem 1.0 (Psion-tuned)") == 0);     // the first line: the name
+	CHECK(g.find("\r\nAtom modem 1.1 (Psion-tuned)") == 0);     // the first line: the name
 	CHECK(Has(g, "IP 192.168.1.50"));
 	CHECK(Has(g, "pacing 5500 bytes/s"));
 	CHECK(g.size() >= 6 && g.substr(g.size() - 6) == "\r\nOK\r\n");
@@ -77,7 +77,9 @@ static void TestBasics()
 	CHECK(Has(r.Got(), "OK"));
 	// line noise before AT (a Remote link frame) is skipped; a line with no AT is ignored
 	{ const char noise[] = { 0x16, 0x10, 0x02, '$', 0x00, 0x00, (char)0xd0, 'T', 0x10, 0x03, 'A', 'T', '\r' };
-	  for (char c : noise) r.hal.rx.push_back((uint8_t)c); r.Run(50); }
+	  for (char c : noise)
+		r.hal.rx.push_back((uint8_t)c);
+	  r.Run(50); }
 	CHECK(Has(r.Got(), "\r\nOK\r\n"));
 	r.TypeRun("hello\r");
 	CHECK(!Has(r.Got(), "OK") );

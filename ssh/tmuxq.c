@@ -294,6 +294,13 @@ int psi_tq_read(void *buf, int len)
 
 int psi_tq_running(void) { return running; }
 
+/* (0.81) a query in hand or waiting (see psi_sftp_busy) */
+int psi_tq_busy(void)
+{
+	PsiShared *s = sh();
+	return op != 0 || (running && s && s->tq_req != s->tq_ack);
+}
+
 /* every turn of Dropbear's main loop, once logged in */
 void psi_tq_loop(void)
 {

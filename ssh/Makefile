@@ -80,7 +80,7 @@ obj/tls13.o: tls13.c tls13.h
 	@mkdir -p obj
 	$(CC) -c $(CFLAGS) $< -o $@
 
-obj/psiglue.o: psiglue.cpp psishared.h
+obj/psiglue.o: psiglue.cpp psishared.h psibell.h
 	@mkdir -p obj
 	$(CXX) -c $(CXXFLAGS) $< -o $@
 

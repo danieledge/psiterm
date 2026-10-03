@@ -49,11 +49,13 @@ static void SaveSharedLink(RFs& aFs, const TPwSettings& aSettings)
 
 _LIT(KEngineExe, "psiweb.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiWeb\\PsiWeb.ini");
-_LIT(KVersion, "0.64");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
+_LIT(KVersion, "0.65");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
 _LIT(KDefaultHome, "http://68k.news/");
 const TInt KZoomSteps[] = { 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200 };
 const TInt KZoomCount = 11;
 const TInt KTick = 62500;            // look for new frames 16 times a second
+const TInt KTickQuiet = 2000000;     // (0.81) ...or every 2 s when nothing is going on: the doorbell brings news
+const TInt KCalmTicks = 16;          // quick ticks with nothing going on before the slow pace (1 s)
 
 static void CopyToC(char* aDst, TInt aMax, const TDesC& aSrc)
 	{
@@ -151,6 +153,8 @@ CPwView::~CPwView()
 	delete iAsker;
 	delete iStarter;
 	delete iTimer;
+	delete iBellWaiter;                  // (before the chunk it points into goes)
+	iEngRinger.Close();
 	delete iWatcher;
 	delete iBitmap;
 	if (iChunkOpen)
@@ -217,11 +221,16 @@ void CPwView::StartEngineL()
 		return;
 	PwShared* s = iShared;
 	TInt w = s->width, h = s->height;
+	if (iBellWaiter)
+		iBellWaiter->Cancel();               // (before the bell it waits on is cleared)
+	iEngRinger.Close();                      // (a new engine: a new thread)
+	TickFast();                              // (and the tick follows it from the start)
 	Mem::FillZ(s, sizeof(PwShared) - sizeof(s->fb));
 	s->width = w;
 	s->height = h;
 	s->magic = PW_MAGIC;
 	s->net.magic = PSI_SHARED_MAGIC;
+	s->net.bell_magic = PSI_BELL_MAGIC;      // (0.81) we ring eng_bell with every key, tap, command and quit
 	UseSharedLink(iCoeEnv->FsSession(), iSettings);   // may have changed in another app
 	s->net.baud_index = iSettings.iBaudIndex;
 	s->net.rtscts = iSettings.iRtsCts;
@@ -235,6 +244,7 @@ void CPwView::StartEngineL()
 	s->proxy_port = iSettings.iProxyPort;
 	s->load_images = iSettings.iImages;
 	s->zoom = iSettings.iZoom;
+	s->display = (iSettings.iDisplay & KPwDisplayScaledText) ? PW_DISPLAY_SCALED_TEXT : 0;
 	CopyToC(s->net.version, sizeof(s->net.version), KVersion);
 	// updates are saved to the CF card if there is one (D:), else C:
 	TVolumeInfo vol;
@@ -310,6 +320,7 @@ void CPwView::StopEngine()
 	iShared->quitting = 1;
 	iShared->net.quit = 1;
 	iShared->cmd = PW_CMD_QUIT;
+	RingEngine();
 	// give the engine a few seconds to hang up and close
 	for (TInt i = 0; i < 40 && iShared->state != PW_STATE_EXITED; i++)
 		User::After(100000);
@@ -428,6 +439,69 @@ void CPwView::Command(TInt aCmd, const TDesC& aArg)
 		iShared->net.quit = 1;          // also interrupts a dial or download
 	iShared->cmd = aCmd;
 	iShared->net.resized = 1;            // wakes the engine's wait (see psi_os.c)
+	RingEngine();
+	TickFast();
+	}
+
+// (0.81) The engine waits on a doorbell when nothing is happening
+// (psibell.h): every key, tap, command, answer and quit rings it.
+void CPwView::RingEngine()
+	{
+	if (iRunning && iShared)
+		iEngRinger.Ring(&iShared->net.eng_bell);
+	}
+
+// Is anything going on that the tick must follow closely? A page loading,
+// frames coming (within the last second), input not yet taken, a message
+// about the link, a question, an update, the start-up message.
+TBool CPwView::TickWanted() const
+	{
+	PwShared* s = iShared;
+	if (!s || iStartBusy || iLinkBusy || iAsking || iUpdState == PW_UPD_RUNNING)
+		return ETrue;
+	if (!iRunning)
+		return EFalse;                       // (the engine has stopped: nothing to follow)
+	if (s->busy || s->state != PW_STATE_READY || s->ev_tail != s->ev_head || s->cmd != PW_CMD_NONE)
+		return ETrue;
+	if (s->frame_seq != iLastFrame || s->net.link_seq != iLinkSeq || s->update_state != iUpdState)
+		return ETrue;
+	if (s->auth_state == PW_ASK_ASKING || s->save_state == PW_ASK_ASKING)
+		return ETrue;
+	if (User::TickCount() - iFrameAt < 64)
+		return ETrue;
+	return EFalse;
+	}
+
+void CPwView::TickFast()
+	{
+	iCalmTicks = 0;
+	if (!iTickQuiet || !iTimer)
+		return;
+	iTickQuiet = EFalse;
+	iTimer->Cancel();
+	iTimer->Start(KTick, KTick, TCallBack(TickCallback, this));
+	}
+
+void CPwView::TickQuiet()
+	{
+	iCalmTicks = 0;
+	if (iTickQuiet || !iTimer || !iShared)
+		return;
+	if (!iBellWaiter)
+		iBellWaiter = new CPsiBellWaiter(TCallBack(BellCallback, this));   // (no memory: stays quick)
+	if (!iBellWaiter || iBellWaiter->Arm(&iShared->net.app_bell) || !iBellWaiter->IsActive())
+		return;                              // (rung just now, or no doorbell: stays quick)
+	iTickQuiet = ETrue;
+	iTimer->Cancel();
+	iTimer->Start(KTickQuiet, KTickQuiet, TCallBack(TickCallback, this));
+	}
+
+TInt CPwView::BellCallback(TAny* aSelf)
+	{
+	CPwView* self = (CPwView*)aSelf;
+	self->TickFast();
+	self->Tick();
+	return 0;
 	}
 
 TInt CPwView::TickCallback(TAny* aSelf)
@@ -442,6 +516,12 @@ void CPwView::Tick()
 	PwShared* s = iShared;
 	if (s)
 		s->app_beat++;                   // "still here": see pwepoc.cpp
+	// (0.81) the pace: quick while anything is going on, else slow with the
+	// doorbell armed (the heartbeat above still goes every 2 s)
+	if (TickWanted())
+		TickFast();
+	else if (!iTickQuiet && ++iCalmTicks >= KCalmTicks)
+		TickQuiet();
 	// "Starting the browser engine...": down once the engine starts loading
 	// its first page (its window is up by then; its first frame is only the
 	// blank background, seconds before that), or after a minute regardless
@@ -507,6 +587,7 @@ void CPwView::Tick()
 	if (!s || s->frame_seq == iLastFrame || iUpdState == PW_UPD_RUNNING)
 		return;
 	iLastFrame = s->frame_seq;
+	iFrameAt = User::TickCount();
 	TInt y0 = s->dirty_y0, y1 = s->dirty_y1;
 	s->dirty_y0 = s->height;
 	s->dirty_y1 = 0;
@@ -559,6 +640,7 @@ TInt CPwView::AskCallback(TAny* aSelf)
 			s->save_state = PW_ASK_CANCEL;
 		}
 	s->net.resized = 1;                  // wakes the engine's wait (psi_os.c)
+	v->RingEngine();
 	v->iAsking = EFalse;
 	return 0;
 	}
@@ -897,6 +979,8 @@ void CPwView::PushEvent(TInt aType, TInt aCode, TInt aX, TInt aY)
 	e.y = aY;
 	s->ev_head++;
 	s->net.resized = 1;                  // wakes the engine's wait (see psi_os.c)
+	RingEngine();                        // (0.81) it may be waiting on its doorbell
+	TickFast();                          // ...and the frame it draws is wanted soon
 	}
 
 // Key and pen timings: the randomness behind TLS keys (see psiglue pg_entropy)
@@ -934,10 +1018,11 @@ TKeyResponse CPwView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 		TUint letter = (code >= 1 && code <= 26) ? 'a' + code - 1 : (code | 0x20);
 		if (mods & EModifierShift)
 			{
-			// Shift+Ctrl+M zoom out, Q page information, H help, A about
+			// Shift+Ctrl+M zoom out, Q page information, H help, A about,
+			// R Reading mode
 			switch (letter)
 				{
-				case 'm': case 'q': case 'h': case 'a':
+				case 'm': case 'q': case 'h': case 'a': case 'r':
 					return EKeyWasNotConsumed;
 				}
 			}
@@ -1100,6 +1185,7 @@ void CPwPrefsDialog::PreLayoutDynInitL()
 	SetNumberEditorValue(EPwDlgProxyPort, iSettings.iProxyPort);
 	SetEdwinTextL(EPwDlgHome, &iSettings.iHome);
 	((CEikChoiceList*)Control(EPwDlgPictures))->SetCurrentItem(iSettings.iImages ? 1 : 0);
+	((CEikChoiceList*)Control(EPwDlgText))->SetCurrentItem((iSettings.iDisplay & KPwDisplayScaledText) ? 1 : 0);
 	}
 
 TBool CPwPrefsDialog::OkToExitL(TInt /*aButtonId*/)
@@ -1120,6 +1206,10 @@ TBool CPwPrefsDialog::OkToExitL(TInt /*aButtonId*/)
 	GetEdwinText(iSettings.iHome, EPwDlgHome);
 	iSettings.iHome.Trim();
 	iSettings.iImages = ((CEikChoiceList*)Control(EPwDlgPictures))->CurrentItem() == 1;
+	if (((CEikChoiceList*)Control(EPwDlgText))->CurrentItem() == 1)
+		iSettings.iDisplay |= KPwDisplayScaledText;
+	else
+		iSettings.iDisplay &= ~KPwDisplayScaledText;
 	return ETrue;
 	}
 
@@ -1140,6 +1230,38 @@ void CPwAppUi::ConstructL()
 	iView->ConstructL(PageRect(settings.iToolbar), settings);
 	AddToStackL(iView);
 	iCoeEnv->RootWin().EnableOnEvents(EEventControlAlways);   // (0.54) switch-on events even when in the background
+	// the user's contrast and backlight back if a program stopped in
+	// Reading mode without doing it (docs/display.md)
+	TPsiReading::Recover(iCoeEnv->FsSession(), iCoeEnv->WsSession(), KUidPsiWeb);
+	iForeground = ETrue;
+	UpdateReading();
+	}
+
+// ----- Reading mode (docs/display.md) ----------------------------------------------
+
+void CPwAppUi::UpdateReading(TBool aEnterOnly)
+	{
+	if (!iView)
+		return;
+	if (iForeground && (iView->Settings().iDisplay & KPwDisplayReading))
+		iReading.Enter(iCoeEnv->FsSession(), KUidPsiWeb);
+	else if (!aEnterOnly)
+		iReading.Leave(iCoeEnv->FsSession(), KUidPsiWeb);
+	}
+
+// Reading mode follows PsiWeb in and out of the foreground (CCoeAppUi's
+// HandleForegroundEventL is private on ER5: the focus events are seen here);
+// after a switch-on turned it off, the next key turns it on again
+void CPwAppUi::HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination)
+	{
+	if (aEvent.Type() == EEventFocusGained || aEvent.Type() == EEventFocusLost)
+		{
+		iForeground = aEvent.Type() == EEventFocusGained;
+		UpdateReading();
+		}
+	else if (aEvent.Type() == EEventKey && iForeground && !iReading.Active())
+		UpdateReading(ETrue);
+	CEikAppUi::HandleWsEventL(aEvent, aDestination);
 	}
 
 // The Psion was switched back on (0.54): the engine re-checks the link
@@ -1148,7 +1270,11 @@ void CPwAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
 	{
 	(void)aDestination;                  // (the CONE default does nothing, and is private)
 	if (iView && iView->Shared())
+		{
 		iView->Shared()->net.switch_on++;
+		iView->RingEngine();             // (0.81) it may be waiting on its doorbell
+		}
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiWeb);   // (back on with the next key)
 	}
 
 // a toolbar button's picture, from PsiWeb.mbm (made by web/tools/mkicons.py):
@@ -1211,6 +1337,7 @@ void CPwAppUi::ShowToolBarL(TBool aShow)
 
 CPwAppUi::~CPwAppUi()
 	{
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiWeb);   // the user's contrast and backlight back
 	if (iView)
 		{
 		RemoveFromStack(iView);
@@ -1231,6 +1358,7 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 	aSettings.iImages = 0;            // pictures only when asked (View > Show pictures)
 	aSettings.iZoom = 100;
 	aSettings.iToolbar = 1;
+	aSettings.iDisplay = 0;           // sharp text, Reading mode off (docs/display.md)
 	RFile file;
 	if (file.Open(iCoeEnv->FsSession(), KIniFile, EFileRead) != KErrNone)
 		{
@@ -1267,6 +1395,8 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 					// NetSurf's setting (on by default) does not carry over
 					if (pos < d.Length())
 						aSettings.iImages = d[pos++] != 0;
+					if (pos < d.Length())            // (0.81) display: Reading mode, text
+						aSettings.iDisplay = d[pos++] & (KPwDisplayReading | KPwDisplayScaledText);
 					}
 				}
 			}
@@ -1280,8 +1410,12 @@ void CPwAppUi::SaveSettings(const TPwSettings& aSettings)
 	RFs& fs = iCoeEnv->FsSession();
 	SaveSharedLink(fs, aSettings);
 	fs.MkDirAll(KIniFile);
+	// (0.81) to a temporary file, then renamed over the old one, so a full
+	// disk or a switch-off part way never leaves half a settings file
+	TFileName tmpName(KIniFile);
+	tmpName.Append('~');
 	RFile file;
-	if (file.Replace(fs, KIniFile, EFileWrite) != KErrNone)
+	if (file.Replace(fs, tmpName, EFileWrite) != KErrNone)
 		return;
 	TBuf8<400> d;
 	d.Append(1);                         // version
@@ -1302,8 +1436,15 @@ void CPwAppUi::SaveSettings(const TPwSettings& aSettings)
 	d.Append(tmp);
 	d.Append((TUint8)aSettings.iToolbar);
 	d.Append((TUint8)aSettings.iImages);    // (0.62)
-	file.Write(d);
+	d.Append((TUint8)aSettings.iDisplay);   // (0.81)
+	TInt r = file.Write(d);
+	if (r == KErrNone)
+		r = file.Flush();
 	file.Close();
+	if (r == KErrNone)
+		r = fs.Replace(tmpName, KIniFile);
+	if (r != KErrNone)
+		fs.Delete(tmpName);
 	}
 
 void CPwAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
@@ -1323,6 +1464,8 @@ void CPwAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		{
 		aMenuPane->SetItemButtonState(EPwCmdToggleToolbar,
 			iView->Settings().iToolbar ? EEikMenuItemSymbolOn : 0);
+		aMenuPane->SetItemButtonState(EPwCmdReading,
+			(iView->Settings().iDisplay & KPwDisplayReading) ? EEikMenuItemSymbolOn : 0);
 		}
 	}
 
@@ -1560,6 +1703,12 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 		st.iToolbar = !st.iToolbar;
 		SaveSettings(st);
 		ShowToolBarL(st.iToolbar);
+		break;
+	case EPwCmdReading:                      // View > Reading mode (docs/display.md)
+		st.iDisplay ^= KPwDisplayReading;
+		SaveSettings(st);
+		UpdateReading();
+		iEikonEnv->InfoMsg((st.iDisplay & KPwDisplayReading) ? _L("Reading mode on") : _L("Reading mode off"));
 		break;
 	case EPwCmdPageInfo:
 		PageInfoL();

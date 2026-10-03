@@ -77,7 +77,14 @@ if [ "$ENGINE" = links ]; then
 	  echo "networking and TLS (MIT). Source: https://github.com/danieledge/psiterm"
 	  echo "(web/ and web/links/fetch.sh, which fetches the exact Links sources used, and"
 	  echo "web/links/patches, the changes made to them)."
-	  echo; cat "$LK/links-2.30/COPYING"; } | sed 's/$/\r/' > "$P/COPYING.txt"
+	  echo
+	  echo "The sharp text (Preferences > Text) is drawn from the DejaVu fonts, rendered"
+	  echo "ahead by web/links/mkstrike.py; their licence (Bitstream Vera, public domain"
+	  echo "changes) follows the GPL below."
+	  echo; cat "$LK/links-2.30/COPYING"
+	  if [ -f /usr/share/doc/fonts-dejavu-core/copyright ]; then
+	    echo; echo "DejaVu fonts:"; cat /usr/share/doc/fonts-dejavu-core/copyright
+	  fi; } | sed 's/$/\r/' > "$P/COPYING.txt"
 else
 	{ echo "PsiWeb is NetSurf (https://www.netsurf-browser.org/), GNU GPL v2,"
 	  echo "with PsiTerm's networking and TLS (MIT). Source: https://github.com/danieledge/psiterm"

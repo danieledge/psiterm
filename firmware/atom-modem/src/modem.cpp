@@ -40,6 +40,40 @@ void FactoryDefaults(Settings& aS)
 	AutoPacing(aS.baud, aS.paceRate, aS.paceBurst, aS.paceGap);
 	aS.swapPins = 0;
 	aS.dcdPin = -1;
+	aS.proxy = 0;                // the web proxy on (when psiproxy is dialled)
+	}
+
+int ProxyMode(const Settings& aS)
+	{
+	return aS.proxy == 0 ? (int)Proxy::EOn : aS.proxy == 1 ? (int)Proxy::EOff : (int)aS.proxy;
+	}
+
+void SetProxyMode(Settings& aS, int aMode)
+	{
+	aS.proxy = aMode == Proxy::EOn ? 0 : aMode == Proxy::EOff ? 1 : (uint8_t)aMode;
+	}
+
+// ===== the platform's defaults ==============================================
+
+bool Hal::UpConnect(const char* aHost, uint16_t aPort, bool aTls, char* aWhy, size_t aWhyMax)
+	{
+	if (aTls)
+		{
+		snprintf(aWhy, aWhyMax, "no TLS on this platform");
+		return false;
+		}
+	if (!TcpConnect(aHost, aPort))
+		{
+		snprintf(aWhy, aWhyMax, "no connection to %s:%u", aHost, aPort);
+		return false;
+		}
+	return true;
+	}
+
+void Hal::MemInfo(char* aOut, size_t aMax)
+	{
+	if (aMax)
+		aOut[0] = 0;
 	}
 
 // ===== ring ================================================================
@@ -196,7 +230,7 @@ static bool ValidBaud(long aB)
 Modem::Modem(Hal& aHal, uint8_t* aRing, size_t aRingSize)
 	: iHal(aHal), iLineLen(0), iOnline(false), iConnected(false), iClosing(false), iWifiWasUp(false),
 	  iLastSerialMs(0), iPluses(0), iLastPlusMs(0), iToPsion(0), iToServer(0), iLastDataMs(0),
-	  iPendingBaud(0), iLed(-1), iUpLen(0)
+	  iPendingBaud(0), iLed(-1), iProxy(aHal), iProxyCall(false), iUpLen(0)
 	{
 	iRing.Init(aRing, aRingSize);
 	iLast[0] = 0;
@@ -231,8 +265,21 @@ void Modem::Loop()
 	{
 	uint32_t now = iHal.Millis();
 	int c;
-	for (int n = 0; n < 512 && (c = iHal.SerialRead()) >= 0; n++)
+	for (int n = 0; n < 512; n++)
+		{
+		// online, a byte can put up to 4 into iUpBuf (held pluses, then it).
+		// No room, even once it has gone on: the rest is left in the UART
+		// until the server (or the proxy) takes more, rather than lost
+		if (iOnline && iUpLen + 4 > sizeof(iUpBuf))
+			{
+			FlushUp();
+			if (iUpLen + 4 > sizeof(iUpBuf))
+				break;
+			}
+		if ((c = iHal.SerialRead()) < 0)
+			break;
 		SerialIn((uint8_t)c);
+		}
 	EscapeTick(iHal.Millis());
 	FlushUp();
 	PumpServer(now);
@@ -322,7 +369,7 @@ void Modem::FlushUp()
 		iUpLen = 0;                          // nowhere to go
 		return;
 		}
-	size_t n = iHal.TcpWrite(iUpBuf, iUpLen);
+	size_t n = iProxyCall ? iProxy.FromPsion(iUpBuf, iUpLen) : iHal.TcpWrite(iUpBuf, iUpLen);
 	iToServer += n;
 	if (n)
 		iLastDataMs = iHal.Millis();
@@ -504,6 +551,8 @@ Modem::TResult Modem::RunCommands(const char* aCmd)
 				SayLine(m);
 				snprintf(m, sizeof(m), "SSID \"%s\"", iS.ssid);
 				SayLine(m);
+				snprintf(m, sizeof(m), "web proxy (psiproxy) $PX=%d $PZ=%d", ProxyMode(iS), iS.proxyNoZip ? 0 : 1);
+				SayLine(m);
 				break;
 				}
 			case 'D': case 'K': case 'S': case 'B': case 'N': case 'Q': case 'R': case 'Y':
@@ -584,7 +633,7 @@ Modem::TResult Modem::RunCommands(const char* aCmd)
 // of the line. AT&W saves them.
 Modem::TResult Modem::SetCommand(const char* aCmd, const char*& aP, bool& aHandled)
 	{
-	static const char* const kNames[] = { "SSID", "PASS", "SB", "PR", "PB", "PG", "SWAP", "DCD", "PACE", 0 };
+	static const char* const kNames[] = { "SSID", "PASS", "SB", "PR", "PB", "PG", "SWAP", "DCD", "PACE", "PX", "PZ", 0 };
 	int which = -1;
 	size_t len = 0;
 	for (int i = 0; kNames[i]; i++)
@@ -688,6 +737,25 @@ Modem::TResult Modem::SetCommand(const char* aCmd, const char*& aP, bool& aHandl
 			snprintf(m, sizeof(m), "off, buffer %lu", (unsigned long)iRing.Size());
 		SayLine(m);
 		return ROk;
+	case 9:                                  // PX: the web proxy for PsiWeb
+		if (query)
+			{
+			static const char* const kModes[] = { "off", "on: simplified pages", "on: text only",
+				"on: pages unchanged (TLS only)" };
+			snprintf(m, sizeof(m), "%d (%s)", ProxyMode(iS), kModes[ProxyMode(iS) & 3]);
+			SayLine(m);
+			return ROk;
+			}
+		if (!num || v < 0 || v > 3)
+			return RError;
+		SetProxyMode(iS, (int)v);
+		return ROk;
+	case 10:                                 // PZ: gzip the proxy's pages on the line
+		if (query) { SayLine(iS.proxyNoZip ? "0" : "1"); return ROk; }
+		if (!num || v < 0 || v > 1)
+			return RError;
+		iS.proxyNoZip = v ? 0 : 1;
+		return ROk;
 		}
 	return RError;
 	}
@@ -728,10 +796,16 @@ Modem::TResult Modem::Dial(const char* aArgs)
 		return RNoCarrier;
 	if (iConnected || iClosing)
 		Hangup(false);
+	// "psiproxy" (any port): the modem is PsiWeb's web proxy itself
+	bool proxy = ProxyMode(iS) != Proxy::EOff && StartsNoCase(target, Proxy::kName)
+		&& target[strlen(Proxy::kName)] == 0;
 	iHal.Led(ELedConnecting);
 	iLed = ELedConnecting;
-	if (!iHal.TcpConnect(target, (uint16_t)port))
+	if (proxy)
+		iProxy.Start(ProxyMode(iS), !iS.proxyNoZip);
+	else if (!iHal.TcpConnect(target, (uint16_t)port))
 		return RNoCarrier;
+	iProxyCall = proxy;
 	iConnected = true;
 	iClosing = false;
 	iOnline = true;
@@ -747,7 +821,11 @@ Modem::TResult Modem::Dial(const char* aArgs)
 
 void Modem::Hangup(bool aSayNoCarrier)
 	{
-	iHal.TcpClose();
+	if (iProxyCall)
+		iProxy.Stop();                       // (closes its server connection)
+	else
+		iHal.TcpClose();
+	iProxyCall = false;
 	iConnected = false;
 	iClosing = false;
 	iOnline = false;
@@ -779,6 +857,16 @@ void Modem::Info()
 	else
 		snprintf(m, sizeof(m), "Serial %lu baud, no flow control, no pacing", (unsigned long)iS.baud);
 	SayLine(m);
+	if (ProxyMode(iS) == Proxy::EOff)
+		snprintf(m, sizeof(m), "Web proxy: off (AT$PX=1 turns it on)");
+	else
+		snprintf(m, sizeof(m), "Web proxy: ATDT %s:8080, %s; %lu requests", Proxy::kName,
+			ProxyMode(iS) == Proxy::EText ? "text only" : ProxyMode(iS) == Proxy::ERaw ? "pages unchanged"
+				: "simplified pages", (unsigned long)iProxy.Requests());
+	SayLine(m);
+	iHal.MemInfo(w, sizeof(w));
+	if (w[0])
+		SayLine(w);
 	}
 
 // ----- to the Psion -----------------------------------------------------------
@@ -838,7 +926,19 @@ void Modem::Result(TResult aR)
 
 void Modem::PumpServer(uint32_t aNow)
 	{
-	if (iConnected)
+	if (iConnected && iProxyCall)
+		{
+		// the web proxy: it fills the ring itself, and ends the call when the
+		// Psion asked it to (or the WiFi goes)
+		if (!iProxy.Pump(iRing) || !iHal.WifiUp())
+			{
+			iProxy.Stop();
+			iProxyCall = false;
+			iConnected = false;
+			iClosing = true;
+			}
+		}
+	else if (iConnected)
 		{
 		// read only what the ring can hold: when it is full the socket is
 		// left alone, its window closes, and the server waits (TCP flow

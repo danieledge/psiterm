@@ -80,6 +80,11 @@ int main(int argc, char **argv)
 		args[n++] = proxy;
 	}
 	args[n] = NULL;
+#ifdef PSI_STRIKES
+	/* Preferences > Text: the pre-drawn sharp fonts (standard) or Links'
+	   scaled ones (docs/display.md); before Links draws anything */
+	psi_hinted_fonts = !(s && (s->display & PW_DISPLAY_SCALED_TEXT));
+#endif
 	r = links_main(n, args);
 	pwn_release_now();		/* hang up and give the serial port back */
 	return r;
@@ -379,12 +384,55 @@ int psi_pipe(int fd[2])
 
 extern void pg_msleep(int ms);
 extern PsiShared *pg_shared(void);
+extern int pg_bells(void);
+extern int pg_bell_wait(int ms);
+extern void pg_ring_app(void);
+extern void psi_poll_soon(void);	/* psi_drv.c: take PsiWeb.app's input now */
 
-/* PsiWeb.app has handed over input or a command (it sets net.resized) */
+/* (0.81) power: PsiWeb.app rings the engine's doorbell (psibell.h) with
+   every key, tap and command, so the input poll can slow down when nothing
+   is happening (psi_drv.c) and the waits here can be long */
+int psi_quiet_ok(void)
+{
+	return pg_bells();
+}
+
+/* ...and the engine rings the app's when there is news for it: a new frame,
+   what the link is doing, loading started or ended, a question, an update.
+   The app then waits on its bell instead of looking 16 times a second. */
+static void ring_if_news(void)
+{
+	static unsigned int frame, link;
+	static int busy = -1, auth = -1, save = -1, upd = -1, state = -1;
+	PwShared *s = (PwShared *)pg_shared();
+	if (!s) return;
+	if (s->frame_seq == frame && s->net.link_seq == link && s->busy == busy && s->auth_state == auth &&
+	    s->save_state == save && s->update_state == upd && s->state == state)
+		return;
+	frame = s->frame_seq;
+	link = s->net.link_seq;
+	busy = s->busy;
+	auth = s->auth_state;
+	save = s->save_state;
+	upd = s->update_state;
+	state = s->state;
+	pg_ring_app();
+}
+
+/* PsiWeb.app has handed over input or a command (it sets net.resized), or
+   asked the engine to quit */
 static int psi_woken(void)
 {
 	PsiShared *ps = pg_shared();
-	if (!ps || !ps->resized) return 0;
+	PwShared *s = (PwShared *)ps;
+	if (!ps) return 0;
+	static int quit_seen;
+	if (!ps->resized) {
+		/* quitting wakes the loop once, not every time round: it is never
+		   cleared, and a loop with no sockets would never sleep again */
+		if (s->quitting && !quit_seen) { quit_seen = 1; return 1; }
+		return s->cmd != PW_CMD_NONE;
+	}
 	ps->resized = 0;
 	return 1;
 }
@@ -420,6 +468,7 @@ int psi_select(int n, void *rv, void *wv, void *ev, void *tvv)
 	int k, batched = 0;
 
 	(void)ev;
+	ring_if_news();
 	for (;;) {
 		int left, step;
 		FD_ZERO(&ro);
@@ -458,15 +507,23 @@ int psi_select(int n, void *rv, void *wv, void *ev, void *tvv)
 			int m = pg_wait(step, 1, 0);
 			if (m & 4) {
 				pg_shared()->resized = 0;
+				psi_poll_soon();
 				break;
 			}
 			if (m & 1 && pg_net_avail() == 0 && !tls_pending())
 				net_eof = 1;
 		} else {
 			/* nothing to wait for but time: sleep exactly (pg_wait would
-			   wait for the clock's next second) */
-			pg_msleep(step < PSI_SLEEP_MS ? step : PSI_SLEEP_MS);
-			if (psi_woken()) break;
+			   wait for the clock's next second). (0.81) With the doorbell,
+			   the whole time, or until PsiWeb.app rings */
+			if (pg_bells())
+				pg_bell_wait(step);
+			else
+				pg_msleep(step < PSI_SLEEP_MS ? step : PSI_SLEEP_MS);
+			if (psi_woken()) {
+				psi_poll_soon();
+				break;
+			}
 		}
 		if (ms < 0) continue;
 	}

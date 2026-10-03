@@ -56,6 +56,14 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
   through PsiWeb.app, psi_save_ask), at most PSI_SAVE_MAX; no Links download window
 - bookmark.c (PSI_NO_BARS): no bookmarks file written
 
+Display (docs/display.md, fonts):
+- dip.c, links.h (PSI_STRIKES, the ARM build): hinted glyphs pre-rendered by FreeType
+  (web/links/mkstrike.py: DejaVu Sans, Sans Bold, Sans Mono) at the seven HTML sizes of
+  the 14 px base, used as they are where they exist (no scaling or sharpening), the
+  scaled masters otherwise; psi_hinted_fonts switches them off, psi_set_font_base(fs)
+  (zoom) keeps a page from mixing the two
+- html.c (PSI_STRIKES): with the hinted fonts, list items get a real bullet (U+2022)
+
 --- a/drivers.c
 +++ b/drivers.c
 @@ -40,6 +40,9 @@
@@ -328,7 +336,21 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  }
  
  static void put_link_line(unsigned char *prefix, unsigned char *linkname, unsigned char *link, unsigned char *target)
-@@ -1727,6 +1919,26 @@
+@@ -1616,6 +1808,13 @@
+ #ifdef G
+ 		if (F) par_format.leftmargin += 2;
+ #endif
++#ifdef PSI_STRIKES
++		/* with the hinted fonts (dip.c), a real bullet: DejaVu's '*' is a
++		   plain asterisk, where Links' own serif one looked like a dot */
++		if (F && psi_hinted_fonts && x[0] == '*')
++			put_chrs(cast_uchar "&#8226;&nbsp;", 13);
++		else
++#endif
+ 		put_chrs(x, 7);
+ 		if (!F) par_format.leftmargin += 2;
+ 		par_format.align = AL_LEFT;
+@@ -1727,6 +1926,26 @@
  	form->num = (int)(a - startf);
  }
  
@@ -355,7 +377,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  static void find_form_for_input(unsigned char *i)
  {
  	unsigned char *s, *ss, *name, *attr, *lf, *la;
-@@ -1749,15 +1961,36 @@
+@@ -1749,15 +1968,36 @@
  	} else {
  		lf = NULL, la = NULL;
  		s = startf;
@@ -392,7 +414,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  	if (parse_element(s, i, &name, &namelen, &attr, &s)) goto sp;
  	if (namelen != 4 || casecmp(name, cast_uchar "FORM", 4)) goto se;
  	lf = ss;
-@@ -1772,6 +2005,10 @@
+@@ -1772,6 +2012,10 @@
  		get_html_form(la, &form);
  	} else {
  		last_form_tag = NULL;
@@ -403,7 +425,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  	}
  }
  
-@@ -2739,6 +2976,18 @@
+@@ -2739,6 +2983,18 @@
  	    !casestrcmp(name, cast_uchar "preconnect") ||
  	    !casestrcmp(name, cast_uchar "stylesheet") ||
  	    casestrstr(name, cast_uchar "icon") ||
@@ -422,7 +444,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  	    0) goto skip;
  	if (!casestrcmp(name, cast_uchar "prefetch") ||
  	    !casestrcmp(name, cast_uchar "prerender") ||
-@@ -2780,6 +3029,9 @@
+@@ -2780,6 +3036,9 @@
  	void (*func)(unsigned char *);
  	int linebreak;
  	int nopair; /* Somehow relates to paired elements */
@@ -432,7 +454,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  };
  
  static struct element_info elements[] = {
-@@ -2960,6 +3212,9 @@
+@@ -2960,6 +3219,9 @@
  	if (head) process_head(head);
  
  	set_lt:
@@ -442,7 +464,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  
  	/*set_globals;*/
  
-@@ -2970,6 +3225,25 @@
+@@ -2970,6 +3232,25 @@
  		int namelen;
  		struct element_info *ei;
  		int inv;
@@ -468,7 +490,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  		if (par_format.align != AL_NO && par_format.align != AL_NO_BREAKABLE && WHITECHAR(*html)) {
  			unsigned char *h = html;
  			/*if (putsp == -1) {
-@@ -3052,6 +3326,10 @@
+@@ -3052,6 +3333,10 @@
  			continue;
  		}
  		element:
@@ -479,7 +501,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  		html_format_changed = 1;
  		inv = *name == '/'; name += inv; namelen -= inv;
  		if (html_top.invisible == INVISIBLE_SCRIPT && !(inv && namelen == 6 && !casecmp(name, cast_uchar "SCRIPT", 6))) {
-@@ -3076,9 +3354,20 @@
+@@ -3076,9 +3361,20 @@
  			ng:;
  		}
  		html = end;
@@ -500,7 +522,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  			if (ei - elements > 4) {
  				struct element_info e = *ei;
  				memmove(elements + 1, elements, (ei - elements) * sizeof(struct element_info));
-@@ -3235,6 +3524,9 @@
+@@ -3235,6 +3531,9 @@
  	pos = 0;
  	/*line_breax = 1;*/
  	was_br = 0;
@@ -510,7 +532,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  #undef set_globals
  }
  
-@@ -3420,12 +3712,30 @@
+@@ -3420,12 +3719,30 @@
  	if (title) *title = init_str();
  	add_chr_to_str(head, hdl, '\n');
  	se:
@@ -1188,7 +1210,31 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  struct letter {
  	const unsigned char *begin; /* Begin in the byte stream (of PNG data) */
  	int length; /* Length (in bytes) of the PNG data in the byte stream */
-@@ -3248,6 +3264,9 @@
+@@ -2160,6 +2176,23 @@
+ 	struct lru_entry *color_list;
+ };
+ 
++#ifdef PSI_STRIKES
++/* web/links/mkstrike.py: hinted glyphs at one cell height (dip.c) */
++struct psi_strike {
++	int height;
++	int slot;			/* 0 normal, 1 bold, 2 monospaced */
++	int n;
++	const unsigned short *codes;	/* sorted */
++	const unsigned short *offs;	/* n + 1: run-length glyph i is data[offs[i]..offs[i + 1]) */
++	const unsigned char *data;
++};
++extern const struct psi_strike psi_strike_table[];
++extern const int psi_strike_count;
++extern const int psi_strike_base;	/* the base (body) size they are for */
++extern int psi_hinted_fonts;		/* 0: the scaled masters only */
++void psi_set_font_base(int fs);		/* the page's base size (zoom) */
++#endif
++
+ struct font {
+ 	int begin; /* Begin in the letter stream */
+ 	int length; /* Length in the letter stream */
+@@ -3248,6 +3281,9 @@
  				      * this is allocated to 256*3*sizeof(*gamma_table)
  				      * = 1536 bytes and speeds up the gamma calculations
  				      * tremendously */
@@ -1198,7 +1244,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  	list_entry_last
  };
  
-@@ -3304,6 +3323,19 @@
+@@ -3304,6 +3340,19 @@
  };
  
  void refresh_image(struct f_data_c *fd, struct g_object *img, uttime tm);
@@ -1715,7 +1761,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  	if (style->flags & FF_MONOSPACED) {
  		tries[0] = FONT_MONOSPACED;
  		if (style->flags & FF_BOLD) {
-@@ -1557,9 +1718,10 @@
+@@ -1557,11 +1718,69 @@
  #define AB(v, key)	(letter_data[start + v].code > key)
  		BIN_SEARCH(font->length, EQ, AB, letter_number, result);
  		if (result >= 0)
@@ -1727,8 +1773,85 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
 +#undef return_letter
  }
  
++#ifdef PSI_STRIKES
++/* web/links/mkstrike.py: hinted glyphs pre-rendered by FreeType at the cell
++   heights PsiWeb draws at 100% zoom (DejaVu Sans, Sans Bold, Sans Mono).
++   Where the style's height and family have a strike holding the character,
++   its glyph is used as it is: no scaling, no sharpening, and the strike's
++   own width. Characters a strike lacks use the scaled masters.
++   - psi_hinted_fonts = 0 turns the strikes off. Set it before the first
++     page is drawn (PsiWeb: at engine start); changing it later needs
++     psi_set_font_base's flush.
++   - Only while the page's base size is the strikes' own (psi_strike_base,
++     14): at any other zoom every size uses the masters, so a page never
++     mixes the two typefaces. psi_set_font_base(fs) tells dip.c the base
++     size (the zoom command), flushing the glyph and width caches if that
++     switches the strikes on or off. */
++#ifndef PSI_HINTED_DEFAULT
++#define PSI_HINTED_DEFAULT 1
++#endif
++int psi_hinted_fonts = PSI_HINTED_DEFAULT;
++static int psi_font_base = -1;		/* -1: the strikes' own */
++static const struct psi_strike *psi_st_last;
++static int psi_st_h = -1, psi_st_slot = -1;
++
++static const unsigned char *psi_strike_glyph(struct style *style, int code, int *len)
++{
++	const struct psi_strike *st;
++	int slot, lo, hi;
++	if (!psi_hinted_fonts || (psi_font_base >= 0 && psi_font_base != psi_strike_base) ||
++	    aspect != 65536 || display_optimize || code < 0 || code > 0xffff)
++		return NULL;
++	slot = style->flags & FF_MONOSPACED ? 2 : style->flags & FF_BOLD ? 1 : 0;
++	if (style->height != psi_st_h || slot != psi_st_slot) {
++		int i;
++		psi_st_last = NULL;
++		for (i = 0; i < psi_strike_count; i++)
++			if (psi_strike_table[i].height == style->height && psi_strike_table[i].slot == slot) {
++				psi_st_last = &psi_strike_table[i];
++				break;
++			}
++		psi_st_h = style->height;
++		psi_st_slot = slot;
++	}
++	if (!(st = psi_st_last)) return NULL;
++	lo = 0;
++	hi = st->n - 1;
++	while (lo <= hi) {
++		int mid = (lo + hi) >> 1;
++		if (st->codes[mid] == code) {
++			*len = (int)(st->offs[mid + 1] - st->offs[mid]);
++			return st->data + st->offs[mid];
++		}
++		if (st->codes[mid] < code) lo = mid + 1;
++		else hi = mid - 1;
++	}
++	return NULL;
++}
++#endif
++
  struct read_work {
-@@ -1657,6 +1819,38 @@
+ 	const unsigned char *pointer;
+ 	int length;
+@@ -1609,6 +1828,17 @@
+ 	}
+ #endif
+ 
++#ifdef PSI_STRIKES
++	{
++		int len;
++		const unsigned char *g = psi_strike_glyph(style, char_number, &len);
++		if (g) {
++			*x = (g[1] << 8) | g[2];
++			*y = style->height;
++			return;
++		}
++	}
++#endif
+ 	l = find_stored_letter(style, char_number);
+ 	if (!l) {
+ 		*x = 0;
+@@ -1657,6 +1887,38 @@
  	unsigned char **ptrs;
  	struct read_work work;
  
@@ -1767,7 +1890,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  	work.pointer = png_data;
  	work.length = png_length;
  
-@@ -1790,6 +1984,26 @@
+@@ -1790,6 +2052,26 @@
  	conv0 = (1 + sharpness) * contrast;
  	conv1 = (float)(-sharpness * (float)0.25 * contrast);
  
@@ -1794,7 +1917,21 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  	for (y0 = y; y0; y0--) {
  		for (x0 = *x; x0; x0--) {
  			/* Convolution */
-@@ -2141,11 +2355,61 @@
+@@ -1825,6 +2107,13 @@
+ 	} else
+ #endif
+ 	{
++#ifdef PSI_STRIKES
++		int len, gy;
++		const unsigned char *g = psi_strike_glyph(style, char_number, &len);
++		if (g)
++			load_char(&found_data, &found_x, &gy, g, len);
++		else
++#endif
+ 		load_scaled_char(&found_data, &found_x, found_y, letter->begin, letter->length, style);
+ 	}
+ 
+@@ -2141,11 +2430,76 @@
  		internal_error("destroy_font_cache: cache not freed due to locks");
  }
  
@@ -1841,6 +1978,21 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
 +}
 +#endif
 +
++#ifdef PSI_STRIKES
++/* the page's base font size (see psi_strike_glyph); call before laying the
++   page out again */
++void psi_set_font_base(int fs)
++{
++	int was = psi_font_base < 0 || psi_font_base == psi_strike_base;
++	int now = fs == psi_strike_base;
++	psi_font_base = fs;
++	if (was == now) return;
++	destroy_font_cache();
++	memset(psi_wc, 0, sizeof(psi_wc));
++	psi_st_h = psi_st_slot = -1;
++}
++#endif
++
  /* Returns 0 in case the char is not found. */
  static inline int g_get_width(struct style *style, unsigned charcode)
  {
@@ -1856,7 +2008,7 @@ Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
  	if (!charcode || charcode == 0xad) return 0;
  	if (charcode == 0x01 || charcode == 0xa0) charcode = ' ';
  	if (style->mono_space >= 0) {
-@@ -2160,6 +2424,24 @@
+@@ -2160,6 +2514,24 @@
  int g_text_width(struct style *style, unsigned char *text)
  {
  	int w = 0;

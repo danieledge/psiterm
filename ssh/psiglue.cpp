@@ -28,6 +28,8 @@ _LIT(KPortName, "COMM::0");
 // engine's writable statics below.
 #ifndef PG_LINK_TEST_ONLY
 
+#include "psibell.h"
+
 // EXEs may have writable static data on EPOC R5 (unlike .app DLLs), but
 // global objects with constructors are avoided: handles live on the heap.
 static RChunk* gChunk = 0;
@@ -462,20 +464,31 @@ static TInt NifStage()
 	}
 
 // ----- keeping the Psion awake ---------------------------------------------
-// Called whenever data has just flowed: every 30 s of that, the auto
-// switch-off timer is reset, so the Psion does not switch off in the middle
-// of a download. An idle connection lets it sleep as before.
-static void KeepAwake()
+// Called whenever data has just flowed, with how much: the auto switch-off
+// timer is reset at most every 30 s, and only if at least 2 KB went or came
+// in that time, so the Psion does not switch off in the middle of a
+// download. (0.81) An idle connection lets it sleep: before, any byte
+// counted, and an idle SSH session's keepalive (every 10 s), tmux's status
+// line or PsiTerm's tmux window list kept the Psion on for ever.
+const int KKeepAwakeMinBytes = 2048;
+static int gAwakeBytes = 0;               // bytes since gKeepAwakeAt
+
+static void KeepAwake(int aBytes)
 	{
+	gAwakeBytes += aBytes;
 	TInt64 now = NowMicro();
 	if (gKeepAwakeAt != TInt64(0) && now - gKeepAwakeAt < KKeepAwakeEveryUs)
 		return;
+	TBool flowing = gKeepAwakeAt == TInt64(0) || gAwakeBytes >= KKeepAwakeMinBytes;
 	gKeepAwakeAt = now;
+	gAwakeBytes = 0;
+	if (!flowing)
+		return;
 	UserHal::ResetAutoSwitchOffTimer();
 	if (!gKeptAwake)
 		{
 		gKeptAwake = 1;
-		LinkLog("keeping the Psion awake while data flows (auto switch-off timer reset every 30 s)");
+		LinkLog("keeping the Psion awake while data flows (auto switch-off timer reset every 30 s while 2 KB or more moves)");
 		}
 	}
 
@@ -931,6 +944,7 @@ static int NetConnect(char* aResult, int aMax)
 
 // Moves a completed receive into gRx. Keeps one receive outstanding at all
 // times instead of cancelling, so no data can be lost to a cancel race.
+static void NetRxDone();
 static void NetRxFill(int aTimeoutUs)
 	{
 	if (gRxPos < gRxLen || !gSockOpen || gNetClosed)
@@ -948,13 +962,19 @@ static void NetRxFill(int aTimeoutUs)
 	// status that has completed; otherwise it waits, bounded.
 	if (!WaitFor(gRecvStat, aTimeoutUs, 0))
 		return;                          // still waiting
+	NetRxDone();
+	}
+
+// The receive has completed: its data into gRx, or the connection closed.
+static void NetRxDone()
+	{
 	gRecvPending = 0;
 	gRxPos = 0;
 	if (gRecvStat.Int() == KErrNone)
 		{
 		gRxLen = gRecvDes->Length();
 		if (gRxLen > 0)
-			KeepAwake();
+			KeepAwake(gRxLen);
 		if (!gNetGotData && gRxLen > 0)
 			{
 			gNetGotData = 1;
@@ -1009,7 +1029,7 @@ static int NetWrite(const void* aBuf, int aLen)
 		gNetSent = 1;
 		LinkMsg("  Request sent, waiting for the reply...\r\n");
 		}
-	KeepAwake();
+	KeepAwake(aLen);
 	return aLen;
 	}
 
@@ -1459,6 +1479,188 @@ extern "C" void pg_msleep(int aMs)
 	User::After(aMs * 1000);
 	}
 
+// ----- doorbells (0.81: power) ------------------------------------------------
+// The CPU halts only while every thread waits on a request. pg_wait used to
+// look at the keyboard ring every tick (1/64 s), so an idle SSH session kept
+// psissh waking 64 times a second, and PsiTerm as often to see its output.
+// Now, once nothing has moved for KQuietAfterUs, the wait is for a request
+// instead: the app's ring (eng_bell: keys, quit, a resize, a request), the
+// link's data (a socket receive, or a serial ReadOneOrMore) or a timer of up
+// to KQuietSliceUs. Output for the app rings app_bell. See psibell.h.
+const TInt64 KQuietAfterUs = TInt64(250000);    // quick waits for 1/4 s after keys or data (a serial
+                                                // burst is then read in slices, not byte by byte)
+const TInt KQuietSliceUs = 5000000;             // longest quiet wait: the heartbeat check (quit, keys
+                                                // and a switch-on ring the bell)
+
+static TInt64 gActiveAt;                  // keys, data or output last moved
+static TRequestStatus gBellStat;          // eng_bell's request (static: the app completes it)
+static int gBellArmed = 0;
+static unsigned int gBellSeen = 0;        // eng_bell.seq when last looked at
+static TPsiBellRinger* gAppRinger = 0;    // rings app_bell
+static TRequestStatus gIdleReadStat;      // serial: the ReadOneOrMore of a quiet wait
+static TPtr8* gIdleDes = 0;
+static unsigned int gXferSeen = 0, gTqSeen = 0;   // requests seen by pg_wait
+static void CarrierLost(TInt aErr);
+
+static void NoteActive()
+	{
+	gActiveAt = NowMicro();
+	}
+
+// The app rings eng_bell for everything an engine waits for (bell_magic),
+// and the bell works: an engine may then wait for longer than a tick.
+static int BellsOn()
+	{
+	return gShared && gShared->bell_magic == PSI_BELL_MAGIC && !gShared->eng_bell.broken && gTimerOpen;
+	}
+
+extern "C" int pg_bells()
+	{
+	return BellsOn();
+	}
+
+// Waits on eng_bell from now. 1 if it was rung since the last look (then
+// don't wait: look first).
+static int BellArm()
+	{
+	PsiBell* b = &gShared->eng_bell;
+	gBellStat = KRequestPending;
+	b->status = &gBellStat;
+	b->tid = PsiBellMyTid();
+	b->armed = 1;
+	gBellArmed = 1;
+	return b->seq != gBellSeen;
+	}
+
+static void BellDisarm()
+	{
+	if (!gBellArmed)
+		return;
+	gBellArmed = 0;
+	PsiBell* b = &gShared->eng_bell;
+	if (PsiBellSwap(&b->armed, 0) != 1)
+		{
+		// the app has taken it and completes it now: take that completion
+		// (never wait on a status that has already completed: see WaitFor)
+		if (gBellStat == KRequestPending)
+			PsiBellTakeBack(b, gBellStat);   // (bounded: the app may have died ringing)
+		b->wakes++;
+		}
+	gBellSeen = b->seq;
+	}
+
+// Rings app_bell: the app has output, a result or news to look at. Cheap
+// unless the app is waiting on it.
+extern "C" void pg_ring_app()
+	{
+	if (!gShared || gShared->bell_magic != PSI_BELL_MAGIC)
+		return;
+	if (!gAppRinger)
+		gAppRinger = new TPsiBellRinger;
+	if (gAppRinger)
+		gAppRinger->Ring(&gShared->app_bell);
+	}
+
+static int IdleDesReady()
+	{
+	if (!gIdleDes)
+		gIdleDes = new TPtr8(0, 0);
+	return gIdleDes != 0;
+	}
+
+// A quiet wait: returns when the app rings, aNet's link has data (aNet: it
+// is open and wanted), or aSliceUs has passed. The link's data, if any, is
+// in gRx (or the connection is marked closed) as after RxFill.
+static void QuietWait(TInt aSliceUs, int aNet)
+	{
+	if (BellArm())
+		{
+		BellDisarm();                    // rung meanwhile: back to look
+		return;
+		}
+	TRequestStatus timerStat;
+	gTimer->After(timerStat, aSliceUs);
+	TRequestStatus* net = 0;
+	int serial = 0;
+	if (aNet && gRxPos >= gRxLen)
+		{
+		if (gNet)
+			{
+			if (gSockOpen && !gNetClosed)
+				{
+				if (!gRecvPending)
+					{
+					gRecvDes->Set(gRx, 0, sizeof(gRx));
+					gSock->RecvOneOrMore(*gRecvDes, 0, gRecvStat, gRecvLen);
+					gRecvPending = 1;
+					}
+				net = &gRecvStat;
+				}
+			}
+		else if (gCommOpen && !(gDcdLost && gDcdFail) && IdleDesReady())
+			{
+			// completes as soon as one byte has come (the active waits then
+			// take the rest in slices); cancelled below if it has not
+			gRxPos = 0;
+			gRxLen = 0;
+			gIdleDes->Set(gRx, 0, sizeof(gRx));
+			gComm->ReadOneOrMore(gIdleReadStat, *gIdleDes);
+			net = &gIdleReadStat;
+			serial = 1;
+			}
+		}
+	while (gBellStat == KRequestPending && timerStat == KRequestPending && (!net || *net == KRequestPending))
+		User::WaitForAnyRequest();
+	NoteOrphans();                       // an orphan done meanwhile: its count went with this wait
+	if (timerStat == KRequestPending)
+		{
+		gTimer->Cancel();
+		User::WaitForRequest(timerStat);   // the cancel completes it
+		}
+	BellDisarm();
+	if (serial)
+		{
+		if (gIdleReadStat == KRequestPending)
+			{
+			gComm->ReadCancel();
+			User::WaitForRequest(gIdleReadStat);
+			}
+		// a ReadOneOrMore that is cancelled has taken no data; one that
+		// completed has (a cancel that came too late is KErrNone too)
+		TInt r = gIdleReadStat.Int();
+		TInt len = gIdleDes->Length();
+		if (len > 0 && (r == KErrNone || r == KErrCancel))
+			{
+			gRxPos = 0;
+			gRxLen = len;
+			KeepAwake(len);
+			}
+		else if (r == KErrCommsLineFail && gDcdFail)
+			CarrierLost(r);              // DCD dropped: the line has gone
+		else if (r != KErrNone && r != KErrCancel)
+			{
+			gRxErrors++;                 // line error: dropped, SSH will notice
+			gRxLastErr = r;
+			}
+		}
+	else if (net && gRecvStat != KRequestPending)
+		NetRxDone();                     // (the receive stays outstanding otherwise, as NetRxFill leaves it)
+	}
+
+// For an engine with nothing to do: waits until the app rings or aMs has
+// passed. 1 if rung. Without the bells it is a plain sleep.
+extern "C" int pg_bell_wait(int aMs)
+	{
+	if (!BellsOn())
+		{
+		User::After(aMs * 1000);
+		return 0;
+		}
+	unsigned int seen = gBellSeen;
+	QuietWait(aMs * 1000, 0);
+	return gBellSeen != seen;
+	}
+
 // Ends the engine's process here and now, with aCode as the exit reason the
 // app reads (RProcess::ExitReason). psishim calls it after CloseSTDLIB(),
 // which frees the C library's per-thread state: returning to ecrt0, whose
@@ -1501,7 +1703,7 @@ extern "C" int pg_serial_write(const void* aBuf, int aLen)
 	if (stat.Int() == KErrCommsLineFail && gDcdFail)
 		CarrierLost(stat.Int());
 	if (stat.Int() == KErrNone)
-		KeepAwake();
+		KeepAwake(aLen);
 	return (stat.Int() == KErrNone) ? aLen : -1;
 	}
 
@@ -1527,7 +1729,7 @@ static void RxFill(int aTimeoutUs)
 		{
 		gRxLen = p.Length();
 		if (gRxLen > 0)
-			KeepAwake();
+			KeepAwake(gRxLen);
 		}
 	else if (stat.Int() == KErrCommsLineFail && gDcdFail)
 		CarrierLost(stat.Int());         // DCD dropped: not a line error, the line has gone
@@ -1603,6 +1805,7 @@ extern "C" void pg_out_write(const void* aBuf, int aLen)
 			{
 			if (pg_quit_requested())    // (or the app has gone: nobody will drain it)
 				return;
+			pg_ring_app();
 			User::After(10000);         // PsiTerm will drain it shortly
 			continue;
 			}
@@ -1618,6 +1821,8 @@ extern "C" void pg_out_write(const void* aBuf, int aLen)
 		in += n;
 		aLen -= n;
 		}
+	NoteActive();
+	pg_ring_app();                       // (0.81) PsiTerm may be waiting on its bell
 	}
 
 extern "C" void pg_winsize(int* aRows, int* aCols)
@@ -1639,8 +1844,16 @@ extern "C" int pg_take_resize()
 	}
 
 // ----- waiting ----------------------------------------------------------------
-// Returns a bit mask: 1 = network data, 2 = keyboard data, 4 = resize, 8 = quit.
+// Returns a bit mask: 1 = network data, 2 = keyboard data, 4 = resize, 8 = quit,
+// 16 = the app has posted a request (file transfer, tmux: xfer_req, tq_req),
+// only to a wait that takes keys too (the session's select: psishim.c), so
+// a wait for a reply alone never ends early without one.
 // aMs < 0 waits forever.
+//
+// For 1/4 s after keys or data it looks every tick (1/64 s), as it always
+// did, so a burst of data is read in slices. After that, if the app rings
+// its doorbell (BellsOn), it waits for a request instead - the app's ring,
+// the link's data or a timer of up to 5 s - and the CPU can halt (QuietWait).
 extern "C" int pg_wait(int aMs, int aWantNet, int aWantKbd)
 	{
 	TInt64 start = NowMicro();
@@ -1656,9 +1869,22 @@ extern "C" int pg_wait(int aMs, int aWantNet, int aWantKbd)
 			mask |= 4;
 		if (pg_quit_requested())
 			mask |= 8;
+		if (aWantKbd && gShared && (gShared->xfer_req != gXferSeen || gShared->tq_req != gTqSeen))
+			{
+			gXferSeen = gShared->xfer_req;
+			gTqSeen = gShared->tq_req;
+			mask |= 16;
+			}
 		if (mask)
+			{
+			if (mask & 3)
+				NoteActive();
 			return mask;
+			}
 		int slice = 15625;                  // look at the keyboard every tick (1/64 s)
+		int quiet = BellsOn() && NowMicro() - gActiveAt > KQuietAfterUs;
+		if (quiet)
+			slice = KQuietSliceUs;
 		if (aMs >= 0)
 			{
 			TInt64 left = TInt64(aMs) * 1000 - (NowMicro() - start);
@@ -1669,7 +1895,10 @@ extern "C" int pg_wait(int aMs, int aWantNet, int aWantKbd)
 			if (slice < 1000)
 				slice = 1000;
 			}
-		if (aWantNet && LinkOpen() && !gNetClosed)
+		int net = aWantNet && LinkOpen() && !gNetClosed;
+		if (quiet && slice > 15625)
+			QuietWait(slice, net);
+		else if (net)
 			RxFill(slice);
 		else
 			User::After(slice);

@@ -11,15 +11,20 @@
 //   - when the ring is full we stop reading the TCP socket, so TCP's own
 //     flow control holds the server back.
 // That gives end-to-end flow control without a single handshake wire.
+//
+// Dialling "psiproxy" (ATDT psiproxy:8080) opens no TCP connection: the
+// modem is then a web proxy for PsiWeb itself (proxy.h), doing the TLS and
+// simplifying pages. AT$PX turns it off or chooses how much it simplifies.
 #ifndef ATOM_MODEM_H
 #define ATOM_MODEM_H
 
 #include <stdint.h>
 #include <stddef.h>
+#include "proxy.h"
 
 namespace am {
 
-static const char* const kVersion = "1.0";
+static const char* const kVersion = "1.1";
 
 // ----- settings (saved whole in NVS by AT&W) -------------------------------
 struct Settings
@@ -40,8 +45,15 @@ struct Settings
 	uint16_t paceBurst;        // bytes per burst (the token bucket's depth)
 	uint16_t paceGap;          // extra quiet time after each burst, ms
 	int8_t dcdPin;             // GPIO driving an emulated DCD, -1 = none
-	uint8_t spare[15];
+	uint8_t proxy;             // the web proxy (AT$PX), stored so that 0 (a record saved
+	                           // by 1.0) means on: 0 on, 1 off, 2 text only, 3 unchanged
+	uint8_t proxyNoZip;        // 1: AT$PZ=0, the proxy does not gzip pages for the Psion
+	uint8_t spare[13];
 	};
+
+// AT$PX's value (Proxy::TMode) from the stored byte, and back
+int ProxyMode(const Settings& aS);
+void SetProxyMode(Settings& aS, int aMode);
 
 static const uint32_t kMagic = 0x41544d31;   // 'ATM1'
 
@@ -112,6 +124,14 @@ public:
 	virtual size_t TcpRead(uint8_t* aBuf, size_t aMax) = 0;
 	virtual size_t TcpWrite(const uint8_t* aData, size_t aLen) = 0;
 	virtual void TcpClose() = 0;
+	// the web proxy's own connection to a server, over TLS if aTls (with
+	// the certificate checked). It is then used through TcpOpen..TcpClose
+	// above: during a psiproxy call there is no other TCP connection.
+	// aWhy: a few words on why it failed. The default does plain TCP only.
+	virtual bool UpConnect(const char* aHost, uint16_t aPort, bool aTls, char* aWhy, size_t aWhyMax);
+	virtual void Idle() {}                              // a moment's wait in a busy loop
+	virtual void MemInfo(char* aOut, size_t aMax);      // "heap free 120 KB, ..." for ATI
+	virtual void Log(const char* aLine) { (void)aLine; } // a status line (the USB console)
 	// WiFi
 	virtual bool WifiUp() = 0;
 	virtual void WifiBegin(const char* aSsid, const char* aPass) = 0;
@@ -141,6 +161,8 @@ public:
 	size_t Buffered() const { return iRing.Count(); }
 	uint32_t ToPsion() const { return iToPsion; }
 	uint32_t ToServer() const { return iToServer; }
+	bool ProxyCall() const { return iProxyCall; }
+	const Proxy& WebProxy() const { return iProxy; }
 
 private:
 	enum TResult { ROk = 0, RConnect = 1, RRing = 2, RNoCarrier = 3, RError = 4, RNone = -1 };
@@ -185,6 +207,8 @@ private:
 	uint32_t iLastDataMs;
 	uint32_t iPendingBaud;              // AT$SB: switch after the OK has gone
 	int iLed;                           // the LED state last shown
+	Proxy iProxy;                       // the web proxy (a psiproxy call)
+	bool iProxyCall;
 	uint8_t iTcpBuf[1460];
 	uint8_t iUpBuf[256];                // Psion -> server, batched
 	size_t iUpLen;

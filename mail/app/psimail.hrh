@@ -165,6 +165,7 @@ enum TPmDialogControls
 	EPmDlgHelpText,
 	EPmDlgPictures,          // Preferences: Show pictures
 	EPmDlgEmailButton,       // Preferences: Email icon opens
+	EPmDlgReading,           // Preferences: Reading mode (0.81, docs/display.md)
 	EPmDlgAlert,             // Preferences > New mail: Alert for new mail (0.74)
 	EPmDlgCheckEvery,        // Check for new mail
 	EPmDlgCheckConnect,      // If not connected

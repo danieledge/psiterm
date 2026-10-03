@@ -988,6 +988,14 @@ int psi_sftp_pending(void)
 /* logged in: the select() wait is kept short so a new request is seen soon */
 int psi_sftp_running(void) { return running; }
 
+/* (0.81) a request in hand or waiting: select() then keeps its waits short,
+   for the time limits and Stop (otherwise PsiTerm's doorbell wakes it) */
+int psi_sftp_busy(void)
+{
+	PsiShared *s = sh();
+	return op != 0 || (running && s && s->xfer_req != s->xfer_ack);
+}
+
 /* every turn of Dropbear's main loop, once logged in */
 void psi_sftp_loop(void)
 {

@@ -2,14 +2,18 @@
 // a UART with a 128-byte transmit FIFO that drains at the line rate, a TCP
 // "server" whose bytes wait in a queue (so back-pressure can be seen), and
 // WiFi and NVS that do what they are told. MIT licence.
+// For the web proxy: UpConnect records the server asked for, and a
+// "responder" plays the web server, answering each request written to it.
 #ifndef FAKEHAL_H
 #define FAKEHAL_H
 #include "../src/modem.h"
 #include <string>
 #include <vector>
 #include <deque>
+#include <functional>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 struct TxByte { uint8_t c; uint64_t us; };     // a byte as it left the UART
 
@@ -34,6 +38,15 @@ public:
 	am::Settings saved;
 	bool dcd = false;
 	int led = -1;
+	// the web proxy's server side
+	int upConnects = 0;
+	bool upTls = false;
+	std::vector<std::string> upLog;            // "host:port tls" for each UpConnect
+	// given a whole request (head and body), returns the reply; aClose: the
+	// server closes the connection after it
+	std::function<std::string(const std::string& aReq, bool& aClose)> responder;
+	size_t reqMark = 0;                        // where in toServer the next request starts
+	size_t readChunk = 0;                      // most bytes one TcpRead returns (0: any)
 
 	uint32_t Millis() override { return (uint32_t)(nowUs / 1000); }
 	uint32_t Micros() override { return (uint32_t)nowUs; }
@@ -65,12 +78,59 @@ public:
 	size_t TcpRead(uint8_t* b, size_t m) override
 		{
 		size_t n = 0;
+		if (readChunk && m > readChunk) m = readChunk;
 		while (n < m && !server.empty()) { b[n++] = server.front(); server.pop_front(); }
 		if (n > maxTcpRead) maxTcpRead = n;
 		return n;
 		}
-	size_t TcpWrite(const uint8_t* d, size_t n) override { toServer.append((const char*)d, n); return n; }
-	void TcpClose() override { tcpOpen = false; server.clear(); }
+	size_t TcpWrite(const uint8_t* d, size_t n) override
+		{
+		toServer.append((const char*)d, n);
+		Respond();
+		return n;
+		}
+	void TcpClose() override { tcpOpen = false; server.clear(); reqMark = toServer.size(); }
+	bool UpConnect(const char* h, uint16_t p, bool tls, char* why, size_t m) override
+		{
+		upConnects++;
+		upTls = tls;
+		tcpHost = h; tcpPort = p;
+		upLog.push_back(std::string(h) + ":" + std::to_string(p) + (tls ? " tls" : ""));
+		if (!tcpOk) { snprintf(why, m, "connection refused"); return false; }
+		tcpOpen = true;
+		reqMark = toServer.size();
+		return true;
+		}
+	void Idle() override { Advance(1000); }
+	std::vector<std::string> logs;             // the proxy's status lines
+	void Log(const char* aLine) override { logs.push_back(aLine); }
+	bool Logged(const char* aPart) const
+		{
+		for (const std::string& l : logs) if (l.find(aPart) != std::string::npos) return true;
+		return false;
+		}
+	void MemInfo(char* o, size_t m) override { snprintf(o, m, "Heap: (host test)"); }
+	// a whole request since reqMark? (head, and as many body bytes as its
+	// Content-Length says): the responder answers it
+	void Respond()
+		{
+		if (!responder) return;
+		for (;;)
+			{
+			size_t e = toServer.find("\r\n\r\n", reqMark);
+			if (e == std::string::npos) return;
+			std::string head = toServer.substr(reqMark, e + 4 - reqMark);
+			size_t cl = 0, p = head.find("Content-Length: ");
+			if (p != std::string::npos) cl = (size_t)atol(head.c_str() + p + 16);
+			if (toServer.size() < e + 4 + cl) return;
+			std::string req = toServer.substr(reqMark, e + 4 + cl - reqMark);
+			reqMark = e + 4 + cl;
+			bool close = false;
+			std::string reply = responder(req, close);
+			for (char c : reply) server.push_back((uint8_t)c);
+			if (close) tcpOpen = false;
+			}
+		}
 	bool WifiUp() override { return wifi; }
 	void WifiBegin(const char* s, const char* p) override { wifiSsid = s; wifiPass = p; }
 	void WifiEnd() override { wifi = false; }

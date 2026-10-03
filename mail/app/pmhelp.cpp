@@ -78,7 +78,15 @@ static const TPmHelpTopic KHelpTopics[] =
 	  "opened with Message > Attachments.\n"
 	  "\n"
 	  "While a picture is being fetched or decoded its frame says so; if it can't be shown, the frame "
-	  "says why. Working offline, pictures not yet fetched wait until you go online." },
+	  "says why. Working offline, pictures not yet fetched wait until you go online.\n"
+	  "\n"
+	  "Pictures are set out in the Psion's 16 greys by error diffusion, following the display "
+	  "calibration set in PsiTerm (Tools > Debug > Display calibration), which can also choose "
+	  "the ordered pattern instead. A change applies to pictures set out after it.\n"
+	  "\n"
+	  "Tools > Preferences > Reading mode: While reading a message raises the screen's contrast and "
+	  "keeps the backlight on while a message is open and PsiMail is in front. Your own settings "
+	  "come back in the list, in the background, on closing, or when the Psion is switched off." },
 
 	{ "Writing messages",
 	  "Message > Create new email (Ctrl+N) opens a new message; Ctrl+R replies, Shift+Ctrl+R replies to "

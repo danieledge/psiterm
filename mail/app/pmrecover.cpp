@@ -16,6 +16,7 @@
 // goes to the new engine, which writes it at the top of psimail.log, and
 // the old engine's log is kept as psimail.old.
 
+#include <e32hal.h>
 #include "pmapp.h"
 #include "pmpict.h"
 
@@ -47,8 +48,13 @@ void CPmView::EngineStoppedL(const TDesC& aWhy)
 	// started again, unless it keeps stopping
 	TUint now = User::TickCount();
 	TInt recent = 0;
+	// ten minutes in ticks (the tick is not 1/64 s on every machine: ask)
+	TTimeIntervalMicroSeconds32 period;
+	if (UserHal::TickPeriod(period) != KErrNone || period.Int() <= 0)
+		period = 15625;
+	TUint tenMinutes = (TUint)(600000000 / period.Int());
 	for (TInt k = 0; k < 3; k++)
-		if (iEngineStops[k] && now - iEngineStops[k] < 64 * 600)
+		if (iEngineStops[k] && now - iEngineStops[k] < tenMinutes)
 			recent++;
 	iEngineStops[0] = iEngineStops[1];
 	iEngineStops[1] = iEngineStops[2];

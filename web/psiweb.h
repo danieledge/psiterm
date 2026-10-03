@@ -134,7 +134,13 @@ typedef struct
 	int save_max;                      /* psiweb: the biggest file it saves */
 	char save_path[256];               /* app: where, e.g. D:\Documents\x.pdf */
 
+	/* display work (docs/display.md): app sets before the engine starts */
+	int display;                       /* PW_DISPLAY_* bits */
+
 	unsigned char fb[PW_MAX_H * PW_STRIDE];
 	} PwShared;
+
+/* PwShared.display (Preferences > Text; all 0 is the standard) */
+#define PW_DISPLAY_SCALED_TEXT	1	/* Links' scaled fonts, not the pre-drawn sharp ones */
 
 #endif

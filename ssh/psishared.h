@@ -19,6 +19,23 @@
 #define PSI_ENTROPY_SIZE  512
 #define PSI_XFER_LIST_SIZE 16384
 #define PSI_TQ_OUT_SIZE 2048
+#define PSI_BELL_MAGIC  0x4c4c4542u      /* 'BELL': the app rings eng_bell (psibell.h) */
+
+/* (0.81) A doorbell: a request one side waits on and the other completes
+   when it has left something in this memory for it, so neither has to look
+   every tick (the CPU halts only while every thread waits). The protocol
+   and the code are in psibell.h. */
+typedef struct
+	{
+	volatile int armed;            /* 1: 'status' waits; whoever swaps it to 0 completes it */
+	volatile unsigned int seq;     /* the ringer adds 1 on every ring */
+	volatile unsigned int tid;     /* the waiting thread (TThreadId) */
+	void* volatile status;         /* its TRequestStatus, in its own process */
+	volatile int broken;           /* the ringer could not reach the waiter: poll instead */
+	volatile unsigned int rings;   /* requests completed by the ringer (diagnostics) */
+	volatile unsigned int wakes;   /* ...and the waiter's wake-ups from them */
+	volatile unsigned int rtid;    /* the ringing thread, set before it takes 'armed' */
+	} PsiBell;
 
 enum
 	{
@@ -130,6 +147,13 @@ typedef struct
 	volatile int tq_result;            /* PSI_TQ_* */
 	volatile int tq_len;               /* bytes in tq_out */
 	char tq_out[PSI_TQ_OUT_SIZE];
+	/* (0.81) power: the doorbells (psibell.h). The app sets bell_magic to
+	   PSI_BELL_MAGIC when it rings eng_bell every time it gives the engine
+	   something (keys, a command, quit, a resize, a switch-on, a request):
+	   only then may the engine wait for longer than a tick. */
+	unsigned int bell_magic;
+	PsiBell app_bell;              /* the engine rings, the app waits */
+	PsiBell eng_bell;              /* the app rings, the engine waits */
 	} PsiShared;
 
 /* tmux queries: what to do (tq_op) */

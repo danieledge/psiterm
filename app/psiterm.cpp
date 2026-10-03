@@ -75,11 +75,18 @@ const TInt KEntropyKeysNeeded = 40;
 const TInt KScrollbackLines = 300;       // ~150 KB of history
 const TInt KScrollbackCols = 128;
 const TInt KClipMax = 16384;            // most text copied/pasted at once
+// (0.81) power: the SSH pump and the status tick (see PumpQuiet, StartTick)
+const TInt KPumpTickUs = 15625;         // every system tick while output flows
+const TInt KPumpQuietAfter = 32;        // ticks with nothing before it goes quiet (1/2 s)
+const TInt KPumpQuietUs = 1000000;      // quiet with no status tick to beat for it (heartbeat)
+const TInt KPumpNoBellUs = 125000;      // quiet without a working doorbell
+const TInt KTickUs = 500000;            // status line, cursor blink, tmux, the log
+const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (TickBusy)
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.80");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.81");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -358,6 +365,7 @@ CTermView::~CTermView()
 		// wait is in this thread, so say so (bottom left, as busy messages go)
 		TRAP_IGNORE(iEikonEnv->BusyMsgL(_L("Ending SSH..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
 		iShared->quit = 1;
+		RingSsh();
 		for (TInt i = 0; i < 30 && iSshProcess.ExitType() == EExitPending; i++)
 			User::After(100000);
 		if (iSshProcess.ExitType() == EExitPending)
@@ -368,6 +376,8 @@ CTermView::~CTermView()
 		iEikonEnv->BusyMsgCancel();
 		}
 	delete iPump;
+	delete iBellWaiter;                  // (before the chunk it points into goes)
+	iSshRinger.Close();
 	delete iWatcher;
 	delete iShotTimer;
 	delete iPendingIdle;
@@ -403,6 +413,7 @@ void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	{
 	iSettings = aSettings;
 	iTabRow = -1;
+	iForeground = ETrue;                     // (until a focus event says otherwise)
 	CreateBackedUpWindowL(iCoeEnv->RootWin(), EGray16);
 	SetRectL(aRect);
 	EnableDragEvents();                      // pen drag selects text
@@ -589,6 +600,7 @@ void CTermView::Layout()
 		iShared->rows = iRows;
 		iShared->cols = iCols;
 		iShared->resized = 1;
+		RingSsh();
 		}
 	iDamaged = EFalse;
 	if (IsActivated())
@@ -1015,6 +1027,7 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 			{
 			while (iShared->kbd_head - iShared->kbd_tail >= PSI_KBD_SIZE && waited < 400)
 				{
+				RingSsh();
 				User::After(5000);
 				waited++;
 				}
@@ -1026,6 +1039,11 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 			iShared->kbd[iShared->kbd_head % PSI_KBD_SIZE] = aBytes[i];
 			iShared->kbd_head++;
 			}
+		RingSsh();                       // (0.81) psissh may be waiting on its doorbell
+		PumpFast();                      // ...and the echo is on its way
+		iUserAt = User::TickCount();
+		if (iTick && iTickUs != KTickUs && TickBusy())
+			StartTick();
 		return;
 		}
 	if (iSettings.iNetMode)
@@ -1230,7 +1248,8 @@ void CTermView::DrawStatus(CWindowGc& aGc) const
 	aGc.DiscardFont();
 	}
 
-// Every 0.5 s: blink the cursor, and refresh the status line if it changed
+// Every 0.5 s: blink the cursor, and refresh the status line if it changed.
+// (0.81) Every 2 s with PsiTerm in the background, where nothing is drawn.
 TInt CTermView::TickCallback(TAny* aSelf)
 	{
 	((CTermView*)aSelf)->Tick();
@@ -1239,8 +1258,34 @@ TInt CTermView::TickCallback(TAny* aSelf)
 
 void CTermView::Tick()
 	{
+	if (iSshActive && iShared)
+		{
+		// (0.81) the heartbeat, while the pump waits on its doorbell; and
+		// output a ring did not bring (it should never happen) is taken
+		iShared->app_beat++;
+		if (iPumpQuiet && iShared->out_tail != iShared->out_head)
+			{
+			PumpFast();
+			PumpSsh();
+			}
+		}
 	if (!IsActivated() || iPaintGc || iCapture)
 		return;
+	if (!iForeground)
+		{
+		// in the background: only what can't wait (nothing on the screen)
+		if (iLog)
+			iLog->Flush();
+		TInt bstate = (iSshActive && iShared) ? iShared->state : -1;
+		if (bstate != iLastState)
+			{
+			iLastState = bstate;
+			iStateSince = User::TickCount();
+			}
+		if (SshLoggedIn())
+			iEverLoggedIn = ETrue;
+		return;
+		}
 	if (iSettings.iBlink && iCurVisible && iScrollOffset == 0)
 		{
 		iBlinkHidden = !iBlinkHidden;
@@ -1292,6 +1337,30 @@ void CTermView::Tick()
 			DeactivateGc();
 			}
 		}
+	if (iTick && iTickUs != (TickBusy() ? KTickUs : KTickSlowUs))
+		StartTick();                         // (0.81) the pace for what is on the screen now
+	}
+
+// (0.81) The tick goes every 0.5 s while something on the screen moves or
+// waits on it, otherwise every 2 s: the clock in the status line then
+// turns within 2 s of the minute. In the background it is always 2 s.
+TBool CTermView::TickBusy() const
+	{
+	if (!iForeground)
+		return EFalse;
+	if (iSettings.iBlink || iReconnectWait || iQuitAsked)
+		return ETrue;
+	if (iSshActive && (!iShared || iShared->state != PSI_STATE_CONNECTED || iLaunchMode != 0))
+		return ETrue;                        // connecting (the spinner), a job, or not up yet
+	if (iTqSent || iTqKickAt)
+		return ETrue;                        // a tmux query on its way
+	if (iLastTx && !iNoReplyShown)
+		return ETrue;                        // typed to the modem: is it answering?
+	if (iTabsTop && iTabMiss > 0 && iTabMiss < KTabMissLimit)
+		return ETrue;                        // the tab strip may be about to go
+	if (iUserAt && (TInt)(User::TickCount() - iUserAt) < 10 * 64)
+		return ETrue;                        // typing in the last 10 s
+	return EFalse;
 	}
 
 void CTermView::StartTick()
@@ -1302,8 +1371,26 @@ void CTermView::StartTick()
 		return;
 	iTick->Cancel();
 	iBlinkHidden = EFalse;
-	// always: the status line, the cursor blink and the tmux tabs
-	iTick->Start(500000, 500000, TCallBack(TickCallback, this));
+	// always: the status line, the cursor blink and the tmux tabs (every
+	// 0.5 s; 2 s when nothing moves, or in the background: TickBusy)
+	iTickUs = TickBusy() ? KTickUs : KTickSlowUs;
+	iTick->Start(iTickUs, iTickUs, TCallBack(TickCallback, this));
+	}
+
+// (0.81) PsiTerm came to the front or went behind another program
+// (CPsiTermAppUi::HandleWsEventL): the tick slows down behind, and in front
+// the blink and the status line are put right at once
+void CTermView::SetForeground(TBool aForeground)
+	{
+	if (aForeground == iForeground)
+		return;
+	iForeground = aForeground;
+	if (iTick && iTick->IsActive() && iTickUs != (TickBusy() ? KTickUs : KTickSlowUs))
+		StartTick();
+	if (iForeground && iTqDueAt)
+		iTqKickAt = User::TickCount();   // the tmux window list, which waited
+	if (iForeground)
+		Tick();
 	}
 
 void CTermView::ApplyAppearanceL()
@@ -1749,6 +1836,7 @@ TBool CTermView::TmuxQueryPost(TInt aOp, TInt aIndex)
 		}
 	TUint req = s->tq_req + 1;
 	s->tq_req = req;                           // last: psissh starts now
+	RingSsh();
 	iTqSent = req ? req : 1;
 	iTqStartedAt = User::TickCount();
 	return ETrue;
@@ -1913,6 +2001,8 @@ void CTermView::TmuxQueryTick()
 		if (TmuxQueryPost(PSI_TQ_SELECT, i))
 			return;
 		}
+	if (!iForeground)
+		return;                              // (0.81) not drawn: asked again on coming back (SetForeground)
 	TBool kick = iTqKickAt && (TInt)(now - iTqKickAt) >= 0;
 	if (!kick && (TInt)(now - iTqDueAt) < 0)
 		return;
@@ -1921,8 +2011,12 @@ void CTermView::TmuxQueryTick()
 	if (TmuxQueryPost(PSI_TQ_LIST, 0))
 		{
 		iTqKickAt = 0;
-		// about every 4 s while tmux answers; less often while it does not
-		iTqDueAt = now + (iTqState == 1 ? 4 * 64 : iTqNone >= 3 ? 30 * 64 : 10 * 64);
+		// about every 4 s while tmux answers; less often while it does not.
+		// (0.81) Each query is a channel and a command on the server, and
+		// wakes the Psion: after a minute without a key, every 14 s, which
+		// still keeps the answer fresh enough to use (KTqFreshTicks)
+		TBool userIdle = !iUserAt || (TInt)(now - iUserAt) > 60 * 64;
+		iTqDueAt = now + (iTqState == 1 ? (userIdle ? 14 * 64 : 4 * 64) : iTqNone >= 3 ? 30 * 64 : 10 * 64);
 		}
 	}
 
@@ -2349,14 +2443,29 @@ TInt CTermView::TextByte(const TLook& aLook) const
 
 // Colour -> one of 16 greys. The Psion screen is dark-on-light, so text
 // colours are kept dark enough to read and backgrounds are kept light
-// unless they are genuinely dark.
-static TInt GreyOf(const VTermScreen* aScreen, VTermColor aCol)
+// unless they are genuinely dark. With the grey calibration on (docs/
+// display.md) the 8-bit grey takes the level that looks nearest to it on
+// this screen (aCal); off, the old mapping exactly.
+static TInt GreyOf(const VTermScreen* aScreen, VTermColor aCol, const TUint8* aCal)
 	{
 	vterm_screen_convert_color_to_rgb(aScreen, &aCol);
+	TUint x = aCol.rgb.red * 30 + aCol.rgb.green * 59 + aCol.rgb.blue * 11;
+	if (aCal)
+		return aCal[(x * 5243u) >> 19];      // x / 100 (exact to 25500): 0..255
 	// ((r*30 + g*59 + b*11) / 100) / 17 without two software divisions:
 	// x*9869 >> 24 == x/1700 for every x <= 25500
-	TUint x = aCol.rgb.red * 30 + aCol.rgb.green * 59 + aCol.rgb.blue * 11;
 	return (TInt)((x * 9869u) >> 24);    // 0..15
+	}
+
+void CTermView::SetGreys(const PsiGrey& aGrey)
+	{
+	unsigned char lv[16], cal[256];
+	psigrey_levels(&aGrey, lv);
+	psigrey_nearest(lv, cal);
+	Mem::Copy(iGreyCal, cal, sizeof(iGreyCal));
+	iGreyOn = aGrey.on;
+	if (IsActivated())
+		DrawNow();
 	}
 
 void CTermView::CellColours(const VTermScreenCell& aCell, TInt& aFg, TInt& aBg) const
@@ -2365,15 +2474,24 @@ void CTermView::CellColours(const VTermScreenCell& aCell, TInt& aFg, TInt& aBg) 
 	TInt bg = 15;
 	TBool fgDefault = VTERM_COLOR_IS_DEFAULT_FG(&aCell.fg);
 	TBool bgDefault = VTERM_COLOR_IS_DEFAULT_BG(&aCell.bg);
+	const TUint8* cal = iGreyOn ? iGreyCal : NULL;
 	if (!fgDefault)
 		{
-		fg = GreyOf(iScreen, aCell.fg);
-		// light text colours were chosen for black backgrounds: darken them
+		fg = GreyOf(iScreen, aCell.fg, cal);
+		// light text colours were chosen for black backgrounds: darken them.
+		// Dark greys (the standard, docs/display.md): 0..6 in the colour's
+		// own order, so text never goes to a mid grey on the white; lighter
+		// greys (as before 0.81): up to 9, the lightest colours folded back
 		if (bgDefault)
-			fg = (fg > 9) ? 9 - (fg - 9) / 2 : fg * 2 / 3;
+			{
+			if (iSettings.iDisplay & KPtDisplayLightText)
+				fg = (fg > 9) ? 9 - (fg - 9) / 2 : fg * 2 / 3;
+			else
+				fg = (fg * 6 + 7) / 15;
+			}
 		}
 	if (!bgDefault)
-		bg = GreyOf(iScreen, aCell.bg);
+		bg = GreyOf(iScreen, aCell.bg, cal);
 	if (aCell.attrs.reverse)
 		{
 		TInt t = fg; fg = bg; bg = t;
@@ -3615,6 +3733,15 @@ void CTermView::LaunchSshL(TInt aMode)
 				TRAP_IGNORE(iEikonEnv->BusyMsgL(_L("Stopping the old SSH program..."), EHLeftVBottom,
 					TTimeIntervalMicroSeconds32(0)));
 				old->quit = 1;
+				// a quiet psissh waits on its doorbell: ring it, or it would
+				// see quit only after its quiet slice (an old psissh's chunk
+				// is smaller and has no bell)
+				if (iChunk.Size() >= (TInt)sizeof(PsiShared) && old->bell_magic == PSI_BELL_MAGIC)
+					{
+					TPsiBellRinger ringer;
+					ringer.Ring(&old->eng_bell);
+					ringer.Close();
+					}
 				for (TInt w = 0; w < 50 && old->state != PSI_STATE_EXITED; w++)
 					User::After(100000);
 				User::After(500000);           // let it hang up and let go
@@ -3641,6 +3768,7 @@ void CTermView::LaunchSshL(TInt aMode)
 		iQuitTimer->Cancel();
 	TmuxQueryReset();
 	iShared->magic = PSI_SHARED_MAGIC;
+	iShared->bell_magic = PSI_BELL_MAGIC;   // (0.81) we ring eng_bell for everything psissh waits for
 	iShared->rows = iRows;
 	iShared->cols = iCols;
 	iShared->baud_index = iSettings.iBaudIndex;
@@ -3798,9 +3926,14 @@ void CTermView::LaunchSshL(TInt aMode)
 	iWatcher->Watch(iSshProcess);
 	if (!iPump)
 		iPump = CPeriodic::NewL(CActive::EPriorityStandard);
-	// every system tick (1/64 s): the old 40 ms poll added up to 3 ticks
-	// to every key echo. An idle poll is a couple of compares.
-	iPump->Start(15625, 15625, TCallBack(PumpCallback, this));
+	// every system tick (1/64 s) while output flows: the old 40 ms poll
+	// added up to 3 ticks to every key echo. (0.81) Half a second with
+	// nothing, and it waits on the doorbell psissh rings (PumpQuiet).
+	iSshRinger.Close();                  // (a new psissh: a new thread)
+	iPumpQuiet = EFalse;
+	iPumpIdle = 0;
+	iPump->Cancel();
+	iPump->Start(KPumpTickUs, KPumpTickUs, TCallBack(PumpCallback, this));
 	iSshProcess.Resume();
 	}
 
@@ -3810,6 +3943,55 @@ TInt CTermView::PumpCallback(TAny* aSelf)
 	return 1;
 	}
 
+// (0.81) The pump's two speeds. Quick: every tick while output flows (and
+// half a second after). Quiet: the doorbell is armed - psissh rings it with
+// its next output - and the status tick keeps the heartbeat going (psissh
+// quits after 45 s without one) and looks anyway, in case a ring went astray.
+void CTermView::PumpFast()
+	{
+	iPumpIdle = 0;
+	if (!iPumpQuiet || !iPump)
+		return;
+	iPumpQuiet = EFalse;
+	iPump->Cancel();
+	iPump->Start(KPumpTickUs, KPumpTickUs, TCallBack(PumpCallback, this));
+	}
+
+void CTermView::PumpQuiet()
+	{
+	iPumpIdle = 0;
+	if (!iPump || !iShared || iPumpQuiet)
+		return;
+	if (!iBellWaiter)
+		iBellWaiter = new CPsiBellWaiter(TCallBack(BellCallback, this));   // (no memory: stays quick)
+	if (!iBellWaiter || iBellWaiter->Arm(&iShared->app_bell))
+		return;                          // (rung just now: stay quick)
+	iPumpQuiet = ETrue;
+	iPump->Cancel();
+	if (!iBellWaiter->IsActive())
+		iPump->Start(KPumpNoBellUs, KPumpNoBellUs, TCallBack(PumpCallback, this));
+	else if (!iTick || !iTick->IsActive())
+		iPump->Start(KPumpQuietUs, KPumpQuietUs, TCallBack(PumpCallback, this));
+	// else no timer at all: psissh's ring, and the status tick (which
+	// beats for the pump and looks at the ring too: Tick)
+	if (iShared->out_tail != iShared->out_head)
+		PumpFast();                      // (output came as the bell was armed)
+	}
+
+TInt CTermView::BellCallback(TAny* aSelf)
+	{
+	CTermView* self = (CTermView*)aSelf;
+	self->PumpFast();
+	self->PumpSsh();
+	return 0;
+	}
+
+void CTermView::RingSsh()
+	{
+	if (iSshActive && iShared)
+		iSshRinger.Ring(&iShared->eng_bell);
+	}
+
 // Move psissh.exe's terminal output into libvterm.
 void CTermView::PumpSsh()
 	{
@@ -3817,7 +3999,12 @@ void CTermView::PumpSsh()
 		return;
 	iShared->app_beat++;                 // (0.69) "still here": see psishared.h
 	if (iShared->out_tail == iShared->out_head)
+		{
+		if (!iPumpQuiet && ++iPumpIdle >= KPumpQuietAfter)
+			PumpQuiet();
 		return;
+		}
+	PumpFast();
 	// Feed everything waiting in one paint pass, so libvterm can merge a
 	// burst of scrolling into a single blit. Not while a job's output goes
 	// to the tool window: that window draws itself, and the terminal's gc
@@ -3885,6 +4072,7 @@ void CTermView::AskQuit()
 		}
 	iQuitAsked = ETrue;
 	iShared->quit = 1;
+	RingSsh();
 	if (!iQuitTimer)
 		iQuitTimer = CPeriodic::New(CActive::EPriorityStandard);
 	if (!iQuitTimer)
@@ -3996,6 +4184,10 @@ void CTermView::SshProcessEnded()
 	PumpSsh();
 	if (iPump)
 		iPump->Cancel();
+	if (iBellWaiter)
+		iBellWaiter->Cancel();           // (psissh has gone: nothing will ring it)
+	iSshRinger.Close();
+	iPumpQuiet = EFalse;
 	TInt reason = iSshProcess.ExitReason();
 	TExitType type = iSshProcess.ExitType();
 	TExitCategoryName category(iSshProcess.ExitCategory());
@@ -5066,6 +5258,7 @@ void CAppearanceDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPtDlgBlink))->SetCurrentItem(iSettings.iBlink ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgBell))->SetCurrentItem(iSettings.iBell ? 0 : 1);
 	((CEikChoiceList*)Control(EPtDlgStartScreen))->SetCurrentItem(iSettings.iStartScreen ? 1 : 0);
+	((CEikChoiceList*)Control(EPtDlgColourText))->SetCurrentItem((iSettings.iDisplay & KPtDisplayLightText) ? 1 : 0);
 	}
 
 TBool CAppearanceDialog::OkToExitL(TInt /*aButtonId*/)
@@ -5075,6 +5268,10 @@ TBool CAppearanceDialog::OkToExitL(TInt /*aButtonId*/)
 	iSettings.iBlink = ((CEikChoiceList*)Control(EPtDlgBlink))->CurrentItem() == 1;
 	iSettings.iBell = ((CEikChoiceList*)Control(EPtDlgBell))->CurrentItem() == 1 ? 0 : 1;
 	iSettings.iStartScreen = ((CEikChoiceList*)Control(EPtDlgStartScreen))->CurrentItem() == 1;
+	if (((CEikChoiceList*)Control(EPtDlgColourText))->CurrentItem() == 1)
+		iSettings.iDisplay |= KPtDisplayLightText;
+	else
+		iSettings.iDisplay &= ~KPtDisplayLightText;
 	return ETrue;
 	}
 
@@ -5232,6 +5429,84 @@ void CPsiTermAppUi::ConstructL()
 	iView->ConstructL(TermRect(settings.iToolbar), settings);
 	AddToStackL(iView);
 	iCoeEnv->RootWin().EnableOnEvents(EEventControlAlways);   // (0.68) switch-on events even when in the background
+	// docs/display.md: the grey calibration shared with PsiMail and PsiWeb,
+	// and the user's contrast and backlight put back if a program stopped
+	// in Reading mode without doing it
+	PsiGrey grey;
+	PsiGreyLoad(iCoeEnv->FsSession(), grey);
+	iView->SetGreys(grey);
+	TPsiReading::Recover(iCoeEnv->FsSession(), iCoeEnv->WsSession(), KUidPsiTerm);
+	iForeground = ETrue;
+	UpdateReading();
+	}
+
+// ----- Reading mode and the grey calibration (docs/display.md) ------------------
+
+// On while PsiTerm is in front with View > Reading mode ticked; off when
+// it goes to the background or the tick is taken off. aEnterOnly: a key
+// was pressed (it comes back on after a switch-on turned it off).
+void CPsiTermAppUi::UpdateReading(TBool aEnterOnly)
+	{
+	if (!iView)
+		return;
+	TBool want = iForeground && (iView->Settings().iDisplay & KPtDisplayReading) && !iGreyScreen;
+	if (want)
+		iReading.Enter(iCoeEnv->FsSession(), KUidPsiTerm);
+	else if (!aEnterOnly)
+		iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);
+	}
+
+// Tools > Debug > Display calibration...
+void CPsiTermAppUi::GreyScreenL()
+	{
+	if (iGreyScreen && !iGreyScreen->IsVisible() && !(iGreyCloser && iGreyCloser->IsActive()))
+		{
+		delete iGreyScreen;              // closed, but its closer could not be made
+		iGreyScreen = NULL;
+		}
+	if (iGreyScreen)
+		return;                          // (open, or closing)
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);   // (the screen as the user set it)
+	iGreyScreen = CPtGreyScreen::NewL(*this);
+	TRAPD(err, AddToStackL(iGreyScreen, ECoeStackPriorityDialog));
+	if (err != KErrNone)
+		{
+		delete iGreyScreen;
+		iGreyScreen = NULL;
+		User::Leave(err);
+		}
+	}
+
+void CPsiTermAppUi::GreyScreenDone(TBool aSave, const PsiGrey& aGrey)
+	{
+	if (aSave)
+		{
+		TInt r = PsiGreySave(iCoeEnv->FsSession(), aGrey);
+		if (r == KErrNone)
+			{
+			iView->SetGreys(aGrey);
+			iEikonEnv->InfoMsg(_L("Saved - PsiMail and PsiWeb use it from the next picture or page"));
+			}
+		else
+			iEikonEnv->InfoMsg(_L("Not saved - the internal disk is full or in use"));
+		}
+	// (called from the screen's own key handler: it goes from the stack and
+	// the screen now, and is deleted once that handler has returned)
+	RemoveFromStack(iGreyScreen);
+	iGreyScreen->MakeVisible(EFalse);
+	if (!iGreyCloser)
+		iGreyCloser = CIdle::New(CActive::EPriorityStandard);
+	if (iGreyCloser && !iGreyCloser->IsActive())
+		iGreyCloser->Start(TCallBack(GreyCloseCallback, this));
+	}
+
+TInt CPsiTermAppUi::GreyCloseCallback(TAny* aSelf)
+	{
+	CPsiTermAppUi* self = (CPsiTermAppUi*)aSelf;
+	delete self->iGreyScreen;
+	self->iGreyScreen = NULL;
+	self->UpdateReading();
+	return 0;
 	}
 
 // ----- the toolbar ---------------------------------------------------------------
@@ -5346,10 +5621,22 @@ void CPsiTermAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
 	(void)aDestination;                  // (the CONE default does nothing, and is private)
 	if (iView)
 		iView->LinkSwitchedOn();
+	// Reading mode is put back to the user's settings at switch-off/on; the
+	// next key in PsiTerm turns it on again (not the switch-on itself: an
+	// alarm may have woken the Psion with nobody reading)
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);
 	}
 
 CPsiTermAppUi::~CPsiTermAppUi()
 	{
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);   // the user's contrast and backlight back
+	delete iGreyCloser;
+	if (iGreyScreen)
+		{
+		if (iGreyScreen->IsVisible())
+			RemoveFromStack(iGreyScreen);    // (still open: on the stack)
+		delete iGreyScreen;
+		}
 	if (iView)
 		{
 		RemoveFromStack(iView);
@@ -5516,6 +5803,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iTmuxTabs = 1;
 	aSettings.iPppStart.Copy(_L("ATDT777"));   // WiRSa and similar: dial 777 = PPP
 	aSettings.iToolbar = 1;       // shown the first time, as the style guide expects
+	aSettings.iDisplay = 0;       // Reading mode off, coloured text dark (docs/display.md)
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
@@ -5602,6 +5890,8 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 												aSettings.iPppStart.Copy(data.Mid(pos + 9, plen));
 												if (pos + 9 + plen < data.Length())   // v13: toolbar
 													aSettings.iToolbar = data[pos + 9 + plen] ? 1 : 0;
+												if (pos + 10 + plen < data.Length())  // v14: display
+													aSettings.iDisplay = data[pos + 10 + plen] & (KPtDisplayReading | KPtDisplayLightText);
 												}
 											}
 										}
@@ -5658,6 +5948,7 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append((TUint8)tmp.Length());
 	data.Append(tmp);
 	data.Append((TUint8)(aSettings.iToolbar ? 1 : 0));   // v13 (older PsiTerms ignore it)
+	data.Append((TUint8)aSettings.iDisplay);              // v14: Reading mode, coloured text
 	SafeWrite(fs, KIniFile, data);
 	}
 
@@ -5681,6 +5972,17 @@ TBool CPsiTermAppUi::ConfirmDisconnectL(TInt aCommand)
 // the program on EApaSystemEventShutdown, is private, so this is the hook).
 void CPsiTermAppUi::HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination)
 	{
+	// Reading mode follows PsiTerm in and out of the foreground (CCoeAppUi's
+	// HandleForegroundEventL is private on ER5: the focus events are seen here)
+	if (aEvent.Type() == EEventFocusGained || aEvent.Type() == EEventFocusLost)
+		{
+		iForeground = aEvent.Type() == EEventFocusGained;
+		UpdateReading();
+		if (iView)
+			iView->SetForeground(iForeground);   // (0.81) power: no drawing behind
+		}
+	else if (aEvent.Type() == EEventKey && !iReading.Active() && iForeground)
+		UpdateReading(ETrue);
 	if (aEvent.Type() == EEventUser && iView && PtLogging(*iView)
 		&& *(TApaSystemEvent*)aEvent.EventData() == EApaSystemEventBackupStarting)
 		TRAP_IGNORE(PtLogCommandL(*iView));   // (with the log on, the command stops it)
@@ -5905,6 +6207,7 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPtCmdBold, s.iBold ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPtCmdStatusLine, s.iStatus ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPtCmdToolbar, s.iToolbar ? EEikMenuItemSymbolOn : 0);
+		aMenuPane->SetItemButtonState(EPtCmdReading, (s.iDisplay & KPtDisplayReading) ? EEikMenuItemSymbolOn : 0);
 		}
 	}
 
@@ -5940,6 +6243,15 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		s.iToolbar = !s.iToolbar;
 		SaveSettings(s);
 		ShowToolBarL(s.iToolbar);
+		break;
+	case EPtCmdReading:                       // View > Reading mode (tick box; docs/display.md)
+		s.iDisplay ^= KPtDisplayReading;
+		SaveSettings(s);
+		UpdateReading();
+		iEikonEnv->InfoMsg((s.iDisplay & KPtDisplayReading) ? _L("Reading mode on") : _L("Reading mode off"));
+		break;
+	case EPtCmdGreyCal:                       // Tools > Debug > Display calibration...
+		GreyScreenL();
 		break;
 	case EPtCmdTbConnect:                     // the toolbar's first button
 		if (iView->SshActive() || iView->ReconnectWaiting())

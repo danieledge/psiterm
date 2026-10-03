@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """tools/emu/net.py - end-to-end network tests in the 5mx emulator.
 
-    python3 tools/emu/net.py [at|web|mail|ssh|all ...] [--keep]
+    python3 tools/emu/net.py [at|web|mail|ssh|proxy|all ...] [--keep]
 
 For each test it starts a host modem (firmware/atom-modem's hostmodem) on a
 unix socket, the local server the app should reach, builds a card with the
@@ -15,6 +15,11 @@ build/emu/net/<test>/ (end.png is the last frame).
   mail  PsiMail: a new account (Security None), Check mail -> fakeimap.py
   ssh   PsiTerm: imports a throwaway key from the card (D:\\PSIKEY) and
         logs in to a throwaway sshd on 127.0.0.1 (key login only)
+  proxy PsiWeb with Preferences > Use a proxy: psiproxy, 8080 - the modem's
+        own web proxy (firmware/atom-modem/src/proxy.cpp) - opens a real
+        site (EMU_PROXY_URL, default news.ycombinator.com: http:// that
+        moves to https://, so the modem does the TLS). Needs the Internet;
+        not part of "all".
 
 Every server listens on 127.0.0.1 only, and every process it starts is
 stopped at the end (it never kills anything it did not start). The sshd
@@ -27,6 +32,7 @@ so the addresses typed on the Psion can be short.
   EMU_PKG_TERM, EMU_PKG_MAIL, EMU_PKG_WEB  app files (default: pkg/,
                 build/mail-pkg/, build/web-pkg/, as mkcard.ts)
   EMU_RETRIES   runs a failed test again this many times (default 1)
+  EMU_PROXY_URL the address the proxy test types (default news.ycombinator.com)
   --keep        leave the test keys in the work folder (logs and
                 screenshots always stay)
 """
@@ -224,6 +230,26 @@ def test_web(ctx):
     return grep(log, 'GET / HTTP') , out
 
 
+def test_proxy(ctx):
+    # The modem is the proxy itself: no local server, no redirect - the
+    # page comes from the real site, fetched (over TLS for https) by the
+    # modem's code and simplified there.
+    url = os.environ.get('EMU_PROXY_URL', 'news.ycombinator.com')
+    card = os.path.join(WORK, 'proxy.img')
+    make_card('psiweb', card, 'EMU_PKG_WEB')
+    modem = ctx.modem('proxy')
+    # PsiWeb is up on its welcome page at ~55 s. Preferences (Ctrl+K): Down
+    # to "Use a proxy", Right for Yes, Down to the host, psiproxy (the port
+    # is 8080 already), Enter. The engine restarts with the proxy.
+    s = Script(60).ctrl('k', gap=2).key(DOWN, gap=0.6).key(DOWN, gap=0.6).key(DOWN, gap=0.6)
+    s.key(RIGHT, gap=0.8).key(DOWN, gap=0.8).type('psiproxy', gap=0.35).key(ENTER, gap=25)
+    # then Ctrl+O, the address, Enter
+    s.ctrl('o', gap=1.5).type(url + '\r', gap=0.35)
+    out = emulate('proxy', card, ctx.sock, s, secs=int(os.environ.get('EMU_PROXY_SECS', 70)))
+    ok = grep(modem, 'proxy: GET ') and grep(modem, '-> 200')
+    return ok, out
+
+
 def test_mail(ctx):
     port = free_port()
     log = os.path.join(WORK, 'imap.log')
@@ -354,13 +380,14 @@ class Ctx:
         os.rmdir(self.sockdir)
 
 
-TESTS = {'at': test_at, 'web': test_web, 'mail': test_mail, 'ssh': test_ssh}
+TESTS = {'at': test_at, 'web': test_web, 'mail': test_mail, 'ssh': test_ssh, 'proxy': test_proxy}
+ALL = ['at', 'web', 'mail', 'ssh']             # (proxy needs the Internet: asked for by name)
 
 
 def main():
     names = [a for a in sys.argv[1:] if not a.startswith('--')] or ['all']
     if 'all' in names:
-        names = list(TESTS)
+        names = list(ALL)
     for n in names:
         if n not in TESTS:
             sys.exit('net.py: unknown test %s (have %s)' % (n, ' '.join(TESTS)))

@@ -56,6 +56,20 @@ static const TPwHelpTopic KHelpTopics[] =
 	  "again from memory when you come back to them; a page that still does not fit says \"Page too "
 	  "big\" and shows what fits." },
 
+	{ "Screen & greys",
+	  "View > Reading mode (Shift+Ctrl+R) raises the screen's contrast and keeps the backlight on "
+	  "while PsiWeb is in front; your own settings come back when it goes to the background or "
+	  "closes, or the Psion is switched off (the next key turns it on again).\n"
+	  "\n"
+	  "Pictures are dithered once, as they are set out, by error diffusion; text and the page's "
+	  "own colours are drawn in plain greys, with no pattern. The greys follow the display "
+	  "calibration set in PsiTerm (Tools > Debug > Display calibration), from the next page; "
+	  "it can also choose the ordered pattern of earlier versions.\n"
+	  "\n"
+	  "Tools > Preferences > Text: Sharp (the standard) draws text with fonts made ahead for the "
+	  "Psion's greys at 100%; other zoom sizes use the scaled fonts. Scaled (as before) uses Links' "
+	  "own fonts at every size. The engine starts again when it changes." },
+
 	{ "Connections & proxy",
 	  "Tools > Connection settings chooses how PsiWeb reaches the Internet, the same way as PsiTerm "
 	  "and PsiMail.\n"
@@ -103,6 +117,7 @@ static const TPwHelpTopic KHelpTopics[] =
 	  "Ctrl+M / Shift+Ctrl+M: zoom in / out\n"
 	  "Ctrl+I / Ctrl+T: show pictures (this page) / show toolbar\n"
 	  "Shift+Ctrl+Q: page information\n"
+	  "Shift+Ctrl+R: Reading mode\n"
 	  "Ctrl+U: disconnect\n"
 	  "Ctrl+K / Shift+Ctrl+H / Shift+Ctrl+A / Ctrl+E: preferences / help / about / close" }
 	};

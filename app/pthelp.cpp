@@ -146,6 +146,24 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "The serial port can be used by one program at a time: switch the Remote link off (System "
 	  "screen, Ctrl+L) and close PsiMail or PsiWeb's connection first." },
 
+	{ "Screen & greys",
+	  "View > Reading mode raises the screen's contrast and keeps the backlight on while PsiTerm is in "
+	  "front. Your own contrast and backlight come back when PsiTerm goes to the background or closes, "
+	  "or the Psion is switched off; the next key turns it on again. If you change the contrast "
+	  "meanwhile, yours is kept. How much, and whether the light stays on, is set in the Display "
+	  "calibration below, for all three programs.\n"
+	  "\n"
+	  "Tools > Debug > Display calibration shows the Psion's 16 greys as bars, with ramps drawn as "
+	  "PsiMail and PsiWeb draw pictures and plain greys. Tab picks a setting; Up and Down change it "
+	  "(on Levels, Left and Right pick a bar and Up makes the greys near it lighter); Del goes back to "
+	  "the standard; Enter saves for PsiTerm, PsiMail and PsiWeb; Esc closes without saving. It is right "
+	  "when the ramps look smooth and evenly stepped. It can also turn the calibration off (plain "
+	  "greys, as before) and choose how pictures are dithered: error diffusion (smoother) or the "
+	  "ordered pattern of earlier versions. The chart docs/display-chart.png shows what to aim for.\n"
+	  "\n"
+	  "Tools > Preferences > Coloured text: dark greys (the standard) keep coloured text dark enough "
+	  "to read on the white screen; lighter greys are as earlier versions drew it." },
+
 	{ "Updating PsiTerm",
 	  "Tools > Update PsiTerm looks for a newer PsiTerm on GitHub (the published releases, or the test "
 	  "builds) or on a local server on your own network, downloads it to the memory disk, checks its "

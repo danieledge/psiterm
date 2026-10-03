@@ -21,7 +21,17 @@ enum {
 static PwShared g_sh;
 static unsigned char g_fb4[PW_MAX_H * PW_STRIDE];
 
-void *pwb_shared(void) { return &g_sh; }
+/* the harness's settings (proxy, connection) go in on first use: main()
+   reads use_proxy before pwb_open runs, as the real chunk is filled in by
+   the app before the engine starts */
+static void emu_config(void)
+{
+	static int done;
+	if (done) return;
+	done = 1;
+	emu_hc(HB_CONFIG, (int)&g_sh.use_proxy, (int)g_sh.proxy_host, (int)&g_sh.proxy_port, (int)&g_sh.net.net_mode);
+}
+void *pwb_shared(void) { emu_config(); return &g_sh; }
 /* for the harness's "auth" and "save" script lines (run_links.py): the
    chunk and the offsets of the question fields */
 PwShared *emu_shared = &g_sh;
@@ -35,8 +45,7 @@ PsiShared *pg_shared(void) { return &g_sh.net; }
 int pwb_open(int *w, int *h)
 {
 	*w = 640; *h = 240;
-	/* the harness fills in proxy settings etc. */
-	emu_hc(HB_CONFIG, (int)&g_sh.use_proxy, (int)g_sh.proxy_host, (int)&g_sh.proxy_port, (int)&g_sh.net.net_mode);
+	emu_config();
 	emu_hc(HB_UPDCFG, (int)&g_sh.upd_source, (int)g_sh.upd_host, (int)&g_sh.upd_port, (int)g_sh.net.version);
 	strcpy(g_sh.net.save_as, "C:\\PsiWeb-update.sis");
 	return emu_hc(HB_OPEN, (int)g_fb4, PW_STRIDE, 0, 0);
@@ -80,6 +89,10 @@ int pg_net_read(void *b, int m) { return emu_hc(HP_READ, (int)b, m, 0, 0); }
 int pg_serial_write(const void *b, int n) { return emu_hc(HP_WRITE, (int)b, n, 0, 0); }
 int pg_wait(int ms, int n, int k) { return emu_hc(HP_WAIT, ms, n, k, 0); }
 void pg_msleep(int ms) { emu_hc(HP_WAIT, ms, 0, 0, 0); }
+/* (0.81) no doorbells in the emulated engine: the input poll stays quick */
+int pg_bells(void) { return 0; }
+int pg_bell_wait(int ms) { pg_msleep(ms); return 0; }
+void pg_ring_app(void) { }
 int pg_entropy(unsigned char *o, int m) { return emu_hc(HP_ENTROPY, (int)o, m, 0, 0); }
 
 /* Tools > Update PsiWeb: not in the emulator build */

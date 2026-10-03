@@ -23,7 +23,8 @@ enum TPwCommands
 	EPwCmdHangup,
 	EPwCmdConnect,           // File > Connect (as PsiTerm's)
 	EPwCmdToggleToolbar,
-	EPwCmdHelp               // Tools > Help on PsiWeb
+	EPwCmdHelp,              // Tools > Help on PsiWeb
+	EPwCmdReading            // View > Reading mode (docs/display.md)
 	};
 
 enum TPwDialogControls
@@ -58,7 +59,8 @@ enum TPwDialogControls
 	EPwDlgAuthWho,           // User name and password (Links phase 5)
 	EPwDlgAuthRealm,
 	EPwDlgAuthUser,
-	EPwDlgAuthPass
+	EPwDlgAuthPass,
+	EPwDlgText               // Preferences > Text: sharp or scaled (docs/display.md)
 	};
 
 // Connection settings > Test (0.74): the button, and the result dialog's lines

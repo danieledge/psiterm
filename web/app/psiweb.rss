@@ -104,6 +104,7 @@ RESOURCE HOTKEYS r_pw_hotkeys
 	shift_control=
 		{
 		HOTKEY { command=EPwCmdZoomOut; key='m'; },
+		HOTKEY { command=EPwCmdReading; key='r'; },
 		HOTKEY { command=EPwCmdPageInfo; key='q'; },
 		HOTKEY { command=EPwCmdHelp; key='h'; },
 		HOTKEY { command=EPwCmdAbout; key='a'; }
@@ -151,6 +152,7 @@ RESOURCE MENU_PANE r_pw_view_menu
 		MENU_ITEM { command=EPwCmdZoomOut; txt="Zoom out"; },
 		MENU_ITEM { command=EPwCmdZoomNormal; txt="Normal size"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPwCmdToggleToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPwCmdReading; txt="Reading mode"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPwCmdImages; txt="Show pictures"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPwCmdPageInfo; txt="Page information..."; }
 		};
@@ -221,12 +223,20 @@ RESOURCE DIALOG r_pw_prefs_dialog
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Home page"; id=EPwDlgHome; control=EDWIN { width=24; maxlength=200; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Pictures"; id=EPwDlgPictures; control=CHOICELIST { array_id=r_pw_pictures_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Text"; id=EPwDlgText; control=CHOICELIST { array_id=r_pw_text_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Use a proxy"; id=EPwDlgProxy; control=CHOICELIST { array_id=r_pw_proxy_array; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Proxy host"; id=EPwDlgProxyHost; control=EDWIN { width=24; maxlength=60; }; },
 		DLG_LINE { type=EEikCtNumberEditor; prompt="Proxy port"; id=EPwDlgProxyPort; control=NUMBER_EDITOR { min=1; max=65535; }; },
 		DLG_LINE { type=EEikCtLabel; control=LABEL { standard_font=EEikLabelFontAnnotation;
 			txt="A proxy such as WebOne fetches https pages for the Psion & keeps one connection open"; }; }
 		};
+	}
+
+// Preferences > Text (docs/display.md): fonts drawn ahead for the Psion's
+// greys at the sizes PsiWeb uses (sharper), or Links' own, scaled
+RESOURCE ARRAY r_pw_text_array
+	{
+	items={ LBUF { txt="Sharp"; }, LBUF { txt="Scaled (as before)"; } };
 	}
 
 // Page information (Shift+Ctrl+Q, the Email program's Status information):

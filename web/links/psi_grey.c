@@ -17,8 +17,23 @@
  * Measured in the ARM harness: about 3 times faster than the multiply
  * version on text, the same pictures to the bit.
  *
- * web/fb/pwgrey.c stays as it is for the NetSurf engine. */
+ * web/fb/pwgrey.c stays as it is for the NetSurf engine.
+ *
+ * Display work (October 2026, docs/display.md): the grey calibration
+ * (ssh/psigrey.h, C:\System\Data\PsiGrey.ini) and the dithering choice.
+ *   - Error diffusion (the standard): pictures are dithered once, when
+ *     psi_drv.c packs their bitmaps (Floyd-Steinberg, to the calibrated
+ *     levels, stored as lv[level]); everything else - text, its
+ *     anti-aliased edges, rules, backgrounds - is not dithered at all: each
+ *     pixel takes the nearest calibrated level. All 16 threshold tables
+ *     are then the same table, so the loop below is unchanged.
+ *   - Ordered (the old way): the 4x4 ordered dither over the whole frame,
+ *     between the calibrated levels; with the calibration off it is
+ *     exactly the old output. */
+#include <stdio.h>
+#include <string.h>
 #include "pwback.h"
+#include "../../ssh/psigrey.h"
 
 static const unsigned char bayer[4][4] = {
 	{   8, 136,  40, 168 },
@@ -35,9 +50,53 @@ static unsigned char dt[16][256];		/* [y & 3][x & 3]: (15v + bayer) / 255 */
 static unsigned char vt[65536];
 static int ready;
 
+static unsigned char lv[16];		/* how light each level looks (psigrey.h) */
+static unsigned char cal[256];		/* v -> the nearest level */
+static int diffuse = 1;			/* pictures by error diffusion, the rest undithered */
+static char grey_text[512];		/* the file as last read: to see a change */
+static int grey_len = -1;
+
+/* reads PsiGrey.ini; 1 if it is not what it was */
+static int read_greys(void)
+{
+	static char buf[512];
+	PsiGrey g;
+	FILE *f = fopen(PSIGREY_FILE, "rb");
+	int n = 0;
+	if (f) { n = (int)fread(buf, 1, sizeof(buf) - 1, f); fclose(f); }
+	if (n < 0) n = 0;
+	if (n == grey_len && !memcmp(buf, grey_text, n)) return 0;
+	memcpy(grey_text, buf, n);
+	grey_len = n;
+	if (n) psigrey_parse(&g, buf, n);
+	else psigrey_defaults(&g);
+	psigrey_levels(&g, lv);
+	psigrey_nearest(lv, cal);
+	diffuse = g.dither;
+	return 1;
+}
+
+static void make_level_tables(void)
+{
+	int t, v;
+	for (t = 0; t < 16; t++) {
+		unsigned th = bayer[t >> 2][t & 3];
+		int q = 0;
+		for (v = 0; v < 256; v++) {
+			if (diffuse) { dt[t][v] = cal[v]; continue; }
+			/* the level at or below v, one up where v's way on to the
+			   next level passes the threshold: (15v + th) / 255 when
+			   the levels are linear, as before */
+			while (q < 15 && v >= lv[q + 1]) q++;
+			if (q == 15 || v <= lv[q]) dt[t][v] = (unsigned char)q;
+			else dt[t][v] = (unsigned char)(q + ((unsigned)(v - lv[q]) * 255 / (lv[q + 1] - lv[q]) + th >= 255));
+		}
+	}
+}
+
 static void make_tables(void)
 {
-	int i, t, v, r, g, b;
+	int i, r, g, b;
 	unsigned char *o = vt;
 	for (i = 0; i < 32; i++) {
 		int c5 = (i << 3) | (i >> 2);
@@ -52,15 +111,29 @@ static void make_tables(void)
 			for (b = 0; b < 32; b++)
 				*o++ = (unsigned char)((base + bt[b]) >> 8);
 		}
-	for (t = 0; t < 16; t++) {
-		unsigned th = bayer[t >> 2][t & 3], q = 0, acc = th;	/* acc = 15v + th - 255q */
-		for (v = 0; v < 256; v++) {
-			while (acc >= 255) { acc -= 255; q++; }
-			dt[t][v] = (unsigned char)q;
-			acc += 15;
-		}
-	}
+	read_greys();
+	make_level_tables();
 	ready = 1;
+}
+
+/* PsiGrey.ini again (at each page): 1 if the greys changed, and the
+   tables are made again */
+int pw_grey_check(void)
+{
+	if (!ready) { make_tables(); return 0; }
+	if (!read_greys()) return 0;
+	make_level_tables();
+	return 1;
+}
+
+/* for psi_drv.c's pictures: 1 if they are to be error-diffused, with the
+   levels and the nearest-level table */
+int pw_grey_diffuse(const unsigned char **levels, const unsigned char **nearest)
+{
+	if (!ready) make_tables();
+	*levels = lv;
+	*nearest = cal;
+	return diffuse;
 }
 
 /* v of every 565 pixel, for psi_drv.c's grey picture bitmaps */

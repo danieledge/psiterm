@@ -25,6 +25,19 @@ O       ?= $(LK)/epoc
 # instead of PNGs); FONTC=$(SRC)/font_inc.c builds with the full set
 FONT_H  ?= 40
 FONTC   ?= $(O)/font_psi.c
+# Hinted glyphs pre-rendered by FreeType at the sizes PsiWeb draws at 100%
+# zoom (mkstrike.py, DejaVu fonts from the build container; dip.c's
+# PSI_STRIKES; psi_hinted_fonts switches them at run time); STRIKES=0 builds
+# without them
+STRIKES ?= 1
+STRIKE_FONTS ?= /usr/share/fonts/truetype/dejavu
+ifeq ($(STRIKES),1)
+LXFLAGS += -DPSI_STRIKES
+endif
+# (tests: HINTED_DEFAULT=0 starts with them switched off, as psi_hinted_fonts = 0)
+ifneq ($(HINTED_DEFAULT),)
+LXFLAGS += -DPSI_HINTED_DEFAULT=$(HINTED_DEFAULT)
+endif
 
 SDK     ?= $(PSION_SDK)
 E       := $(SDK)/epoc_cpp_sdk/epoc32
@@ -63,6 +76,9 @@ CFLAGS_C := $(ARCH) $(DEFS) -fno-builtin -w $(LIBC)
 LTCFLAGS := $(ARCH) $(DEFS) -std=gnu99 -fno-builtin -w -I$(WEB)/tls -I$(WEB)/compat -I$(LTC)/headers $(LIBC) -DLTC_SOURCE -DLTC_NO_ASM
 
 LINKS_OBJS := $(addprefix $(O)/links/,$(LINKS_SRCS:=.o))
+ifeq ($(STRIKES),1)
+LINKS_OBJS += $(O)/links/strike_psi.o
+endif
 PSI_OBJS   := $(O)/psi/psi_drv.o $(O)/psi/psi_os.o $(O)/psi/pwgrey.o $(O)/psi/psi_str.o $(O)/psi/psi_digest.o $(O)/psi/pwnet.o \
 	$(O)/psi/nsprintf.o $(O)/psi/tls13.o $(O)/psi/x25519.o $(O)/psi/pwrandom.o \
 	$(addprefix $(O)/ltc/,$(subst /,__,$(LTC_SRCS:=.o)))
@@ -124,6 +140,12 @@ $(O)/links/suffix.o: $(O)/sfx/suffix.c $(O)/sfx/suffix.inc $(HDRS) $(SRC)/links.
 $(O)/links/font_inc.o: $(FONTC) $(HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) -c $(LCFLAGS) -O0 $< -o $@
+$(O)/strike_psi.c: $(LW)/mkstrike.py
+	@mkdir -p $(dir $@)
+	python3 $< $@ --fontdir $(STRIKE_FONTS)
+$(O)/links/strike_psi.o: $(O)/strike_psi.c $(HDRS) $(SRC)/links.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $(LCFLAGS) -O0 $< -o $@
 
 $(O)/psi/psi_drv.o: $(LW)/psi_drv.c $(HDRS) $(WEB)/fb/pwback.h $(SRC)/links.h $(WEB)/psiweb.h $(TOP)/ssh/psishared.h
 	@mkdir -p $(dir $@)
@@ -131,7 +153,7 @@ $(O)/psi/psi_drv.o: $(LW)/psi_drv.c $(HDRS) $(WEB)/fb/pwback.h $(SRC)/links.h $(
 $(O)/psi/psi_os.o: $(LW)/epoc/psi_os.c $(HDRS) $(O)/inc/welcome.inc $(WEB)/engine/pwnet.h $(SRC)/links.h $(WEB)/psiweb.h $(TOP)/ssh/psishared.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(LCFLAGS) -I$(WEB)/fb -I$(WEB) -I$(WEB)/engine -I$(TOP)/ssh $< -o $@
-$(O)/psi/pwgrey.o: $(LW)/psi_grey.c $(WEB)/fb/pwback.h
+$(O)/psi/pwgrey.o: $(LW)/psi_grey.c $(WEB)/fb/pwback.h $(TOP)/ssh/psigrey.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CFLAGS_C) -std=gnu99 -I$(WEB)/fb $< -o $@
 $(O)/psi/psi_str.o: $(LW)/psi_str.c
@@ -178,7 +200,7 @@ $(Z_LIB): $(addprefix $(O)/zlib/,$(Z_SRCS:=.o))
 $(O)/emu/emu_hc.o: $(WEB)/emu/emu_hc.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(ARCH) -fno-builtin -w -D__EPOC32__ $< -o $@
-$(O)/emu/emu_back.o: $(LW)/emu/emu_back.c $(WEB)/psiweb.h $(WEB)/fb/pwback.h
+$(O)/emu/emu_back.o: $(LW)/emu/emu_back.c $(WEB)/psiweb.h $(TOP)/ssh/psishared.h $(WEB)/fb/pwback.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(ARCH) -fno-builtin -w -D__EPOC32__ -I$(WEB) -I$(TOP)/ssh -I$(E)/include/libc $< -o $@
 $(O)/emu/links_rt.o: $(LW)/emu/links_rt.c
@@ -203,16 +225,16 @@ EXE_OBJS = $(REL)/eexe.o $(LINKS_OBJS) $(PSI_OBJS) $(DEV_OBJS) $(PNG_LIB) $(JPG_
 $(O)/dev/pwepoc.o: $(WEB)/engine/pwepoc.cpp $(WEB)/psiweb.h $(WEB)/fb/pwback.h $(TOP)/ssh/psishared.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CXXFLAGS) $(PWEPOC_DEFS) $< -o $@
-$(O)/dev/psiglue.o: $(TOP)/ssh/psiglue.cpp $(TOP)/ssh/psishared.h
+$(O)/dev/psiglue.o: $(TOP)/ssh/psiglue.cpp $(TOP)/ssh/psishared.h $(TOP)/ssh/psibell.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CXXFLAGS) '-DPSI_SHARED_NAME="PsiWebShared"' $< -o $@
-$(O)/dev/psi_heap.o: $(LW)/epoc/psi_heap.cpp $(WEB)/psiweb.h
+$(O)/dev/psi_heap.o: $(LW)/epoc/psi_heap.cpp $(WEB)/psiweb.h $(TOP)/ssh/psishared.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CXXFLAGS) $< -o $@
 $(O)/dev/psi_stubs.o: $(LW)/epoc/psi_stubs.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CFLAGS_C) $< -o $@
-$(O)/dev/pwupdate.o: $(WEB)/engine/pwupdate.c $(WEB)/engine/pwnet.h $(WEB)/psiweb.h $(WEB)/psiweb_cmds.h
+$(O)/dev/pwupdate.o: $(WEB)/engine/pwupdate.c $(WEB)/engine/pwnet.h $(WEB)/psiweb.h $(WEB)/psiweb_cmds.h $(TOP)/ssh/psishared.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(LTCFLAGS) -I$(TOP)/ssh $< -o $@
 

@@ -18,6 +18,8 @@ A copy of web/emu/run_psiweb.py (NetSurf's harness) with, in addition:
                    virtual time (e.g. 10000 for a modem link), as it would
                    over the Psion's link; by default all at once
   --vclock         the virtual clock without --replay
+(environment: PW_CDISK / PW_DDISK, the PC folders that stand for C: and D:,
+e.g. a C:\System\Data\PsiGrey.ini to try a grey calibration)
   --callers f1,f2  who calls these functions (CALLSITES=1: the exact places)
   --incl f1,f2     instructions spent inside these functions, callees
                    included (per measured section)
@@ -385,7 +387,7 @@ def hc(op, a, b, c, d):
     if op == 4:                                      # fopen
         path, mode = cstr(a), cstr(b)
         path = path.replace("\\", "/")
-        if path.startswith("C:"): path = "/tmp/psiwebemu" + path[2:]
+        if path.startswith("C:"): path = os.environ.get("PW_CDISK", "/tmp/psiwebemu") + path[2:]
         elif path.startswith("D:"): path = os.environ.get("PW_DDISK", "/tmp/psiwebemu-d") + path[2:]
         try:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

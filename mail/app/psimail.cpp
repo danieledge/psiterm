@@ -78,8 +78,10 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.80");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.81");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
+const TInt KTickQuiet = 2000000; // (0.81) ...or every 2 s when nothing is going on: the doorbell brings news
+const TInt KCalmTicks = 4;       // quick ticks with nothing going on before the slow pace (1 s)
 const TUint32 KIniMagic = 0x314d5350;   // 'PSM1'
 
 // ============================================================================
@@ -236,6 +238,8 @@ CPmView::~CPmView()
 	delete iCalSync;
 	calm_free(&iCalModel);
 	delete iTimer;
+	delete iBellWaiter;                  // (before the chunk it points into goes)
+	iEngRinger.Close();
 	delete iCheckTimer;
 	delete iWatcher;
 	delete iFolders;
@@ -490,9 +494,14 @@ void CPmView::StartEngineL()
 	// asks for a message's text again; anything else the user does again.
 	TUint head = s->cmd_head, tail = s->cmd_tail;
 	TBool keep = s->magic == PM_MAGIC && head != tail && head - tail <= PM_CMDQ;
+	if (iBellWaiter)
+		iBellWaiter->Cancel();               // (before the bell it waits on is cleared)
+	iEngRinger.Close();                      // (a new engine: a new thread)
+	TickFast();                              // (and the tick follows it from the start)
 	Mem::FillZ(s, sizeof(PmShared));
 	s->magic = PM_MAGIC;
 	s->net.magic = PSI_SHARED_MAGIC;
+	s->net.bell_magic = PSI_BELL_MAGIC;      // (0.81) we ring eng_bell for every command, quit and switch-on
 	s->net.port = 993;
 	s->net.dial_prefix[0] = 'A'; s->net.dial_prefix[1] = 'T';
 	s->net.dial_prefix[2] = 'D'; s->net.dial_prefix[3] = 'T'; s->net.dial_prefix[4] = 0;
@@ -568,6 +577,7 @@ void CPmView::AskEngineToStop()
 		return;
 	iShared->quitting = 1;
 	iShared->net.quit = 1;
+	RingEngine();
 	}
 
 void CPmView::StopEngine(TBool aWait)
@@ -576,6 +586,7 @@ void CPmView::StopEngine(TBool aWait)
 		return;
 	iShared->quitting = 1;
 	iShared->net.quit = 1;
+	RingEngine();
 	if (aWait && iShared->state != PM_STATE_EXITED)
 		{
 		// give it a few seconds to log out and hang up - saying so, as the
@@ -685,6 +696,7 @@ TBool CPmView::OpInFlight(TInt aOp) const
 void CPmView::StopEngineWork(const TDesC& aToast)
 	{
 	iShared->net.quit = 1;
+	RingEngine();
 	if (aToast.Length())
 		Working(aToast);
 	}
@@ -713,7 +725,72 @@ void CPmView::Cmd(TInt aOp, const TDesC8& aFolder, TUint aUid, const TDesC8& aAr
 	Mem::Copy(c.arg, aArg.Ptr(), n);
 	iSent[s->cmd_head % PM_CMDQ] = c;
 	s->cmd_head++;
+	RingEngine();                            // (0.81) the engine may be waiting on its doorbell
+	TickFast();                              // ...and its answer is wanted soon
 	Render();
+	}
+
+// (0.81) The engine waits on a doorbell when it has nothing to do
+// (psibell.h): every command, quit, Stop and switch-on rings it.
+void CPmView::RingEngine()
+	{
+	if (iRunning && iShared)
+		iEngRinger.Ring(&iShared->net.eng_bell);
+	}
+
+// Is anything going on that the tick must follow closely? The engine at
+// work or with commands queued, results not yet taken, a message on the
+// screen that times out, a busy message, the update window, start-up.
+TBool CPmView::TickWanted() const
+	{
+	PmShared* s = iShared;
+	if (!s || iStartPending || iOldEngineUntil)
+		return ETrue;
+	if (iStatusUntil || iWorkText.Length() || iBusyShown || iUpdDlg || iLinkMsg.Length())
+		return ETrue;
+	if (!iRunning)
+		return EFalse;                       // (the engine has stopped: nothing to follow)
+	if (!iSplashDone || iEngineLow)
+		return ETrue;
+	if (s->busy || s->cmd_tail != s->cmd_head || s->state != PM_STATE_READY)
+		return ETrue;
+	if (s->done_seq != iDoneSeen || s->changed_seq != iChangedSeen || s->online != iOnlineWas)
+		return ETrue;
+	if (s->net.link_seq != iLinkSeq || (iMode == EMessage && s->changed_seq != iPicChangedSeen))
+		return ETrue;
+	return EFalse;
+	}
+
+void CPmView::TickFast()
+	{
+	iCalmTicks = 0;
+	if (!iTickQuiet || !iTimer)
+		return;
+	iTickQuiet = EFalse;
+	iTimer->Cancel();
+	iTimer->Start(KTick, KTick, TCallBack(TickCallback, this));
+	}
+
+void CPmView::TickQuiet()
+	{
+	iCalmTicks = 0;
+	if (iTickQuiet || !iTimer || !iShared)
+		return;
+	if (!iBellWaiter)
+		iBellWaiter = new CPsiBellWaiter(TCallBack(BellCallback, this));   // (no memory: stays quick)
+	if (!iBellWaiter || iBellWaiter->Arm(&iShared->net.app_bell) || !iBellWaiter->IsActive())
+		return;                              // (rung just now, or no doorbell: stays quick)
+	iTickQuiet = ETrue;
+	iTimer->Cancel();
+	iTimer->Start(KTickQuiet, KTickQuiet, TCallBack(TickCallback, this));
+	}
+
+TInt CPmView::BellCallback(TAny* aSelf)
+	{
+	CPmView* self = (CPmView*)aSelf;
+	self->TickFast();
+	self->Tick();
+	return 0;
 	}
 
 // ============================================================================
@@ -2076,6 +2153,12 @@ void CPmView::TickL()
 	AutoTickL();                             // a connection came up: send what waits (pmauto.cpp)
 	if (redraw)
 		Render();
+	// (0.81) the pace: quick while anything is going on, else slow with the
+	// doorbell armed (the heartbeat above still goes every 2 s)
+	if (TickWanted())
+		TickFast();
+	else if (!iTickQuiet && ++iCalmTicks >= KCalmTicks)
+		TickQuiet();
 	}
 
 void CPmView::HandleResultL(const PmCmd& aCmd)
@@ -3052,6 +3135,7 @@ void CPmPrefsDialog::PreLayoutDynInitL()
 	SetChoiceListCurrentItem(EPmDlgPictures, (iSettings.iSpare[0] & 3) <= 2 ? (iSettings.iSpare[0] & 3) : 0);
 	SetChoiceListCurrentItem(EPmDlgWebPictures, ((iSettings.iSpare[0] >> 8) & 3) <= 2 ? ((iSettings.iSpare[0] >> 8) & 3) : 0);
 	SetChoiceListCurrentItem(EPmDlgEmailButton, (iSettings.iView & KPmViewEmailButton) ? 0 : 1);
+	SetChoiceListCurrentItem(EPmDlgReading, (iSettings.iView & KPmViewReading) ? 1 : 0);
 	NewMailInitL();                           // the New mail page (pmauto.cpp)
 	}
 
@@ -3068,6 +3152,10 @@ TBool CPmPrefsDialog::OkToExitL(TInt /*aButtonId*/)
 		iSettings.iView |= KPmViewEmailButton;
 	else
 		iSettings.iView &= ~KPmViewEmailButton;
+	if (ChoiceListCurrentItem(EPmDlgReading) == 1)
+		iSettings.iView |= KPmViewReading;
+	else
+		iSettings.iView &= ~KPmViewReading;
 	NewMailSave();
 	return ETrue;
 	}
@@ -3223,6 +3311,10 @@ void CPmAppUi::ConstructL()
 	iView->ConstructL(ClientRect(), iSettings, iCalSettings);
 	AddToStackL(iView);
 	iCoeEnv->RootWin().EnableOnEvents(EEventControlAlways);   // (0.68) switch-on events even when in the background
+	// the user's contrast and backlight back if a program stopped in
+	// Reading mode without doing it (docs/display.md)
+	TPsiReading::Recover(iCoeEnv->FsSession(), iCoeEnv->WsSession(), KUidPsiMail);
+	iForeground = ETrue;
 	if (!iSettings.iAccounts[iSettings.iAcct].used)
 		{
 		iAccountSetup = ETrue;               // (the Email icon question waits for this)
@@ -3399,7 +3491,36 @@ void CPmAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
 	{
 	(void)aDestination;                  // (the CONE default does nothing, and is private)
 	if (iView && iView->Shared())
+		{
 		iView->Shared()->net.switch_on++;
+		iView->RingEngine();             // (0.81) it may be waiting on its doorbell
+		}
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiMail);   // (back on with the next key or tap)
+	}
+
+// ----- Reading mode (docs/display.md) ----------------------------------------------
+
+// On while a message is open with PsiMail in front and the preference on.
+// Looked at after keys, taps and focus changes, which are what change the
+// view; not after the switch-on event (the next key turns it on again)
+void CPmAppUi::UpdateReading()
+	{
+	if (iView && iForeground && !iExiting && (iSettings.iView & KPmViewReading)
+		&& iView->Mode() == CPmView::EMessage)
+		iReading.Enter(iCoeEnv->FsSession(), KUidPsiMail);
+	else
+		iReading.Leave(iCoeEnv->FsSession(), KUidPsiMail);
+	}
+
+// (CCoeAppUi's HandleForegroundEventL is private on ER5: the focus events are seen here)
+void CPmAppUi::HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination)
+	{
+	CEikAppUi::HandleWsEventL(aEvent, aDestination);
+	TInt type = aEvent.Type();
+	if (type == EEventFocusGained || type == EEventFocusLost)
+		iForeground = type == EEventFocusGained;
+	if (type == EEventFocusGained || type == EEventFocusLost || type == EEventKey || type == EEventPointer)
+		UpdateReading();
 	}
 
 // A PsiWin backup (robustness notes, section 5): files must be closed
@@ -3480,6 +3601,7 @@ void CPmAppUi::ExitTick()
 
 CPmAppUi::~CPmAppUi()
 	{
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiMail);   // the user's contrast and backlight back
 	delete iExitTimer;
 	delete iSoon;
 	if (iView)
