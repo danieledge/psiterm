@@ -38,7 +38,6 @@ RESOURCE MENU_PANE r_pskt_write_menu
 		MENU_ITEM { command=EPsiKtCmdInvert; txt="Invert the screen (3 s)"; },
 		MENU_ITEM { command=EPsiKtCmdCurves; txt="Grey curves (35 s)"; },
 		MENU_ITEM { command=EPsiKtCmdKeepCurve; txt="Keep a grey curve"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPsiKtCmdSerialFast; txt="230400 with the Atom modem"; },
-		MENU_ITEM { command=EPsiKtCmdRom; txt="ROM timing"; }
+		MENU_ITEM { command=EPsiKtCmdSerialFast; txt="230400 with the Atom modem"; }
 		};
 	}

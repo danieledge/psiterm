@@ -46,7 +46,7 @@ if (app === 'psimail') {
 	const P = pkg(REPO + 'build/kernel-pkg/');
 	w('SYSTEM/APPS/PSIKT/PSIKT.APP', f(P + 'psikt.app'));
 	w('SYSTEM/APPS/PSIKT/PSIKT.RSC', f(P + 'psikt.rsc'));
-	w('SYSTEM/LIBS/PSIKERN5.LDD', f(P + 'psikern.ldd'));
+	w('SYSTEM/LIBS/PSIKERN6.LDD', f(P + 'psikern.ldd'));
 } else {
 	console.error('usage: mkcard.ts psimail|psiterm|psiweb|psikern [--seed] [out.img]'); process.exit(1);
 }

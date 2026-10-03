@@ -15,7 +15,6 @@ enum TPsiKtCommand
 	EPsiKtCmdSerial,           // read: UBRCR at 9600, 57600 and 115200
 	EPsiKtCmdKeepCurve,        // write: choose a curve and keep it
 	EPsiKtCmdSerialFast,       // write: 230400 with the Atom
-	EPsiKtCmdRom,              // write: the ROM's wait states
 	EPsiKtCmdEverything        // every test but Keep a grey curve, asked once
 	};
 

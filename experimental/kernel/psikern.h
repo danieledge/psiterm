@@ -9,13 +9,13 @@
 // until the Psion restarts, so with one name a newer harness found the old
 // driver (-11), which then refused it (-5). Each version loads beside the
 // last instead.
-_LIT(KPsiKernName,"PsiKern05");
+_LIT(KPsiKernName,"PsiKern06");
 // The file name carries the version too: EPOC knows a loaded driver by its
 // file name, so a new PSIKERN.LDD was taken as the old one, still loaded
 // (-11), and the new name was never installed (-1).
-_LIT(KPsiKernFile,"PSIKERN5.LDD");     // \System\Libs\ on any drive
+_LIT(KPsiKernFile,"PSIKERN6.LDD");     // \System\Libs\ on any drive
 const TInt KPsiKernMajor=0;
-const TInt KPsiKernMinor=3;
+const TInt KPsiKernMinor=6;
 const TInt KPsiKernBuild=1;
 const TInt KPsiKernMagic=0x504B;       // "PK", the top half of EVersion's answer
 
@@ -33,22 +33,12 @@ enum TPsiKernControl
 	EPalRead=6,     // a1=entry 0..15 -> the 16-bit palette entry (read only)
 	EPalCheck=7,    // -> 0 if the 32 bytes look like a 16-grey palette, else KErrCorrupt
 	EPalSet=8,      // a1=entry<<8 | grey level 0..15: sets that entry's level -> 0 or an error
-	ERestore=9,     // puts back everything written (palette, MEMCFG1, UBRCR) -> 0
+	ERestore=9,     // puts back everything written (palette, UBRCR) -> 0
 	// (0.3)
 	EUbrcrSet=10,   // a1=1 (230400) or 3 (115200): UART2's divider, only while
 	                // the UART is on -> 0 or an error. Put back by ERestore.
-	ERomProbe=11,   // a1=a MEMCFG1 byte for CS0 and CS1 (see KRomTry): with
-	                // interrupts off, sets it, checks 128 KB of ROM reads the
-	                // same as at the normal setting, and puts it back
-	                // -> 0 same, 1 different, or an error
-	ERomKeep=12,    // a1=a byte that passed ERomProbe on this channel: sets it
-	                // until ERestore or close -> 0 or an error
 	};
 
-// the CS0/CS1 bytes ERomProbe may try (the ROM is 0x50 on the 5mx: 32-bit,
-// 125 ns, sequential access on at 40 ns): 0x54 100 ns, 0x58 75 ns, 0x5c 50 ns,
-// and with 20 ns sequential access (0x20) 0x70, 0x74, 0x78, 0x7c
-const TInt KRomNormal=0x50;
 
 // Register offsets from the Windermere's register base (virtual 0x58000000
 // in the 1.05(260) ROM). The driver only reads the ones in its own list.
@@ -90,8 +80,6 @@ public:
 	inline TInt PalSet(TInt aEntry,TInt aLevel) { return DoControl(EPalSet,(TAny*)((aEntry<<8)|(aLevel&15))); }
 	inline TInt Restore() { return DoControl(ERestore); }
 	inline TInt UbrcrSet(TInt aValue) { return DoControl(EUbrcrSet,(TAny*)aValue); }
-	inline TInt RomProbe(TInt aByte) { return DoControl(ERomProbe,(TAny*)aByte); }
-	inline TInt RomKeep(TInt aByte) { return DoControl(ERomKeep,(TAny*)aByte); }
 	};
 
 #endif

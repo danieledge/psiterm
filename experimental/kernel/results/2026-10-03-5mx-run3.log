@@ -1,0 +1,90 @@
+21:39:37 PsiKernTest 0.5. Choose a test from the Read or Write menus.
+21:39:37 Log: D:\PsiKern.log (the last one: PsiKern.old)
+21:39:49 > Machine and driver
+21:39:49 Machine: SERIES5mx, ROM 1.05(260)
+21:39:49 Processor: ARM 710T, 36864 kHz, speed factor 2000
+21:39:49 Display 640x240, 16 colours
+21:39:49 RAM 16384 KB, free 3060 KB; ROM 16384 KB
+21:39:49 < Machine and driver: 0
+21:39:49 > Load the driver
+21:39:49 Load driver: 0
+21:39:49 Open channel: 0
+21:39:49 < Load the driver: 0
+21:39:49 Driver version 0.3
+21:39:49 CPU mode in the driver: 1b (UND)
+21:39:49 > Speed
+21:39:51 Loop: 2000000 turns in 343 ms
+21:39:51 Memory copy: 8 MB in 328 ms (24975 KB a second)
+21:39:51 ROM code: 200000 calls in 593 ms
+21:39:51 < Speed: 0
+21:39:51 > Registers
+21:39:51 MEMCFG1 = 00925050
+21:39:51 MEMCFG2 = 00009393
+21:39:51 DRAMCFG = 80000081
+21:39:51 LCDCTL = 00000003
+21:39:51 LCDST = 00000803
+21:39:51 LCDDBAR1 = c000d000
+21:39:51 LCDT0 = 01010a70
+21:39:52 LCDT1 = 010108ef
+21:39:52 LCDT2 = 00000b0b
+21:39:52 PWRSR = 00000026
+21:39:52 PWRCNT = 00000004
+21:39:52 INTSR = 00000000
+21:39:52 INTRSR = 00004000
+21:39:52 INTENS = 000028ae
+21:39:52 UART2 FCR = 00000070
+21:39:52 UART2 UBRCR = 00000003
+21:39:52 UART2 CON = 00000001
+21:39:52 UART2 FLG = 00000016
+21:39:52 UART2 INTM = 00000005
+21:39:52 TC1 LOAD = 00000019
+21:39:52 TC1 VALUE = 00000000
+21:39:52 TC1 CTRL = 0000005f
+21:39:53 TC2 LOAD = 00002800
+21:39:53 TC2 VALUE = 000027fa
+21:39:53 TC2 CTRL = 0000000f
+21:39:53 RTC LOW = 000032bb
+21:39:53 RTC HIGH = 00003254
+21:39:53 PORT B = 00000018
+21:39:53 PORT C = 0000001c
+21:39:53 PORT D = 000000ec
+21:39:53 PORT E = 00000009
+21:39:54 A second later, what changed:
+21:39:54 DRAMCFG = ffa00081 (was 80000081)
+21:39:54 PWRSR = 0000000c (was 00000026)
+21:39:54 TC2 VALUE = 000027f9 (was 000027fa)
+21:39:54 RTC LOW = 000032bc (was 000032bb)
+21:39:54 (206 ticks of 15625 us between the reads)
+21:39:54 < Registers: 0
+21:39:54 > Palette
+21:39:55 Screen at 58003020, 640x240; palette 32 bytes before it
+21:39:55 Palette: 200e 000d 000c 000b 000a 0009 0008 0007
+21:39:55          0007 0006 0005 0004 0003 0002 0001 0000
+21:39:55 It looks like the palette: the Write tests can run
+21:39:55 < Palette: 0
+21:39:55 > Serial port
+21:39:55 Could not open the serial port: -21 (the Remote link may have it)
+21:39:55 < Serial port: -21
+21:39:55 The screen will be inverted for 3 seconds
+21:39:55 > Invert
+21:39:55 Inverted: 0
+21:39:58 Put back
+21:39:58 < Invert: 0
+21:39:58 The greys will change for 35 seconds, then go back
+21:39:58 > Curves
+21:39:58 16 greys in use; black is level 14
+21:40:03 All 16 levels (EPOC uses 15, with 7 twice)
+21:40:09 Lighter middle greys (gamma 0.6)
+21:40:14 Darker middle greys (gamma 1.6)
+21:40:19 More contrast (S-curve)
+21:40:24 Less contrast
+21:40:29 Inverted
+21:40:34 Grey curves done, put back: 0
+21:40:34 < Curves: 0
+21:40:34 The Atom modem must be connected and idle
+21:40:34 > Serial 230400
+21:40:35 Could not open the serial port: -21
+21:40:35 < Serial 230400: -21
+21:40:35 The ROM will be read at faster settings, a moment each
+21:40:35 > ROM timing
+21:40:35 > ROM probe 70

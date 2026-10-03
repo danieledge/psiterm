@@ -32,7 +32,7 @@ const TInt KMaxLines=40;
 const TInt KLineLen=80;
 _LIT(KLogName,"PsiKern.log");
 _LIT(KOldName,"PsiKern.old");
-_LIT(KPsiKtVersion,"0.5");
+_LIT(KPsiKtVersion,"0.6");
 
 // the ROM the driver's ordinals come from (ekern_rom.def)
 const TInt KRomMajor=1, KRomMinor=5, KRomBuild=260;
@@ -420,11 +420,11 @@ private:
 	void CurvesL();
 	void SerialL();
 	void SerialFastL();
-	void RomL();
 	void KeepCurveL();
 	void HandleKeyEventL(const TKeyEvent& aKeyEvent,TEventCode aType);
 	TBool RomOk();
 	TBool Ask(const TDesC& aFirst, const TDesC& aSecond);
+	void SerialProblemL(TInt aErr);
 	void EverythingL();
 	TBool PaletteReady();
 	void ReadPalette();
@@ -1020,8 +1020,7 @@ void CPsiKtAppUi::SerialL()
 	r=port.Open(EBps9600);
 	if (r!=KErrNone)
 		{
-		l.Format(_L("Could not open the serial port: %d (the Remote link may have it)"),r);
-		Say(l);
+		SerialProblemL(r);
 		EndStep(KStep,r);
 		return;
 		}
@@ -1086,8 +1085,7 @@ void CPsiKtAppUi::SerialFastL()
 	r=port.Open(EBps115200);
 	if (r!=KErrNone)
 		{
-		l.Format(_L("Could not open the serial port: %d"),r);
-		Say(l);
+		SerialProblemL(r);
 		EndStep(KStep,r);
 		return;
 		}
@@ -1169,91 +1167,30 @@ void CPsiKtAppUi::SerialFastL()
 	EndStep(KStep,ok==10 && clean==10 ? KErrNone : KErrGeneral);
 	}
 
-// ----- the ROM's wait states --------------------------------------------------
-
-// Each value in turn with ERomProbe (interrupts off, the ROM read as data
-// only). Then, if one passes and Dan agrees, the fastest that passed is
-// kept for one speed test, and put back.
-void CPsiKtAppUi::RomL()
+// Why the serial port could not be opened, and what to do: on the screen
+// (a dialog, unless Test everything is running) and in the log
+void CPsiKtAppUi::SerialProblemL(TInt aErr)
 	{
-	_LIT(KStep,"ROM timing");
-	TInt r=OpenDriver();
-	if (r!=KErrNone)
-		return;
-	if (!Ask(_L("The ROM will be read at faster settings, a moment each"),_L("Go ahead?")))
-		return;
-	if (!BeginStepL(KStep))
-		return;
-	struct TTry { TUint8 iByte; const char* iName; };
-	// fastest first
-	static const TTry KTries[]=
+	TBuf<KLineLen> first, second;
+	if (aErr==KErrAccessDenied)
 		{
-		{0x7c,"50 ns, 20 ns sequential"},{0x5c,"50 ns"},
-		{0x78,"75 ns, 20 ns sequential"},{0x58,"75 ns"},
-		{0x74,"100 ns, 20 ns sequential"},{0x54,"100 ns"},
-		{0x70,"125 ns, 20 ns sequential"},
-		};
-	const TInt KTryCount=sizeof(KTries)/sizeof(KTries[0]);
-	TBuf<KLineLen> l, name;
-	TInt best=-1;
-	// slowest first, so the first trouble is the mildest
-	for (TInt i=KTryCount-1; i>=0; i--)
-		{
-		name.Copy(TPtrC8((const TUint8*)KTries[i].iName));
-		l.Format(_L("> ROM probe %x"),KTries[i].iByte);
-		iLog.Line(l);
-		r=iKern.RomProbe(KTries[i].iByte);
-		l.Format(_L("< ROM probe %x: %d"),KTries[i].iByte,r);
-		iLog.Line(l);
-		l.Format(_L("ROM at %S: %S"),&name,r==0 ? &_L("reads the same") : r==1 ? &_L("reads differently") : &_L("not tried"));
-		if (r<0)
-			l.AppendFormat(_L(" (%d)"),r);
-		Say(l);
-		if (r<0)
-			break;
-		if (r==0)
-			best=i;
+		first.Copy(_L("The serial port is in use by the Remote link"));
+		second.Copy(_L("Switch it off on the System screen (Ctrl+L), then try again"));
 		}
-	if (best<0 && r==KErrNotSupported)
+	else if (aErr==KErrInUse)
 		{
-		Say(_L("Not available: the ROM is not set as on the 5mx this was made for (MEMCFG1)"));
-		EndStep(KStep,r);
-		return;
+		first.Copy(_L("The serial port is in use by another program"));
+		second.Copy(_L("Close PsiTerm, PsiMail and PsiWeb, then try again"));
 		}
-	if (best<0)
+	else
 		{
-		Say(_L("No faster setting reads the ROM correctly: nothing to keep"));
-		EndStep(KStep,r);
-		return;
+		first.Format(_L("Cannot open the serial port (%d)"),aErr);
+		second.Copy(_L("Check nothing else is using it, then try again"));
 		}
-	name.Copy(TPtrC8((const TUint8*)KTries[best].iName));
-	TBuf<KLineLen> q;
-	q.Format(_L("The ROM reads correctly at %S"),&name);
-	if (!Ask(q,_L("Run on it for a speed test (a few seconds)?")))
-		{
-		EndStep(KStep,KErrNone);
-		return;
-		}
-	TInt loop0, copy0, rom0, loop1=0, copy1=0, rom1=0;
-	RunSpeed(loop0,copy0,rom0);
-	l.Format(_L("> ROM keep %x"),KTries[best].iByte);
-	iLog.Line(l);
-	r=iKern.RomKeep(KTries[best].iByte);
-	if (r==KErrNone)
-		RunSpeed(loop1,copy1,rom1);
-	iKern.Restore();
-	l.Format(_L("< ROM keep %x: %d"),KTries[best].iByte,r);
-	iLog.Line(l);
-	l.Format(_L("Normal: ROM code %d ms, copy %d ms, loop %d ms"),rom0,copy0,loop0);
-	Say(l);
-	l.Format(_L("%S: ROM code %d ms, copy %d ms, loop %d ms"),&name,rom1,copy1,loop1);
-	Say(l);
-	if (r==KErrNone && rom0>0)
-		{
-		l.Format(_L("ROM code %d%% faster; put back to normal"),(rom0-rom1)*100/rom0);
-		Say(l);
-		}
-	EndStep(KStep,r);
+	Say(first);
+	Say(second);
+	if (!iAll)
+		iEikonEnv->InfoWinL(first,second);
 	}
 
 // A question before a write test, unless Test everything has asked already
@@ -1273,7 +1210,7 @@ TBool CPsiKtAppUi::Ask(const TDesC& aFirst, const TDesC& aSecond)
 // The 230400 test needs the Atom: without it, it says so and goes on.
 void CPsiKtAppUi::EverythingL()
 	{
-	if (!iEikonEnv->QueryWinL(_L("All tests: screen, 230400 with the Atom, ROM timing"),
+	if (!iEikonEnv->QueryWinL(_L("All tests: screen, and 230400 with the Atom"),
 		_L("Back up C: first. Run them all?")))
 		return;
 	if (iKeepCurve>=0)
@@ -1298,7 +1235,6 @@ void CPsiKtAppUi::EverythingL()
 		InvertL();
 		CurvesL();
 		SerialFastL();
-		RomL();
 		);
 	iAll=EFalse;
 	TBuf<KLineLen> l;
@@ -1348,9 +1284,6 @@ void CPsiKtAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPsiKtCmdSerialFast:
 		SerialFastL();
-		break;
-	case EPsiKtCmdRom:
-		RomL();
 		break;
 	case EPsiKtCmdEverything:
 		EverythingL();
