@@ -1,0 +1,19 @@
+; ekern_rom.def - the few EKERN exports PsiKern.ldd needs, with the ordinals
+; of the Series 5mx ROM 1.05(260) EKERN[100000ba].EXE.
+; The SDK's ekern.lib is for the Series 5 kernel (EKERN[100000b9]) and its
+; ordinals differ: never link a 5mx driver against it.
+; Ordinals: from the call targets in the ROM's own Video.ldd and Lcd.pdd,
+; resolved against the ROM's EKERN export table, each disassembled to
+; confirm (see README.md). Names: the mangled names in the SDK's ekern.lib.
+EXPORTS
+	Close__15DLogicalChannel @ 63 NONAME
+	DoControl__15DLogicalChanneliPvT2 @ 99 NONAME
+	DoCreateL__15DLogicalChanneliP5CBasePC6TDesC8RC8TVersion @ 101 NONAME
+	IsAvailable__C14DLogicalDeviceiPC6TDesC8T2 @ 141 NONAME
+	QueryVersionSupported__C14DLogicalDeviceRC8TVersion @ 302 NONAME
+	Remove__14DLogicalDevice @ 321 NONAME
+	ScreenInfo__4PlatR5TDes8 @ 339 NONAME
+	"_._14DLogicalDevice" @ 557 NONAME
+	"_._15DLogicalChannel" @ 558 NONAME
+	__14DLogicalDevice @ 565 NONAME
+	__15DLogicalChannelP14DLogicalDevice @ 566 NONAME

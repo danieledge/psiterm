@@ -1,0 +1,10 @@
+// psikt.rss - PsiKernTest's resources (a File > Close menu)
+NAME PSKT
+#include <eikdef.rh>
+#include <eikmenu.rh>
+RESOURCE RSS_SIGNATURE { }
+RESOURCE TBUF { buf=""; }
+RESOURCE EIK_APP_INFO { menubar=r_pskt_menubar; hotkeys=r_pskt_hotkeys; }
+RESOURCE HOTKEYS r_pskt_hotkeys { control= { HOTKEY { command=EEikCmdExit; key='e'; } }; }
+RESOURCE MENU_BAR r_pskt_menubar { titles= { MENU_TITLE { menu_pane=r_pskt_file_menu; txt="File"; } }; }
+RESOURCE MENU_PANE r_pskt_file_menu { items= { MENU_ITEM { command=EEikCmdExit; txt="Close"; } }; }

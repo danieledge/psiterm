@@ -1,0 +1,10 @@
+// psikern.mmp - PsiKern.ldd, the experimental kernel driver (emulator only)
+TARGET          psikern.ldd
+TARGETTYPE      ldd
+UID             0x100000ae 0x0100FA12
+PROJECT         ptproj
+SUBPROJECT      psikernldd
+SOURCE          psikern.cpp
+USERINCLUDE     .
+SYSTEMINCLUDE   \epoc32\include
+LIBRARY         euser.lib psiekern.lib

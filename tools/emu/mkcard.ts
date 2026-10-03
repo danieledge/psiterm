@@ -41,8 +41,16 @@ if (app === 'psimail') {
 	const P = pkg(REPO + 'build/web-pkg/');
 	for (const n of ['psiweb.app','psiweb.rsc','psiweb.exe','psiweb.aif','psiweb.mbm'])
 		w('SYSTEM/APPS/PSIWEB/' + n.toUpperCase(), f(P + n));
+} else if (app === 'psikern') {
+	// experimental/kernel: the test app and the driver (EMULATOR ONLY), and
+	// PSIKERN.WR, which lets the test app run its palette write experiment
+	const P = pkg(REPO + 'build/kernel-pkg/');
+	w('SYSTEM/APPS/PSIKT/PSIKT.APP', f(P + 'psikt.app'));
+	w('SYSTEM/APPS/PSIKT/PSIKT.RSC', f(P + 'psikt.rsc'));
+	w('SYSTEM/LIBS/PSIKERN.LDD', f(P + 'psikern.ldd'));
+	w('PSIKERN.WR', t('write test on\n'));
 } else {
-	console.error('usage: mkcard.ts psimail|psiterm|psiweb [--seed] [out.img]'); process.exit(1);
+	console.error('usage: mkcard.ts psimail|psiterm|psiweb|psikern [--seed] [out.img]'); process.exit(1);
 }
 if (seedOn) {
 	const A = 'SEEDA0/';    // (TESTSEED copies it to C:\PsiMail\A0)

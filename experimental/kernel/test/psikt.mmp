@@ -1,0 +1,12 @@
+// psikt.mmp - PsiKernTest, the test program for PsiKern.ldd (emulator only)
+TARGET          psikt.app
+TARGETTYPE      app
+UID             0x1000006c 0x0100FA11
+TARGETPATH      \system\apps\psikt
+PROJECT         ptproj
+SUBPROJECT      psikerntest
+SOURCE          psikt.cpp
+RESOURCE        psikt.rss
+USERINCLUDE     .
+SYSTEMINCLUDE   \epoc32\include
+LIBRARY         euser.lib apparc.lib cone.lib eikon.lib gdi.lib ws32.lib efsrv.lib
