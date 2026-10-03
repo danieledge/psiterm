@@ -815,3 +815,121 @@ Not tested: anything over the network on the Psion (the emulator's serial port d
 9. PsiMail's "View as web page" (a `file:///D:/…` page).
 
 **What to send back:** `C:\System\Data\PsiWeb.log` (and `PsiWeb.old`, the run before) after a session. It has timestamps (`mm:ss.t`) for the start, each status and busy change, the link messages, every infoprint, and a `mem <page>: heap … KB` line when each page finishes, which gives the real timings and memory to set against the 15 MIPS estimates.
+
+## Phase 5: picture memory, speed, passwords and files
+
+Written 3 October 2026. Phase 5 finishes the work left after phase 4: pictures on long pages, the remaining CPU costs (TLS, the parser, scrolling), HTTP authentication and saving files PsiWeb cannot show, and one bug from the emulator. Nothing is committed and no version is bumped; `dist/` is untouched (test packages went to `build/links5/`).
+
+### Results
+
+All figures are from the ARM harness, `NET=replay` on the phase 3 recordings (fast link), at 15 MIPS. "Before" is phase 4.
+
+| Page | Before | After | Heap peak |
+|---|---|---|---|
+| start-up | 1.2M, 0.08 s | 1.9M, 0.13 s (the 64 KB grey table, made once) | 313 KB |
+| http://info.cern.ch/ | 4.5M, 0.30 s | **4.1M, 0.27 s** | 346 KB |
+| http://68k.news/ | 31.7M, 2.11 s | **30.6M, 2.04 s** | 767 KB |
+| the same, Page Down | 5.5M, 0.37 s | **4.2M, 0.28 s** (target ≤ 0.3 s: met) | 786 KB |
+| https://text.npr.org/ | 25.3M, 1.69 s | **15.0M, 1.00 s** | 382 KB |
+| https://en.m.wikipedia.org/wiki/Psion (2 TLS connections) | 52.6M, 3.51 s | **32.1M, 2.14 s** | 532 KB |
+| https://www.bbc.co.uk/, pictures off | 101.6M, 6.77 s | **78.9M, 5.26 s** | 2246 KB |
+| local picture page | 27.3M, 1.82 s | **26.0M, 1.73 s** | 1123 KB |
+| the same, Page Down | 21.3M | **19.1M** | 1224 KB |
+| Show pictures | 7.0M + 24.2M | **6.1M + 23.0M** | 1143 KB |
+| BBC with all 117 pictures (3.9 MB) | 728.6M, 48.6 s | **473.8M, 31.6 s** | 6312 KB |
+
+**BBC with pictures, then 200 × Page Down and End** (the acceptance test; `--images --replay build/links/net/bbcpics`, 10 MB heap):
+
+| | Before | After |
+|---|---|---|
+| Heap peak | 10.0 MB (the limit) | **8.3 MB** (6.3 MB at load) |
+| Failed allocations | 2,305 | **0** |
+| Pictures | black boxes and missing text from about screen 30 | every picture on screen drawn, to the end of the page |
+| "Page too big" | | never needed |
+
+With a smaller heap the page stops instead of failing: with `--heap-limit 6000000` and `4500000` the page loads part way, says "Page too big - only part of it is shown", scrolls, and no allocation fails.
+
+The screenshots of the picture pages are identical to the pixel with phase 4's (the grey bitmaps are exact). The text pages differ from the phase 3 references only by the underlined links of phase 4. Unsized wide pictures are now at most 640 wide, so BBC with pictures is no longer wider than the screen.
+
+### What changed
+
+**1. Picture memory** (`img.c`, `imgcache.c`, `error.c`, `jpeg.c`, `psi_drv.c`, `epoc/config.h`)
+- **Eviction.** `psi_evict_pictures` walks Links' image cache (in use or not) and drops the bitmap of every picture outside the view plus one screen either side (`PSI_PIC_MARGIN`), once the picture bitmaps take more than 1 MB (`PSI_PIC_BUDGET`). It is checked four times a second. `psi_drop` is Links' `r3l0ad` without an image object: the picture goes back to "type not known", and `img_draw_image` decodes it again from the compressed copy in Links' cache when it is next drawn. Each picture remembers where on the page it was last drawn. (A first version walked each page's image list, but most pictures on BBC are not in it: they belong to table layouts.)
+- **Memory short.** The same pass runs as a Links cache upcall when an allocation fails, then for finished pictures off the screen only, never for the one being decoded.
+- **One byte a pixel.** Picture bitmaps are kept as the grey level `v` that `psi_grey.c` works out from a 565 pixel, half the memory of 565. Drawing turns `v` back into a 565 pixel with the same `v` (a 256-entry table; every level from 0 to 255 has one), so the screen is the same to the bit. To Links the bitmap still looks like 565: `register_bitmap` packs it in place and gives the rest back, and `prepare_strip` hands out scratch rows that `commit_strip` packs. Glyphs stay 565.
+- **Caps per picture.** At most 640 × 480 pixels shown (`PSI_PIC_MAX_PIX`), made smaller in proportion. At most 4 MB to decode and scale one picture (`PSI_PIC_MAX_BYTES`); a bigger one is a box. A JPEG with no size given is decoded at the biggest n/8 that is at most 640 wide and 640 × 480 in all (`PSI_JPEG_MAX_W` 1280 → 640), so Links does not scale it again.
+- **8-bit scaling.** A picture shown at another size than it was decoded at used Links' 16-bit scaler: 6 bytes a pixel of the picture before and after. A 350 × 623 JPEG shown 341 × 607 needed 1.3 MB, and that is what refused allocations further down BBC. `psi_scale_to_bitmap` averages (or repeats) 8-bit pixels into a 3-byte-a-pixel copy, then converts 16 rows at a time. A picture that cannot be scaled for lack of memory is a box, not a black rectangle.
+- **Soft ceiling.** Allocations made while a picture is decoded or drawn (`psi_pic_alloc`), "may fail" and 4 KB or more, stop 1.5 MB short of the heap's limit (`PSI_HEAP_SOFT`) after Links has freed what it can; the page says "Page too big - not all the pictures are shown". A page still loading when less than 0.75 MB is left (`PSI_HEAP_STOP`) is stopped where it is: "Page too big - only part of it is shown". "Room" is `psi_heap_room()`: on the Psion the 10 MB less what RHeap has in use (`Size() - Available()`), and no more than the system's free RAM less 256 KB (`epoc/psi_heap.cpp`); in the harness, its limit less its count.
+
+**2a. TLS** (`ssh/tls13.c`, `web/tls/*`, `mail/tls/*`; PsiWeb and PsiMail only. PsiTerm's `psissh` still links Dropbear's X25519 and is unaffected.)
+- **The handshake: 15.4M → 6.5M instructions** (1.03 s → 0.43 s) for npr. X25519 went from 6.8M to 2.7M a call: 13-bit limbs, the field multiply and square in inline ARM asm (generated by `web/tls/gen_fe25519.py`), and a shorter inversion chain. The key pair for the next connection is worked out in pieces while `read_exact` waits for data (`tls_background()`; Links' `psi_select` could also call it when idle: not wired yet). The replay harness never waits, so its figures still include it.
+- **Bulk decryption:** ChaCha20 in asm (`gen_chacha.py`, about 13.5 instructions a byte); Poly1305 with no 64-bit multiply calls; SHA-256 rewritten in C (`web/tls/sha256.c`).
+- **Session resumption** (PSK, `psk_dhe_ke` only, so every connection still has a fresh X25519 and forward secrecy). Tickets are kept in memory by host and port, used once, and capped at a day. A ticket is stored only after a complete handshake that passed all its checks (for PsiMail, the certificate check). A rejected ticket falls back to a full handshake. Resumed: npr, Wikipedia, BBC, Google, imap.gmail.com. Not resumed by the server: GitHub, iCloud, mostly Fastmail. A resumed session also skips about 6.5 KB of certificates over the link.
+- PsiMail in its ARM build, per later connection: Gmail 33.8M → 6.4M (resumed, no certificate check needed), Fastmail 33.9M → 25.1M.
+- The ClientHello now lists `psk_key_exchange_modes` (Google sends no tickets without it). So that the phase 3 recordings still replay, it is left out when the entropy source has only ever returned zeros, which happens only in record and replay runs. A new recording cannot be compared with older ones.
+- Tested: RFC 7748 vectors including the 1,000-iteration one, 3,000 random cases against Python, an instruction-level simulation of the generated asm at its worst-case bounds, the AEAD against Python's `cryptography` (400 cases), live handshakes, PsiMail's certtest, `mail` host and ARM builds, foldertest and undotest, parsefuzz, `make -C ssh` and the ssh linktest (49/49). The fork's harness is in `build/links-tls/live/`.
+
+**2b. The parser** (`html.c`). `scan_http_equiv` (META, TITLE, STYLE, SCRIPT, BODY) and `find_form_for_input` (FORM) parsed every tag of the page in full to find a few elements. Now they parse only tags whose first two letters match, and step from `<` to `<` over the rest. On BBC `parse_element` went from 14.2M to 5.9M instructions; its calls from those two from 16,843 to 127. The one difference: a `<` inside an attribute value of a skipped tag is looked at as a tag, which matters only if a page writes one of those elements inside an attribute.
+
+**2c. Scrolling** (`psi_grey.c`). The 565 → 16-grey conversion was a third of a Page Down on 68k.news. A 64 KB table now gives `v` for every 565 pixel in one load (the three-table sum, the shift and the "last colour" test are gone). Same output to the bit. 68k.news Page Down 5.5M → 4.2M.
+
+**3a. Passwords** (`objreq.c`, `auth.c`, `http.c`, `psi_drv.c`, `psi_digest.c`, `web/psiweb.h`, `web/app`)
+- Links' `auth_window` asks through the shared chunk (`auth_state`, `auth_host`, `auth_realm`, `auth_proxy`; `PW_ASK_*` in `psiweb_cmds.h`). PsiWeb.app shows **User name and password** (who asks, in bold; the realm in quotes as an annotation; User name; Password in a secret editor; "No user name entered"), from an idle callback rather than inside its tick. The answer comes back in `auth_user`/`auth_pass` (UTF-8); the engine wipes the password from the chunk once used. Cancel shows the server's own page, as Links' Cancel does.
+- **Digest** (RFC 7616) besides Basic: MD5, SHA-256 and their -sess forms, `qop=auth` or none, the nonce count, opaque, and a stale nonce answered again without asking. The hashes are in `web/links/psi_digest.c` (self-contained; checked against the RFC 7616 examples for both MD5 and SHA-256). The `cnonce` comes from the TLS random pool.
+- Tested in the harness against a local server (Basic, Digest MD5, Digest SHA-256 with a stale nonce, cancel), and in the 5mx emulator end to end (the dialog, typing, the page).
+
+**3b. Saving files** (`session.c`, `psi_drv.c`, `web/app`)
+- A response PsiWeb cannot show used to say "Not available - PsiWeb cannot show or save … files". Now the engine asks (`save_state`, `save_name` from Content-Disposition or the URL, `save_type`, `save_size`). The app says what it is (`PsiWeb cannot show "report.pdf" (application/pdf, 101 KB)` / `Save it to a file?`), then shows the standard Save as dialog on `D:\Documents\` (or `C:\Documents\` without a card), checks the room on the disk, and answers with the path.
+- The engine saves with Links' own download code (no Links window): "Saving report.pdf: 40 of 100 KB..." as the busy message, at most once a second; "Saved report.pdf" at the end. Esc stops it ("File not saved - stopped"). A file over 4 MB (`PSI_SAVE_MAX`) is refused before asking if its size is known, and stopped when it passes 4 MB if not. A part file is deleted.
+- Tested: the harness saved a 100 KB PDF byte-identical and refused a 5 MB one; the emulator showed the query, the Save as dialog and the progress.
+- Links' bookmarks file: Links wrote `bookmarks.html` into the folder it was started in at its first start. That is now off (`bookmark.c`).
+
+**The emulator bug: "Checking the modem..." stayed up 25 s and more after every page over a modem.** Reproduced with `python3 tools/emu/net.py web`. The modem reports the server closing only in-band, as "NO CARRIER" in the data; `pwnet.c` notices it and the next read says "closed", but `psi_os.c`'s `psi_select` did not count that as the connection being readable. So Links kept the finished connection in its queue, the engine stayed "busy", and the app kept the busy message up until a time-out. Fixed with `pwn_dead()`, which `sock_readable` asks. In the emulator the modem now hangs up 1.6 s after the page arrives, where before it never did within the run. The app also takes a link busy message down as soon as a later plain note arrives ("Checking the modem..." then "CONNECT 115200").
+
+### Sizes
+
+`psiweb.exe` is 1,909,576 bytes (phase 4: 1,862,608). Most of the growth is the TLS asm and resumption. 64 KB more of static data (the grey table).
+
+### Files
+
+- Links patch: `img.c`, `imgcache.c`, `error.c`, `jpeg.c`, `html.c`, `auth.c`, `http.c`, `objreq.c`, `session.c`, `bookmark.c`, `main.c`, `links.h` (header of `patches/links-2.30-psion.diff`).
+- `web/links`: `psi_drv.c`, `psi_grey.c`, `psi_digest.c` (new), `psi_mem.c`, `epoc/psi_os.c`, `epoc/psi_heap.cpp`, `epoc/config.h`, `host/config2.h`, `epoc.mk`, `Makefile` (the PC build now uses `psi_grey.c`), `emu/links_rt.c` (files opened for writing), `emu/emu_back.c` and `emu/run_links.py` (`auth` and `save` script lines; `PW_DDISK` for D:).
+- `web/engine/pwnet.c`, `pwnet.h` (`pwn_dead`), `web/psiweb.h`, `web/psiweb_cmds.h` (the question fields: the chunk's layout changed, so app and engine must come from the same package, as they always do).
+- `web/app/psiweb.cpp`, `pwapp.h`, `psiweb.hrh`, `psiweb.rss`, `pwhelp.cpp`.
+- TLS: see 2a.
+
+### Remaining device tests
+
+1. Install a package built from this tree. Then 68k.news: time to the first screen, and Page Down.
+2. BBC (or a Wikipedia article) with Show pictures, scrolled a long way down and back up: pictures come back as they scroll in; `PsiWeb.log`'s `mem` lines and free RAM. The `Available()` walk in `psi_heap_room` and the free-RAM limit have only run in the emulator's ROM, not with real RAM pressure.
+3. A page behind a password (Basic, and Digest if a server is to hand): the dialog, a wrong password (asked again), Cancel.
+4. A PDF or ZIP link: the query, Save as to D:, the progress, Esc part way (no part file left), and a file over 4 MB.
+5. Over the modem: a page, then the busy message going as soon as the page is in, and the hang-up a moment later.
+6. TLS: npr and Wikipedia twice in a row (the second resumed: compare the times in `PsiWeb.log`); PsiMail checking Gmail twice. The ARM asm has run in unicorn only, not on an ARM710.
+7. The 15 MIPS assumption, as in every phase.
+
+### Still open
+
+- `tls_background()` is not called from Links' idle loop (it runs only while a TLS read waits).
+- `<select>` lists still open Links' own pop-up (phase 4, known issue 2).
+- With the scroll test, one screen (about screen 100 of BBC) shows two lines of text drawn over each other; the phase 4 build does the same. It is Links' partial redraw after a scroll, not the picture work.
+- The compressed pictures stay in Links' cache for the page's life (3.9 MB on BBC): the budget for very picture-heavy pages. Re-fetching them instead would cost the modem time.
+
+### Removing NetSurf later
+
+The NetSurf sources stay as a fallback until Links has been used on the device. When Dan is happy to drop them:
+
+1. Delete the NetSurf-only files:
+   - `web/netsurf.sh`, `web/gen.py`, `web/Makefile`, `web/mkres.py`;
+   - `web/patches/` (`netsurf-psion.diff`, `libcss-psion.diff`, `libnsfb-psion.diff`, `libnsutils-psion.diff`);
+   - `web/engine/fetch_psi.c`;
+   - `web/fb/nsfb_epoc.c`, `web/fb/pgnet_host.c`, `web/fb/pwgrey.c` (the Links builds use `web/links/psi_grey.c`);
+   - `web/emu/run_psiweb.py`, `web/emu/emu_rt.c`, `web/emu/emu_back.c`;
+   - `web/res/welcome.html` (Links' start page is `web/links/welcome.html`);
+   - the `compat/` files only NetSurf uses: `iconv.h`, `endian.h`, `inttypes.h`, `stdbool.h`, `stdint.h`, `strings.h`, `zconf.h`, `sys/`, and `nscompat.c`. Check each with `grep -rn <name> web/links web/engine ssh mail` first.
+2. **Keep**, because the Links build uses them: `web/fb/pwback.h` and `web/fb/pwhost.c` (the PC build), `web/compat/nscompat.h` and `web/compat/nsprintf.c` (pwnet and the Links ARM build), `web/emu/emu_hc.c`, `web/engine/pwepoc.cpp`, `pwnet.c`, `pwnet.h`, `pwupdate.c`, `web/tls/`, `web/tools/mkicons.py`.
+3. In `web/build.sh`, remove `PSIWEB_ENGINE` and the `netsurf` branch (the `NS=`/`netsurf.sh` lines, `web/Makefile`, and NetSurf's COPYING text); keep the Links branch as the only one.
+4. Move `pwback.h`, `pwhost.c` (and `emu_hc.c`) under `web/links/` if wanted, and fix the paths in `web/links/epoc.mk` and `web/links/Makefile`.
+5. Delete `build/netsurf` locally (it is not in git).
+6. Update the docs: `web/README.md` ("The NetSurf engine"), `CLAUDE.md` (the PsiWeb section still describes `netsurf.sh`, `gen.py` and `web/fb/nsfb_epoc.c`, and its "Open issues" entry points at the superseded `docs/issues/psiweb-no-render.md`), `docs/BUILDING.md`, and the comments in `web/psiweb.h` and `web/app/pwapp.h` that still say NetSurf.
+7. Build (`tools/docker/psibuild web/build.sh`), run `web/links/emu/run_pages.sh` with `NET=replay`, and `python3 tools/emu/net.py web`, before committing.

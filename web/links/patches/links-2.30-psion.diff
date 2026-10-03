@@ -38,6 +38,24 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
   they are by the URL tidying; file:///D:/x is the file D:/x; about: pages may link to
   files; with a proxy (WebOne), https:// addresses go to it as plain requests
 
+Phase 5 (picture memory, speed, questions; see PORTING.md, "Phase 5"):
+- img.c, imgcache.c, links.h, main.c (PSI_LAZY_IMAGES): picture bitmaps away from the view
+  are dropped and decoded again from the cache when they come back (psi_evict_pictures);
+  picture bitmaps kept as one byte of grey a pixel (psi_drv.c); caps on the size shown
+  and on the memory for decoding one picture; 8-bit scaling instead of Links' 16-bit
+  copies; a picture that cannot be scaled is a box, not black
+- error.c (PSI_LAZY_IMAGES): big "may fail" allocations for pictures stop short of the
+  heap's limit (psi_drv.c psi_heap_tight)
+- jpeg.c (PSI_JPEG_SCALE): a JPEG with no size given is decoded at most 640 wide and
+  640x480 in all
+- html.c (PSIWEB): scan_http_equiv and find_form_for_input parse only the tags they look for
+- objreq.c, auth.c, http.c (PSI_NO_BARS, PSIWEB): HTTP authentication asked through
+  PsiWeb.app (psi_drv.c psi_auth_ask); Digest (RFC 7616: MD5, SHA-256, -sess, qop=auth,
+  stale nonces) besides Basic
+- session.c (PSI_NO_BARS): a response PsiWeb cannot show can be saved to a file (asked
+  through PsiWeb.app, psi_save_ask), at most PSI_SAVE_MAX; no Links download window
+- bookmark.c (PSI_NO_BARS): no bookmarks file written
+
 --- a/drivers.c
 +++ b/drivers.c
 @@ -40,6 +40,9 @@
@@ -310,18 +328,34 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  }
  
  static void put_link_line(unsigned char *prefix, unsigned char *linkname, unsigned char *link, unsigned char *target)
-@@ -1727,6 +1919,10 @@
+@@ -1727,6 +1919,26 @@
  	form->num = (int)(a - startf);
  }
  
 +#ifdef PSIWEB
 +unsigned char *noform_startf, *noform_upto;	/* (reset with last_form_tag) */
++
++/* The first two letters of the tag at s, in lower case (0 if too short).
++ * scan_http_equiv and find_form_for_input look for a few elements only
++ * (META, TITLE, STYLE, SCRIPT, BODY; FORM), but parsed every tag of the
++ * page in full to find them: on BBC two more passes over 416 KB of tags,
++ * each as costly as the real parse. Now they parse only the tags that
++ * start with the right two letters, and step from '<' to '<' over the
++ * rest (phase 5). The one difference: a '<' inside an attribute value of
++ * a skipped tag is looked at as a tag, which can only find one of these
++ * elements where a page has written one inside an attribute. */
++static inline int psi_tag2(unsigned char *s, unsigned char *eof)
++{
++	if (eof - s < 3) return 0;
++	return ((s[1] | 0x20) << 8) | (s[2] | 0x20);
++}
++#define PSI_T2(a, b) (((a) << 8) | (b))
 +#endif
 +
  static void find_form_for_input(unsigned char *i)
  {
  	unsigned char *s, *ss, *name, *attr, *lf, *la;
-@@ -1749,9 +1945,27 @@
+@@ -1749,15 +1961,36 @@
  	} else {
  		lf = NULL, la = NULL;
  		s = startf;
@@ -349,7 +383,16 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  	if (s >= i) goto end_parse;
  	if (eofff - s >= 2 && (s[1] == '!' || s[1] == '?')) {
  		s = skip_comment(s, i);
-@@ -1772,6 +1986,10 @@
+ 		goto se;
+ 	}
+ 	ss = s;
++#ifdef PSIWEB
++	if (psi_tag2(s, i) != PSI_T2('f', 'o')) goto sp;
++#endif
+ 	if (parse_element(s, i, &name, &namelen, &attr, &s)) goto sp;
+ 	if (namelen != 4 || casecmp(name, cast_uchar "FORM", 4)) goto se;
+ 	lf = ss;
+@@ -1772,6 +2005,10 @@
  		get_html_form(la, &form);
  	} else {
  		last_form_tag = NULL;
@@ -360,7 +403,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  	}
  }
  
-@@ -2739,6 +2957,18 @@
+@@ -2739,6 +2976,18 @@
  	    !casestrcmp(name, cast_uchar "preconnect") ||
  	    !casestrcmp(name, cast_uchar "stylesheet") ||
  	    casestrstr(name, cast_uchar "icon") ||
@@ -379,7 +422,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  	    0) goto skip;
  	if (!casestrcmp(name, cast_uchar "prefetch") ||
  	    !casestrcmp(name, cast_uchar "prerender") ||
-@@ -2780,6 +3010,9 @@
+@@ -2780,6 +3029,9 @@
  	void (*func)(unsigned char *);
  	int linebreak;
  	int nopair; /* Somehow relates to paired elements */
@@ -389,7 +432,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  };
  
  static struct element_info elements[] = {
-@@ -2960,6 +3193,9 @@
+@@ -2960,6 +3212,9 @@
  	if (head) process_head(head);
  
  	set_lt:
@@ -399,7 +442,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  
  	/*set_globals;*/
  
-@@ -2970,6 +3206,25 @@
+@@ -2970,6 +3225,25 @@
  		int namelen;
  		struct element_info *ei;
  		int inv;
@@ -425,7 +468,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  		if (par_format.align != AL_NO && par_format.align != AL_NO_BREAKABLE && WHITECHAR(*html)) {
  			unsigned char *h = html;
  			/*if (putsp == -1) {
-@@ -3052,6 +3307,10 @@
+@@ -3052,6 +3326,10 @@
  			continue;
  		}
  		element:
@@ -436,7 +479,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  		html_format_changed = 1;
  		inv = *name == '/'; name += inv; namelen -= inv;
  		if (html_top.invisible == INVISIBLE_SCRIPT && !(inv && namelen == 6 && !casecmp(name, cast_uchar "SCRIPT", 6))) {
-@@ -3076,9 +3335,20 @@
+@@ -3076,9 +3354,20 @@
  			ng:;
  		}
  		html = end;
@@ -457,7 +500,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  			if (ei - elements > 4) {
  				struct element_info e = *ei;
  				memmove(elements + 1, elements, (ei - elements) * sizeof(struct element_info));
-@@ -3235,6 +3505,9 @@
+@@ -3235,6 +3524,9 @@
  	pos = 0;
  	/*line_breax = 1;*/
  	was_br = 0;
@@ -467,7 +510,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  #undef set_globals
  }
  
-@@ -3420,7 +3693,18 @@
+@@ -3420,12 +3712,30 @@
  	if (title) *title = init_str();
  	add_chr_to_str(head, hdl, '\n');
  	se:
@@ -486,6 +529,18 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  	if (s >= eof) return;
  	if (eof - s >= 2 && (s[1] == '!' || s[1] == '?')) {
  		s = skip_comment(s, eof);
+ 		goto se;
+ 	}
++#ifdef PSIWEB
++	{
++		int t = psi_tag2(s, eof);
++		if (t != PSI_T2('m', 'e') && t != PSI_T2('t', 'i') && t != PSI_T2('s', 't') &&
++		    t != PSI_T2('s', 'c') && t != PSI_T2('b', 'o')) goto sp;
++	}
++#endif
+ 	if (parse_element(s, eof, &name, &namelen, &attr, &s)) goto sp;
+ 	ps:
+ 	if (namelen == 6 && !casecmp(name, cast_uchar "SCRIPT", 6)) {
 --- a/html_r.c
 +++ b/html_r.c
 @@ -1311,6 +1311,12 @@
@@ -524,19 +579,70 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  		goto r;
 --- a/img.c
 +++ b/img.c
-@@ -76,6 +76,11 @@
+@@ -76,6 +76,12 @@
  	}
  }
  
 +#ifdef PSI_LAZY_IMAGES
 +/* Set while insert_image() only wants a picture's size (see there). */
 +int psi_size_only;
++int psi_pic_alloc;
 +#endif
 +
  static void mem_free_buffer(struct cached_image *cimg)
  {
  	mem_free(cimg->buffer);
-@@ -387,9 +392,19 @@
+@@ -296,6 +302,28 @@
+ 		cimg->xww = cimg->width;
+ 		cimg->yww = cimg->height;
+ 	}
++#ifdef PSI_LAZY_IMAGES
++	/* PsiWeb caps. Shown: at most PSI_PIC_MAX_PIX pixels (the screen is
++	   153,600), made smaller in proportion. Decoded: the picture's buffer,
++	   and the 6-byte-a-pixel copies Links makes to scale it, within
++	   PSI_PIC_MAX_BYTES; a bigger one is shown as a box (JPEGs are scaled
++	   while decoding, so this is PNGs and GIFs: about 800x500 at most when
++	   scaled, 1000x800 when not). */
++	while ((double)cimg->xww * (double)cimg->yww > PSI_PIC_MAX_PIX) {
++		cimg->xww = cimg->xww * 3 / 4;
++		cimg->yww = cimg->yww * 3 / 4;
++		if (cimg->xww < 1) cimg->xww = 1;
++		if (cimg->yww < 1) cimg->yww = 1;
++	}
++	{
++		double px = (double)cimg->width * (double)cimg->height;
++		double need = px * cimg->buffer_bytes_per_pixel;
++		if (cimg->width != cimg->xww || cimg->height != cimg->yww)
++			need += px * 6 + (double)cimg->xww * (double)cimg->yww * 6;
++		if (need > PSI_PIC_MAX_BYTES)
++			return 1;
++	}
++#endif
+ 
+ #ifdef HAVE_SVG
+ 	if (cimg->image_type == IM_SVG) {
+@@ -317,10 +345,20 @@
+ 		/* No buffer, bitmap is valid from the very beginning */
+ 		cimg->bmp.x = (int)cimg->width;
+ 		cimg->bmp.y = (int)cimg->height;
++#ifdef PSI_LAZY_IMAGES
++		psi_pic_bitmap = 1;
++		if (drv->get_empty_bitmap(&(cimg->bmp))) {
++			psi_pic_bitmap = 0;
++			cimg->dregs = NULL;
++			goto skip_img;
++		}
++		psi_pic_bitmap = 0;
++#else
+ 		if (drv->get_empty_bitmap(&(cimg->bmp))) {
+ 			cimg->dregs = NULL;
+ 			goto skip_img;
+ 		}
++#endif
+ 		if ((size_t)cimg->width > MAX_SIZE_T / sizeof(*buf_16) / 3) overalloc();
+ 		buf_16 = mem_alloc(sizeof(*buf_16) * 3 * (size_t)cimg->width);
+ 		round_color_sRGB_to_48(&red, &green, &blue
+@@ -387,9 +425,19 @@
  			} else {
  				unsigned char rgb[3];
  
@@ -556,7 +662,228 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  			}
  		}
  	}
-@@ -1342,12 +1357,30 @@
+@@ -554,6 +602,88 @@
+ 	if (!use_strip) drv->register_bitmap(&(cimg->bmp));
+ }
+ 
++#ifdef PSI_LAZY_IMAGES
++/* PsiWeb: a picture shown at another size than it was decoded at. Links
++ * scales in 16 bits a channel, with copies of 6 bytes a pixel of the
++ * picture before and after: 1.3 MB for a 350x623 JPEG shown 341x607, and
++ * on a long page that is what the heap ran out of. Here an 8-bit picture
++ * (3 bytes a pixel) is scaled while still 8-bit, by averaging the source
++ * pixels under each new one (or repeating them, when made bigger), and
++ * is then put into the bitmap 16 rows at a time. Memory: the scaled
++ * picture (3 bytes a pixel) and one strip. The 16 greys hide the
++ * difference from scaling in linear light. Returns 0 if it could not
++ * (no memory): the caller then shows a box. */
++static int psi_scale_to_bitmap(struct cached_image *cimg, ssize_t ix, ssize_t iy, ssize_t ox, ssize_t oy)
++{
++	unsigned char *dst, *d;
++	unsigned short *strip;
++	int *sx, *rcp;
++	ssize_t i, j, y, maxbx = 1, maxby = 1;
++	struct bitmap tb;
++
++	if (ox > MAXINT / 3 || (size_t)ox * (size_t)oy > MAX_SIZE_T / 3) return 0;
++	dst = mem_alloc_mayfail((size_t)ox * (size_t)oy * 3);
++	if (!dst) return 0;
++	sx = mem_alloc_mayfail(sizeof(int) * (ox + 1));
++	if (!sx) { mem_free(dst); return 0; }
++	for (i = 0; i <= ox; i++) {
++		sx[i] = (int)((long long)i * ix / ox);
++		if (i && sx[i] <= sx[i - 1]) sx[i] = sx[i - 1] + 1;
++		if (sx[i] > ix) sx[i] = (int)ix;
++		if (i && sx[i] - sx[i - 1] > maxbx) maxbx = sx[i] - sx[i - 1];
++	}
++	maxby = (iy + oy - 1) / oy + 1;
++	rcp = mem_alloc_mayfail(sizeof(int) * (maxbx * maxby + 1));
++	if (!rcp) { mem_free(sx); mem_free(dst); return 0; }
++	for (i = 1; i <= maxbx * maxby; i++) rcp[i] = (int)(65536 / i);	/* (once a picture) */
++	d = dst;
++	for (j = 0; j < oy; j++) {
++		ssize_t y0 = (ssize_t)((long long)j * iy / oy), y1 = (ssize_t)((long long)(j + 1) * iy / oy);
++		if (y1 <= y0) y1 = y0 + 1;
++		if (y1 > iy) y1 = iy, y0 = y1 - 1;
++		if (y1 - y0 > maxby) y1 = y0 + maxby;
++		for (i = 0; i < ox; i++) {
++			int x0 = sx[i], x1 = sx[i + 1], x, n;
++			unsigned r = 0, g = 0, b = 0, f;
++			const unsigned char *row;
++			if (x0 >= ix) x0 = (int)ix - 1, x1 = (int)ix;
++			n = (x1 - x0) * (int)(y1 - y0);
++			for (y = y0; y < y1; y++) {
++				row = cimg->buffer + ((size_t)y * ix + x0) * 3;
++				for (x = x0; x < x1; x++, row += 3) r += row[0], g += row[1], b += row[2];
++			}
++			f = rcp[n];
++			*d++ = (unsigned char)((r * f + 32768) >> 16);
++			*d++ = (unsigned char)((g * f + 32768) >> 16);
++			*d++ = (unsigned char)((b * f + 32768) >> 16);
++		}
++	}
++	mem_free(rcp);
++	mem_free(sx);
++	strip = mem_alloc_mayfail((size_t)ox * 16 * 3 * sizeof(*strip));
++	if (!strip) { mem_free(dst); return 0; }
++	tb.x = (int)ox;
++	tb.skip = cimg->bmp.skip;
++	for (y = 0; y < oy; y += 16) {
++		int n = oy - y < 16 ? (int)(oy - y) : 16;
++		unsigned char *src = dst + (size_t)y * ox * 3;
++		if (cimg->gamma_table)
++			agx_24_to_48_table(strip, src, ox * n, cimg->gamma_table);
++		else
++			agx_24_to_48(strip, src, ox * n,
++				(float)((float)(user_gamma tcc_hack) / cimg->red_gamma),
++				(float)((float)(user_gamma tcc_hack) / cimg->green_gamma),
++				(float)((float)(user_gamma tcc_hack) / cimg->blue_gamma));
++		tb.y = n;
++		tb.data = (unsigned char *)cimg->bmp.data + cimg->bmp.skip * y;
++		(*round_fn)(strip, &tb);
++	}
++	mem_free(strip);
++	mem_free(dst);
++	return 1;
++}
++#endif
++
+ /* Takes the buffer and resamples the data into the bitmap. Automatically
+  * destroys the previous bitmap. Must be called only when cimg->buffer is valid.
+  * Sets bmp_used to non-zero.
+@@ -590,6 +720,35 @@
+ 	ox=cimg->xww;
+ 	oy=cimg->yww;
+ 	if (ix==ox&&iy==oy) gonna_be_smart=1;
++#ifdef PSI_LAZY_IMAGES
++	else if (cimg->buffer_bytes_per_pixel == 3 && !dither_images) {
++		/* (psi_scale_to_bitmap: 8-bit scaling, no 16-bit copies) */
++		if (cimg->bmp_used) drv->unregister_bitmap(&cimg->bmp);
++		cimg->bmp.x = (int)ox;
++		cimg->bmp.y = (int)oy;
++		psi_pic_bitmap = 1;
++		if (drv->get_empty_bitmap(&(cimg->bmp))) {
++			psi_pic_bitmap = 0;
++			drv->register_bitmap(&(cimg->bmp));
++		} else {
++			psi_pic_bitmap = 0;
++			if (!psi_scale_to_bitmap(cimg, ix, iy, ox, oy)) {
++				/* no memory to scale it: no picture (a box), not
++				   a black one */
++				drv->unregister_bitmap(&cimg->bmp);
++				cimg->bmp.data = NULL;
++			}
++			drv->register_bitmap(&(cimg->bmp));
++		}
++		if (!cimg->decoder) {
++			mem_free_buffer(cimg);
++			cimg->buffer = NULL;
++		}
++		cimg->bmp_used = 1;
++		cimg->rows_added = 0;
++		return;
++	}
++#endif
+ 	else{
+ 		gonna_be_smart=0;
+ 		if (ix && (size_t)ix * (size_t)iy / (size_t)ix != (size_t)iy) overalloc();
+@@ -616,7 +775,13 @@
+ 	if (cimg->bmp_used) drv->unregister_bitmap(&cimg->bmp);
+ 	cimg->bmp.x = (int)ox;
+ 	cimg->bmp.y = (int)oy;
++#ifdef PSI_LAZY_IMAGES
++	psi_pic_bitmap = 1;
++	if (drv->get_empty_bitmap(&(cimg->bmp))) {
++		psi_pic_bitmap = 0;
++#else
+ 	if (drv->get_empty_bitmap(&(cimg->bmp))) {
++#endif
+ 		if (!gonna_be_smart) {
+ 			if (tmp) {
+ 				mem_free(tmp);
+@@ -624,6 +789,9 @@
+ 		}
+ 		goto bitmap_failed;
+ 	}
++#ifdef PSI_LAZY_IMAGES
++	psi_pic_bitmap = 0;
++#endif
+ 	if (gonna_be_smart){
+ 		if (dither_images) {
+ 			if ((size_t)cimg->width > MAX_SIZE_T / 3 / sizeof(*dregs)) overalloc();
+@@ -642,12 +810,19 @@
+ 				(*round_fn)(tmp, &cimg->bmp);
+ 			mem_free(tmp);
+ 		} else {
++#ifdef PSI_LAZY_IMAGES
++			/* PsiWeb: no memory to scale it: no picture, rather
++			   than a black one */
++			drv->unregister_bitmap(&cimg->bmp);
++			cimg->bmp.data = NULL;
++#else
+ 			int i;
+ 			unsigned char *ptr = cimg->bmp.data;
+ 			for (i = 0; i < cimg->bmp.y; i++) {
+ 				memset(ptr, 0, cimg->bmp.x * (drv->depth & 7));
+ 				ptr += cimg->bmp.skip;
+ 			}
++#endif
+ 		}
+ 		bitmap_failed:
+ 		drv->register_bitmap(&(cimg->bmp));
+@@ -1181,6 +1356,12 @@
+ 
+ 	if (!(goi->goti.go.xw && goi->goti.go.yw))
+ 		return; /* At least one dimension is zero */
++#ifdef PSI_LAZY_IMAGES
++	if (fdatac->vs && cimg) {
++		cimg->psi_py = y - fdatac->yp + fdatac->vs->view_pos;
++		cimg->psi_yw = goi->goti.go.yw;
++	}
++#endif
+ 
+ 	memcpy(&r, &fdatac->ses->term->dev->clip, sizeof(struct rect));
+ 	if (fdatac->vs->g_display_link && fdatac->active && fdatac->vs->current_link != -1 && fdatac->vs->current_link == goi->goti.link_num) {
+@@ -1192,6 +1373,9 @@
+ 
+ 	global_goi=goi;
+ 	global_cimg=goi->cimg;
++#ifdef PSI_LAZY_IMAGES
++	psi_pic_alloc++;
++#endif
+ 	if (img_process_download(goi, fdatac)) goto ret; /* Choked with data, will not
+ 							* draw. */
+ 	/* Now we will only draw... */
+@@ -1209,6 +1393,9 @@
+ 		draw_picture(fdatac, goi, x, y);
+ 	}
+ ret:
++#ifdef PSI_LAZY_IMAGES
++	psi_pic_alloc--;
++#endif
+ 	set_clip_area(fdatac->ses->term->dev, &r);
+ #ifdef LINKS_TESTMODE_IMAGE_AUTO_EXIT
+ 	if (cimg->state & 1)
+@@ -1258,6 +1445,10 @@
+ 		cimg->eof_hit = 0;
+ 		cimg->last_count = -1;
+ 		cimg->last_count2 = -1;
++#ifdef PSI_LAZY_IMAGES
++		cimg->psi_py = -1;
++		cimg->psi_yw = 0;
++#endif
+ 		if (cimg->wanted_xw >= 0 && cimg->wanted_yw >=0) cimg->state |= 2;
+ 		add_image_to_cache(cimg);
+ 	}
+@@ -1277,6 +1468,7 @@
+ 
+ 	image=mem_calloc(sizeof(struct g_object_image));
+ 	global_goi = image;
++
+ 	image->goti.go.mouse_event = g_text_mouse;
+ 	image->goti.go.draw = img_draw_image;
+ 	image->goti.go.destruct = img_destruct_image;
+@@ -1342,17 +1534,143 @@
  	find_or_make_cached_image(image, im->url, d_opt->image_scale);
  	cimg = global_cimg;
  
@@ -565,12 +892,14 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
 +	   Without this, every layout pass while a page loads decoded each
 +	   picture that had come so far in full, only to throw it away. */
 +	psi_size_only = image->af->rq && image->af->rq->ce;
++	psi_pic_alloc++;
 +#endif
  next_chunk:
  	retval = img_process_download(image, NULL);
  	if (retval && !(cimg->state & 4)) goto next_chunk;
 +#ifdef PSI_LAZY_IMAGES
 +	psi_size_only = 0;
++	psi_pic_alloc--;
 +#endif
  	image->goti.go.xw = (int)image->cimg->xww;
  	image->goti.go.yw = (int)image->cimg->yww;
@@ -587,9 +916,120 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  	if (im->insert_flag) add_to_list(current_f_data->images, image);
  	else image->list_entry.prev = image->list_entry.next = NULL;
  	return image;
+ }
+ 
++#ifdef PSI_LAZY_IMAGES
++/* PsiWeb: picture memory on long pages. A picture is decoded when it is
++ * first drawn, and Links then keeps its bitmap for as long as the page
++ * lives: after twenty screens of the BBC home page the 10 MB heap was
++ * full. Here the bitmaps of pictures away from the view are dropped
++ * (r3l0ad, as PSI_LAZY_IMAGES does for pictures not yet drawn); the
++ * compressed picture stays in Links' cache, and img_draw_image decodes it
++ * again when it comes back into view.
++ *
++ * how 0 (from a timer, after drawing): only when the bitmaps take more
++ *   than PSI_PIC_BUDGET, and not those within a screen of the view;
++ * how 1 (memory is short, perhaps inside an allocation): every finished
++ *   picture off the screen, but no decoder is touched. */
++struct psi_evict {
++	int top, bot, how, freed;
++};
++
++/* r3l0ad() without an image object: the picture goes back to "type not
++ * known yet" (state 0 or 2), and is decoded again from its cache entry
++ * the next time it is drawn. last_count and last_count2 stay as they
++ * are, as they still describe the cache entry. */
++static void psi_drop(struct cached_image *cimg)
++{
++	switch (cimg->state) {
++		case 12:
++		case 14:
++		if (cimg->gamma_table) mem_free(cimg->gamma_table), cimg->gamma_table = NULL;
++		destroy_decoder(cimg);
++		cimg->decoder = NULL;
++		if (cimg->strip_optimized) {
++			if (cimg->dregs) mem_free(cimg->dregs);
++			cimg->dregs = NULL;
++		} else {
++			mem_free_buffer(cimg);
++			cimg->buffer = NULL;
++		}
++		if (cimg->bmp_used) drv->unregister_bitmap(&cimg->bmp);
++		break;
++		case 13:
++		case 15:
++		drv->unregister_bitmap(&cimg->bmp);
++		break;
++		default:
++		return;
++	}
++	cimg->bmp_used = 0;
++	if (!(cimg->state & 2)) {
++		cimg->xww = img_scale_h(cimg->scale, cimg->wanted_xw < 0 ? 32 : cimg->wanted_xw);
++		cimg->yww = img_scale_v(cimg->scale, cimg->wanted_yw < 0 ? 32 : cimg->wanted_yw);
++	}
++	cimg->eof_hit = 0;
++	cimg->gamma_stamp = gamma_stamp;
++	cimg->state &= 2;
++}
++
++static void psi_evict_one(struct cached_image *cimg, void *e_)
++{
++	struct psi_evict *e = (struct psi_evict *)e_;
++	if (cimg->state < 12) return;
++	/* near the view (pictures are decoded when they are drawn, so one
++	   with a bitmap has a position) */
++	if (cimg->psi_py >= 0 && cimg->psi_py + cimg->psi_yw > e->top && cimg->psi_py < e->bot) return;
++	/* memory short, perhaps inside a decoder: finished pictures only,
++	   and never the one being decoded */
++	if (e->how && (!(cimg->state & 1) || cimg == global_cimg)) return;
++	psi_drop(cimg);
++	e->freed++;
++}
++
++int psi_evict_pictures(int how)
++{
++	struct session *ses;
++	struct psi_evict e;
++	int view = 0, h = 240;
++
++	if (!how && psi_pic_bytes <= PSI_PIC_BUDGET) return 0;
++	if (!list_empty(sessions)) {
++		ses = list_struct(sessions.next, struct session);
++		if (ses->screen && ses->screen->vs) view = ses->screen->vs->view_pos, h = ses->screen->yw;
++	}
++	e.how = how;
++	e.freed = 0;
++	e.top = view - (how ? 0 : PSI_PIC_MARGIN);
++	e.bot = view + h + (how ? 0 : PSI_PIC_MARGIN);
++	psi_imgcache_walk(psi_evict_one, &e);
++#ifdef PSI_DEBUG_MEM
++	fprintf(stderr, "[evict] how %d: view %d, %d dropped, bitmaps now %lu KB\n", how, view, e.freed, psi_pic_bytes >> 10);
++#endif
++	return e.freed;
++}
++
++/* Links' "free some memory" call */
++static int psi_evict_upcall(int type)
++{
++	/* (only when memory is short: not for Links' regular SH_CHECK_QUOTA;
++	   nor SH_FREE_ALL at exit, when the pages go before the pictures do,
++	   so there is nothing of ours left to say no to) */
++	return (type == SH_FREE_SOMETHING && psi_evict_pictures(1) ? ST_SOMETHING_FREED : 0) | ST_CACHE_EMPTY;
++}
++
++void psi_init_pictures(void)
++{
++	register_cache_upcall(psi_evict_upcall, 0, cast_uchar "pictures");
++}
++#endif
++
+ #ifdef JS
+ 
+ void change_image (struct g_object_image *goi, unsigned char *url, unsigned char *src, struct f_data *fdata)
 --- a/jpeg.c
 +++ b/jpeg.c
-@@ -246,13 +246,48 @@
+@@ -246,13 +246,57 @@
  		/* jpeg_read_header */
  		if (JPEG_SUSPENDED==jpeg_read_header(global_cinfo,TRUE))
  			break;
@@ -618,7 +1058,16 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
 +			long tw = cimg->wanted_xw >= 0 ? (long)cimg->xww : -1;
 +			long th = cimg->wanted_yw >= 0 ? (long)cimg->yww : -1;
 +			int num;
-+			if (tw < 0 && th < 0) tw = PSI_JPEG_MAX_W;
++			if (tw < 0 && th < 0) {
++				/* no size given: the biggest n/8 that is at most
++				   PSI_JPEG_MAX_W wide and PSI_PIC_MAX_PIX in all
++				   (img.c's cap), so Links need not scale it again */
++				for (num = 8; num > 1; num--) {
++					long sw = (w * num + 7) / 8, sh = (h * num + 7) / 8;
++					if (sw <= PSI_JPEG_MAX_W && (double)sw * (double)sh <= PSI_PIC_MAX_PIX)
++						break;
++				}
++			} else
 +			for (num = 1; num < 8; num++)
 +				if ((tw < 0 || (w * num + 7) / 8 >= tw) && (th < 0 || (h * num + 7) / 8 >= th))
 +					break;
@@ -638,7 +1087,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  		/* jpeg_start_decompress */
  		if (jpeg_start_decompress(global_cinfo)==FALSE)
  			break;
-@@ -326,11 +361,35 @@
+@@ -326,11 +370,35 @@
  		}
  new_scan:
  		deco->state=2;
@@ -675,7 +1124,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  susp0:
  			/* Suspended */
  			break;
-@@ -364,6 +423,7 @@
+@@ -364,6 +432,7 @@
  
  		case 4:
  		/* jpeg_finish_output */
@@ -683,7 +1132,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  		if (FALSE==jpeg_finish_output(global_cinfo))
  		{
  			/* Suspended */
-@@ -374,6 +434,7 @@
+@@ -374,6 +443,7 @@
  			/* Some more scans awaited... */
  			goto new_scan;
  		}
@@ -693,7 +1142,21 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  
 --- a/links.h
 +++ b/links.h
-@@ -1696,6 +1696,9 @@
+@@ -1652,6 +1652,13 @@
+ unsigned char *base64_encode(unsigned char *in, int inlen, unsigned char *prefix, unsigned char *suffix, int line_bits);
+ unsigned char *get_auth_realm(unsigned char *url, unsigned char *head, int proxy);
+ unsigned char *get_auth_string(unsigned char *url, int proxy);
++#ifdef PSIWEB
++unsigned char *get_auth_string_req(unsigned char *url, int proxy, unsigned char *request);
++void auth_set_challenge(unsigned char *url, int proxy, unsigned char *realm, unsigned char *head);
++int auth_stale(unsigned char *url, int proxy, unsigned char *realm, unsigned char *head);
++/* web/links/psi_digest.c: lower-case hex MD5 (alg 0) or SHA-256 (alg 1) */
++void psi_digest_hex(int alg, const unsigned char *data, int len, char *out);
++#endif
+ void free_auth(void);
+ void add_auth(unsigned char *url, unsigned char *realm, unsigned char *user, unsigned char *password, int proxy);
+ int find_auth(unsigned char *url, unsigned char *realm);
+@@ -1696,6 +1703,9 @@
  /* data.c */
  
  void data_func(struct connection *);
@@ -703,7 +1166,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  
  /* file.c */
  
-@@ -1832,7 +1835,7 @@
+@@ -1832,7 +1842,7 @@
  extern unsigned char term_seq_tw_mouse[];
  extern unsigned char term_seq_xterm[];
  
@@ -712,7 +1175,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  #define GRDRV_VIRTUAL_DEVICES
  #endif
  
-@@ -2151,6 +2154,12 @@
+@@ -2151,6 +2161,12 @@
  
  #define G_BFU_FONT_SIZE menu_font_size
  
@@ -725,6 +1188,36 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  struct letter {
  	const unsigned char *begin; /* Begin in the byte stream (of PNG data) */
  	int length; /* Length (in bytes) of the PNG data in the byte stream */
+@@ -3248,6 +3264,9 @@
+ 				      * this is allocated to 256*3*sizeof(*gamma_table)
+ 				      * = 1536 bytes and speeds up the gamma calculations
+ 				      * tremendously */
++#ifdef PSI_LAZY_IMAGES
++	int psi_py, psi_yw; /* PsiWeb: where on the page it was last drawn (psi_py -1: never) */
++#endif
+ 	list_entry_last
+ };
+ 
+@@ -3304,6 +3323,19 @@
+ };
+ 
+ void refresh_image(struct f_data_c *fd, struct g_object *img, uttime tm);
++#ifdef PSI_LAZY_IMAGES
++/* PsiWeb (img.c): drop the bitmaps of pictures away from the view; they are
++   decoded again from the cached file when they come back. how: 0 = only if
++   they take more than the budget, keeping a screen either side; 1 = memory
++   is short: everything off the screen (safe inside an allocation) */
++int psi_evict_pictures(int how);
++void psi_init_pictures(void);
++void psi_imgcache_walk(void (*fn)(struct cached_image *, void *), void *data);
++int psi_heap_tight(size_t size);
++extern int psi_pic_bitmap;
++extern int psi_pic_alloc;	/* img.c: decoding or drawing a picture (the soft ceiling applies) */
++extern unsigned long psi_pic_bytes;
++#endif
+ 
+ #endif
+ 
 --- a/main.c
 +++ b/main.c
 @@ -335,6 +335,9 @@
@@ -737,6 +1230,16 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  	if (dmp) ggr = 0;
  }
  
+@@ -528,6 +531,9 @@
+ 	GF(init_dip());
+ 	init_bfu();
+ 	GF(init_imgcache());
++#ifdef PSI_LAZY_IMAGES
++	GF(psi_init_pictures());
++#endif
+ 	init_fcache();
+ 	GF(init_grview());
+ }
 --- a/session.c
 +++ b/session.c
 @@ -285,6 +285,9 @@
@@ -767,7 +1270,51 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  	msg_box(ses->term, getml(u, NULL), TEXT_(T_ERROR), AL_CENTER, TEXT_(T_ERROR_LOADING), cast_uchar " ", u, cast_uchar ":\n\n", t, MSG_BOX_END, (void *)ses, 1, TEXT_(T_CANCEL), msg_box_null, B_ENTER | B_ESC /*, get_text_translation("Retry"), NULL, 0 !!! FIXME: retry */);
  }
  
-@@ -1444,6 +1456,15 @@
+@@ -859,7 +871,20 @@
+ 			while (frag->offset <= down->last_pos && frag->offset + frag->length > down->last_pos) {
+ 				if (download_prealloc(down, stat->state < 0 ? ce->length : down->stat.prg ? down->stat.prg->size : 0))
+ 					goto det_abt;
++		#ifdef PSI_NO_BARS
++				if (down->last_pos + (frag->length - (down->last_pos - frag->offset)) > PSI_SAVE_MAX) {
++					void psi_save_done(unsigned char *file, int ok, unsigned char *why);
++					char b[40];
++					snprintf(b, sizeof(b), "it is bigger than %d MB", PSI_SAVE_MAX >> 20);
++					psi_save_done(down->orig_file, 0, cast_uchar b);
++					if (!down->prog) down->prog = DUMMY;	/* (abort_download deletes it) */
++					goto det_abt;
++				}
++#endif
+ 				if (download_write(down, frag->data + (down->last_pos - frag->offset), frag->length - (down->last_pos - frag->offset))) {
++#ifdef PSI_NO_BARS
++					if (!down->prog) down->prog = DUMMY;	/* (a part file is no use) */
++#endif
+ 					det_abt:
+ 					detach_connection(stat, down->last_pos, 0, 0);
+ 					abort_download(down);
+@@ -884,6 +909,22 @@
+ 				if (download_write(down, start + down->last_pos, len - down->last_pos)) goto det_abt;
+ 			}
+ 		}
++#ifdef PSI_NO_BARS
++		{
++			void psi_save_done(unsigned char *file, int ok, unsigned char *why);
++			if (stat->state != S__OK) {
++				unsigned char *t = get_err_msg(stat->state, get_download_ses(down)->term);
++				psi_save_done(down->orig_file, 0, stat->state == S_INTERRUPTED ? cast_uchar "stopped" : t);
++				if (!down->prog) down->prog = DUMMY;	/* (abort_download deletes it) */
++			} else if (close_download_file(down)) {
++				psi_save_done(down->orig_file, 0, cast_uchar "the disk may be full");
++				if (!down->prog) down->prog = DUMMY;
++			} else
++				psi_save_done(down->orig_file, 1, NULL);
++			abort_download(down);
++			return;
++		}
++#endif
+ 		if (stat->state != S__OK) {
+ 			unsigned char *t = get_err_msg(stat->state, get_download_ses(down)->term);
+ 			unsigned char *tt = display_url(get_download_ses(down)->term, down->url, 1);
+@@ -1444,6 +1485,15 @@
  		int marg = (fd->marginwidth + G_HTML_MARGIN - 1) / G_HTML_MARGIN;
  		if (marg >= 0 && marg < 9) opt->margin = marg;
  	}
@@ -783,17 +1330,79 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  	if (opt->plain == 2) opt->margin = 0, opt->display_images = 1;
  	pr(
  	if (!jsint_get_source(fd, NULL, NULL) && ses) {
-@@ -2504,6 +2525,21 @@
- 		mem_free(ct);
- 		return;
- 	}
+@@ -2331,7 +2381,9 @@
+ 	down->prog_flag_block = ses->tq_prog_flag_block;
+ 	add_to_list(downloads, down);
+ 	release_object_get_stat(&ses->tq, &down->stat, PRI_DOWNLOAD);
++#ifndef PSI_NO_BARS
+ 	display_download(ses->term, down, ses);
++#endif
+ }
+ 
+ 
+@@ -2342,6 +2394,26 @@
+ 	query_file(ses, ses->tq->url, ses->tq->ce ? ses->tq->ce->head : NULL, &continue_download, tp_cancel, DOWNLOAD_CONTINUE);
+ }
+ 
 +#ifdef PSI_NO_BARS
-+	/* PsiWeb cannot save or open files: say so rather than ask */
++/* PsiWeb.app answered psi_save_ask: save to path (an EPOC path, e.g.
++   D:\\Documents\\x.pdf), or NULL: do not. The file is replaced if it is
++   there (the app has asked). */
++void psi_save_reply(struct session *ses, unsigned char *path)
++{
++	struct session *s;
++	struct list_head *ls;
++	foreach(struct session, s, ls, sessions) if (s == ses) goto found;
++	return;
++	found:
++	if (!ses->tq) return;
++	if (!path) {
++		tp_cancel(ses);
++		return;
++	}
++	continue_download(ses, path, DOWNLOAD_OVERWRITE);
++}
++#endif
++
+ static void tp_open(void *ses_)
+ {
+ 	struct session *ses = (struct session *)ses_;
+@@ -2491,6 +2563,46 @@
+ 	unsigned char *m2;
+ 	if (!ct) ct = stracpy(cast_uchar "unknown");
+ 	if (ses->tq_prog) mem_free(ses->tq_prog), ses->tq_prog = NULL;
++#ifdef PSI_NO_BARS
++	/* PsiWeb: no programs to open files with. Offer to save it (File >
++	   Save to file in PsiWeb.app, psi_drv.c psi_save_ask): the app asks
++	   where, psi_save_reply goes on. A file known to be too big, or one
++	   while another is being asked about, is said not available. */
 +	{
 +		void psi_msg_box(unsigned char *title, unsigned char *text);
-+		unsigned char *m = stracpy(cast_uchar "Not available - PsiWeb cannot show or save ");
++		int psi_save_ask(struct session *ses, unsigned char *name, unsigned char *ct, long size);
++		unsigned char *m, *name, *len = NULL;
++		long size = -1;
++		if (ses->tq->ce && ses->tq->ce->head && (len = parse_http_header(ses->tq->ce->head, cast_uchar "Content-Length", NULL))) {
++			size = strtol(cast_const_char len, NULL, 10);
++			mem_free(len);
++		}
++		if (size > PSI_SAVE_MAX) {
++			char b[64];
++			snprintf(b, sizeof(b), "Not available - the file is bigger than %d MB", PSI_SAVE_MAX >> 20);
++			m = stracpy(cast_uchar b);
++			goto psi_no;
++		}
++		name = get_filename_from_url(ses->tq->url, ses->tq->ce ? ses->tq->ce->head : NULL, 0);
++		if (!psi_save_ask(ses, name, ct, size)) {
++			mem_free(name);
++			if (n) mem_free(a);
++			mem_free(ct);
++			return;
++		}
++		mem_free(name);
++		m = stracpy(cast_uchar "Not available - PsiWeb cannot show ");
 +		add_to_strn(&m, ct);
 +		add_to_strn(&m, cast_uchar " files");
++		psi_no:
 +		psi_msg_box(NULL, m);
 +		mem_free(m);
 +		tp_cancel(ses);
@@ -802,10 +1411,10 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
 +		return;
 +	}
 +#endif
- 	m1 = stracpy(ct);
- 	if (!a) {
- 		if (!anonymous) msg_box(ses->term, getml(m1, NULL), TEXT_(T_UNKNOWN_TYPE), AL_CENTER, TEXT_(T_CONTENT_TYPE_IS), cast_uchar " ", m1, cast_uchar ".\n", TEXT_(T_DO_YOU_WANT_TO_SAVE_OR_DISLPAY_THIS_FILE), MSG_BOX_END, (void *)ses, 3, TEXT_(T_SAVE), tp_save, B_ENTER, TEXT_(T_DISPLAY), tp_display, 0, TEXT_(T_CANCEL), tp_cancel, B_ESC);
-@@ -2819,6 +2855,10 @@
+ 
+ 	if (n > 1) {
+ 		type_query_multiple_programs(ses, ct, a, n);
+@@ -2819,6 +2931,10 @@
  	ses->screen->xw = ses->term->x;
  	if (ses->term->y < gf_val(2, 2 * G_BFU_FONT_SIZE)) ses->screen->yw = 0;
  	else ses->screen->yw = ses->term->y - gf_val(2, 2 * G_BFU_FONT_SIZE);
@@ -816,7 +1425,7 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  }
  
  static struct session *create_session(struct window *win)
-@@ -2836,6 +2876,11 @@
+@@ -2836,6 +2952,11 @@
  	ses->screen->xp = 0; ses->screen->xw = term->x;
  	ses->screen->yp = gf_val(1, G_BFU_FONT_SIZE);
  	ses->screen->yw = term->y - gf_val(2, 2 * G_BFU_FONT_SIZE);
@@ -1603,15 +2212,58 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  	for (p = url + 7; *p && *p != POST_CHAR; p++)
 --- a/objreq.c
 +++ b/objreq.c
-@@ -125,6 +125,16 @@
+@@ -115,6 +115,34 @@
+ 	return 0;
+ }
+ 
++#ifdef PSI_NO_BARS
++/* PsiWeb.app answered psi_auth_ask (psi_drv.c): what auth_ok and
++   auth_cancel do for Links' own dialog. user NULL: cancelled, and the
++   server's own page is shown. The user name and password are taken as
++   UTF-8, as the app sends them. */
++void psi_auth_reply(tcount count, unsigned char *realm, int proxy, unsigned char *user, unsigned char *pass)
++{
++	struct object_request *rq = find_rq(count);
++	if (!rq || rq->hold != HOLD_AUTH) return;
++	if (!user) {
++		rq->hold = 0;
++		rq->state = O_OK;
++		if (rq->timer != NULL) kill_timer(rq->timer);
++		rq->timer = install_timer(0, object_timer, rq);
++		if (!rq->ce) (rq->ce = rq->ce_internal)->refcount++;
++		return;
++	}
++#ifdef PSI_DEBUG_MEM
++	fprintf(stderr, "[auth] reply %s ce_internal %p head %s\n", rq->url, (void *)rq->ce_internal, rq->ce_internal && rq->ce_internal->head ? (char *)rq->ce_internal->head : "-");
++#endif
++	add_auth(rq->url, realm, user, pass, proxy);
++	if (rq->ce_internal) auth_set_challenge(rq->url, proxy, realm, rq->ce_internal->head);
++	rq->hold = 0;
++	change_connection(&rq->stat, NULL, PRI_CANCEL);
++	load_url(rq->url, rq->prev_url, &rq->stat, rq->pri, NC_RELOAD, 0, 0, 0, 0);
++}
++#endif
++
+ static int auth_window(struct object_request *rq, unsigned char *realm)
+ {
+ 	unsigned char *host, *port;
+@@ -125,6 +153,24 @@
  	struct session *ses;
  	int net_cp;
  	if (!(term = find_terminal(rq->term))) return -1;
 +#ifdef PSI_NO_BARS
-+	/* no Links dialogs in PsiWeb: say so, and show the server's own page */
++	/* no Links dialogs in PsiWeb: PsiWeb.app asks for the user name and
++	   password (psi_drv.c psi_auth_ask), and psi_auth_reply goes on. If
++	   it cannot ask now, say so and show the server's own page. */
 +	{
 +		void psi_msg_box(unsigned char *title, unsigned char *text);
-+		psi_msg_box(NULL, cast_uchar (rq->ce_internal->http_code == 407
++		int psi_auth_ask(tcount count, unsigned char *realm, unsigned char *host, int proxy);
++		int proxy = rq->ce_internal->http_code == 407;
++		unsigned char *h = proxy ? stracpy(get_proxy_string(rq->url) ? get_proxy_string(rq->url) : cast_uchar "") : get_host_name(rq->url);
++		int r = psi_auth_ask(rq->count, realm, h ? h : cast_uchar "", proxy);
++		if (h) mem_free(h);
++		if (!r) return 0;
++		psi_msg_box(NULL, cast_uchar (proxy
 +			? "Not available - the proxy needs a user name and password"
 +			: "Not available - this page needs a user name and password"));
 +		return -1;
@@ -1620,6 +2272,23 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  	ses = list_struct(term->windows.prev, struct window)->data;
  	get_convert_table(rq->ce_internal->head, term_charset(term), ses->ds.assume_cp, &net_cp, NULL, ses->ds.hard_assume);
  	if (rq->ce_internal->http_code == 407) {
+@@ -387,6 +433,16 @@
+ 			unsigned char *realm = get_auth_realm(rq->url, stat->ce->head, stat->ce->http_code == 407);
+ 			unsigned char *user;
+ 			if (!realm) goto xx;
++#ifdef PSIWEB
++			/* a Digest nonce the server says is stale: the same user name
++			   and password with its new nonce, without asking again */
++			if (auth_stale(rq->url, stat->ce->http_code == 407, realm, stat->ce->head) && rq->redirect_cnt++ < MAX_REDIRECTS) {
++				mem_free(realm);
++				change_connection(stat, NULL, PRI_CANCEL);
++				load_url(rq->url, rq->prev_url, &rq->stat, rq->pri, NC_RELOAD, 0, 0, 0, 0);
++				return;
++			}
++#endif
+ 			if (stat->ce->http_code == 401 && !find_auth(rq->url, realm)) {
+ 				mem_free(realm);
+ 				if (rq->redirect_cnt++ >= MAX_REDIRECTS) goto maxrd;
 --- a/url.c
 +++ b/url.c
 @@ -17,6 +17,9 @@
@@ -1642,3 +2311,441 @@ Phase 4 (the device build; see PORTING.md, "Phase 4: device build"):
  	if (!dd || dd == url /*|| *--dd != '/'*/) return;
  	if (!dsep(*dd)) {
  		dd--;
+--- a/auth.c
++++ b/auth.c
+@@ -12,6 +12,14 @@
+ 	unsigned char *directory;
+ 	unsigned char *user_password_encoded;
+ 	int proxy;
++#ifdef PSIWEB
++	/* HTTP Digest (RFC 7616), when the server asked for it */
++	int digest;		/* 1 MD5, 2 SHA-256 (0: Basic) */
++	int sess;		/* the -sess variants */
++	int qop;		/* qop=auth offered */
++	unsigned nc;		/* nonce count */
++	unsigned char *nonce, *opaque;
++#endif
+ 	list_entry_last
+ };
+ 
+@@ -74,6 +82,51 @@
+ 	return e;
+ }
+ 
++#ifdef PSIWEB
++/* one parameter of a Digest challenge: name=value or name="value" */
++static unsigned char *digest_param(unsigned char *h, unsigned char *name)
++{
++	size_t nl = strlen(cast_const_char name);
++	while (*h) {
++		unsigned char *k, *r;
++		int l = 0, match;
++		while (*h == ' ' || *h == '\t' || *h == ',') h++;
++		k = h;
++		while (*h && *h != '=' && *h != ',' && *h != ' ') h++;
++		if (*h != '=') {
++			if (!*h) break;
++			continue;
++		}
++		match = (size_t)(h - k) == nl && !casecmp(k, name, nl);
++		r = init_str();
++		if (h[1] == '"') {
++			h += 2;
++			while (*h && *h != '"') {
++				if (*h == '\\' && h[1]) h++;
++				add_chr_to_str(&r, &l, *h++);
++			}
++			if (*h) h++;
++		} else {
++			h++;
++			while (*h && *h != ',' && *h != ' ') add_chr_to_str(&r, &l, *h++);
++		}
++		if (match) return r;
++		mem_free(r);
++	}
++	return NULL;
++}
++
++/* MD5 (1), SHA-256 (2), their -sess forms (+16), or -1 */
++static int digest_alg(unsigned char *a)
++{
++	if (!casestrcmp(a, cast_uchar "MD5")) return 1;
++	if (!casestrcmp(a, cast_uchar "MD5-sess")) return 17;
++	if (!casestrcmp(a, cast_uchar "SHA-256")) return 2;
++	if (!casestrcmp(a, cast_uchar "SHA-256-sess")) return 18;
++	return -1;
++}
++#endif
++
+ unsigned char *get_auth_realm(unsigned char *url, unsigned char *head, int proxy)
+ {
+ 	unsigned char *ch = head;
+@@ -95,6 +148,21 @@
+ 			return stracpy(cast_uchar "");
+ 		}
+ 	}
++#ifdef PSIWEB
++	if (!casecmp(h, cast_uchar "Digest", 6)) {
++		unsigned char *v = digest_param(h + 6, cast_uchar "realm");
++		unsigned char *alg = digest_param(h + 6, cast_uchar "algorithm");
++		int ok = !alg || digest_alg(alg) >= 0;
++		if (alg) mem_free(alg);
++		mem_free(h);
++		if (!ok || !v) {
++			if (v) mem_free(v);
++			unknown = 1;
++			goto try_next;
++		}
++		return v;
++	}
++#endif
+ 	if (casecmp(h, cast_uchar "Basic", 5)) {
+ 		mem_free(h);
+ 		unknown = 1;
+@@ -142,7 +210,18 @@
+ 	return NULL;
+ }
+ 
++#ifdef PSIWEB
++static unsigned char *digest_header(struct http_auth *a, unsigned char *request);
++unsigned char *get_auth_string(unsigned char *url, int proxy)
++{
++	return get_auth_string_req(url, proxy, NULL);
++}
++
++/* request: the request so far ("GET /x HTTP/1.1..."), for Digest */
++unsigned char *get_auth_string_req(unsigned char *url, int proxy, unsigned char *request)
++#else
+ unsigned char *get_auth_string(unsigned char *url, int proxy)
++#endif
+ {
+ 	struct http_auth *a;
+ 	struct list_head *la;
+@@ -165,6 +244,12 @@
+ 		else d++;
+ 		if ((size_t)(d - data) >= strlen(cast_const_char a->directory) && !memcmp(data, a->directory, strlen(cast_const_char a->directory))) {
+ 			skip_dir_check:
++#ifdef PSIWEB
++			if (a->digest) {
++				if (!request || !(r = digest_header(a, request))) continue;
++				goto have_passwd;
++			}
++#endif
+ 			r = init_str();
+ 			if (proxy) add_to_str(&r, &l, cast_uchar "Proxy-");
+ 			add_to_str(&r, &l, cast_uchar "Authorization: Basic ");
+@@ -181,6 +266,193 @@
+ 	return r;
+ }
+ 
++#ifdef PSIWEB
++static void hex_of(int alg, unsigned char *s, char out[65])
++{
++	psi_digest_hex(alg, s, (int)strlen(cast_const_char s), out);
++}
++
++static void add_q(unsigned char **r, int *l, const char *name, unsigned char *v, int quote)
++{
++	add_to_str(r, l, cast_uchar ", ");
++	add_to_str(r, l, cast_uchar name);
++	add_to_str(r, l, cast_uchar (quote ? "=\"" : "="));
++	for (; *v; v++) {
++		if (quote && (*v == '"' || *v == '\\')) add_chr_to_str(r, l, '\\');
++		add_chr_to_str(r, l, *v);
++	}
++	if (quote) add_chr_to_str(r, l, '"');
++}
++
++/* the Authorization line for a Digest entry (RFC 7616, qop=auth or none) */
++static unsigned char *digest_header(struct http_auth *a, unsigned char *request)
++{
++	unsigned char *method, *uri, *sp, *end, *t, *r;
++	char ha1[65], ha2[65], resp[65], cnonce[17], ncs[9];
++	unsigned char rnd[8];
++	int alg = (a->digest & 15) == 2, l = 0, i;
++	if (!a->nonce) return NULL;
++	sp = cast_uchar strchr(cast_const_char request, ' ');
++	end = cast_uchar strstr(cast_const_char request, " HTTP/");
++	if (!sp || !end || end <= sp) return NULL;
++	method = memacpy(request, sp - request);
++	uri = memacpy(sp + 1, end - sp - 1);
++#ifdef PSI_EPOC
++	{
++		extern void genrandom(unsigned char *buf, unsigned int len);
++		genrandom(rnd, sizeof(rnd));
++	}
++#else
++	for (i = 0; i < 8; i++) rnd[i] = (unsigned char)random();
++#endif
++	for (i = 0; i < 8; i++) sprintf(cnonce + 2 * i, "%02x", rnd[i]);
++	a->nc++;
++	sprintf(ncs, "%08x", a->nc);
++	t = stracpy(a->user); add_to_strn(&t, cast_uchar ":"); add_to_strn(&t, a->realm);
++	add_to_strn(&t, cast_uchar ":"); add_to_strn(&t, a->password);
++	hex_of(alg, t, ha1);
++	mem_free(t);
++	if (a->sess) {
++		t = stracpy(cast_uchar ha1); add_to_strn(&t, cast_uchar ":"); add_to_strn(&t, a->nonce);
++		add_to_strn(&t, cast_uchar ":"); add_to_strn(&t, cast_uchar cnonce);
++		hex_of(alg, t, ha1);
++		mem_free(t);
++	}
++	t = stracpy(method); add_to_strn(&t, cast_uchar ":"); add_to_strn(&t, uri);
++	hex_of(alg, t, ha2);
++	mem_free(t);
++	t = stracpy(cast_uchar ha1); add_to_strn(&t, cast_uchar ":"); add_to_strn(&t, a->nonce);
++	if (a->qop) {
++		add_to_strn(&t, cast_uchar ":"); add_to_strn(&t, cast_uchar ncs);
++		add_to_strn(&t, cast_uchar ":"); add_to_strn(&t, cast_uchar cnonce);
++		add_to_strn(&t, cast_uchar ":auth");
++	}
++	add_to_strn(&t, cast_uchar ":"); add_to_strn(&t, cast_uchar ha2);
++	hex_of(alg, t, resp);
++	mem_free(t);
++	r = init_str();
++	if (a->proxy) add_to_str(&r, &l, cast_uchar "Proxy-");
++	add_to_str(&r, &l, cast_uchar "Authorization: Digest username=\"");
++	for (t = a->user; *t; t++) {
++		if (*t == '"' || *t == '\\') add_chr_to_str(&r, &l, '\\');
++		add_chr_to_str(&r, &l, *t);
++	}
++	add_chr_to_str(&r, &l, '"');
++	add_q(&r, &l, "realm", a->realm, 1);
++	add_q(&r, &l, "nonce", a->nonce, 1);
++	add_q(&r, &l, "uri", uri, 1);
++	add_q(&r, &l, "algorithm", cast_uchar (alg ? (a->sess ? "SHA-256-sess" : "SHA-256") : (a->sess ? "MD5-sess" : "MD5")), 0);
++	add_q(&r, &l, "response", cast_uchar resp, 1);
++	if (a->opaque) add_q(&r, &l, "opaque", a->opaque, 1);
++	if (a->qop) {
++		add_q(&r, &l, "qop", cast_uchar "auth", 0);
++		add_q(&r, &l, "nc", cast_uchar ncs, 0);
++		add_q(&r, &l, "cnonce", cast_uchar cnonce, 1);
++	}
++	add_to_str(&r, &l, cast_uchar "\r\n");
++	mem_free(method);
++	mem_free(uri);
++	memset(ha1, 0, sizeof ha1);
++	return r;
++}
++
++static struct http_auth *find_entry(unsigned char *url, int proxy, unsigned char *realm)
++{
++	struct http_auth *a;
++	struct list_head *la;
++	unsigned char *host = NULL;
++	int port = 0;
++	if (!proxy) {
++		host = get_host_name(url);
++		port = get_port(url);
++	} else {
++		unsigned char *p = get_proxy(url);
++		if (strcmp(cast_const_char p, cast_const_char url)) {
++			host = get_host_name(p);
++			port = get_port(p);
++		}
++		mem_free(p);
++	}
++	if (!host) return NULL;
++	foreach(struct http_auth, a, la, auth) if (a->proxy == proxy && !casestrcmp(a->host, host) && a->port == port && !strcmp(cast_const_char a->realm, cast_const_char realm)) {
++		mem_free(host);
++		return a;
++	}
++	mem_free(host);
++	return NULL;
++}
++
++/* the Digest challenge for realm in the response's header, or NULL */
++static unsigned char *find_digest(unsigned char *head, int proxy, unsigned char *realm)
++{
++	unsigned char *ch = head, *h;
++	while ((h = parse_http_header(ch, cast_uchar (proxy ? "Proxy-Authenticate" : "WWW-Authenticate"), &ch))) {
++		if (!casecmp(h, cast_uchar "Digest", 6)) {
++			unsigned char *v = digest_param(h + 6, cast_uchar "realm");
++			int same = v && !strcmp(cast_const_char v, cast_const_char realm);
++			if (v) mem_free(v);
++			if (same) return h;
++		}
++		mem_free(h);
++	}
++	return NULL;
++}
++
++static void take_challenge(struct http_auth *a, unsigned char *h)
++{
++	unsigned char *v;
++	int alg = 1;
++	if ((v = digest_param(h + 6, cast_uchar "algorithm"))) alg = digest_alg(v), mem_free(v);
++	if (alg < 0) return;
++	a->digest = alg & 15;
++	a->sess = alg >= 16;
++	if (a->nonce) mem_free(a->nonce);
++	if (a->opaque) mem_free(a->opaque);
++	a->nonce = digest_param(h + 6, cast_uchar "nonce");
++	a->opaque = digest_param(h + 6, cast_uchar "opaque");
++	a->qop = 0;
++	if ((v = digest_param(h + 6, cast_uchar "qop"))) {
++		unsigned char *q = v;
++		while (*q) {
++			if (!casecmp(q, cast_uchar "auth", 4) && (!q[4] || q[4] == ',' || q[4] == ' ')) a->qop = 1;
++			while (*q && *q != ',') q++;
++			while (*q == ',' || *q == ' ') q++;
++		}
++		mem_free(v);
++	}
++	a->nc = 0;
++	if (!a->nonce) a->digest = 0;
++}
++
++/* objreq.c, once the user has given a user name and password: if the
++   server asked for Digest, the entry add_auth made answers with it */
++void auth_set_challenge(unsigned char *url, int proxy, unsigned char *realm, unsigned char *head)
++{
++	struct http_auth *a = find_entry(url, proxy, realm);
++	unsigned char *h;
++	if (!a || !head || !(h = find_digest(head, proxy, realm))) return;
++	take_challenge(a, h);
++	mem_free(h);
++}
++
++/* a 401 or 407 that says stale=true for a Digest entry we have: take the
++   new nonce; 1 if the request should simply be made again */
++int auth_stale(unsigned char *url, int proxy, unsigned char *realm, unsigned char *head)
++{
++	struct http_auth *a = find_entry(url, proxy, realm);
++	unsigned char *h, *v;
++	int stale = 0;
++	if (!a || !a->digest || !head || !(h = find_digest(head, proxy, realm))) return 0;
++	if ((v = digest_param(h + 6, cast_uchar "stale"))) {
++		stale = !casestrcmp(v, cast_uchar "true");
++		mem_free(v);
++	}
++	if (stale) take_challenge(a, h);
++	mem_free(h);
++	return stale;
++}
++#endif
++
+ static void free_auth_entry(struct http_auth *a)
+ {
+ 	mem_free(a->host);
+@@ -189,6 +461,10 @@
+ 	mem_free(a->password);
+ 	if (a->directory) mem_free(a->directory);
+ 	mem_free(a->user_password_encoded);
++#ifdef PSIWEB
++	if (a->nonce) mem_free(a->nonce);
++	if (a->opaque) mem_free(a->opaque);
++#endif
+ 	del_from_list(a);
+ 	mem_free(a);
+ }
+@@ -221,6 +497,11 @@
+ 		free_auth_entry(a);
+ 	}
+ 	a = mem_alloc(sizeof(struct http_auth));
++#ifdef PSIWEB
++	a->digest = a->sess = a->qop = 0;
++	a->nc = 0;
++	a->nonce = a->opaque = NULL;
++#endif
+ 	a->host = host;
+ 	a->port = port;
+ 	a->realm = stracpy(realm);
+--- a/bookmark.c
++++ b/bookmark.c
+@@ -720,6 +720,11 @@
+ 	unsigned char *data;
+ 	int l;
+ 	int err;
++#ifdef PSI_NO_BARS
++	/* PsiWeb has no bookmarks of Links' own: no file is written (Links
++	   made bookmarks.html in the folder it was started in) */
++	return;
++#endif
+ 	int rs;
+ 
+ 	if (!bookmark_ld.modified)return;
+--- a/error.c
++++ b/error.c
+@@ -681,6 +681,11 @@
+ 		if (mayfail) return NULL;
+ 		overalloc();
+ 	}
++#ifdef PSI_LAZY_IMAGES
++	/* PsiWeb: big allocations for pictures (which may fail) stop short of
++	   the heap's limit, so the rest of Links never runs out (psi_drv.c) */
++	if (mayfail && psi_pic_alloc && size >= 4096 && psi_heap_tight(size)) return NULL;
++#endif
+ 	retry:
+ 	if (!(p = heap_malloc(size))) {
+ 		if (out_of_memory_fl(0, !mayfail ? cast_uchar "malloc" : NULL, size, NULL, 0)) goto retry;
+@@ -699,6 +704,11 @@
+ 		if (mayfail) return NULL;
+ 		overalloc();
+ 	}
++#ifdef PSI_LAZY_IMAGES
++	/* PsiWeb: big allocations for pictures (which may fail) stop short of
++	   the heap's limit, so the rest of Links never runs out (psi_drv.c) */
++	if (mayfail && psi_pic_alloc && size >= 4096 && psi_heap_tight(size)) return NULL;
++#endif
+ 	retry:
+ 	if (!(p = heap_calloc(size))) {
+ 		if (out_of_memory_fl(0, !mayfail ? cast_uchar "calloc" : NULL, size, NULL, 0)) goto retry;
+@@ -736,6 +746,11 @@
+ 		if (mayfail) return NULL;
+ 		overalloc();
+ 	}
++#ifdef PSI_LAZY_IMAGES
++	/* PsiWeb: big allocations for pictures (which may fail) stop short of
++	   the heap's limit, so the rest of Links never runs out (psi_drv.c) */
++	if (mayfail && psi_pic_alloc && size >= 4096 && psi_heap_tight(size)) return NULL;
++#endif
+ 	retry:
+ 	if (!(np = heap_realloc(p, size))) {
+ 		if (out_of_memory_fl(0, !mayfail ? cast_uchar "realloc" : NULL, size, NULL, 0)) goto retry;
+--- a/http.c
++++ b/http.c
+@@ -860,7 +860,11 @@
+ static void add_proxy_auth_string(unsigned char **hdr, int *l, unsigned char *url)
+ {
+ 	unsigned char *h;
++#ifdef PSIWEB
++	if ((h = get_auth_string_req(url, 1, *hdr))) {
++#else
+ 	if ((h = get_auth_string(url, 1))) {
++#endif
+ 		add_to_str(hdr, l, h);
+ 		mem_free(h);
+ 	}
+@@ -869,7 +873,11 @@
+ static void add_auth_string(unsigned char **hdr, int *l, unsigned char *url)
+ {
+ 	unsigned char *h;
++#ifdef PSIWEB
++	if ((h = get_auth_string_req(url, 0, *hdr))) {	/* (Digest needs the request line) */
++#else
+ 	if ((h = get_auth_string(url, 0))) {
++#endif
+ 		add_to_str(hdr, l, h);
+ 		mem_free(h);
+ 	}
+--- a/imgcache.c
++++ b/imgcache.c
+@@ -179,6 +179,17 @@
+ 	return n;
+ }
+ 
++#ifdef PSI_LAZY_IMAGES
++/* PsiWeb: every picture in the cache, in use or not (img.c's eviction) */
++void psi_imgcache_walk(void (*fn)(struct cached_image *, void *), void *data)
++{
++	struct cached_image *i;
++	struct list_head *li;
++	foreach(struct cached_image, i, li, image_cache_ref) fn(i, data);
++	foreach(struct cached_image, i, li, image_cache_deref) fn(i, data);
++}
++#endif
++
+ void init_imgcache(void)
+ {
+ 	unsigned i;

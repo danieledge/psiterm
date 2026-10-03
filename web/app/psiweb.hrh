@@ -54,7 +54,11 @@ enum TPwDialogControls
 	EPwDlgAbout6,
 	EPwDlgHelpTopic,         // Help on PsiWeb
 	EPwDlgHelpText,
-	EPwDlgPictures           // Preferences: pictures on every page (0.62)
+	EPwDlgPictures,          // Preferences: pictures on every page (0.62)
+	EPwDlgAuthWho,           // User name and password (Links phase 5)
+	EPwDlgAuthRealm,
+	EPwDlgAuthUser,
+	EPwDlgAuthPass
 	};
 
 // Connection settings > Test (0.74): the button, and the result dialog's lines

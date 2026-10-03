@@ -176,6 +176,8 @@ void *realloc(void *o, size_t n)
 void emu_mem_report(void) { emu_hc(HC_MEM, (int)rh_live, (int)rh_peak, (int)top, (int)nallocs); }
 /* psi_drv.c: a page starts loading / has loaded */
 void psi_mem_page_start(void) { rh_page_peak = rh_live; }
+/* bytes the heap may still grow by (psi_drv.c: the soft ceiling) */
+long psi_heap_room(void) { return (long)emu_heap_limit - (long)rh_live; }
 void psi_mem_report(const char *what) { emu_hc(HC_PAGEMEM, (int)what, (int)rh_live, (int)rh_page_peak, (int)rh_fails); }
 
 /* ------------------------------------------------------------- strings */
@@ -353,10 +355,14 @@ int rename(const char *a, const char *b) { (void)a; (void)b; return -1; }
 void *opendir(const char *p) { (void)p; return 0; }
 void *readdir(void *d) { (void)d; return 0; }
 int closedir(void *d) { (void)d; return 0; }
-int open(const char *p, int fl, ...) { (void)p; (void)fl; err = 2; return -1; }
+/* open() for writing only (PsiWeb's Save to file), through fopen's
+   hypercall; descriptors 30 to 37 (Links checks them against FD_SETSIZE,
+   and psi_os.c's own start at 40) */
+static int wfd[8];
+int open(const char *p, int fl, ...) { int h, i; if (!(fl & 3)) { err = 2; return -1; } for (i = 0; i < 8 && wfd[i]; i++) ; if (i == 8) { err = 24; return -1; } h = emu_hc(HC_FOPEN, (int)p, (int)"wb", 0, 0); if (h < 0) { err = 2; return -1; } wfd[i] = h + 1; return 30 + i; }
 int read(int fd, void *b, size_t n) { (void)fd; (void)b; (void)n; return -1; }
-int write(int fd, const void *b, size_t n) { (void)fd; (void)b; return n; }
-int close(int fd) { (void)fd; return 0; }
+int write(int fd, const void *b, size_t n) { if (fd >= 30 && fd < 38 && wfd[fd - 30]) { int r = emu_hc(HC_FWRITE, wfd[fd - 30] - 1, (int)b, n, 0); return r < 0 ? -1 : r; } (void)b; return n; }
+int close(int fd) { if (fd >= 30 && fd < 38 && wfd[fd - 30]) emu_hc(HC_FCLOSE, wfd[fd - 30] - 1, 0, 0, 0), wfd[fd - 30] = 0; return 0; }
 long lseek(int fd, long o, int w) { (void)fd; (void)o; (void)w; return -1; }
 int dup(int fd) { return fd; }
 char *getenv(const char *n) { return (char *)emu_hc(HC_GETENV, (int)n, 0, 0, 0); }

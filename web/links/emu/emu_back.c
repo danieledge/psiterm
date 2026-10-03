@@ -22,6 +22,14 @@ static PwShared g_sh;
 static unsigned char g_fb4[PW_MAX_H * PW_STRIDE];
 
 void *pwb_shared(void) { return &g_sh; }
+/* for the harness's "auth" and "save" script lines (run_links.py): the
+   chunk and the offsets of the question fields */
+PwShared *emu_shared = &g_sh;
+const int emu_ask_offsets[] = {
+	(int)&((PwShared *)0)->auth_state, (int)&((PwShared *)0)->auth_user, (int)&((PwShared *)0)->auth_pass,
+	(int)&((PwShared *)0)->save_state, (int)&((PwShared *)0)->save_path, (int)&((PwShared *)0)->auth_realm,
+	(int)&((PwShared *)0)->save_name, (int)&((PwShared *)0)->save_type, (int)&((PwShared *)0)->save_size
+};
 PsiShared *pg_shared(void) { return &g_sh.net; }
 
 int pwb_open(int *w, int *h)

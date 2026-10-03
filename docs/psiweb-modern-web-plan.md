@@ -1,5 +1,24 @@
 # PsiWeb: making the modern web usable on the 5mx
 
+> **Status, 3 October 2026: this plan was written for the NetSurf engine. From PsiWeb 0.62 the engine is Links 2** (`web/links`, see [`web/links/PORTING.md`](../web/links/PORTING.md)). The table below says which items Links made moot, which are done, and which still apply. The rest of the document is left as it was written.
+>
+> | Item | Now |
+> |---|---|
+> | A1 10 MB gate in the harness | **Done** for Links: `web/links/emu/run_links.py` fails allocations above 10 MB and counts as RHeap would (phase 2). |
+> | A2 author CSS off / page styles | **Moot**: Links has no CSS at all. BBC loads in 2.2 MB without pictures. |
+> | A3 stylesheet caps | **Moot**: Links fetches no stylesheets. |
+> | A4 heap ceiling, "Page too big" | **Done** (phase 5): big picture allocations stop 1.5 MB short of the limit; a page still loading 0.75 MB short of it is stopped and says "Page too big". |
+> | A5 picture caps, grey bitmaps | **Done** (phase 5): one byte of grey a pixel, pictures far from the view let go and decoded again, caps per picture. |
+> | A6 free the source | Still applies, in a smaller way: Links keeps the page's HTML and the compressed pictures in its cache (BBC: 1 MB and 3.9 MB). |
+> | B1 reader mode on the device | Still applies: without CSS, BBC and Wikipedia start with long navigation lists. |
+> | C1 WebOne | Unchanged, still recommended over a modem. |
+> | C2 PsiProxy transcoder | Still applies, and would help Links as it would have NetSurf (readable front pages, smaller pictures). |
+> | C3 lite sites and search | Partly done: the built-in welcome page links to light sites. Search still uses Links' default. |
+> | D1 card cache | Still deferred (card-write wedging). |
+> | E1 incremental reflow | Links lays out as the page arrives, with its own back-off (PORTING.md phase 3, "Timing"). |
+> | Stage 0 corpus | Partly done: `web/links/emu/run_pages.sh` with recorded traffic (`NET=record|replay`); no Guardian, Hacker News or login form in it yet. |
+> | Open question 5 | Still open: nothing has been timed on a real 5mx yet. |
+
 This plan was drafted on 2 October 2026 by a planning agent that read the code. Line numbers are as of v0.78. The NetSurf paths are under `build/netsurf/` and are patched via `web/patches/*-psion.diff`.
 
 ## Goals and constraints

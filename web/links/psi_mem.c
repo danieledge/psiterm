@@ -149,3 +149,11 @@ void psi_mem_report(const char *what)
 		(unsigned long)peak_blocks, fails ? " - allocations refused" : "");
 	if (fails) fprintf(stderr, "[mem] %lu allocations refused by PSI_HEAP_LIMIT\n", (unsigned long)fails);
 }
+
+/* bytes the heap may still grow by (psi_drv.c: the soft ceiling); with no
+   PSI_HEAP_LIMIT, as if the limit were the Psion's 10 MB */
+long psi_heap_room(void)
+{
+	over(0);
+	return (long)(limit ? limit : 10 * 1024 * 1024) - (long)live;
+}

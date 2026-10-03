@@ -21,6 +21,14 @@
 #include "curve25519.h"
 #include "tls13.h"
 
+#ifdef TLS_FAST_CRYPTO
+/* web/tls/sha256.c instead of libtomcrypt's (LTC_SMALL_CODE: slow) */
+#define hash_state tls_sha256
+#define sha256_init tls_sha256_init
+#define sha256_process tls_sha256_process
+#define sha256_done tls_sha256_done
+#endif
+
 #ifdef TLS_VERIFY
 /* PsiMail checks the server's certificate chain and its CertificateVerify
    signature (mail/engine/certcheck.c); PsiTerm and PsiWeb don't */
@@ -38,6 +46,105 @@ extern int pg_wait(int ms, int want_net, int want_kbd);
 
 #define REC_MAX   (16384 + 256 + 5)
 #define HS_MAX    16384              /* longest handshake message we keep */
+
+/* TLS_FAST_X25519 (PsiWeb, PsiMail: web/tls, mail/tls includes.h): X25519
+   from web/tls/fe25519.c, about twice as fast on the ARM710 as Dropbear's,
+   and each connection's key pair is worked out ahead, a few ladder steps at
+   a time while this file waits for the server (see read_exact), so a
+   connection usually costs one X25519 instead of two. psissh (PsiTerm)
+   keeps Dropbear's. */
+#ifdef TLS_FAST_X25519
+extern void tls_x25519(unsigned char *q, const unsigned char *n, const unsigned char *u);
+extern void tls_x25519_kg_start(const unsigned char priv[32]);
+extern int tls_x25519_kg_steps(int n);
+extern void tls_x25519_kg_finish(unsigned char pub[32]);
+#define X25519(q, n, u) tls_x25519(q, n, u)
+#define KG_CHUNK 24                   /* ladder steps between looks at the network (~25 ms) */
+static unsigned char g_kg_priv[32];  /* the next connection's private key */
+static int g_kg_on, g_kg_done;       /* being worked out / finished */
+
+static void kg_next(void)
+{
+	genrandom(g_kg_priv, 32);
+	tls_x25519_kg_start(g_kg_priv);
+	g_kg_on = 1;
+	g_kg_done = 0;
+}
+
+/* the key pair for this connection: the one worked out ahead if there is
+   one (finished here if need be). tls_connect starts the next one once the
+   ClientHello is out (so the random numbers are drawn in the same order as
+   before: the harness's recorded TLS sessions still play back). */
+static void kg_take(unsigned char priv[32], unsigned char pub[32])
+{
+	if (!g_kg_on) kg_next();
+	tls_x25519_kg_finish(pub);
+	memcpy(priv, g_kg_priv, 32);
+	memset(g_kg_priv, 0, sizeof(g_kg_priv));
+	g_kg_on = 0;
+}
+
+/* Some of the next key's work, for an engine with nothing else to do
+   (optional: tls13.c does it itself while it waits for a server). Returns
+   1 while there is more to do. */
+int tls_background(void)
+{
+	if (!g_kg_on || g_kg_done) return 0;
+	g_kg_done = tls_x25519_kg_steps(KG_CHUNK);
+	return !g_kg_done;
+}
+#else
+#define X25519(q, n, u) dropbear_curve25519_scalarmult(q, n, u)
+#endif
+
+/* TLS_RESUME (PsiWeb, PsiMail): TLS 1.3 session resumption (RFC 8446 2.2,
+   4.6.1). A server's NewSessionTickets are kept in memory, for this run of
+   the engine only, by host and port; the next connection there offers one
+   (psk_dhe_ke only: a new X25519 exchange every time, so forward secrecy is
+   kept) and, if the server takes it, skips the certificate, its signature
+   check and the chain check. Each ticket is used once. A ticket is only
+   stored from a connection whose handshake was complete (and, in PsiMail,
+   whose certificate was checked and trusted, or which was itself resumed
+   from such a ticket): the PSK is bound to that proof. */
+#ifdef TLS_RESUME
+#include <time.h>
+#include "psishared.h"
+extern PsiShared *pg_shared(void);
+extern int tls_rng_repeatable(void);    /* pwrandom.c, pmrandom.c */
+#define TK_N      4                  /* tickets kept, all hosts together */
+#define TK_MAX    1024               /* longest ticket kept */
+#define TK_LIFE   (24L * 3600)       /* at most a day, whatever the server says */
+typedef struct {
+	char host[64];
+	int port;
+	int len;                         /* 0 = slot free */
+	unsigned long got, life, age_add;
+	unsigned char psk[32];
+	unsigned char t[TK_MAX];
+} tls_ticket;
+static tls_ticket g_tk[TK_N];
+static unsigned char g_res[32];      /* resumption_master_secret of this connection */
+static int g_res_ok;                 /* tickets from this connection may be kept */
+static char g_res_host[64];
+static int g_res_port;
+static int g_resumed;                /* this connection was resumed */
+
+static int cur_port(void) { return pg_shared() ? pg_shared()->port : 0; }
+
+/* 1 if the last tls_connect resumed a session (no certificate was sent) */
+int tls_resumed(void) { return g_resumed; }
+
+/* Forgets every ticket and the next key (e.g. when the engine is told to
+   forget a server). */
+void tls_forget(void)
+{
+	memset(g_tk, 0, sizeof(g_tk));
+#ifdef TLS_FAST_X25519
+	memset(g_kg_priv, 0, sizeof(g_kg_priv));
+	g_kg_on = 0;
+#endif
+}
+#endif
 
 static unsigned char g_rec[REC_MAX];     /* one record being read */
 static unsigned char g_app[16384 + 256]; /* decrypted application data */
@@ -146,6 +253,31 @@ static void poly_tag(chacha_state *cs, const unsigned char *aad, int aadlen,
 	poly1305_done(&p, tag, &taglen);
 }
 
+#ifdef TLS_FAST_CRYPTO
+/* web/tls/aead.c: ChaCha20 in ARM assembler, Poly1305 without 64-bit
+   multiplies (libtomcrypt's below are about 3 times slower on the ARM710) */
+extern void tls_aead_seal(const unsigned char key[32], const unsigned char nonce[12],
+                          const unsigned char *aad, int aadlen, unsigned char *buf, int len);
+extern int tls_aead_open(const unsigned char key[32], const unsigned char nonce[12],
+                         const unsigned char *aad, int aadlen, unsigned char *buf, int len);
+
+static void aead_seal(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
+{
+	unsigned char nonce[12];
+	aead_nonce(d, nonce);
+	tls_aead_seal(d->key, nonce, aad, aadlen, buf, len);
+	d->seq++;
+}
+
+static int aead_open(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
+{
+	unsigned char nonce[12];
+	aead_nonce(d, nonce);
+	if (tls_aead_open(d->key, nonce, aad, aadlen, buf, len) != 0) return -1;
+	d->seq++;
+	return 0;
+}
+#else
 /* encrypt in place: buf holds len bytes of plaintext, 16 bytes of room after */
 static void aead_seal(tls_dir *d, const unsigned char *aad, int aadlen, unsigned char *buf, int len)
 {
@@ -184,6 +316,7 @@ static int aead_open(tls_dir *d, const unsigned char *aad, int aadlen, unsigned 
 	d->seq++;
 	return 0;
 }
+#endif
 
 /* ---------------------------------------------------------------- raw record I/O */
 
@@ -191,6 +324,17 @@ static int read_exact(unsigned char *buf, int n, int timeout_ms)
 {
 	int k = 0;
 	while (k < n) {
+#ifdef TLS_FAST_X25519
+		if (g_kg_on && !g_kg_done && pg_net_avail() < n - k) {
+			/* not all here yet: work on the next connection's key pair
+			   while the rest comes in (the port and TCP buffer it),
+			   taking what has come between pieces */
+			if (pg_wait(1, 1, 0) & 8) { g_err = "cancelled"; return -2; }
+			if (pg_net_avail() < n - k) g_kg_done = tls_x25519_kg_steps(KG_CHUNK);
+			k += pg_net_read(buf + k, n - k);
+			continue;
+		}
+#endif
 		if (pg_net_avail() == 0) {
 			int m = pg_wait(timeout_ms, 1, 0);
 			if (m & 8) { g_err = "cancelled"; return -2; }
@@ -289,11 +433,22 @@ void tls_close(void)
 	g_encrypted = 0;
 	g_app_pos = g_app_len = 0;
 	g_closed = 1;
+#ifdef TLS_RESUME
+	memset(g_res, 0, sizeof(g_res));
+	g_res_ok = 0;
+#endif
 }
 
 int tls_connect(const char *host, char *why, int whymax)
 {
+#ifdef TLS_RESUME
+	static unsigned char ch[600 + TK_MAX];
+	tls_ticket *tk = NULL;
+	unsigned char psk_early[32];
+	int resumed = 0, binders_at = 0;
+#else
 	static unsigned char ch[512];
+#endif
 	static unsigned char hs[HS_MAX];     /* handshake bytes not yet parsed */
 	unsigned char priv[32], pub[32], shared[32], zero[32], secret[32], derived[32];
 	unsigned char hs_secret[32], c_hs[32], s_hs[32], th[32], fin[32], empty_hash[32];
@@ -319,9 +474,31 @@ int tls_connect(const char *host, char *why, int whymax)
 	sha256_buf((const unsigned char *)"", 0, empty_hash);
 
 	/* key pair */
+#ifdef TLS_FAST_X25519
+	kg_take(priv, pub);
+#else
 	genrandom(priv, 32);
 	priv[0] &= 248; priv[31] &= 127; priv[31] |= 64;
 	dropbear_curve25519_scalarmult(pub, priv, basepoint);
+#endif
+#ifdef TLS_RESUME
+	g_resumed = 0;
+	/* a name too long to keep whole is never resumed (a cut name could
+	   match another server's) */
+	if (hn < (int)sizeof(g_res_host)) strcpy(g_res_host, host);
+	else g_res_host[0] = 0;
+	g_res_port = cur_port();
+	if (g_res_host[0]) {	/* a ticket for this server, still in date (used once) */
+		unsigned long now = (unsigned long)time(NULL);
+		int i;
+		for (i = 0; i < TK_N; i++) {
+			tls_ticket *t = &g_tk[i];
+			if (!t->len) continue;
+			if (now - t->got >= t->life || now < t->got) { memset(t, 0, sizeof(*t)); continue; }
+			if (!strcmp(t->host, g_res_host) && t->port == g_res_port && (!tk || t->got > tk->got)) tk = t;
+		}
+	}
+#endif
 
 	/* ---- ClientHello */
 	ch[n++] = 1; n += 3;                         /* type, length (later) */
@@ -353,12 +530,55 @@ int tls_connect(const char *host, char *why, int whymax)
 	/* key_share: x25519 */
 	put16(ch + n, 51); put16(ch + n + 2, 38); put16(ch + n + 4, 36); put16(ch + n + 6, 0x001d);
 	put16(ch + n + 8, 32); memcpy(ch + n + 10, pub, 32); n += 42;
+#ifdef TLS_RESUME
+	{
+		/* psk_key_exchange_modes: psk_dhe_ke only. Sent on every
+		   connection: BoringSSL servers (Google's) give tickets only to a
+		   client that lists a mode. Left out only in the ARM harness's
+		   repeatable runs (no entropy at all: see pwrandom.c), so that
+		   the TLS sessions recorded before it was added still play back */
+		if (tk || !tls_rng_repeatable()) {
+			put16(ch + n, 45); put16(ch + n + 2, 2); ch[n + 4] = 1; ch[n + 5] = 1; n += 6;
+		}
+	}
+	if (tk) {
+		/* pre_shared_key (must be last): one identity, one binder */
+		{
+			unsigned long age = ((unsigned long)time(NULL) - tk->got) * 1000UL + tk->age_add;
+			int il = 2 + tk->len + 4;
+			put16(ch + n, 41); put16(ch + n + 2, 2 + il + 2 + 33); n += 4;
+			put16(ch + n, il); n += 2;
+			put16(ch + n, tk->len); memcpy(ch + n + 2, tk->t, tk->len); n += 2 + tk->len;
+			ch[n] = (unsigned char)(age >> 24); ch[n + 1] = (unsigned char)(age >> 16);
+			ch[n + 2] = (unsigned char)(age >> 8); ch[n + 3] = (unsigned char)age; n += 4;
+			binders_at = n;
+			n += 2 + 33;                         /* binders, filled in below */
+		}
+	}
+#endif
 	put16(ch + ext_start, n - ext_start - 2);
 	ch[1] = 0; put16(ch + 2, n - 4);
+#ifdef TLS_RESUME
+	if (tk) {
+		/* binder = HMAC(finished key of "res binder", hash of the ClientHello up to the binders) */
+		unsigned char bk[32];
+		hkdf_extract(zero, tk->psk, 32, psk_early);
+		hkdf_label(psk_early, "res binder", empty_hash, 32, bk, 32);
+		hkdf_label(bk, "finished", NULL, 0, fkey, 32);
+		sha256_buf(ch, binders_at, th);
+		put16(ch + binders_at, 33); ch[binders_at + 2] = 32;
+		hmac_sha256(fkey, 32, th, 32, NULL, 0, ch + binders_at + 3);
+		memset(bk, 0, sizeof(bk));
+		memset(tk, 0, sizeof(*tk));          /* a ticket is used once */
+	}
+#endif
 
 	sha256_init(&transcript);
 	sha256_process(&transcript, ch, n);
 	if (write_record(22, ch, n) != 0) { g_err = "could not send"; goto fail; }
+#ifdef TLS_FAST_X25519
+	kg_next();                           /* worked out while the server answers */
+#endif
 
 	/* ---- ServerHello (plaintext) */
 	for (;;) {
@@ -398,6 +618,12 @@ int tls_connect(const char *host, char *why, int whymax)
 				got_sh = 1;
 			}
 			if (et == 43 && !(elen == 2 && hs[p] == 3 && hs[p + 1] == 4)) { g_err = "server does not speak TLS 1.3"; goto fail; }
+#ifdef TLS_RESUME
+			if (et == 41) {                  /* the server took our ticket */
+				if (!binders_at || elen != 2 || hs[p] || hs[p + 1]) { g_err = "bad session resumption"; goto fail; }
+				resumed = 1;
+			}
+#endif
 			p += elen;
 		}
 		if (!got_sh) { g_err = "server did not send an X25519 key"; goto fail; }
@@ -408,7 +634,11 @@ int tls_connect(const char *host, char *why, int whymax)
 	}
 
 	/* ---- key schedule up to the handshake keys */
-	dropbear_curve25519_scalarmult(shared, priv, server_pub);
+	X25519(shared, priv, server_pub);
+#ifdef TLS_RESUME
+	if (resumed) memcpy(secret, psk_early, 32);                  /* early secret from the ticket */
+	else
+#endif
 	hkdf_extract(zero, zero, 32, secret);                        /* early secret */
 	hkdf_label(secret, "derived", empty_hash, 32, derived, 32);
 	hkdf_extract(derived, shared, 32, hs_secret);                /* handshake secret */
@@ -438,6 +668,9 @@ int tls_connect(const char *host, char *why, int whymax)
 			hmac_sha256(fkey, 32, th, 32, NULL, 0, fin);
 			if (mlen != 32 || memcmp(fin, hs + 4, 32)) { g_err = "server Finished did not verify"; goto fail; }
 #ifdef TLS_VERIFY
+#ifdef TLS_RESUME
+			if (!resumed)        /* resumed: proved by the ticket's own connection */
+#endif
 			if (!tlsv_ok()) { g_err = "the server did not prove who it is"; goto fail; }
 #endif
 			sha256_process(&transcript, hs, 4 + mlen);
@@ -446,6 +679,9 @@ int tls_connect(const char *host, char *why, int whymax)
 			break;
 		}
 		if (mt != 8 && mt != 11 && mt != 15) { g_err = "unexpected handshake message"; goto fail; }
+#ifdef TLS_RESUME
+		if (resumed && mt != 8) { g_err = "unexpected certificate in a resumed session"; goto fail; }
+#endif
 #ifdef TLS_VERIFY
 		if (mt == 11) {
 			const char *e = tlsv_certificate(hs + 4, mlen);
@@ -481,6 +717,14 @@ int tls_connect(const char *host, char *why, int whymax)
 	}
 	set_keys(&g_rd, s_ap);
 	set_keys(&g_wr, c_ap);
+#ifdef TLS_RESUME
+	/* resumption_master_secret: transcript up to the client Finished */
+	sha256_process(&transcript, msg, 36);
+	tmp = transcript; sha256_done(&tmp, th);
+	hkdf_label(master, "res master", th, 32, g_res, 32);
+	g_res_ok = 1;
+	g_resumed = resumed;
+#endif
 	ret = 0;
 	goto done;
 
@@ -506,6 +750,9 @@ done:
 	memset(fkey, 0, sizeof(fkey));
 	memset(fin, 0, sizeof(fin));
 	memset(msg, 0, sizeof(msg));
+#ifdef TLS_RESUME
+	memset(psk_early, 0, sizeof(psk_early));
+#endif
 	memset(&transcript, 0, sizeof(transcript));
 	memset(&tmp, 0, sizeof(tmp));
 	memset(hs, 0, sizeof(hs));
@@ -523,6 +770,55 @@ int tls_write(const void *buf, int len)
 	}
 	return 0;
 }
+
+#ifdef TLS_RESUME
+/* NewSessionTicket messages in a handshake record (whole messages only) */
+static void take_tickets(const unsigned char *m, int len)
+{
+	while (g_res_ok && g_res_host[0] && len >= 4) {
+		int mt = m[0], ml = (m[1] << 16) | (m[2] << 8) | m[3];
+		if (ml > len - 4) return;                 /* split over records: not kept */
+		if (mt == 4 && ml >= 13) {
+			const unsigned char *b = m + 4;
+			unsigned long life = ((unsigned long)b[0] << 24) | ((unsigned long)b[1] << 16) | (b[2] << 8) | b[3];
+			unsigned long add = ((unsigned long)b[4] << 24) | ((unsigned long)b[5] << 16) | (b[6] << 8) | b[7];
+			int nl = b[8], p = 9 + nl, tl;
+			if (p + 2 <= ml) {
+				tl = (b[p] << 8) | b[p + 1];
+				/* (the nonce goes into hkdf_label's 100-byte info: real
+				   ones are 0 to 32 bytes) */
+				if (tl > 0 && tl <= TK_MAX && p + 2 + tl <= ml && life > 0 && nl <= 32) {
+					tls_ticket *t = NULL;
+					int i, same = 0;
+					/* a free slot; else the oldest of this server's (two
+					   at most), else the oldest */
+					for (i = 0; i < TK_N; i++)
+						if (g_tk[i].len && !strcmp(g_tk[i].host, g_res_host) && g_tk[i].port == g_res_port) same++;
+					for (i = 0; i < TK_N; i++) {
+						tls_ticket *c = &g_tk[i];
+						int mine = c->len && !strcmp(c->host, g_res_host) && c->port == g_res_port;
+						if (same >= 2 && !mine) continue;
+						if (!c->len) { t = c; break; }
+						if (!t || c->got < t->got) t = c;
+					}
+					if (t) {
+						memset(t, 0, sizeof(*t));
+						strcpy(t->host, g_res_host);
+						t->port = g_res_port;
+						t->got = (unsigned long)time(NULL);
+						t->life = life < (unsigned long)TK_LIFE ? life : (unsigned long)TK_LIFE;
+						t->age_add = add;
+						hkdf_label(g_res, "resumption", b + 9, nl, t->psk, 32);
+						memcpy(t->t, b + p + 2, tl);
+						t->len = tl;
+					}
+				}
+			}
+		}
+		m += 4 + ml; len -= 4 + ml;
+	}
+}
+#endif
 
 /* Returns bytes read (>0), 0 when the server has closed, -1 on timeout or
    error, -2 if cancelled. */
@@ -546,7 +842,10 @@ int tls_read(void *buf, int max, int timeout_ms)
 			g_closed = 1;
 			return 0;
 		}
-		/* type 22 after the handshake: NewSessionTicket etc. - ignored */
+#ifdef TLS_RESUME
+		else if (type == 22) take_tickets(g_rec, len);
+#endif
+		/* other type 22 after the handshake (KeyUpdate...) - ignored */
 	}
 	{
 		int k = g_app_len - g_app_pos;

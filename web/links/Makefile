@@ -34,7 +34,8 @@ PNG_SRCS := png pngerror pngget pngmem pngpread pngread pngrio pngrtran pngrutil
 Z_SRCS   := adler32 crc32 inflate inftrees inffast zutil deflate trees
 
 LINKS_OBJS := $(addprefix $(O)/links/,$(LINKS_SRCS:=.o))
-PSI_OBJS   := $(O)/psi/psi_drv.o $(O)/psi/psi_mem.o $(O)/psi/pwhost.o $(O)/psi/pwgrey.o
+# (psi_grey.c, as in the ARM build: psi_drv.c uses its table of greys)
+PSI_OBJS   := $(O)/psi/psi_drv.o $(O)/psi/psi_mem.o $(O)/psi/pwhost.o $(O)/psi/psi_grey.o $(O)/psi/psi_digest.o
 JPG_LIB    := $(O)/libjpeg.a
 PNG_LIB    := $(O)/libpng.a
 Z_LIB      := $(O)/libz.a
@@ -66,6 +67,12 @@ $(O)/psi/psi_drv.o: psi_drv.c $(HDRS) $(WEB)/fb/pwback.h $(SRC)/links.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(LCFLAGS) -I$(WEB)/fb -I$(WEB) $< -o $@
 $(O)/psi/psi_mem.o: psi_mem.c
+	@mkdir -p $(dir $@)
+	$(CC) -c $(OPT) -Wall $< -o $@
+$(O)/psi/psi_grey.o: psi_grey.c $(WEB)/fb/pwback.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $(OPT) -w -std=gnu99 -I$(WEB)/fb $< -o $@
+$(O)/psi/psi_digest.o: psi_digest.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(OPT) -Wall $< -o $@
 $(O)/psi/%.o: $(WEB)/fb/%.c $(WEB)/fb/pwback.h

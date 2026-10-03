@@ -29,11 +29,16 @@ static const unsigned char bayer[4][4] = {
 
 static unsigned short rt[32], gt[64], bt[32];	/* r8 * 77, g8 * 151, b8 * 28 */
 static unsigned char dt[16][256];		/* [y & 3][x & 3]: (15v + bayer) / 255 */
+/* v for every 565 pixel (64 KB, made once at the first use): one load in
+   place of three table loads, the adds and the shift. Phase 5: the grey
+   conversion was a third of a Page Down on 68k.news. */
+static unsigned char vt[65536];
 static int ready;
 
 static void make_tables(void)
 {
-	int i, t, v;
+	int i, t, v, r, g, b;
+	unsigned char *o = vt;
 	for (i = 0; i < 32; i++) {
 		int c5 = (i << 3) | (i >> 2);
 		rt[i] = (unsigned short)(c5 * 77);
@@ -41,6 +46,12 @@ static void make_tables(void)
 	}
 	for (i = 0; i < 64; i++)
 		gt[i] = (unsigned short)(((i << 2) | (i >> 4)) * 151);
+	for (r = 0; r < 32; r++)
+		for (g = 0; g < 64; g++) {
+			unsigned base = rt[r] + gt[g];
+			for (b = 0; b < 32; b++)
+				*o++ = (unsigned char)((base + bt[b]) >> 8);
+		}
 	for (t = 0; t < 16; t++) {
 		unsigned th = bayer[t >> 2][t & 3], q = 0, acc = th;	/* acc = 15v + th - 255q */
 		for (v = 0; v < 256; v++) {
@@ -52,21 +63,17 @@ static void make_tables(void)
 	ready = 1;
 }
 
-#define V565(p) ((rt[(p) >> 11] + gt[((p) >> 5) & 63] + bt[(p) & 31]) >> 8)
+/* v of every 565 pixel, for psi_drv.c's grey picture bitmaps */
+const unsigned char *pw_v565_table(void)
+{
+	if (!ready) make_tables();
+	return vt;
+}
 
 /* a pair that is neither white nor black; d is the left pixel's threshold
-   table (the right one's is the next). The last colour's v is kept: runs
-   of one colour are common. */
-static unsigned int last = 0x10000, lv;
-static unsigned int grey_pair(unsigned int w, const unsigned char *d)
-{
-	unsigned int p = w & 0xffff, a;	/* little-endian: the left pixel is the low half */
-	if (p != last) { last = p; lv = V565(p); }
-	a = d[lv];
-	p = w >> 16;
-	if (p != last) { last = p; lv = V565(p); }
-	return a | ((unsigned int)d[256 + lv] << 4);
-}
+   table (the right one's is the next); little-endian: the left pixel is
+   the low half */
+#define grey_pair(w, d) ((d)[vt[(w) & 0xffff]] | ((unsigned int)(d)[256 + vt[(w) >> 16]] << 4))
 #define PAIR(w, d) ((w) == 0xffffffffu ? 0xffu : !(w) ? 0u : grey_pair(w, d))
 
 void pw_grey_convert(const unsigned short *fb, int fbw, unsigned char *out, int stride,

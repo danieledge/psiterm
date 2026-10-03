@@ -23,6 +23,15 @@ enum
 	PW_CMD_HANGUP                   /* hang up and give the serial port back now */
 	};
 
+/* auth_state, save_state (psiweb.h) */
+enum
+	{
+	PW_ASK_NONE = 0,
+	PW_ASK_ASKING,                  /* psiweb: show the dialog */
+	PW_ASK_OK,                      /* app: answered */
+	PW_ASK_CANCEL                   /* app: cancelled */
+	};
+
 /* update_state */
 enum
 	{

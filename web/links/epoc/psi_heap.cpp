@@ -16,6 +16,26 @@ extern void* pwb_shared();
 extern void pw_log(const char*);
 }
 
+// Bytes the heap may still grow by, for the soft ceiling in psi_drv.c:
+// the 10 MB petran gives the heap, less what is in use (the heap's size
+// less its free cells), and no more than the free RAM the system has left
+// (plus the heap's own free cells) less 256 KB for the rest of the Psion.
+// Called for big picture allocations and four times a second: Available()
+// walks the free cells, so not on every allocation.
+extern "C" long psi_heap_room()
+	{
+	const TInt KHeapMax = 10 * 1024 * 1024;
+	const TInt KSystemReserve = 256 * 1024;
+	TInt biggest = 0;
+	TInt avail = User::Heap().Available(biggest);
+	TInt used = User::Heap().Size() - avail;
+	TMemoryInfoV1Buf mem;
+	UserHal::MemoryInfo(mem);
+	TInt room = KHeapMax - used;
+	TInt sys = mem().iFreeRamInBytes + avail - KSystemReserve;
+	return sys < room ? sys : room;
+	}
+
 extern "C" void psi_mem_page_start()
 	{
 	}

@@ -63,7 +63,7 @@ CFLAGS_C := $(ARCH) $(DEFS) -fno-builtin -w $(LIBC)
 LTCFLAGS := $(ARCH) $(DEFS) -std=gnu99 -fno-builtin -w -I$(WEB)/tls -I$(WEB)/compat -I$(LTC)/headers $(LIBC) -DLTC_SOURCE -DLTC_NO_ASM
 
 LINKS_OBJS := $(addprefix $(O)/links/,$(LINKS_SRCS:=.o))
-PSI_OBJS   := $(O)/psi/psi_drv.o $(O)/psi/psi_os.o $(O)/psi/pwgrey.o $(O)/psi/psi_str.o $(O)/psi/pwnet.o \
+PSI_OBJS   := $(O)/psi/psi_drv.o $(O)/psi/psi_os.o $(O)/psi/pwgrey.o $(O)/psi/psi_str.o $(O)/psi/psi_digest.o $(O)/psi/pwnet.o \
 	$(O)/psi/nsprintf.o $(O)/psi/tls13.o $(O)/psi/x25519.o $(O)/psi/pwrandom.o \
 	$(addprefix $(O)/ltc/,$(subst /,__,$(LTC_SRCS:=.o)))
 JPG_LIB    := $(O)/libjpeg.a
@@ -135,6 +135,9 @@ $(O)/psi/pwgrey.o: $(LW)/psi_grey.c $(WEB)/fb/pwback.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CFLAGS_C) -std=gnu99 -I$(WEB)/fb $< -o $@
 $(O)/psi/psi_str.o: $(LW)/psi_str.c
+	@mkdir -p $(dir $@)
+	$(CC) -c $(CFLAGS_C) $< -o $@
+$(O)/psi/psi_digest.o: $(LW)/psi_digest.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CFLAGS_C) $< -o $@
 $(O)/psi/nsprintf.o: $(WEB)/compat/nsprintf.c

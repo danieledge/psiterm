@@ -27,7 +27,8 @@ The apps reach the internet in one of two ways, and the user chooses which in th
 
 ## Open issues
 
-- **PsiWeb never shows a web page** (device and emulator). See `docs/issues/psiweb-no-render.md` before working on PsiWeb.
+- **PsiWeb now uses Links 2.30 as its engine** (the NetSurf "never shows a page" issue in `docs/issues/psiweb-no-render.md` is superseded). Read `web/links/PORTING.md` before working on PsiWeb. It has not yet been confirmed on a real 5mx.
+- `main` deliberately leaves out PsiWeb and the Atom modem firmware until they are proven: promote `dev` to `main` with a merge that keeps those deletions.
 
 ## Architecture
 

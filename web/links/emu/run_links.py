@@ -75,7 +75,7 @@ MAP = open(os.path.join(BUILD, "psiweb-emu.map")).read()
 def sym(name):
     m = re.search(r"0x([0-9a-f]+)\s+_?%s\s*$" % re.escape(name), MAP, re.M)
     if not m:       # a static function: from arm-pe-nm's list
-        m = re.search(r"^([0-9a-f]+) [tT] _?%s$" % re.escape(name),
+        m = re.search(r"^([0-9a-f]+) [tTdDbBrR] _?%s$" % re.escape(name),
                       open(os.path.join(BUILD, "psiweb-emu.syms")).read(), re.M)
     return int(m.group(1), 16)
 
@@ -211,9 +211,36 @@ def prof_report(blocks_, base, title):
     for name, n in sorted(byfn.items(), key=lambda x: -x[1])[:PROFILE_N]:
         print("  %8.1fM %5.1f%%  %s" % (n / 1e6, 100.0 * n / tot, name))
 
+def answer_step():
+    """script lines "auth USER PASS" / "auth cancel" and "save PATH" /
+    "save cancel" answer the engine's next question as PsiWeb.app's
+    dialogs would (psiweb.h auth_* and save_*); False while it has not
+    been asked yet"""
+    kind, args = state["answer"]
+    base, offs = sym("emu_shared"), sym("emu_ask_offsets")
+    sh = struct.unpack("<I", rd(base, 4))[0]
+    off = struct.unpack("<9i", rd(offs, 36))
+    st_off = off[0] if kind == "auth" else off[3]
+    if struct.unpack("<i", rd(sh + st_off, 4))[0] != 1:
+        return False
+    if kind == "auth":
+        log("[ask] auth realm %r" % cstr(sh + off[5]))
+        if args[0] != "cancel":
+            wr(sh + off[1], args[0].encode() + b"\0")
+            wr(sh + off[2], (args[1] if len(args) > 1 else "").encode() + b"\0")
+    else:
+        log("[ask] save %r type %r size %d" % (cstr(sh + off[6]), cstr(sh + off[7]), struct.unpack("<i", rd(sh + off[8], 4))[0]))
+        if args[0] != "cancel":
+            wr(sh + off[4], args[0].encode() + b"\0")
+    wr(sh + st_off, struct.pack("<i", 3 if args[0] == "cancel" else 2))
+    state["answer"] = None
+    return True
+
 def script_step():
     """runs script lines until one produces input or has to wait"""
     while state["script"] and not state["queue"] and not state["cmd"]:
+        if state.get("answer") and not answer_step():
+            return
         t = now()
         if state["wait_until"] and t < state["wait_until"]:
             return
@@ -253,6 +280,8 @@ def script_step():
         elif cmd == "shot":
             page_end()
             shot(rest)
+        elif cmd in ("auth", "save"):
+            state["answer"] = (cmd, rest.split())
         elif cmd == "quit":
             state["queue"].append((4, 0, 0, 0))
     if not state["script"] and not state["queue"] and not state["cmd"] and state["exit"] is None:
@@ -357,6 +386,7 @@ def hc(op, a, b, c, d):
         path, mode = cstr(a), cstr(b)
         path = path.replace("\\", "/")
         if path.startswith("C:"): path = "/tmp/psiwebemu" + path[2:]
+        elif path.startswith("D:"): path = os.environ.get("PW_DDISK", "/tmp/psiwebemu-d") + path[2:]
         try:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             f = open(path, mode.replace("t", "") + ("b" if "b" not in mode else ""))

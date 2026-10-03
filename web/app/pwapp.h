@@ -101,6 +101,9 @@ private:
 	void AddEntropy(TUint aValue);
 	static TInt TickCallback(TAny* aSelf);
 	void Tick();
+	static TInt AskCallback(TAny* aSelf);    // the engine's questions (Links phase 5)
+	void AskAuthL();                         // a user name and password
+	void AskSaveL();                         // where to save a file PsiWeb cannot show
 	void UpdateTickL();
 	void UpdateLine(const TDesC& aLine);        // adds to the progress window's text
 	void UpdateDialogL();                       // the progress window, then what the update came to
@@ -131,6 +134,24 @@ private:
 	TBuf<1200> iUpdLog;        // the progress window's text (paragraphs)
 	CPwUpdateProgress* iUpdDlg;   // the window, while it is up
 	TFileName iUpdateFile;
+	CIdle* iAsker;             // shows the engine's questions outside Tick
+	TBool iAsking;             // one of its dialogs is up
+	};
+
+// A page or the proxy needs a user name and password (HTTP authentication,
+// Links phase 5): the engine asks through the shared chunk (psiweb.h auth_*)
+class CPwAuthDialog : public CEikDialog
+	{
+public:
+	CPwAuthDialog(const TDesC& aWho, const TDesC& aRealm, TDes& aUser, TDes& aPass)
+		: iWho(aWho), iRealm(aRealm), iUser(aUser), iPass(aPass) {}
+private:
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	const TDesC& iWho;
+	const TDesC& iRealm;
+	TDes& iUser;
+	TDes& iPass;
 	};
 
 // Page information: up to five lines of text (the title is the resource's)

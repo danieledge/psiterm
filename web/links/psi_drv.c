@@ -64,6 +64,9 @@ void psi_mem_report(const char *what);
 /* ---------- drawing ---------- */
 
 static inline void mark(int x0, int y0, int x1, int y1);
+static void check_heap(int busy);
+static void save_progress(void);
+static void load_start(void);
 
 static void present_bh(void *p)
 {
@@ -129,43 +132,160 @@ static void copy16(unsigned short *d, const unsigned short *s, int n)
 #define TEST_INACTIVITY if (dev != current_virtual_device) return;
 #define TEST_INACTIVITY_0 if (dev != current_virtual_device) return 0;
 
+/* ---------- bitmaps ----------
+ * Glyphs stay RGB565 (they are small, and drawn most often). Pictures
+ * (img.c sets psi_pic_bitmap around its get_empty_bitmap calls) are kept
+ * as one byte a pixel: the grey level v that psi_grey.c would work out
+ * from the 565 pixel. Drawing turns v back into a 565 pixel with that
+ * same v (g2p[]), so the screen is the same to the bit, for half the
+ * memory.
+ *
+ * To Links, a picture bitmap still looks like 565 (skip = 2x): it writes
+ * 565 rows between get_empty_bitmap and register_bitmap (the buffer is
+ * then 2 bytes a pixel; register_bitmap packs it to 1 in place and gives
+ * the rest back), and into the scratch rows prepare_strip hands out, which
+ * commit_strip packs. */
+#define PSI_BMP_GREY	((void *)1)	/* bitmap->flags: packed grey */
+
+int psi_pic_bitmap;			/* img.c: the next bitmap is a picture's */
+unsigned long psi_pic_bytes;		/* bytes in picture bitmaps now */
+
+static unsigned int g2p[256];		/* grey v -> a 565 pixel with that v */
+static int g2p_ready;
+static unsigned char *strip_buf;	/* prepare_strip's scratch rows */
+static size_t strip_size;
+
+/* v of a 565 pixel, exactly as psi_grey.c works it out (its table) */
+const unsigned char *pw_v565_table(void);
+static const unsigned char *vtab;
+#define v565(p) (vtab[(p) & 0xffff])
+
+static void make_g2p(void)
+{
+	unsigned p, n = 0;
+	int v;
+	vtab = pw_v565_table();
+	/* grey 565 values first (r = g = b), then any 565 value for the v
+	   still missing: every v from 0 to 255 has one */
+	for (v = 0; v < 256; v++) g2p[v] = 0x10000;
+	for (p = 0; p < 32; p++) {
+		unsigned q = (p << 11) | ((p << 1) << 5) | p;
+		if (g2p[v565(q)] == 0x10000) g2p[v565(q)] = q, n++;
+		q = (p << 11) | (((p << 1) | 1) << 5) | p;
+		if (g2p[v565(q)] == 0x10000) g2p[v565(q)] = q, n++;
+	}
+	for (p = 0; p < 65536 && n < 256; p++)
+		if (g2p[v565(p)] == 0x10000) g2p[v565(p)] = p, n++;
+	for (v = 0; v < 256; v++)		/* (none left: belt and braces) */
+		if (g2p[v] == 0x10000) g2p[v] = v ? g2p[v - 1] : 0;
+	g2p[0] = 0;
+	g2p[255] = 0xffff;
+	g2p_ready = 1;
+}
+
+/* 565 row -> grey row (may be the same memory: d never passes s) */
+static void pack_row(unsigned char *d, const unsigned short *s, int n)
+{
+	const unsigned char *t = vtab;
+	for (; n > 0; n--) *d++ = t[*s++];
+}
+
 static int psi_get_empty_bitmap(struct bitmap *dest)
 {
+	size_t n;
 	dest->data = NULL;
+	dest->flags = psi_pic_bitmap ? PSI_BMP_GREY : NULL;
 	if (dest->x && (size_t)dest->x * (size_t)dest->y / (size_t)dest->x != (size_t)dest->y)
 		return -1;
 	if ((size_t)dest->x * (size_t)dest->y > MAX_SIZE_T / 4)
 		return -1;
-	dest->data = mem_alloc_mayfail((size_t)dest->x * (size_t)dest->y * 2);
+	n = (size_t)dest->x * (size_t)dest->y * 2;
+	dest->data = mem_alloc_mayfail(n ? n : 2);
 	if (!dest->data)
 		return -1;
 	dest->skip = (ssize_t)dest->x * 2;
-	dest->flags = 0;
+	if (dest->flags) psi_pic_bytes += n;
 	return 0;
 }
 
-static void psi_register_bitmap(struct bitmap *bmp) { (void)bmp; }
+static void psi_register_bitmap(struct bitmap *bmp)
+{
+	size_t n;
+	unsigned char *d;
+	const unsigned char *s;
+	int y;
+	if (bmp->flags != PSI_BMP_GREY || !bmp->data) return;
+	n = (size_t)bmp->x * (size_t)bmp->y;
+	if (!n) return;
+	if (!g2p_ready) make_g2p();
+	d = bmp->data;
+	s = bmp->data;
+	for (y = 0; y < bmp->y; y++, d += bmp->x, s += bmp->skip)
+		pack_row(d, (const unsigned short *)s, bmp->x);
+	psi_pic_bytes -= n;			/* (2n before, n now) */
+	bmp->data = mem_realloc(bmp->data, n);	/* (shrinking: in place) */
+	bmp->flags = (void *)2;			/* packed */
+}
+#define PACKED(b) ((b)->flags == (void *)2)
 
 static void psi_unregister_bitmap(struct bitmap *bmp)
 {
+	if (bmp->flags && bmp->data)
+		psi_pic_bytes -= (size_t)bmp->x * (size_t)bmp->y * (PACKED(bmp) ? 1 : 2);
 	if (bmp->data) mem_free(bmp->data);
+	bmp->data = NULL;
 }
 
 static void *psi_prepare_strip(struct bitmap *bmp, int top, int lines)
 {
-	(void)lines;
+	size_t n;
 	if (!bmp->data) return NULL;
-	return (unsigned char *)bmp->data + bmp->skip * top;
+	if (!PACKED(bmp)) return (unsigned char *)bmp->data + bmp->skip * top;
+	n = (size_t)bmp->skip * (size_t)lines;
+	if (n > strip_size) {
+		unsigned char *b = mem_alloc_mayfail(n);
+		if (!b) return NULL;
+		if (strip_buf) mem_free(strip_buf);
+		strip_buf = b;
+		strip_size = n;
+	}
+	return strip_buf;
 }
 
 static void psi_commit_strip(struct bitmap *bmp, int top, int lines)
 {
-	(void)bmp; (void)top; (void)lines;
+	int y;
+	if (!PACKED(bmp) || !bmp->data || !strip_buf) return;
+	if (top < 0 || top + lines > bmp->y) return;
+	for (y = 0; y < lines; y++)
+		pack_row((unsigned char *)bmp->data + (size_t)(top + y) * bmp->x,
+			(const unsigned short *)(strip_buf + (size_t)y * bmp->skip), bmp->x);
+	if (strip_size > 65536) {		/* (a wide picture's: give it back) */
+		mem_free(strip_buf);
+		strip_buf = NULL;
+		strip_size = 0;
+	}
+}
+
+/* a grey row onto the 565 frame */
+static void unpack16(unsigned short *d, const unsigned char *s, int n)
+{
+	unsigned int *dw;
+	if (n <= 0) return;
+	if ((unsigned long)d & 2) *d++ = (unsigned short)g2p[*s++], n--;
+	dw = (unsigned int *)d;
+	for (; n >= 4; n -= 4, s += 4, dw += 2) {
+		dw[0] = g2p[s[0]] | (g2p[s[1]] << 16);
+		dw[1] = g2p[s[2]] | (g2p[s[3]] << 16);
+	}
+	for (; n >= 2; n -= 2, s += 2) *dw++ = g2p[s[0]] | (g2p[s[1]] << 16);
+	if (n) *(unsigned short *)dw = (unsigned short)g2p[*s];
 }
 
 static void psi_draw_bitmap(struct graphics_device *dev, struct bitmap *bmp, int x, int y)
 {
-	int xs, ys;
+	int xs, ys, packed = PACKED(bmp);
+	ssize_t skip = packed ? bmp->x : bmp->skip;
 	unsigned char *data = bmp->data;
 	unsigned short *d;
 
@@ -178,20 +298,21 @@ static void psi_draw_bitmap(struct graphics_device *dev, struct bitmap *bmp, int
 	if (y + ys > dev->clip.y2) ys = dev->clip.y2 - y;
 	if (dev->clip.x1 - x > 0) {
 		xs -= dev->clip.x1 - x;
-		data += 2 * (dev->clip.x1 - x);
+		data += (packed ? 1 : 2) * (dev->clip.x1 - x);
 		x = dev->clip.x1;
 	}
 	if (dev->clip.y1 - y > 0) {
 		ys -= dev->clip.y1 - y;
-		data += bmp->skip * (dev->clip.y1 - y);
+		data += skip * (dev->clip.y1 - y);
 		y = dev->clip.y1;
 	}
 	if (xs <= 0 || ys <= 0) return;
 	mark(x, y, x + xs, y + ys);
 	d = psi_fb + y * psi_w + x;
 	for (; ys; ys--) {
-		copy16(d, (const unsigned short *)data, xs);
-		data += bmp->skip;
+		if (packed) unpack16(d, data, xs);
+		else copy16(d, (const unsigned short *)data, xs);
+		data += skip;
 		d += psi_w;
 	}
 }
@@ -283,7 +404,7 @@ static void psi_set_title(struct graphics_device *dev, unsigned char *title)
 static void report_state(int force)
 {
 	struct session *ses = psi_ses();
-	int busy = !list_empty(queue);
+	int busy = !list_empty(queue) || !list_empty(downloads);	/* (Esc stops a file being saved too) */
 	int back = 0, fwd = 0;
 	unsigned char *u = cast_uchar "", *st = cast_uchar "";
 
@@ -295,6 +416,8 @@ static void report_state(int force)
 		fwd = !list_empty(ses->forward_history);
 		if (ses->st) st = ses->st;
 	}
+	check_heap(busy);
+	save_progress();
 	if (force || busy != last_busy) {
 		if (last_busy == 1 && !busy)
 			psi_mem_report(cast_const_char u);
@@ -397,6 +520,209 @@ void psi_load_failed(unsigned char *why)
 	if (!casecmp(why, cast_uchar "Error ", 6)) why += 6;
 	snprintf(line, sizeof(line), "Page not loaded - %s", (char *)why);
 	psi_infoprint(line);
+}
+
+/* ---------- memory: the soft ceiling ----------
+ * psiweb.exe's heap stops at 10 MB (less if the Psion's RAM runs out
+ * first), and Links ends the engine when an allocation it cannot do
+ * without fails. So:
+ *  - big allocations that may fail (picture buffers and bitmaps) stop
+ *    PSI_HEAP_SOFT short of the limit, after Links has dropped what it can
+ *    (pictures away from the screen, its caches): the picture is shown as
+ *    a box, and the page says it is too big;
+ *  - a page still loading when the room left falls below PSI_HEAP_STOP
+ *    is stopped where it is: what has come stays on the screen. */
+long psi_heap_room(void);	/* emu/links_rt.c, epoc/psi_heap.cpp, psi_mem.c */
+static int too_big_said;	/* 1: pictures, 2: the page; per page */
+
+static void psi_too_big(int stop)
+{
+	int what = stop ? 2 : 1;
+	if (too_big_said >= what) return;
+	too_big_said = what;
+	psi_infoprint(stop ? "Page too big - only part of it is shown"
+		: "Page too big - not all the pictures are shown");
+}
+
+int psi_heap_tight(size_t size)
+{
+	if (psi_heap_room() - (long)size >= PSI_HEAP_SOFT) return 0;
+	shrink_memory(SH_FREE_SOMETHING, 0);	/* (psi_evict_pictures(1) among others) */
+	if (psi_heap_room() - (long)size >= PSI_HEAP_SOFT) return 0;
+#ifdef PSI_DEBUG_MEM
+	fprintf(stderr, "[mem] refused %lu bytes, room %ld KB\n", (unsigned long)size, psi_heap_room() >> 10);
+	if (global_cimg) {
+		fprintf(stderr, "[mem]   %d x %d", (int)global_cimg->width, (int)global_cimg->height);
+		fprintf(stderr, " -> %d x %d", (int)global_cimg->xww, (int)global_cimg->yww);
+		fprintf(stderr, " state %d bpp %d\n", (int)global_cimg->state, (int)global_cimg->buffer_bytes_per_pixel);
+	}
+#endif
+	psi_too_big(0);
+	return 1;
+}
+
+static void check_heap(int busy)
+{
+#ifdef PSI_DEBUG_MEM
+	{
+		static long lr; static unsigned long lb;
+		long r = psi_heap_room();
+		if (r / 65536 != lr / 65536 || psi_pic_bytes / 65536 != lb / 65536)
+			fprintf(stderr, "[mem] room %ld KB, picture bitmaps %lu KB, imgcache %lu KB, cache %lu KB\n",
+				r >> 10, psi_pic_bytes >> 10, (unsigned long)imgcache_info(CI_BYTES) >> 10, (unsigned long)cache_info(CI_BYTES) >> 10);
+		lr = r; lb = psi_pic_bytes;
+	}
+#endif
+	psi_evict_pictures(0);			/* (only if over the budget) */
+	if (!busy || psi_heap_room() >= PSI_HEAP_STOP) return;
+	shrink_memory(SH_FREE_SOMETHING, 0);
+	if (psi_heap_room() >= PSI_HEAP_STOP) return;
+	abort_all_connections();
+	psi_too_big(1);
+}
+
+/* ---------- questions for the user (PsiWeb.app's dialogs) ----------
+ * Links asks with its own dialogs; PsiWeb asks through the shared chunk
+ * (psiweb.h auth_* and save_*), PsiWeb.app shows an EIKON dialog, and the
+ * answer is taken here from the input poll. One question of each kind at
+ * a time. On the PC build (no app) the questions are cancelled. */
+static tcount ask_rq;			/* the request waiting for a password */
+static unsigned char *ask_realm;
+static int ask_proxy;
+static struct session *save_ses;	/* the session whose ses->tq waits */
+static int save_said;			/* last progress line (KB) */
+static uttime save_said_at;
+
+static void copy_utf8(char *d, int max, const unsigned char *s)
+{
+	int n = 0;
+	if (s) for (; s[n] && n < max - 1; n++) d[n] = s[n];
+	d[n] = 0;
+}
+
+/* objreq.c (auth_window): 0 if the app will ask, -1 if it cannot now */
+int psi_auth_ask(tcount count, unsigned char *realm, unsigned char *host, int proxy)
+{
+#ifdef PSI_EPOC
+	PwShared *s = (PwShared *)pwb_shared();
+	if (!s || s->auth_state != PW_ASK_NONE || ask_realm) return -1;
+	ask_rq = count;
+	ask_realm = stracpy(realm ? realm : cast_uchar "");
+	ask_proxy = proxy;
+	s->auth_proxy = proxy;
+	copy_utf8(s->auth_host, sizeof(s->auth_host), host);
+	copy_utf8(s->auth_realm, sizeof(s->auth_realm), realm);
+	s->auth_user[0] = 0;
+	s->auth_pass[0] = 0;
+	s->auth_state = PW_ASK_ASKING;
+	return 0;
+#else
+	(void)count; (void)realm; (void)host; (void)proxy;
+	return -1;
+#endif
+}
+
+/* session.c (type_query): a response PsiWeb cannot show. 0 if the app
+   will ask where to save it, -1 if not (then it is said not available) */
+int psi_save_ask(struct session *ses, unsigned char *name, unsigned char *ct, long size)
+{
+#ifdef PSI_EPOC
+	PwShared *s = (PwShared *)pwb_shared();
+	if (!s || s->save_state != PW_ASK_NONE || save_ses) return -1;
+	save_ses = ses;
+	copy_utf8(s->save_name, sizeof(s->save_name), name && *name ? name : cast_uchar "Download");
+	copy_utf8(s->save_type, sizeof(s->save_type), ct);
+	s->save_size = (int)size;
+	s->save_max = PSI_SAVE_MAX;
+	s->save_path[0] = 0;
+	s->save_state = PW_ASK_ASKING;
+	return 0;
+#else
+	(void)ses; (void)name; (void)ct; (void)size;
+	return -1;
+#endif
+}
+
+/* the session is going: forget the question about it */
+void psi_save_forget(struct session *ses)
+{
+	if (save_ses == ses) save_ses = NULL;
+}
+
+static void take_answers(void)
+{
+#ifdef PSI_EPOC
+	PwShared *s = (PwShared *)pwb_shared();
+	extern void psi_auth_reply(tcount count, unsigned char *realm, int proxy, unsigned char *user, unsigned char *pass);
+	extern void psi_save_reply(struct session *ses, unsigned char *path);
+	int st;
+	if (!s) return;
+	st = s->auth_state;
+	if (ask_realm && (st == PW_ASK_OK || st == PW_ASK_CANCEL)) {
+		unsigned char *realm = ask_realm;
+		ask_realm = NULL;
+		s->auth_user[sizeof(s->auth_user) - 1] = 0;
+		s->auth_pass[sizeof(s->auth_pass) - 1] = 0;
+		psi_auth_reply(ask_rq, realm, ask_proxy, st == PW_ASK_OK ? cast_uchar s->auth_user : NULL, cast_uchar s->auth_pass);
+		memset(s->auth_pass, 0, sizeof(s->auth_pass));
+		mem_free(realm);
+		s->auth_state = PW_ASK_NONE;
+		load_start();
+	}
+	st = s->save_state;
+	if (st == PW_ASK_OK || st == PW_ASK_CANCEL) {
+		struct session *ses = save_ses;
+		save_ses = NULL;
+		s->save_path[sizeof(s->save_path) - 1] = 0;
+		s->save_state = PW_ASK_NONE;
+		if (ses) {
+			char *c;
+			for (c = s->save_path; *c; c++) if (*c == '\\') *c = '/';	/* (D:/x, as file:// has it) */
+			save_said = -1;
+			psi_save_reply(ses, st == PW_ASK_OK && s->save_path[0] ? cast_uchar s->save_path : NULL);
+		}
+	}
+#endif
+}
+
+/* "Saving x.pdf: 120 of 300 KB..." as the busy message (a line ending in
+   "..." is one), at most once a second */
+static void save_progress(void)
+{
+	struct download *down;
+	struct list_head *ld;
+	char line[120];
+	const char *name;
+	long kb, of = -1;
+	uttime now = get_time();
+	if (list_empty(downloads) || now - save_said_at < 1000) return;
+	down = list_struct(downloads.next, struct download);
+	kb = (long)(down->last_pos >> 10);
+	if (kb == save_said) return;
+	save_said = kb;
+	save_said_at = now;
+	if (down->stat.prg && down->stat.prg->size > 0) of = (long)(down->stat.prg->size >> 10);
+	name = (const char *)down->file;
+	{
+		const char *p = name;
+		for (; *p; p++) if (*p == '/' || *p == '\\' || *p == ':') name = p + 1;
+	}
+	if (of >= 0) snprintf(line, sizeof(line), "Saving %.40s: %ld of %ld KB...", name, kb, of);
+	else snprintf(line, sizeof(line), "Saving %.40s: %ld KB...", name, kb);
+	psi_infoprint(line);
+	(void)ld;
+}
+
+/* session.c: the file has been saved, or not */
+void psi_save_done(unsigned char *file, int ok, unsigned char *why)
+{
+	char line[120];
+	const char *name = (const char *)file, *p;
+	for (p = name; p && *p; p++) if (*p == '/' || *p == '\\' || *p == ':') name = p + 1;
+	if (ok) snprintf(line, sizeof(line), "Saved %.60s", name ? name : "");
+	else snprintf(line, sizeof(line), "File not saved - %.80s", why ? (char *)why : "");
+	psi_infoprint(line);
+	save_said = -1;
 }
 
 /* session.c cached_format_html: pictures for this page? */
@@ -550,6 +876,7 @@ static void key_event(int down, int c)
 static void load_start(void)
 {
 	psi_mem_page_start();
+	too_big_said = 0;
 	last_busy = 1;
 	pwb_set_busy(1);
 }
@@ -686,6 +1013,7 @@ static void poll_fn(void *p)
 	}
 	while ((cmd = pwb_take_command(arg, sizeof(arg))) != 0)
 		run_command(cmd, arg);
+	take_answers();
 
 	now = get_time();
 	if (now - last_status >= STATUS_MS) {

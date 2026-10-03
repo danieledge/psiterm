@@ -12,6 +12,13 @@ extern int pg_entropy(unsigned char *out, int max);
 static unsigned char g_pool[32];
 static unsigned long g_counter;
 static int g_seeded;
+static int g_noise;            /* pg_entropy has ever given a non-zero byte */
+
+/* 1 while pg_entropy has given nothing but zeros: never on a Psion (its
+   noise includes the clock and free RAM), only in the ARM harness's
+   repeatable runs (web/links/emu/run_links.py --record/--replay), which
+   tls13.c then keeps to the ClientHello the recordings were made with */
+int tls_rng_repeatable(void) { return !g_noise; }
 
 static void mix(const unsigned char *d, unsigned long n)
 {
@@ -26,7 +33,8 @@ void genrandom(unsigned char *buf, unsigned int len)
 {
 	unsigned char e[256], blk[32];
 	hash_state h;
-	int n = pg_entropy(e, g_seeded ? 64 : (int)sizeof(e));
+	int n = pg_entropy(e, g_seeded ? 64 : (int)sizeof(e)), i;
+	for (i = 0; i < n; i++) if (e[i]) g_noise = 1;
 	mix(e, n);
 	g_seeded = 1;
 	while (len) {

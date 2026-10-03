@@ -46,8 +46,15 @@ static const TPwHelpTopic KHelpTopics[] =
 	  "View > Page information (Shift+Ctrl+Q) shows the page's title and address, what the engine "
 	  "is doing, the free memory and the connection in use.\n"
 	  "\n"
+	  "A page that asks for a user name and password brings up a dialog for them; PsiWeb remembers "
+	  "them until it closes. A file PsiWeb cannot show, such as a PDF, can be saved to a disk (up "
+	  "to 4 MB): PsiWeb says what it is and offers the Save as dialog; the bottom left shows how much "
+	  "has come, and Esc stops it.\n"
+	  "\n"
 	  "Light sites suit the Psion's memory best - 68k.news, FrogFind, DuckDuckGo Lite, text.npr.org, "
-	  "lite.cnn.com. A page of a few hundred KB can be too much for a 16 MB machine." },
+	  "lite.cnn.com. On a long page with pictures, those far from the screen are let go, and made "
+	  "again from memory when you come back to them; a page that still does not fit says \"Page too "
+	  "big\" and shows what fits." },
 
 	{ "Connections & proxy",
 	  "Tools > Connection settings chooses how PsiWeb reaches the Internet, the same way as PsiTerm "
@@ -74,9 +81,8 @@ static const TPwHelpTopic KHelpTopics[] =
 	  "port can be used by one program at a time; the Remote link must be off too." },
 
 	{ "If the engine stops",
-	  "The browser engine runs as its own program, so a page that is too big for the memory stops "
-	  "the engine rather than the Psion. PsiWeb then says so on the page and Tools > Restart browser "
-	  "engine starts it again. Preferences and connection settings that the engine reads when it "
+	  "The browser engine runs as its own program, so if it stops, the Psion carries on. PsiWeb "
+	  "then says so on the page and Tools > Restart browser engine starts it again. Preferences and connection settings that the engine reads when it "
 	  "starts also restart it, on the same page." },
 
 	{ "Updating PsiWeb",

@@ -18,6 +18,7 @@ NAME PSIW
 #include <eikclock.rh>
 #include <eikspace.rh>
 #include <eikrted.rh>
+#include <eikseced.rh>
 #include <eikon.rsg>
 
 #include "psiweb.hrh"
@@ -243,6 +244,25 @@ RESOURCE DIALOG r_pw_info_dialog
 		DLG_LINE { type=EEikCtLabel; prompt="Status"; id=EPwDlgInfo3; control=LABEL { txt=""; }; },
 		DLG_LINE { type=EEikCtLabel; prompt="Free memory"; id=EPwDlgInfo4; control=LABEL { txt=""; }; },
 		DLG_LINE { type=EEikCtLabel; prompt="Connection"; id=EPwDlgInfo5; control=LABEL { txt=""; }; }
+		};
+	}
+
+// A page (or the proxy) asks for a user name and password (Links phase 5): the
+// engine's question, answered here. Who asks, in bold; the server's own
+// name for what is protected, as an annotation under it.
+RESOURCE DIALOG r_pw_auth_dialog
+	{
+	title="User name and password";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgAuthWho; control=LABEL { txt=""; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPwDlgAuthRealm; control=LABEL { standard_font=EEikLabelFontAnnotation; txt=""; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="User name"; id=EPwDlgAuthUser;
+			control=EDWIN { width=20; maxlength=60; }; },
+		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPwDlgAuthPass;
+			control=SECRETED { num_letters=32; }; }
 		};
 	}
 

@@ -294,6 +294,7 @@ static int sock_readable(int i)
 {
 	if (!pfd[i].live) return 1;		/* the read says it is over */
 	if (net_eof) return 1;
+	if (pwn_dead()) return 1;		/* (NO CARRIER in the data: closed) */
 	if (pg_net_avail() > 0) return 1;
 	if (pfd[i].tls && tls_pending()) return 1;
 	return 0;

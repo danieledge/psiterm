@@ -47,4 +47,12 @@
 #define PSI_LAZY_IMAGES 1	/* img.c: no decoder kept for pictures not yet drawn */
 #define PSIWEB 1		/* html.c: no <link> lines or prefetches */
 #define PSI_JPEG_SCALE 1	/* jpeg.c: libjpeg scales down while decoding */
-#define PSI_JPEG_MAX_W 1280	/* ... and caps pictures with no size given */
+#define PSI_JPEG_MAX_W 640	/* ... and caps pictures with no size given */
+/* picture memory (img.c, psi_drv.c; PORTING.md phase 5) */
+#define PSI_PIC_MAX_PIX 307200	/* a picture is shown at most 640x480 (in pixels) */
+#define PSI_PIC_MAX_BYTES 4194304	/* decoding and scaling one picture: at most 4 MB */
+#define PSI_PIC_BUDGET 1048576	/* picture bitmaps above this: drop those away from the view */
+#define PSI_PIC_MARGIN 240	/* ... except within this many pixels of it */
+#define PSI_HEAP_SOFT 1572864	/* big "may fail" allocations stop this far below the heap's limit */
+#define PSI_HEAP_STOP 786432	/* and a page stops loading ("Page too big") this far below it */
+#define PSI_SAVE_MAX 4194304	/* File > Save: the biggest file saved (session.c) */

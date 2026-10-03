@@ -14,6 +14,9 @@
 #include <eiktbar.h>
 #include <eikimage.h>
 #include <apgcli.h>
+#include <eikcfdlg.h>
+#include <eikseced.h>
+#include <eikon.rsg>
 #include "pwapp.h"
 #include "pwicons.h"
 #include "psilink.h"
@@ -46,7 +49,7 @@ static void SaveSharedLink(RFs& aFs, const TPwSettings& aSettings)
 
 _LIT(KEngineExe, "psiweb.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiWeb\\PsiWeb.ini");
-_LIT(KVersion, "0.63");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
+_LIT(KVersion, "0.64");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
 _LIT(KDefaultHome, "http://68k.news/");
 const TInt KZoomSteps[] = { 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200 };
 const TInt KZoomCount = 11;
@@ -80,6 +83,28 @@ static void FromUtf8(TDes& aDst, const char* aSrc)
 			}
 		aDst.Append(TChar(c));
 		}
+	}
+
+// text from the Psion's 8-bit UI (Latin-1 here) -> UTF-8 for the engine
+static void ToUtf8(char* aDst, TInt aMax, const TDesC& aSrc)
+	{
+	TInt n = 0;
+	for (TInt i = 0; i < aSrc.Length(); i++)
+		{
+		TUint c = aSrc[i];
+		if (c < 0x80)
+			{
+			if (n + 1 >= aMax) break;
+			aDst[n++] = (char)c;
+			}
+		else
+			{
+			if (n + 2 >= aMax) break;
+			aDst[n++] = (char)(0xc0 | (c >> 6));
+			aDst[n++] = (char)(0x80 | (c & 0x3f));
+			}
+		}
+	aDst[n] = 0;
 	}
 
 // ===========================================================================
@@ -123,6 +148,7 @@ CPwView::~CPwView()
 	{
 	StartBusyCancel();
 	StopEngine();
+	delete iAsker;
 	delete iStarter;
 	delete iTimer;
 	delete iWatcher;
@@ -161,6 +187,7 @@ void CPwView::ConstructL(const TRect& aRect, const TPwSettings& aSettings)
 	// PsiMail) can be the first page: see CPwAppUi::ProcessCommandParametersL
 	iStarter = CIdle::NewL(CActive::EPriorityStandard);
 	iStarter->Start(TCallBack(StartCallback, this));
+	iAsker = CIdle::NewL(CActive::EPriorityStandard);
 	}
 
 TInt CPwView::StartCallback(TAny* aSelf)
@@ -451,13 +478,27 @@ void CPwView::Tick()
 			iLinkBusy = err == KErrNone;
 			}
 		else if (m.Length())
+			{
+			// a plain note after a busy one ("Checking the modem..." then
+			// "CONNECT 115200"): that step is over
+			if (iLinkBusy)
+				{
+				iEikonEnv->BusyMsgCancel();
+				iLinkBusy = EFalse;
+				}
 			iEikonEnv->InfoMsg(m);
+			}
 		}
 	if (s && iLinkBusy && !s->busy)
 		{
 		iEikonEnv->BusyMsgCancel();
 		iLinkBusy = EFalse;
 		}
+	// the engine asks something (a password, where to save a file): the
+	// dialog is shown from an idle callback, not inside this tick
+	if (s && !iAsking && iAsker && !iAsker->IsActive()
+		&& (s->auth_state == PW_ASK_ASKING || s->save_state == PW_ASK_ASKING))
+		iAsker->Start(TCallBack(AskCallback, this));
 	if (s && (iUpdState == PW_UPD_RUNNING || s->update_state != iUpdState))
 		{
 		TRAPD(err, UpdateTickL());
@@ -489,6 +530,154 @@ void CPwView::Tick()
 	ActivateGc();
 	SystemGc().BitBlt(r.iTl, iBitmap, r);
 	DeactivateGc();
+	}
+
+// ----- the engine's questions (Links phase 5) --------------------------------------
+
+TInt CPwView::AskCallback(TAny* aSelf)
+	{
+	CPwView* v = (CPwView*)aSelf;
+	PwShared* s = v->iShared;
+	if (!s || v->iAsking)
+		return 0;
+	v->iAsking = ETrue;
+	if (v->iLinkBusy)
+		{
+		CEikonEnv::Static()->BusyMsgCancel();
+		v->iLinkBusy = EFalse;
+		}
+	if (s->auth_state == PW_ASK_ASKING)
+		{
+		TRAPD(err, v->AskAuthL());
+		if (err != KErrNone && s->auth_state == PW_ASK_ASKING)
+			s->auth_state = PW_ASK_CANCEL;
+		}
+	if (s->save_state == PW_ASK_ASKING)
+		{
+		TRAPD(err, v->AskSaveL());
+		if (err != KErrNone && s->save_state == PW_ASK_ASKING)
+			s->save_state = PW_ASK_CANCEL;
+		}
+	s->net.resized = 1;                  // wakes the engine's wait (psi_os.c)
+	v->iAsking = EFalse;
+	return 0;
+	}
+
+// User name and password: who asks, and the server's name for it
+void CPwView::AskAuthL()
+	{
+	PwShared* s = iShared;
+	TBuf<64> host;
+	TBuf<96> realm;
+	FromUtf8(host, s->auth_host);
+	FromUtf8(realm, s->auth_realm);
+	TBuf<100> who;
+	TPtrC h = Clip(host, 60);
+	if (s->auth_proxy)
+		who.Format(_L("The proxy %S needs a password"), &h);
+	else
+		who.Format(_L("%S needs a password"), &h);
+	TBuf<100> what;
+	if (realm.Length() && realm.Compare(host))
+		{
+		TPtrC r = Clip(realm, 90);
+		what.Format(_L("\"%S\""), &r);
+		}
+	TBuf<60> user;
+	TBuf<CEikSecretEditor::EMaxSecEdLength> pass;
+	CPwAuthDialog* dlg = new(ELeave) CPwAuthDialog(who, what, user, pass);
+	if (dlg->ExecuteLD(R_PW_AUTH_DIALOG))
+		{
+		ToUtf8(s->auth_user, sizeof(s->auth_user), user);
+		ToUtf8(s->auth_pass, sizeof(s->auth_pass), pass);
+		s->auth_state = PW_ASK_OK;
+		}
+	else
+		s->auth_state = PW_ASK_CANCEL;
+	pass.FillZ();
+	}
+
+void CPwAuthDialog::PreLayoutDynInitL()
+	{
+	((CEikLabel*)Control(EPwDlgAuthWho))->SetTextL(Clip(iWho, 60));
+	if (iRealm.Length())
+		((CEikLabel*)Control(EPwDlgAuthRealm))->SetTextL(Clip(iRealm, 70));
+	else
+		MakeLineVisible(EPwDlgAuthRealm, EFalse);
+	}
+
+TBool CPwAuthDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	((CEikEdwin*)Control(EPwDlgAuthUser))->GetText(iUser);
+	iUser.Trim();
+	if (iUser.Length() == 0)
+		{
+		TryChangeFocusToL(EPwDlgAuthUser);
+		iEikonEnv->InfoMsg(_L("No user name entered"));
+		return EFalse;
+		}
+	((CEikSecretEditor*)Control(EPwDlgAuthPass))->GetText(iPass);
+	return ETrue;
+	}
+
+// A file PsiWeb cannot show: say what it is, then the standard Save as
+// dialog (on the Memory disk if there is one). The engine saves it, with
+// its progress as the busy message and "Saved" at the end.
+void CPwView::AskSaveL()
+	{
+	PwShared* s = iShared;
+	TBuf<64> name, type;
+	FromUtf8(name, s->save_name);
+	FromUtf8(type, s->save_type);
+	for (TInt i = 0; i < name.Length(); i++)
+		{
+		TChar c = name[i];
+		if (c < ' ' || c == '\\' || c == '/' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|')
+			name[i] = '_';
+		}
+	name.Trim();
+	if (name.Length() == 0)
+		name = _L("Download");
+	TBuf<120> what;
+	TPtrC n = Clip(name, 36), t = Clip(type, 30);
+	if (s->save_size >= 0)
+		what.Format(_L("PsiWeb cannot show \"%S\" (%S, %d KB)"), &n, &t, (s->save_size + 1023) / 1024);
+	else
+		what.Format(_L("PsiWeb cannot show \"%S\" (%S)"), &n, &t);
+	if (!iEikonEnv->QueryWinL(what, _L("Save it to a file?")))
+		{
+		s->save_state = PW_ASK_CANCEL;
+		return;
+		}
+	RFs& fs = iCoeEnv->FsSession();
+	TDriveInfo di;
+	TBool memDisk = fs.Drive(di, EDriveD) == KErrNone && di.iType != EMediaNotPresent;
+	TFileName path;
+	path = memDisk ? _L("D:\\Documents\\") : _L("C:\\Documents\\");
+	fs.MkDirAll(path);
+	path.Append(name);
+	TBuf<40> title(_L("Save to file"));
+	CEikFileSaveAsDialog* dlg = new(ELeave) CEikFileSaveAsDialog(&path, &title, NULL, EFalse);
+	if (!dlg->ExecuteLD(R_EIK_DIALOG_FILE_SAVEAS))
+		{
+		s->save_state = PW_ASK_CANCEL;
+		return;
+		}
+	// room for it? (if the size is not known, the engine finds out)
+	TInt drive;
+	TVolumeInfo vol;
+	if (s->save_size >= 0 && RFs::CharToDrive(path[0], drive) == KErrNone && fs.Volume(vol, drive) == KErrNone
+		&& vol.iFree < TInt64(s->save_size) + TInt64(16384))
+		{
+		TBuf<80> m;
+		m.Format(_L("Not enough room on the disk - the file is %d KB"), (s->save_size + 1023) / 1024);
+		iEikonEnv->InfoMsg(m);
+		s->save_state = PW_ASK_CANCEL;
+		return;
+		}
+	fs.MkDirAll(TParsePtrC(path).DriveAndPath());
+	ToUtf8(s->save_path, sizeof(s->save_path), path);
+	s->save_state = PW_ASK_OK;
 	}
 
 // ----- Update PsiWeb ------------------------------------------------------------
