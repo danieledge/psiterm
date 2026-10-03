@@ -1867,10 +1867,16 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 		return;
 	TRect r = Rect();
 	TRect band(r.iTl, TSize(r.Width(), iTitleH));
+	// (0.82) white with black text and a black rule under it, as Psion's own
+	// screens: a band of dark grey (the old look) is made on the 5mx's
+	// passive screen by flickering the pixels, and over a whole band that
+	// shows as streaks; black, white and small greys stay steady
 	gc.SetPenStyle(CGraphicsContext::ENullPen);
 	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	gc.SetBrushColor(KPmDarkGrey);
+	gc.SetBrushColor(KRgbWhite);
 	gc.DrawRect(band);
+	gc.SetBrushColor(KRgbBlack);
+	gc.DrawRect(TRect(band.iTl.iX, band.iBr.iY - 1, band.iBr.iX, band.iBr.iY));
 	// the folder-list button (it shows or hides the folders)
 	TRect btn(band.iTl.iX + 1, band.iTl.iY + 1, band.iTl.iX + iTitleH + 3, band.iBr.iY - 1);
 	PmDrawButtonFace(gc, btn, iPenHead == 10);
@@ -1918,7 +1924,7 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 	TInt maxW = (box.iTl.iX - x) / 2;
 	if (maxW > 10 && iTitleFont->TextWidthInPixels(where) > maxW)
 		TextUtils::ClipToFit(where, *iTitleFont, maxW);
-	gc.SetPenColor(KRgbWhite);
+	gc.SetPenColor(KRgbBlack);
 	gc.DrawText(where, TPoint(x, base));
 	TInt ww = iTitleFont->TextWidthInPixels(where);
 	// the middle: what's happening, or how many messages
@@ -1959,6 +1965,7 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 	TInt mw = iSmallFont->TextWidthInPixels(mid);
 	TInt mx = ml + (mr - ml - mw) / 2;
 	TInt mbase = band.iTl.iY + (iTitleH - iSmallFont->HeightInPixels()) / 2 + iSmallFont->AscentInPixels();
+	gc.SetPenColor(KPmDarkGrey);             // (secondary text: grey, small)
 	gc.DrawText(mid, TPoint(mx, mbase));
 	gc.DiscardFont();
 	}
