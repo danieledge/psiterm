@@ -285,7 +285,9 @@ PSION_SDK=/path/to/psion_cpp_sdk_linux web/build.sh      # dist/PsiWeb.sis
 [docs/BUILDING.md](docs/BUILDING.md) has the details, the source layout and
 the release steps; [mail/README.md](mail/README.md#how-it-works) and
 [web/README.md](web/README.md#how-it-fits-together) explain how PsiMail and
-PsiWeb are put together.
+PsiWeb are put together. [docs/TESTING.md](docs/TESTING.md) describes how
+the apps are tested: host tests, fuzzers, an ARM harness, the Psion emulator
+(including end-to-end network tests through a fake modem) and the device.
 
 ## Support
 
