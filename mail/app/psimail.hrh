@@ -202,6 +202,13 @@ enum TPmLinkTest
 	EPmDlgTest1, EPmDlgTest2, EPmDlgTest3, EPmDlgTest4, EPmDlgTest5
 	};
 
+// Preferences > Screen greys... (0.84): the button, the same id in all
+// three apps (ssh/psigreyui.cpp)
+enum TPmGreyButton
+	{
+	EPmBidGreys = 0x7480
+	};
+
 // Help on PsiMail (0.75): the text with its scroll bar, a custom dialog control (pmhelp.cpp)
 enum TPmCustomControls
 	{

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""mkcalpic.py [OUT.h] - the test picture for PsiTerm's "Which looks best?"
-calibration screen (app/ptgrey.cpp): a small scene, drawn here so it needs no
+"""mkcalpic.py [OUT.h] - the test picture for the "Which looks best?" screen
+(Preferences > Screen greys, in all three programs: ssh/psigreyui.cpp): a small scene, drawn here so it needs no
 photo and no licence, with what makes greys hard on the 5mx's screen:
 
  - a sky that runs smoothly from mid grey to near white, with soft clouds in
@@ -12,8 +12,8 @@ photo and no licence, with what makes greys hard on the 5mx's screen:
    black blobs?);
  - a white house wall with a shadow side.
 
-Writes a C header: PtCalPicW, PtCalPicH and the 8-bit greys row by row
-(0 black .. 255 white). Default OUT: app/ptcalpic.h."""
+Writes a C header: PsiGreyPicW, PsiGreyPicH and the 8-bit greys row by row
+(0 black .. 255 white). Default OUT: ssh/psigreypic.h."""
 import math, os, sys
 
 W, H = 150, 110
@@ -79,13 +79,13 @@ def scene(x, y):
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, '..', 'app', 'ptcalpic.h')
+    out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(here, '..', 'ssh', 'psigreypic.h')
     px = [scene(x, y) for y in range(H) for x in range(W)]
     with open(out, 'w') as f:
-        f.write('// ptcalpic.h - made by tools/mkcalpic.py: do not edit\n')
-        f.write('// The test picture for the calibration screen (app/ptgrey.cpp)\n')
-        f.write('const TInt PtCalPicW = %d;\nconst TInt PtCalPicH = %d;\n' % (W, H))
-        f.write('static const TUint8 PtCalPic[%d] =\n\t{\n' % (W * H))
+        f.write('// psigreypic.h - made by tools/mkcalpic.py: do not edit\n')
+        f.write('// The test picture for the Screen greys screen (ssh/psigreyui.cpp)\n')
+        f.write('const TInt PsiGreyPicW = %d;\nconst TInt PsiGreyPicH = %d;\n' % (W, H))
+        f.write('static const TUint8 PsiGreyPic[%d] =\n\t{\n' % (W * H))
         for i in range(0, len(px), 30):
             f.write('\t' + ','.join(str(p) for p in px[i:i + 30]) + ',\n')
         f.write('\t};\n')

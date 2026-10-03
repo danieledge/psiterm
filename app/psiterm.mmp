@@ -7,9 +7,9 @@ TARGETPATH    \system\apps\psiterm
 PROJECT       ptproj
 SUBPROJECT    psiterm
 
-SOURCE        psiterm.cpp pthelp.cpp glyphs.cpp termsb.cpp ptxfer.cpp pttabs.cpp ptgrey.cpp
+SOURCE        psiterm.cpp pthelp.cpp glyphs.cpp termsb.cpp ptxfer.cpp pttabs.cpp
 SUBPROJECT    psitermssh
-SOURCE        pglinktest.cpp
+SOURCE        pglinktest.cpp psigreyui.cpp
 SUBPROJECT    psiterm
 RESOURCE      psiterm.rss
 

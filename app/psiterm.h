@@ -815,60 +815,19 @@ private:
 // ---------------------------------------------------------------------------
 // EIKON application framework classes
 // ---------------------------------------------------------------------------
-// Tools > Debug > Display calibration (ptgrey.cpp): a full-screen test card
-class MPtGreyObserver
-	{
-public:
-	virtual void GreyScreenDone(TBool aSave, const PsiGrey& aGrey) = 0;
-	};
-
-class CPtGreyScreen : public CCoeControl
-	{
-public:
-	static CPtGreyScreen* NewL(MPtGreyObserver& aObserver);
-	~CPtGreyScreen();
-	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
-private:
-	enum { KRampRows = 72 };
-	enum { KChoices = 4 };             // "Which looks best?": the four versions
-	CPtGreyScreen(MPtGreyObserver& aObserver);
-	void ConstructL();
-	void Draw(const TRect& aRect) const;
-	void DrawChoices(CWindowGc& aGc) const;
-	TKeyResponse ChoiceKeyL(TInt aCode);
-	void MakeChoicesL();
-	static void Version(const PsiGrey& aNow, TInt aWhich, PsiGrey& aOut);
-	void DrawField(CWindowGc& aGc, TInt aField, const TDesC& aText, TInt& aX, TInt aY) const;
-	void Changed();
-	void MakeRampsL();
-	void TimeBlitsL();                 // T: window server against direct screen writes
-	MPtGreyObserver& iObserver;
-	PsiGrey iGrey;
-	TInt iField;
-	TInt iLevel;
-	CFbsBitmap* iRamps;
-	TBool iSimple;                     // "Which looks best?" (A: the detailed settings)
-	TInt iChoice;                      // 0..KChoices-1
-	PsiGrey iVersions[KChoices];
-	CFbsBitmap* iPics[KChoices];       // the test picture as each version draws it
-	};
-
-class CPsiTermAppUi : public CEikAppUi, public MPtGreyObserver
+class CPsiTermAppUi : public CEikAppUi
 	{
 public:
 	void ConstructL();
 	~CPsiTermAppUi();
-	void GreyScreenDone(TBool aSave, const PsiGrey& aGrey);
+	void ScreenGreysL();               // Preferences > Screen greys... (ssh/psigreyui.cpp)
 private:
 	// Reading mode (View > Reading mode; ssh/psidisp.h): on while PsiTerm
 	// is in front, off in the background, at switch-on and on closing
 	void UpdateReading(TBool aEnterOnly = EFalse);
-	void GreyScreenL();
 	TPsiReading iReading;
 	TBool iForeground;
-	CPtGreyScreen* iGreyScreen;
-	CIdle* iGreyCloser;
-	static TInt GreyCloseCallback(TAny* aSelf);
+	TBool iGreysOpen;                  // the greys screen is up (Reading mode stays off)
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
 	void HandleSwitchOnEventL(CCoeControl* aDestination);

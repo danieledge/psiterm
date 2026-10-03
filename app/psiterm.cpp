@@ -31,6 +31,7 @@
 #include "pticons.h"
 #include "psilink.h"
 #include "pglinktest.h"
+#include "psigreyui.h"
 
 static void UseSharedLink(RFs& aFs, TPsiSettings& aSettings);
 static void SaveSharedLink(RFs& aFs, const TPsiSettings& aSettings);
@@ -5167,8 +5168,13 @@ void CAppearanceDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPtDlgColourText))->SetCurrentItem((iSettings.iDisplay & KPtDisplayLightText) ? 1 : 0);
 	}
 
-TBool CAppearanceDialog::OkToExitL(TInt /*aButtonId*/)
+TBool CAppearanceDialog::OkToExitL(TInt aButtonId)
 	{
+	if (aButtonId == EPtBidGreys)
+		{
+		((CPsiTermAppUi*)iEikonEnv->AppUi())->ScreenGreysL();
+		return EFalse;                   // (the dialog stays open)
+		}
 	iSettings.iTheme = ((CEikChoiceList*)Control(EPtDlgTheme))->CurrentItem();
 	iSettings.iCursor = ((CEikChoiceList*)Control(EPtDlgCursor))->CurrentItem();
 	iSettings.iBlink = ((CEikChoiceList*)Control(EPtDlgBlink))->CurrentItem() == 1;
@@ -5353,64 +5359,35 @@ void CPsiTermAppUi::UpdateReading(TBool aEnterOnly)
 	{
 	if (!iView)
 		return;
-	TBool want = iForeground && (iView->Settings().iDisplay & KPtDisplayReading) && !iGreyScreen;
+	TBool want = iForeground && (iView->Settings().iDisplay & KPtDisplayReading) && !iGreysOpen;
 	if (want)
 		iReading.Enter(iCoeEnv->FsSession(), KUidPsiTerm);
 	else if (!aEnterOnly)
 		iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);
 	}
 
-// Tools > Debug > Display calibration...
-void CPsiTermAppUi::GreyScreenL()
+// Preferences > Screen greys...: the shared greys screen (ssh/psigreyui.cpp)
+// on top of the Preferences dialog, with Reading mode off meanwhile (the
+// screen as the user set it). A saved choice applies to the terminal at once.
+void CPsiTermAppUi::ScreenGreysL()
 	{
-	if (iGreyScreen && !iGreyScreen->IsVisible() && !(iGreyCloser && iGreyCloser->IsActive()))
+	if (iGreysOpen)
+		return;
+	iGreysOpen = ETrue;
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);
+	PsiGrey grey;
+	TInt r = 0;
+	TRAPD(err, r = PsiGreyScreenL(grey));
+	iGreysOpen = EFalse;
+	UpdateReading();
+	User::LeaveIfError(err);
+	if (r > 0)
 		{
-		delete iGreyScreen;              // closed, but its closer could not be made
-		iGreyScreen = NULL;
+		iView->SetGreys(grey);
+		iEikonEnv->InfoMsg(_L("Greys saved - PsiMail and PsiWeb use them from the next picture or page"));
 		}
-	if (iGreyScreen)
-		return;                          // (open, or closing)
-	iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);   // (the screen as the user set it)
-	iGreyScreen = CPtGreyScreen::NewL(*this);
-	TRAPD(err, AddToStackL(iGreyScreen, ECoeStackPriorityDialog));
-	if (err != KErrNone)
-		{
-		delete iGreyScreen;
-		iGreyScreen = NULL;
-		User::Leave(err);
-		}
-	}
-
-void CPsiTermAppUi::GreyScreenDone(TBool aSave, const PsiGrey& aGrey)
-	{
-	if (aSave)
-		{
-		TInt r = PsiGreySave(iCoeEnv->FsSession(), aGrey);
-		if (r == KErrNone)
-			{
-			iView->SetGreys(aGrey);
-			iEikonEnv->InfoMsg(_L("Saved - PsiMail and PsiWeb use it from the next picture or page"));
-			}
-		else
-			iEikonEnv->InfoMsg(_L("Not saved - the internal disk is full or in use"));
-		}
-	// (called from the screen's own key handler: it goes from the stack and
-	// the screen now, and is deleted once that handler has returned)
-	RemoveFromStack(iGreyScreen);
-	iGreyScreen->MakeVisible(EFalse);
-	if (!iGreyCloser)
-		iGreyCloser = CIdle::New(CActive::EPriorityStandard);
-	if (iGreyCloser && !iGreyCloser->IsActive())
-		iGreyCloser->Start(TCallBack(GreyCloseCallback, this));
-	}
-
-TInt CPsiTermAppUi::GreyCloseCallback(TAny* aSelf)
-	{
-	CPsiTermAppUi* self = (CPsiTermAppUi*)aSelf;
-	delete self->iGreyScreen;
-	self->iGreyScreen = NULL;
-	self->UpdateReading();
-	return 0;
+	else if (r < 0)
+		iEikonEnv->InfoMsg(_L("Not saved - the internal disk is full or in use"));
 	}
 
 // ----- the toolbar ---------------------------------------------------------------
@@ -5534,13 +5511,6 @@ void CPsiTermAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
 CPsiTermAppUi::~CPsiTermAppUi()
 	{
 	iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);   // the user's contrast and backlight back
-	delete iGreyCloser;
-	if (iGreyScreen)
-		{
-		if (iGreyScreen->IsVisible())
-			RemoveFromStack(iGreyScreen);    // (still open: on the stack)
-		delete iGreyScreen;
-		}
 	if (iView)
 		{
 		RemoveFromStack(iView);
@@ -6153,9 +6123,6 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		SaveSettings(s);
 		UpdateReading();
 		iEikonEnv->InfoMsg((s.iDisplay & KPtDisplayReading) ? _L("Reading mode on") : _L("Reading mode off"));
-		break;
-	case EPtCmdGreyCal:                       // Tools > Debug > Display calibration...
-		GreyScreenL();
 		break;
 	case EPtCmdTbConnect:                     // the toolbar's first button
 		if (iView->SshActive() || iView->ReconnectWaiting())

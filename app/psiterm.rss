@@ -232,8 +232,7 @@ RESOURCE MENU_PANE r_pt_debug_menu
 		MENU_ITEM { command=EPtCmdCharInfo; txt="Character codes"; },
 		MENU_ITEM { command=EPtCmdCheckTabs; txt="Check tmux tabs"; },
 		MENU_ITEM { command=EPtCmdScreenshot; txt="Screenshot"; },
-		MENU_ITEM { command=EPtCmdSendSize; txt="Type screen size"; },
-		MENU_ITEM { command=EPtCmdGreyCal; txt="Display calibration..."; }
+		MENU_ITEM { command=EPtCmdSendSize; txt="Type screen size"; }
 		};
 	}
 
@@ -616,12 +615,14 @@ RESOURCE DIALOG r_pt_snippet_edit_dialog
 	}
 
 // Preferences (Shift+Ctrl+K): theme, cursor, bell, start screen. The status
-// line is a tick box on the View menu.
+// line is a tick box on the View menu. Screen greys... opens the greys
+// screen shared with PsiMail and PsiWeb (ssh/psigreyui.cpp; docs/display.md)
+// on top; the dialog is still there when it closes.
 RESOURCE DIALOG r_pt_appearance_dialog
 	{
 	title="Preferences";
 	flags=EEikDialogFlagWait;
-	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	buttons=r_pt_appearance_buttons;
 	items=
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Theme"; id=EPtDlgTheme; control=CHOICELIST { array_id=r_pt_theme_array; }; },
@@ -635,6 +636,16 @@ RESOURCE DIALOG r_pt_appearance_dialog
 
 // docs/display.md: colours meant for a black background are made dark
 // enough to read on the Psion's white (the standard), or as before 0.81
+RESOURCE DLG_BUTTONS r_pt_appearance_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPtBidGreys; button=CMBUT { txt="Screen greys..."; }; hotkey='G'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="OK"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
 RESOURCE ARRAY r_pt_colour_text_array
 	{
 	items={ LBUF { txt="Dark greys"; }, LBUF { txt="Lighter greys"; } };

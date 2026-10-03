@@ -1,8 +1,8 @@
-// ptcalpic.h - made by tools/mkcalpic.py: do not edit
-// The test picture for the calibration screen (app/ptgrey.cpp)
-const TInt PtCalPicW = 150;
-const TInt PtCalPicH = 110;
-static const TUint8 PtCalPic[16500] =
+// psigreypic.h - made by tools/mkcalpic.py: do not edit
+// The test picture for the Screen greys screen (ssh/psigreyui.cpp)
+const TInt PsiGreyPicW = 150;
+const TInt PsiGreyPicH = 110;
+static const TUint8 PsiGreyPic[16500] =
 	{
 	150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,
 	150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,150,

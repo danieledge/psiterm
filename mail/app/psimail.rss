@@ -700,13 +700,26 @@ RESOURCE ARRAY r_pm_options_lines
 		};
 	}
 
-// Preferences: two pages (0.74), General and New mail (pmauto.cpp)
+// Preferences: two pages (0.74), General and New mail (pmauto.cpp).
+// Screen greys... opens the greys screen shared with PsiTerm and PsiWeb
+// (ssh/psigreyui.cpp; docs/display.md) on top; the dialog is still there
+// when it closes.
 RESOURCE DIALOG r_pm_prefs_dialog
 	{
 	title="Preferences";
 	flags=EEikDialogFlagWait;
-	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	buttons=r_pm_prefs_buttons;
 	pages=r_pm_prefs_pages;
+	}
+
+RESOURCE DLG_BUTTONS r_pm_prefs_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPmBidGreys; button=CMBUT { txt="Screen greys..."; }; hotkey='G'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="OK"; }; hotkey=EEikBidOk; flags=0; }
+		};
 	}
 
 RESOURCE ARRAY r_pm_prefs_pages
@@ -792,7 +805,7 @@ RESOURCE ARRAY r_pm_prefs_lines
 	}
 
 // docs/display.md: contrast up and the backlight on while a message is
-// open (how much is set in PsiTerm's Display calibration)
+// open (how much is set in Preferences > Screen greys)
 RESOURCE ARRAY r_pm_reading_array
 	{
 	items=

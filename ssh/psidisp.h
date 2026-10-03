@@ -6,7 +6,7 @@
 // back as they were when the program goes to the background, closes, the
 // Psion is switched off and on, or Reading mode is turned off. How many
 // notches, and whether the light stays on, are in PsiGrey.ini ("reading"),
-// set in PsiTerm's Display calibration.
+// set in Preferences > Screen greys (ssh/psigreyui.cpp).
 //
 // Putting things back:
 //   - only what Reading mode itself set: if the contrast is no longer what

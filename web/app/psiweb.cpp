@@ -21,6 +21,7 @@
 #include "pwicons.h"
 #include "psilink.h"
 #include "pglinktest.h"
+#include "psigreyui.h"
 
 // The link settings are shared with PsiTerm and PsiMail (psilink.h)
 static void UseSharedLink(RFs& aFs, TPwSettings& aSettings)
@@ -1188,8 +1189,20 @@ void CPwPrefsDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPwDlgText))->SetCurrentItem((iSettings.iDisplay & KPwDisplayScaledText) ? 1 : 0);
 	}
 
-TBool CPwPrefsDialog::OkToExitL(TInt /*aButtonId*/)
+TBool CPwPrefsDialog::OkToExitL(TInt aButtonId)
 	{
+	if (aButtonId == EPwBidGreys)
+		{
+		// the greys screen shared with PsiTerm and PsiMail, on top of this
+		// dialog; the engine reads PsiGrey.ini at each page load
+		PsiGrey grey;
+		TInt r = PsiGreyScreenL(grey);
+		if (r > 0)
+			iEikonEnv->InfoMsg(_L("Greys saved - used from the next page"));
+		else if (r < 0)
+			iEikonEnv->InfoMsg(_L("Not saved - the internal disk is full or in use"));
+		return EFalse;                        // (the dialog stays open)
+		}
 	TInt proxy = ((CEikChoiceList*)Control(EPwDlgProxy))->CurrentItem() == 1;
 	TBuf<60> host;
 	GetEdwinText(host, EPwDlgProxyHost);

@@ -31,6 +31,7 @@
 #include "pmcontacts.h"
 #include "psilink.h"
 #include "pglinktest.h"
+#include "psigreyui.h"
 
 // how many of the newest messages to download ahead after a sync
 static TInt PrefetchCount(const TPmSettings& aSettings)
@@ -3139,8 +3140,20 @@ void CPmPrefsDialog::PreLayoutDynInitL()
 	NewMailInitL();                           // the New mail page (pmauto.cpp)
 	}
 
-TBool CPmPrefsDialog::OkToExitL(TInt /*aButtonId*/)
+TBool CPmPrefsDialog::OkToExitL(TInt aButtonId)
 	{
+	if (aButtonId == EPmBidGreys)
+		{
+		// the greys screen shared with PsiTerm and PsiWeb, on top of this
+		// dialog; the engine reads PsiGrey.ini for every picture it sets out
+		PsiGrey grey;
+		TInt r = PsiGreyScreenL(grey);
+		if (r > 0)
+			iEikonEnv->InfoMsg(_L("Greys saved - used from the next picture"));
+		else if (r < 0)
+			iEikonEnv->InfoMsg(_L("Not saved - the internal disk is full or in use"));
+		return EFalse;                        // (the dialog stays open)
+		}
 	iSort = ChoiceListCurrentItem(EPmDlgSort);
 	TInt ahead = NumberEditorValue(EPmDlgPrefetch);
 	iSettings.iPrefetch = ahead > 0 ? ahead : -1;

@@ -69,3 +69,10 @@ enum TPwLinkTest
 	EPwBidTest = 0x7400,
 	EPwDlgTest1, EPwDlgTest2, EPwDlgTest3, EPwDlgTest4, EPwDlgTest5
 	};
+
+// Preferences > Screen greys... (0.84): the button, the same id in all
+// three apps (ssh/psigreyui.cpp)
+enum TPwGreyButton
+	{
+	EPwBidGreys = 0x7480
+	};

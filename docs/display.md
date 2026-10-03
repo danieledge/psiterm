@@ -8,7 +8,7 @@ Every change can be turned off. All standards are as listed.
 
 | Switch | Where | Standard | Stored in |
 |---|---|---|---|
-| Grey calibration on/off | PsiTerm: Tools > Debug > Display calibration (*Calibration on/off*) | on | `C:\System\Data\PsiGrey.ini`, shared by all three programs |
+| Grey calibration on/off | Any of the three: Tools > Preferences > Screen greys, then A (*Calibration on/off*) | on | `C:\System\Data\PsiGrey.ini`, shared by all three programs |
 | Pictures: error diffusion or ordered | the same screen (*Pictures: error diffusion / ordered*) | error diffusion | `PsiGrey.ini` |
 | Reading mode: notches of contrast, light on | the same screen (*Reading mode: contrast +N*, *light on / light as set*) | +1, light on | `PsiGrey.ini` |
 | Reading mode in PsiTerm | View > Reading mode (tick box) | off | `PsiTerm.ini`, a new byte at the end (v14, bit 0) |
@@ -45,7 +45,7 @@ lv = 0 12 26 42 60 78 98 118 137 157 177 195 213 229 243 255
 
 This is the linear ramp blended 35% towards a smoothstep (`x + 0.35·(x²(3−2x) − x)`), with gamma 1.0. It is a mild S-curve: it assumes level 1 looks like 12 rather than 17, and level 14 like 243 rather than 238. Input greys near black and near white are therefore pushed one level further in, so that they stay visibly different from black and white. The middle is left almost as it was.
 
-It is deliberately mild. The real curve depends on the contrast setting and the temperature, and can't be measured from here. The calibration screen exists to fit it to Dan's actual panel. `tools/mkgrey.py` computes the table with the same formula as PsiTerm (and checks it against the header).
+It is deliberately mild. The real curve depends on the contrast setting and the temperature, and can't be measured from here. The Screen greys screen exists to fit it to Dan's actual panel. `tools/mkgrey.py` computes the table with the same formula as PsiTerm (and checks it against the header).
 
 ### PsiGrey.ini
 
@@ -63,7 +63,7 @@ reading 1 1
 table 0 12 26 42 60 78 98 118 137 157 177 195 213 229 243 255
 ```
 
-- It is written only by PsiTerm's calibration screen: to `PsiGrey.ini~`, then renamed over the old file.
+- It is written only by the Screen greys screen (in any of the three programs): to `PsiGrey.ini~`, then renamed over the old file.
 - The readers need only `calibrate`, `dither` and `table`. The writer computes the table (it needs `pow`), so the engines need no floating point.
 - If the file is missing, or a line doesn't parse, the standard is used. Every value is clamped and the table is made strictly increasing (`psigrey_parse`, `psigrey_fix`).
 
@@ -71,7 +71,7 @@ table 0 12 26 42 60 78 98 118 137 157 177 195 213 229 243 255
 
 - **PsiMail's engine** reads it again for every picture it sets out (a few hundred bytes), so a saved change applies to the next picture. Pictures already set out keep their greys, because their source `.img` is deleted after decoding.
 - **PsiWeb's engine** reads it when it starts and at each page load. A change is redrawn from the next page.
-- **PsiTerm** reads it at start, and at once after the calibration screen saves.
+- **PsiTerm** reads it at start, and at once after its own Screen greys screen saves. (A change saved from PsiMail or PsiWeb reaches PsiTerm when it next starts.)
 
 ### Where it is applied
 
@@ -85,7 +85,14 @@ table 0 12 26 42 60 78 98 118 137 157 177 195 213 229 243 255
 
 ### How to calibrate
 
-**The simple way (0.82):** Tools > Debug > Display calibration... opens on *Which looks best?*. A test picture (`app/ptcalpic.h`, drawn by `tools/mkcalpic.py`) and a line of coloured terminal text, drawn four ways side by side:
+**Where it is (0.84):** in every program, Tools > Preferences... has a **Screen greys...** button (Ctrl+G). It opens the full-screen greys screen on top of the Preferences dialog; when it closes, Preferences is still there. The screen is shared code, compiled into all three programs as `ssh/pglinktest.cpp` is: `ssh/psigreyui.cpp` and `.h` (`CPsiGreyScreen`, and `PsiGreyScreenL`, which runs it with the program's loop running and saves). Its test picture is `ssh/psigreypic.h`, drawn by `tools/mkcalpic.py`. After saving:
+- PsiTerm redraws its colours at once ("Greys saved - PsiMail and PsiWeb use them from the next picture or page");
+- PsiMail uses them from the next picture it sets out ("Greys saved - used from the next picture");
+- PsiWeb from the next page ("Greys saved - used from the next page").
+
+It used to be PsiTerm's Tools > Debug > Display calibration; it moved so that it isn't hidden among the developer tools, and so that every program has it.
+
+**The simple way:** the screen opens on *Which looks best?*. A test picture and a line of coloured terminal text, drawn four ways side by side:
 
 | Key | Version | Settings |
 |---|---|---|
@@ -94,12 +101,12 @@ table 0 12 26 42 60 78 98 118 137 157 177 195 213 229 243 255
 | 3 | Darker shadows | gamma 0.60, curve 35 |
 | 4 | As before | calibration off |
 
-Look at the doorway and the tree (dark detail), the clouds (near white) and the ball (smooth shading). 1–4 or Left/Right choose, **Enter** uses that version in all three programs, **Esc** closes, and **A** opens the detailed settings below. The other settings (pictures' dither, Reading mode) are kept.
+Look at the doorway and the tree (dark detail), the clouds (near white) and the ball (smooth shading). 1–4 or Left/Right choose. **Up/Down fine-tune** the chosen version: each press is gamma ±0.10 (Up is lighter: gamma above 1 takes the levels to look darker than their numbers, so `psigrey_compute` maps every grey lighter), within 0.50–2.50. That version's picture and text are drawn again at once, and its label says so ("Standard, lighter +2", "Darker shadows, darker -1"; on two lines when it doesn't fit). *As before (off)* has no fine-tuning (an infoprint says so). **Enter** saves the chosen version with its fine-tuning for all three programs, **Esc** closes, and **A** opens the detailed settings below. The other settings (pictures' dither, Reading mode) are kept. When the screen opens, a saved setting that is one of these (the standard curve, no brightness or level nudges, a gamma a whole number of steps from a version's) shows as that version with its fine-tuning.
 
 **The detailed way:**
 
 1. On the Psion, set the screen contrast as you normally use it (Control panel), and switch the backlight to how you read.
-2. In PsiTerm: Tools > Debug > **Display calibration...**. The screen shows:
+2. In any of the three: Tools > Preferences > **Screen greys...**, then **A**. The screen shows:
    - the 16 levels as bars, each as it is;
    - three ramps, drawn with the settings as they stand:
      - pictures (error diffusion, or the ordered pattern if that is chosen);
@@ -210,7 +217,7 @@ While a page, a message or the terminal is being read:
 - PsiTerm: View has 8 items with Reading mode. It has no shortcut: all 26 Shift+Ctrl letters are taken by menus or snippet keys.
 - PsiWeb: View has 7 items, with Shift+Ctrl+R (a free shifted letter).
 - PsiMail: a Preferences line, because View and Tools are both at 8.
-- The calibration screen is the 8th item in PsiTerm's Tools > Debug cascade.
+- The greys screen is a button in each program's Preferences dialog (0.84; it was the 8th item in PsiTerm's Tools > Debug cascade).
 
 **Tested in the 5mx emulator:** the menus open and the tick, the infoprint ("Reading mode on") and the preferences lines all work, with no panics. The emulator does not show contrast or the backlight, so the visible effect needs the device.
 
@@ -273,7 +280,7 @@ Each program's text and UI colours were checked:
 
 ## 6. Direct screen access: measured, not built
 
-**The measurement.** I measured it with PsiTerm's calibration screen: press **T** there. It times 10 full 640×240 frames each way, then shows the directly written rows for 2 s and says where the screen is. Results in the 5mx emulator (emulated time):
+**The measurement.** I measured it with PsiTerm's calibration screen: **T** there (a developer tool, removed in 0.84 when the screen became shared). It times 10 full 640×240 frames each way, then shows the directly written rows for 2 s and says where the screen is. Results in the 5mx emulator (emulated time):
 
 | Path | 10 frames | Per frame |
 |---|---|---|
@@ -295,7 +302,7 @@ So the gain is real: about 33 ms per full frame, roughly 10–25% of a Page Down
 3. **The window server's copy goes stale.** The page is a backed-up window. After direct writes, a menu or dialog closing would restore old content until the next full redraw.
 4. **It isn't a published interface.** The screen address is a kernel mapping that user code happens to be able to write on the 5mx. Other ER5 machines (Revo, netBook) and a future ROM may differ.
 
-PsiWeb therefore keeps the window-server path. The **T** tool stays in Debug so the figure can be checked on the real 5mx.
+PsiWeb therefore keeps the window-server path. (The **T** tool was removed in 0.84; `app/ptgrey.cpp` in git history has it, should the real 5mx's figure be wanted.)
 
 ## 7. Temporal "extra greys": evaluated, not built
 
@@ -328,21 +335,21 @@ The idea is to alternate a pixel between two adjacent levels on successive redra
 
 ## For Dan to check on the 5mx
 
-1. **Calibration:** PsiTerm > Tools > Debug > Display calibration. Adjust until the picture ramp is smooth and the 16 patches step evenly. Save. Then compare a PsiMail picture and a PsiWeb page with Show pictures.
+1. **Calibration:** Tools > Preferences > Screen greys (in any of the three). Fine-tune with Up/Down, or press A and adjust until the picture ramp is smooth and the 16 patches step evenly. Save. Then compare a PsiMail picture and a PsiWeb page with Show pictures.
 2. **The extremes:** press Del (standard), then turn *Calibration off* and choose *Pictures: ordered*. The old look should come back.
 3. **Reading mode:**
    - Turn it on in each program and check the contrast and the light.
    - Switch to another program and back, switch off and on, and close the program. The contrast and backlight should always come back.
    - Change the contrast by hand while in Reading mode: yours should stay.
 4. **Fonts:** PsiWeb > Preferences > Text: Sharp against Scaled, on 68k.news and Wikipedia. Zoom in and out (other sizes use the scaled fonts).
-5. **The T key** on the calibration screen: the real 5mx's per-frame times for the record.
 
 ## Files
 
 **New:**
 - `ssh/psigrey.h`: the calibration's model, file and parser.
 - `ssh/psidisp.h`: Reading mode and the PsiGrey.ini load and save, for the apps.
-- `app/ptgrey.cpp`: the calibration screen and the T timing.
+- `ssh/psigreyui.cpp`, `.h`: the Screen greys screen, shared by all three (0.84; before that `app/ptgrey.cpp`, with the T timing).
+- `ssh/psigreypic.h`: its test picture (before 0.84 `app/ptcalpic.h`).
 - `tools/mkgrey.py`: the standard table and the chart.
 - `docs/display-chart.png`.
 - `web/links/mkstrike.py`: the pre-drawn fonts.

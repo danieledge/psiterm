@@ -26,7 +26,7 @@
  *     nudge 0 0 ... 0      (16 values)
  *     reading 1 1          Reading mode: contrast notches up, light on
  *     table 0 12 26 ...    ... and the table they make (16 values)
- * Written by PsiTerm's Tools > Debug > Display calibration (to a temporary
+ * Written by Preferences > Screen greys in any of the three (to a temporary
  * file, then renamed over the old one). A missing file, or one that does
  * not parse, means the standard settings. Readers need only "calibrate",
  * "dither" and "table": the table is computed by the writer (with pow),
