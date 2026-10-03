@@ -391,7 +391,7 @@ void CPmPicture::Draw(CGraphicsContext& aGc, const TPoint& aTopLeft, const TRect
 		{
 		aGc.UseFont(iFont);
 		aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
-		aGc.SetPenColor(iFailed ? TRgb(85, 85, 85) : KRgbBlack);
+		aGc.SetPenColor(KRgbBlack);          // (failed or not: grey text is hard to read on the 5mx)
 		TRect tr(r.iTl.iX + 25, r.iTl.iY, r.iBr.iX - 4, r.iBr.iY);
 		TInt base = (tr.Height() - iFont->HeightInPixels()) / 2 + iFont->AscentInPixels();
 		aGc.DrawText(iText, tr, base, CGraphicsContext::ELeft, 0);

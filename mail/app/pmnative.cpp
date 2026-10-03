@@ -1965,7 +1965,7 @@ void CPmView::DrawTitle(CWindowGc& gc) const
 	TInt mw = iSmallFont->TextWidthInPixels(mid);
 	TInt mx = ml + (mr - ml - mw) / 2;
 	TInt mbase = band.iTl.iY + (iTitleH - iSmallFont->HeightInPixels()) / 2 + iSmallFont->AscentInPixels();
-	gc.SetPenColor(KPmDarkGrey);             // (secondary text: grey, small)
+	gc.SetPenColor(KRgbBlack);               // (small, but black: small grey text is hard to read on the 5mx)
 	gc.DrawText(mid, TPoint(mx, mbase));
 	gc.DiscardFont();
 	}

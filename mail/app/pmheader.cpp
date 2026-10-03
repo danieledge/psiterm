@@ -179,7 +179,7 @@ void CPmHdChip::DrawIn(CGraphicsContext& aGc, const TRect& aBox, const CFont* aF
 	aGc.SetPenColor(KRgbBlack);
 	aGc.DrawText(iName, TPoint(x, base));
 	x += aFont->TextWidthInPixels(iName) + 8;
-	aGc.SetPenColor(KPmDarkGrey);
+	aGc.SetPenColor(KRgbBlack);              // (black: grey text is hard to read on the 5mx)
 	aGc.DrawText(iSize, TPoint(x, base));
 	aGc.DiscardFont();
 	}
@@ -759,7 +759,10 @@ void CPmView::HeaderFormatL(CRichText& aText)
 			cm.SetAttrib(EAttFontHeight);
 			break;
 		case EHdGrey:
-			cf.iFontPresentation.iTextColor = KPmDarkGrey;
+			// (0.82) the secondary parts (address, date, To and Cc) stay
+			// smaller but are black: small dark grey text is made on the
+			// 5mx's passive screen by flickering pixels, and was hard to read
+			cf.iFontPresentation.iTextColor = KRgbBlack;
 			cm.SetAttrib(EAttColor);
 			break;
 		case EHdUnder:
