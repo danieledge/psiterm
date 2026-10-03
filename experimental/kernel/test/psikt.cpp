@@ -22,6 +22,7 @@
 #include <f32file.h>
 #include <e32hal.h>
 #include <e32svr.h>
+#include <c32comm.h>
 #include <eikcmds.hrh>
 #include "psikt.hrh"
 #include "../psikern.h"
@@ -31,7 +32,7 @@ const TInt KMaxLines=40;
 const TInt KLineLen=80;
 _LIT(KLogName,"PsiKern.log");
 _LIT(KOldName,"PsiKern.old");
-_LIT(KPsiKtVersion,"0.2");
+_LIT(KPsiKtVersion,"0.3");
 
 // the ROM the driver's ordinals come from (ekern_rom.def)
 const TInt KRomMajor=1, KRomMinor=5, KRomBuild=260;
@@ -164,6 +165,147 @@ void TPsiKtLog::Line(const TDesC& aText)
 	iFile.Flush();
 	}
 
+// ----- the serial port -----------------------------------------------------
+
+// COMM::0 (UART2), opened as the apps open it (psiglue.cpp OpenSerial)
+class TPsiKtSerial
+	{
+public:
+	TPsiKtSerial() : iServerOpen(EFalse), iOpen(EFalse) {}
+	TInt Open(TBps aRate);
+	TInt SetRate(TBps aRate);
+	TInt Talk(const TDesC8& aCommand, TDes8& aReply, TInt aTimeoutMs);
+	void Close();
+private:
+	RCommServ iServer;
+	RComm iComm;
+	TBool iServerOpen, iOpen;
+	};
+
+TInt TPsiKtSerial::Open(TBps aRate)
+	{
+	TInt r=User::LoadPhysicalDevice(_L("EUART1"));
+	if (r==KErrNone || r==KErrAlreadyExists)
+		r=User::LoadLogicalDevice(_L("ECOMM"));
+	if (r==KErrNone || r==KErrAlreadyExists)
+		r=StartC32();
+	if (r==KErrNone || r==KErrAlreadyExists)
+		{
+		r=iServer.Connect();
+		if (r==KErrNone)
+			{
+			iServerOpen=ETrue;
+			r=iServer.LoadCommModule(_L("ECUART"));
+			}
+		}
+	if (r==KErrNone || r==KErrAlreadyExists)
+		r=iComm.Open(iServer,_L("COMM::0"),ECommExclusive);
+	if (r!=KErrNone)
+		{
+		Close();
+		return r;
+		}
+	iOpen=ETrue;
+	iComm.SetReceiveBufferLength(4096);
+	r=SetRate(aRate);
+	if (r!=KErrNone)
+		return r;
+	// (DTR and the UART only come on with the first read or write)
+	iComm.SetSignals(KSignalDTR|KSignalRTS,0);
+	TRequestStatus st;
+	TBuf8<4> none;
+	iComm.Read(st,none,0);
+	User::WaitForRequest(st);
+	User::After(100000);
+	return KErrNone;
+	}
+
+TInt TPsiKtSerial::SetRate(TBps aRate)
+	{
+	TCommConfig cfg;
+	iComm.Config(cfg);
+	cfg().iRate=aRate;
+	cfg().iDataBits=EData8;
+	cfg().iStopBits=EStop1;
+	cfg().iParity=EParityNone;
+	cfg().iFifo=EFifoEnable;
+	cfg().iTerminatorCount=0;
+	cfg().iHandshake=0;                  // the Atom has no RTS/CTS
+	iComm.Cancel();
+	return iComm.SetConfig(cfg);
+	}
+
+// Sends aCommand and collects the answer until OK or ERROR, or aTimeoutMs.
+// KErrNone for OK, KErrGeneral for ERROR, KErrTimedOut for nothing.
+TInt TPsiKtSerial::Talk(const TDesC8& aCommand, TDes8& aReply, TInt aTimeoutMs)
+	{
+	aReply.Zero();
+	if (!iOpen)
+		return KErrNotReady;
+	iComm.ResetBuffers();
+	TRequestStatus ws;
+	iComm.Write(ws,aCommand);
+	User::WaitForRequest(ws);
+	if (ws.Int()!=KErrNone)
+		return ws.Int();
+	RTimer timer;
+	TInt r=timer.CreateLocal();
+	if (r!=KErrNone)
+		return r;
+	TRequestStatus ts;
+	timer.After(ts,aTimeoutMs*1000);
+	r=KErrTimedOut;
+	TBuf8<64> piece;
+	for (;;)
+		{
+		TRequestStatus rs;
+		iComm.ReadOneOrMore(rs,piece);
+		User::WaitForRequest(rs,ts);
+		if (rs==KRequestPending)
+			{
+			iComm.ReadCancel();
+			User::WaitForRequest(rs);
+			break;                           // the timer: out of time
+			}
+		if (rs.Int()!=KErrNone)
+			{
+			r=rs.Int();
+			break;
+			}
+		if (aReply.Length()+piece.Length()<=aReply.MaxLength())
+			aReply.Append(piece);
+		if (aReply.Find(_L8("OK\r\n"))>=0)
+			{
+			r=KErrNone;
+			break;
+			}
+		if (aReply.Find(_L8("ERROR"))>=0)
+			{
+			r=KErrGeneral;
+			break;
+			}
+		}
+	if (ts==KRequestPending)
+		{
+		timer.Cancel();
+		User::WaitForRequest(ts);
+		}
+	timer.Close();
+	return r;
+	}
+
+void TPsiKtSerial::Close()
+	{
+	if (iOpen)
+		{
+		iComm.Cancel();
+		iComm.Close();
+		}
+	if (iServerOpen)
+		iServer.Close();
+	iOpen=iServerOpen=EFalse;
+	}
+
 // ----- the view ------------------------------------------------------------
 
 class CPsiKtView : public CCoeControl
@@ -276,17 +418,40 @@ private:
 	void SpeedL();
 	void InvertL();
 	void CurvesL();
+	void SerialL();
+	void SerialFastL();
+	void RomL();
+	void KeepCurveL();
+	void HandleKeyEventL(const TKeyEvent& aKeyEvent,TEventCode aType);
 	TBool RomOk();
+	TBool PaletteReady();
+	void ReadPalette();
+	TInt ApplyCurve(TInt aCurve);
+	void RunSpeed(TInt& aLoopMs, TInt& aCopyMs, TInt& aRomMs);
+	static TInt KeepTick(TAny* aSelf);
+	void Keep();
 	CPsiKtView* iView;
 	TPsiKtLog iLog;
 	TBuf<40> iCrashed;              // the step the last run stopped in, if any
 	RPsiKern iKern;
 	TBool iKernOpen;
+	// the palette as EPOC set it, and a curve kept on it
+	TInt iOrig[16];
+	TInt iUsed;
+	TBool iBlackHigh;
+	TInt iApplied[16];                // the levels we wrote, or -1
+	TInt iKeepCurve;                  // -1: none kept
+	TBool iPicking;                   // keys 0-6 choose a curve
+	TInt iReapplied;                  // how often EPOC set its own again
+	CPeriodic* iKeeper;
 	};
 
 void CPsiKtAppUi::ConstructL()
 	{
 	BaseConstructL();
+	iKeepCurve=-1;
+	for (TInt k=0; k<16; k++)
+		iApplied[k]=-1;
 	iView=new(ELeave) CPsiKtView;
 	iView->ConstructL(ClientRect());
 	AddToStackL(iView);
@@ -315,6 +480,7 @@ void CPsiKtAppUi::ConstructL()
 
 CPsiKtAppUi::~CPsiKtAppUi()
 	{
+	delete iKeeper;
 	if (iKernOpen)
 		{
 		iKern.Restore();
@@ -568,14 +734,14 @@ static TInt TicksToMs(TUint aTicks)
 	return (TInt)((TInt64((TInt)aTicks)*TInt64(period.Int())/TInt64(1000)).Low());
 	}
 
-// The CPU and the memory, timed by the tick. No driver.
-void CPsiKtAppUi::SpeedL()
+// The CPU, the memory and ROM code, timed by the tick. No driver.
+//  - aLoopMs: 2,000,000 turns of a loop of a few instructions, in RAM;
+//  - aCopyMs: 8 MB copied in RAM (Mem::Copy runs from the ROM, but its time
+//    is the memory's);
+//  - aRomMs: 200,000 calls of Mem::Compare on 16 bytes: code that runs in
+//    place from the ROM, so the ROM's wait states show here.
+void CPsiKtAppUi::RunSpeed(TInt& aLoopMs, TInt& aCopyMs, TInt& aRomMs)
 	{
-	_LIT(KStep,"Speed");
-	if (!BeginStepL(KStep))
-		return;
-	TBuf<KLineLen> l;
-	// a loop of 3 instructions (add, subs, bne)
 	const TInt KLoops=2000000;
 	TUint t0=User::TickCount();
 	volatile TInt sink=0;
@@ -583,27 +749,49 @@ void CPsiKtAppUi::SpeedL()
 	for (TInt i=KLoops; i>0; i--)
 		acc+=i;
 	sink=acc;
-	TUint t1=User::TickCount();
-	TInt ms=TicksToMs(t1-t0);
-	l.Format(_L("Loop: %d turns in %d ms (%d k turns a second)"),KLoops,ms,ms ? KLoops/ms : 0);
-	Say(l);
-	// memory: copy 64 KB 32 times
+	aLoopMs=TicksToMs(User::TickCount()-t0);
 	const TInt KSize=65536;
-	HBufC8* a=HBufC8::NewLC(KSize);
-	HBufC8* b=HBufC8::NewLC(KSize);
-	a->Des().SetLength(KSize);
-	b->Des().SetLength(KSize);
-	TUint8* pa=(TUint8*)a->Ptr();
-	TUint8* pb=(TUint8*)b->Ptr();
+	HBufC8* a=HBufC8::New(KSize);
+	HBufC8* b=HBufC8::New(KSize);
+	aCopyMs=0;
+	if (a && b)
+		{
+		a->Des().SetLength(KSize);
+		b->Des().SetLength(KSize);
+		TUint8* pa=(TUint8*)a->Ptr();
+		TUint8* pb=(TUint8*)b->Ptr();
+		t0=User::TickCount();
+		for (TInt k=0; k<128; k++)
+			Mem::Copy(k&1 ? pa : pb,k&1 ? pb : pa,KSize);
+		aCopyMs=TicksToMs(User::TickCount()-t0);
+		}
+	delete a;
+	delete b;
+	TUint8 x[16], y[16];
+	Mem::Fill(x,16,'x');
+	Mem::Fill(y,16,'x');
 	t0=User::TickCount();
-	for (TInt k=0; k<32; k++)
-		Mem::Copy(k&1 ? pa : pb,k&1 ? pb : pa,KSize);
-	t1=User::TickCount();
-	ms=TicksToMs(t1-t0);
-	l.Format(_L("Memory copy: 2 MB in %d ms (%d KB a second)"),ms,ms ? 2048*1000/ms : 0);
-	Say(l);
-	CleanupStack::PopAndDestroy(2);
+	for (TInt n=0; n<200000; n++)
+		acc+=Mem::Compare(x,16,y,16);
+	sink=acc;
+	aRomMs=TicksToMs(User::TickCount()-t0);
 	(void)sink;
+	}
+
+void CPsiKtAppUi::SpeedL()
+	{
+	_LIT(KStep,"Speed");
+	if (!BeginStepL(KStep))
+		return;
+	TInt loopMs, copyMs, romMs;
+	RunSpeed(loopMs,copyMs,romMs);
+	TBuf<KLineLen> l;
+	l.Format(_L("Loop: 2000000 turns in %d ms"),loopMs);
+	Say(l);
+	l.Format(_L("Memory copy: 8 MB in %d ms (%d KB a second)"),copyMs,copyMs ? 8192*1000/copyMs : 0);
+	Say(l);
+	l.Format(_L("ROM code: 200000 calls in %d ms"),romMs);
+	Say(l);
 	EndStep(KStep,KErrNone);
 	}
 
@@ -613,11 +801,8 @@ void CPsiKtAppUi::InvertL()
 	TInt r=OpenDriver();
 	if (r!=KErrNone)
 		return;
-	if (iKern.PalCheck()!=KErrNone)
-		{
-		Say(_L("Not available: that is not the palette (Read > Palette)"));
+	if (!PaletteReady())
 		return;
-		}
 	if (!iEikonEnv->QueryWinL(_L("The screen will be inverted for 3 seconds"),_L("Go ahead?")))
 		return;
 	if (!BeginStepL(KStep))
@@ -632,29 +817,68 @@ void CPsiKtAppUi::InvertL()
 	EndStep(KStep,r);
 	}
 
+// Says why not, if the palette can't be written
+TBool CPsiKtAppUi::PaletteReady()
+	{
+	if (iKern.PalCheck()==KErrNone)
+		return ETrue;
+	Say(_L("Not available: that is not the palette (Read > Palette)"));
+	return EFalse;
+	}
+
+// The palette as EPOC set it: how many entries are in use, and which way
+// its levels run (on the 5mx black is the high level)
+void CPsiKtAppUi::ReadPalette()
+	{
+	for (TInt e=0; e<16; e++)
+		{
+		TInt v=iKern.PalRead(e);
+		iOrig[e]=v<0 ? 0 : v&15;
+		}
+	TInt code=(iKern.PalRead(0)>>12)&3;
+	iUsed=code==0 ? 2 : code==1 ? 4 : 16;
+	iBlackHigh=iOrig[0]>iOrig[iUsed-1];
+	}
+
+// Puts curve aCurve on the palette ReadPalette found (-1: EPOC's own)
+TInt CPsiKtAppUi::ApplyCurve(TInt aCurve)
+	{
+	TInt r=KErrNone;
+	for (TInt e=0; e<16 && r==KErrNone; e++)
+		{
+		TInt level;
+		if (aCurve<0)
+			level=iOrig[e];
+		else
+			{
+			TInt grey=e<iUsed ? e*15/(iUsed-1) : 15;     // the grey this entry is for
+			TInt light=KCurves[aCurve].iLevel[grey];
+			level=iBlackHigh ? 15-light : light;
+			}
+		r=iKern.PalSet(e,level);
+		iApplied[e]=r==KErrNone ? level : -1;
+		}
+	return r;
+	}
+
 void CPsiKtAppUi::CurvesL()
 	{
 	_LIT(KStep,"Curves");
 	TInt r=OpenDriver();
-	if (r!=KErrNone)
+	if (r!=KErrNone || !PaletteReady())
 		return;
-	if (iKern.PalCheck()!=KErrNone)
+	if (iKeepCurve>=0)
 		{
-		Say(_L("Not available: that is not the palette (Read > Palette)"));
+		Say(_L("Not available while a curve is kept (Write > Keep a grey curve, 0)"));
 		return;
 		}
 	if (!iEikonEnv->QueryWinL(_L("The greys will change for 35 seconds, then go back"),_L("Go ahead?")))
 		return;
 	if (!BeginStepL(KStep))
 		return;
-	// the palette as it was: how many entries are in use, and which way
-	// its levels run (black first is the high level on the 5mx)
-	TInt e0=iKern.PalRead(0);
-	TInt code=(e0>>12)&3;
-	TInt used=code==0 ? 2 : code==1 ? 4 : 16;
-	TBool blackHigh=(e0&15)>(iKern.PalRead(used-1)&15);
+	ReadPalette();
 	TBuf<KLineLen> l;
-	l.Format(_L("%d greys in use; black is level %d"),used,e0&15);
+	l.Format(_L("%d greys in use; black is level %d"),iUsed,iOrig[0]);
 	Say(l);
 	iView->ShowRamp(ETrue,_L("As EPOC set it"));
 	User::After(5000000);
@@ -662,12 +886,7 @@ void CPsiKtAppUi::CurvesL()
 		{
 		TBuf<KLineLen> name;
 		name.Copy(TPtrC8((const TUint8*)KCurves[c].iName));
-		for (TInt e=0; e<16 && r==KErrNone; e++)
-			{
-			TInt grey=e<used ? e*15/(used-1) : 15;     // the grey this entry is for
-			TInt light=KCurves[c].iLevel[grey];
-			r=iKern.PalSet(e,blackHigh ? 15-light : light);
-			}
+		r=ApplyCurve(c);
 		iView->ShowRamp(ETrue,name);
 		iLog.Line(name);
 		User::After(5000000);
@@ -676,6 +895,358 @@ void CPsiKtAppUi::CurvesL()
 	iView->ShowRamp(EFalse,KNullDesC);
 	l.Format(_L("Grey curves done, put back: %d"),r);
 	Say(l);
+	EndStep(KStep,r);
+	}
+
+// ----- keeping a curve on ---------------------------------------------------
+// Keys 1-6 put a curve on, 0 puts EPOC's own back, Esc or Enter ends the
+// choosing and leaves the curve on. While PsiKernTest runs (in front or
+// not), a timer looks every 2 s: if EPOC has set its own palette again (a 4-
+// or 16-grey screen in front, contrast, switch-on), the curve goes back on,
+// and the log says so. Closing PsiKernTest puts EPOC's palette back.
+
+void CPsiKtAppUi::KeepCurveL()
+	{
+	TInt r=OpenDriver();
+	if (r!=KErrNone || !PaletteReady())
+		return;
+	if (!iKeeper)
+		{
+		iKeeper=CPeriodic::NewL(CActive::EPriorityLow);
+		iKeeper->Start(2000000,2000000,TCallBack(KeepTick,this));
+		}
+	if (iKeepCurve<0)
+		ReadPalette();
+	iPicking=ETrue;
+	iView->ShowRamp(ETrue,_L("Keys 1-6: a curve.  0: EPOC's own.  Enter: keep it on"));
+	for (TInt c=0; c<KCurveCount; c++)
+		{
+		TBuf<KLineLen> l, name;
+		name.Copy(TPtrC8((const TUint8*)KCurves[c].iName));
+		l.Format(_L("%d  %S"),c+1,&name);
+		iView->AddLine(l);
+		}
+	}
+
+void CPsiKtAppUi::HandleKeyEventL(const TKeyEvent& aKeyEvent,TEventCode aType)
+	{
+	if (!iPicking || aType!=EEventKey)
+		return;
+	TInt key=aKeyEvent.iCode;
+	TBuf<KLineLen> l;
+	if (key>='0' && key<='0'+KCurveCount)
+		{
+		TInt c=key-'1';                      // ('0' gives -1: EPOC's own)
+		if (iKeepCurve>=0 && c<0)
+			{
+			ReadPalette();                   // (what EPOC has now)
+			iKern.Restore();
+			}
+		else
+			{
+			if (iKeepCurve<0)
+				ReadPalette();
+			ApplyCurve(c);
+			}
+		iKeepCurve=c;
+		if (c<0)
+			l.Copy(_L("Kept: EPOC's own"));
+		else
+			{
+			TBuf<KLineLen> name;
+			name.Copy(TPtrC8((const TUint8*)KCurves[c].iName));
+			l.Format(_L("Kept: %S"),&name);
+			}
+		iView->ShowRamp(ETrue,l);
+		iLog.Line(l);
+		}
+	else if (key==EKeyEscape || key==EKeyEnter)
+		{
+		iPicking=EFalse;
+		iView->ShowRamp(EFalse,KNullDesC);
+		if (iKeepCurve>=0)
+			Say(_L("The curve stays on while PsiKernTest is open (in front or not)"));
+		}
+	}
+
+TInt CPsiKtAppUi::KeepTick(TAny* aSelf)
+	{
+	((CPsiKtAppUi*)aSelf)->Keep();
+	return 0;
+	}
+
+void CPsiKtAppUi::Keep()
+	{
+	if (iKeepCurve<0 || !iKernOpen)
+		return;
+	TBool ours=ETrue;
+	for (TInt e=0; e<16 && ours; e++)
+		{
+		TInt v=iKern.PalRead(e);
+		if (v<0 || (v&15)!=iApplied[e])
+			ours=EFalse;
+		}
+	if (ours)
+		return;
+	// EPOC has set its own palette again: take it, and put the curve back
+	if (iKern.PalCheck()!=KErrNone)
+		return;
+	ReadPalette();
+	TInt r=ApplyCurve(iKeepCurve);
+	iReapplied++;
+	TBuf<KLineLen> l;
+	l.Format(_L("EPOC set its palette (%d greys): curve back on (%d times): %d"),iUsed,iReapplied,r);
+	iLog.Line(l);
+	}
+
+// ----- the serial port ------------------------------------------------------
+
+// Opens COMM::0 at three speeds and reads UART2's divider each time:
+// UBRCR = 7372800 / (16 x rate) - 1, so 47, 7 and 3 are expected.
+void CPsiKtAppUi::SerialL()
+	{
+	_LIT(KStep,"Serial port");
+	TInt r=OpenDriver();
+	if (r!=KErrNone || !BeginStepL(KStep))
+		return;
+	TBuf<KLineLen> l;
+	TPsiKtSerial port;
+	r=port.Open(EBps9600);
+	if (r!=KErrNone)
+		{
+		l.Format(_L("Could not open the serial port: %d (the Remote link may have it)"),r);
+		Say(l);
+		EndStep(KStep,r);
+		return;
+		}
+	static const TBps KRates[]={EBps9600,EBps57600,EBps115200};
+	static const TInt KBauds[]={9600,57600,115200};
+	for (TInt i=0; i<3; i++)
+		{
+		if (i)
+			r=port.SetRate(KRates[i]);
+		TUint32 ubrcr=0;
+		TInt con=iKern.Read8(ERegU2Con);
+		TInt rr=iKern.Read32(ERegU2Ubrcr,ubrcr);
+		l.Format(_L("%d: UBRCR %d (expected %d), CON %x  [%d %d]"),KBauds[i],ubrcr,
+			7372800/(16*KBauds[i])-1,con,r,rr);
+		Say(l);
+		}
+	port.Close();
+	EndStep(KStep,KErrNone);
+	}
+
+// A reply in one line for the log: control characters as dots
+static void ReplyLine(const TDesC8& aReply, TDes& aOut)
+	{
+	aOut.Zero();
+	for (TInt i=0; i<aReply.Length() && aOut.Length()<aOut.MaxLength(); i++)
+		{
+		TUint c=aReply[i];
+		aOut.Append(c>=32 && c<127 ? (TChar)c : (TChar)'.');
+		}
+	}
+
+// Printable, CR and LF only: a garbled reply has other bytes
+static TBool Clean(const TDesC8& aReply)
+	{
+	for (TInt i=0; i<aReply.Length(); i++)
+		{
+		TUint c=aReply[i];
+		if (!(c>=32 && c<127) && c!='\r' && c!='\n')
+			return EFalse;
+		}
+	return ETrue;
+	}
+
+// 230400 with the Atom modem: AT$SB=230400 at 115200, then UART2's divider
+// to 1, then ATI ten times. Back to 115200 at the end, or if anything fails
+// (the Atom goes back by itself 15 s after a speed change that nothing at
+// the new speed confirms).
+void CPsiKtAppUi::SerialFastL()
+	{
+	_LIT(KStep,"Serial 230400");
+	TInt r=OpenDriver();
+	if (r!=KErrNone)
+		return;
+	if (!iEikonEnv->QueryWinL(_L("The Atom modem must be connected and idle"),_L("Try 230400 with it?")))
+		return;
+	if (!BeginStepL(KStep))
+		return;
+	TBuf<KLineLen> l;
+	TBuf<KLineLen> shown;
+	TBuf8<512> reply;
+	TPsiKtSerial port;
+	r=port.Open(EBps115200);
+	if (r!=KErrNone)
+		{
+		l.Format(_L("Could not open the serial port: %d"),r);
+		Say(l);
+		EndStep(KStep,r);
+		return;
+		}
+	r=port.Talk(_L8("AT\r"),reply,2000);
+	if (r!=KErrNone)
+		r=port.Talk(_L8("AT\r"),reply,2000);
+	if (r!=KErrNone)
+		{
+		l.Format(_L("No modem answers at 115200: %d"),r);
+		Say(l);
+		port.Close();
+		EndStep(KStep,r);
+		return;
+		}
+	Say(_L("115200: the modem answers"));
+	TUint t0=User::TickCount();
+	r=port.Talk(_L8("ATI\r"),reply,3000);
+	TInt slowMs=TicksToMs(User::TickCount()-t0);
+	TInt slowLen=reply.Length();
+	l.Format(_L("115200: ATI, %d bytes in %d ms: %d"),slowLen,slowMs,r);
+	Say(l);
+	r=port.Talk(_L8("AT$SB=230400\r"),reply,2000);
+	if (r!=KErrNone)
+		{
+		ReplyLine(reply,shown);
+		l.Format(_L("The modem refused AT$SB=230400: %d %S"),r,&shown);
+		Say(l);
+		port.Close();
+		EndStep(KStep,r);
+		return;
+		}
+	User::After(300000);                     // (the Atom switches after its OK)
+	iLog.Line(_L("> UBRCR 1"));
+	r=iKern.UbrcrSet(1);
+	l.Format(_L("UART2 at 230400: %d"),r);
+	Say(l);
+	TInt ok=0, clean=0, fastMs=0, fastLen=0;
+	if (r==KErrNone)
+		{
+		r=port.Talk(_L8("AT\r"),reply,2000);
+		if (r!=KErrNone)
+			r=port.Talk(_L8("AT\r"),reply,2000);
+		ReplyLine(reply,shown);
+		l.Format(_L("230400: AT: %d %S"),r,&shown);
+		Say(l);
+		if (r==KErrNone)
+			{
+			for (TInt n=0; n<10; n++)
+				{
+				t0=User::TickCount();
+				TInt rr=port.Talk(_L8("ATI\r"),reply,3000);
+				fastMs+=TicksToMs(User::TickCount()-t0);
+				fastLen+=reply.Length();
+				if (rr==KErrNone) ok++;
+				if (Clean(reply)) clean++;
+				}
+			l.Format(_L("230400: ATI ten times: %d answered, %d clean, %d bytes in %d ms"),
+				ok,clean,fastLen,fastMs);
+			Say(l);
+			// back to 115200 at both ends
+			r=port.Talk(_L8("AT$SB=115200\r"),reply,2000);
+			User::After(300000);
+			}
+		}
+	iKern.UbrcrSet(3);
+	iLog.Line(_L("< UBRCR 3"));
+	r=port.Talk(_L8("AT\r"),reply,2000);
+	if (r!=KErrNone)
+		{
+		Say(_L("Waiting 16 s for the modem to go back to 115200 by itself..."));
+		User::After(16000000);
+		r=port.Talk(_L8("AT\r"),reply,2000);
+		}
+	l.Format(_L("Back at 115200: the modem %S"),r==KErrNone ? &_L("answers") : &_L("does not answer"));
+	Say(l);
+	port.Close();
+	if (ok==10 && clean==10)
+		Say(_L("230400 works with the Atom"));
+	EndStep(KStep,ok==10 && clean==10 ? KErrNone : KErrGeneral);
+	}
+
+// ----- the ROM's wait states --------------------------------------------------
+
+// Each value in turn with ERomProbe (interrupts off, the ROM read as data
+// only). Then, if one passes and Dan agrees, the fastest that passed is
+// kept for one speed test, and put back.
+void CPsiKtAppUi::RomL()
+	{
+	_LIT(KStep,"ROM timing");
+	TInt r=OpenDriver();
+	if (r!=KErrNone)
+		return;
+	if (!iEikonEnv->QueryWinL(_L("The ROM will be read at faster settings, a moment each"),_L("Go ahead?")))
+		return;
+	if (!BeginStepL(KStep))
+		return;
+	struct TTry { TUint8 iByte; const char* iName; };
+	// fastest first
+	static const TTry KTries[]=
+		{
+		{0x7c,"50 ns, 20 ns sequential"},{0x5c,"50 ns"},
+		{0x78,"75 ns, 20 ns sequential"},{0x58,"75 ns"},
+		{0x74,"100 ns, 20 ns sequential"},{0x54,"100 ns"},
+		{0x70,"125 ns, 20 ns sequential"},
+		};
+	const TInt KTryCount=sizeof(KTries)/sizeof(KTries[0]);
+	TBuf<KLineLen> l, name;
+	TInt best=-1;
+	// slowest first, so the first trouble is the mildest
+	for (TInt i=KTryCount-1; i>=0; i--)
+		{
+		name.Copy(TPtrC8((const TUint8*)KTries[i].iName));
+		l.Format(_L("> ROM probe %x"),KTries[i].iByte);
+		iLog.Line(l);
+		r=iKern.RomProbe(KTries[i].iByte);
+		l.Format(_L("< ROM probe %x: %d"),KTries[i].iByte,r);
+		iLog.Line(l);
+		l.Format(_L("ROM at %S: %S"),&name,r==0 ? &_L("reads the same") : r==1 ? &_L("reads differently") : &_L("not tried"));
+		if (r<0)
+			l.AppendFormat(_L(" (%d)"),r);
+		Say(l);
+		if (r<0)
+			break;
+		if (r==0)
+			best=i;
+		}
+	if (best<0 && r==KErrNotSupported)
+		{
+		Say(_L("Not available: the ROM is not set as on the 5mx this was made for (MEMCFG1)"));
+		EndStep(KStep,r);
+		return;
+		}
+	if (best<0)
+		{
+		Say(_L("No faster setting reads the ROM correctly: nothing to keep"));
+		EndStep(KStep,r);
+		return;
+		}
+	name.Copy(TPtrC8((const TUint8*)KTries[best].iName));
+	TBuf<KLineLen> q;
+	q.Format(_L("The ROM reads correctly at %S"),&name);
+	if (!iEikonEnv->QueryWinL(q,_L("Run on it for a speed test (a few seconds)?")))
+		{
+		EndStep(KStep,KErrNone);
+		return;
+		}
+	TInt loop0, copy0, rom0, loop1=0, copy1=0, rom1=0;
+	RunSpeed(loop0,copy0,rom0);
+	l.Format(_L("> ROM keep %x"),KTries[best].iByte);
+	iLog.Line(l);
+	r=iKern.RomKeep(KTries[best].iByte);
+	if (r==KErrNone)
+		RunSpeed(loop1,copy1,rom1);
+	iKern.Restore();
+	l.Format(_L("< ROM keep %x: %d"),KTries[best].iByte,r);
+	iLog.Line(l);
+	l.Format(_L("Normal: ROM code %d ms, copy %d ms, loop %d ms"),rom0,copy0,loop0);
+	Say(l);
+	l.Format(_L("%S: ROM code %d ms, copy %d ms, loop %d ms"),&name,rom1,copy1,loop1);
+	Say(l);
+	if (r==KErrNone && rom0>0)
+		{
+		l.Format(_L("ROM code %d%% faster; put back to normal"),(rom0-rom1)*100/rom0);
+		Say(l);
+		}
 	EndStep(KStep,r);
 	}
 
@@ -698,11 +1269,15 @@ void CPsiKtAppUi::HandleCommandL(TInt aCommand)
 	case EPsiKtCmdSpeed:
 		SpeedL();
 		break;
+	case EPsiKtCmdSerial:
+		SerialL();
+		break;
 	case EPsiKtCmdReadAll:
 		CheckL();
 		SpeedL();
 		RegistersL();
 		PaletteL();
+		SerialL();
 		Say(_L("Read tests done"));
 		break;
 	case EPsiKtCmdInvert:
@@ -710,6 +1285,15 @@ void CPsiKtAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPsiKtCmdCurves:
 		CurvesL();
+		break;
+	case EPsiKtCmdKeepCurve:
+		KeepCurveL();
+		break;
+	case EPsiKtCmdSerialFast:
+		SerialFastL();
+		break;
+	case EPsiKtCmdRom:
+		RomL();
 		break;
 		}
 	}

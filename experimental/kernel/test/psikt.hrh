@@ -10,7 +10,12 @@ enum TPsiKtCommand
 	EPsiKtCmdSpeed,            // CPU and memory speed (no driver)
 	EPsiKtCmdReadAll,          // all four above
 	EPsiKtCmdInvert,           // write: invert the palette for 3 s
-	EPsiKtCmdCurves            // write: grey curves, 5 s each
+	EPsiKtCmdCurves,           // write: grey curves, 5 s each
+	// (0.3)
+	EPsiKtCmdSerial,           // read: UBRCR at 9600, 57600 and 115200
+	EPsiKtCmdKeepCurve,        // write: choose a curve and keep it
+	EPsiKtCmdSerialFast,       // write: 230400 with the Atom
+	EPsiKtCmdRom               // write: the ROM's wait states
 	};
 
 #endif

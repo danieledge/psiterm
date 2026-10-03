@@ -23,7 +23,12 @@ All requests go through `DoControl`, and every answer is its return value, so th
 - **Version and CPU mode.** Version returns the magic number `0x504B` and 0.2. CPU mode returns the CPSR mode bits.
 - **Register reads.** It reads a fixed list of Windermere registers at virtual `0x58000000` and up: memory, LCD, power, interrupt status, UART2, timers, RTC and port data. Only registers without read side effects are on the list: no data, FIFO or end-of-interrupt registers. Any other offset gets `KErrArgument`.
 - **Palette reads.** It reads the 16 entries of the LCD palette, which is the 32 bytes of RAM just before the frame buffer. The LCD controller reads it every frame.
-- **Palette writes, the only writes.** It inverts the palette or sets single entries. Before the first write it checks that the 32 bytes look like a palette, and refuses if they don't:
+- **(0.3) Two register writes,** each to one register and from a short list of values. Each is saved first and put back by `ERestore` and when the channel closes:
+  - `EUbrcrSet`: UART2's divider, only 1 (230400) or 3 (115200), and only while the UART is on.
+  - `ERomProbe` and `ERomKeep`: the ROM's wait states (the CS0 and CS1 bytes of `MEMCFG1`), only if they are at the 5mx's `0x50`.
+    - `ERomProbe` turns interrupts off and calls nothing, so no ROM code runs while the setting is changed: the driver, which is in RAM, only reads the ROM as data. Its compiled code was checked for this: between interrupts off and on there are only its loops and the two register stores.
+    - `ERomKeep` accepts only a value that passed `ERomProbe` on the same channel.
+- **Palette writes.** It inverts the palette or sets single entries. Before the first write it checks that the 32 bytes look like a palette, and refuses if they don't:
   - only the level bits are set, plus the bits-per-pixel code in entry 0;
   - the levels of the entries in use run one way only.
 
@@ -40,8 +45,12 @@ Nothing runs by itself. Each test is a menu command.
 | Read | Registers | Reads every register on the list, then again a second later, and shows what changed. |
 | Read | Palette | Shows the screen address and the palette, and whether the palette passes the check. |
 | Read | CPU and memory speed | Times a loop and a memory copy. Doesn't use the driver. |
+| Read | Serial port speeds | (0.3) Opens COMM::0 at 9600, 57600 and 115200 and reads UART2's divider (`UBRCR`) each time: 47, 7 and 3 are expected. |
 | Write | Invert the screen (3 s) | Asks first, then inverts the screen and puts it back. |
 | Write | Grey curves (35 s) | Asks first, then shows a 16-grey ramp under six palettes for 5 s each, and puts the palette back. |
+| Write | Keep a grey curve | (0.3) Keys 1–6 choose a curve, 0 gives EPOC's own back, and Enter keeps it on while PsiKernTest stays open, in front or not. Every 2 s it checks whether EPOC has set its own palette again (a 4- or 16-grey screen, contrast, switch-on), puts the curve back if so, and logs it. |
+| Write | 230400 with the Atom modem | (0.3) Asks first. It sends `AT$SB=230400` at 115200, sets `UBRCR` to 1, then sends `AT` and ten `ATI`s at 230400 and checks the answers are clean. Then it goes back to 115200 at both ends. If the Atom doesn't answer, it waits for the Atom's 15 s fallback. |
+| Write | ROM timing | (0.3) Asks first. With interrupts off and nothing else running, it sets the ROM's wait states faster, slowest first, and checks that 128 KB of ROM reads the same as at the normal setting. If one passes and you agree, it runs the speed test on the fastest that passed and puts the normal setting back. |
 
 **Built-in safety**
 

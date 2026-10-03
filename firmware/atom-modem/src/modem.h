@@ -185,6 +185,9 @@ private:
 	void PumpServer(uint32_t aNow);
 	void PumpPsion(uint32_t aNow);
 	void ApplyPacing();
+	void StartBaudTrial(uint32_t aOld);
+	void ConfirmBaud(uint32_t aGen, TResult aR);
+	void BaudTrialTick(uint32_t aNow);
 	void UpdateDcd();
 	void UpdateLed(uint32_t aNow);
 	uint32_t GuardMs() const { return (uint32_t)iS.s12 * 20; }
@@ -206,6 +209,13 @@ private:
 	uint32_t iToPsion, iToServer;
 	uint32_t iLastDataMs;
 	uint32_t iPendingBaud;              // AT$SB: switch after the OK has gone
+	// AT$SB/ATB on trial: back to iTrialFrom if no valid command line
+	// arrives at the new speed within kBaudTrialMs (and no AT&W saves it)
+	static const uint32_t kBaudTrialMs = 15000;
+	uint32_t iTrialFrom;                // the speed to go back to; 0 = none
+	uint32_t iTrialStartMs;             // when the new speed took effect
+	bool iTrialArmed;                   // it has (the clock is running)
+	uint32_t iTrialGen;                 // counts speed changes (see ConfirmBaud)
 	int iLed;                           // the LED state last shown
 	Proxy iProxy;                       // the web proxy (a psiproxy call)
 	bool iProxyCall;

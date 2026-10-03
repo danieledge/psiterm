@@ -123,8 +123,8 @@ Install the **esp32** boards package (2.0.x), choose the board
 **M5Stack-ATOM**, and upload. With arduino-cli:
 
 ```sh
-arduino-cli compile --fqbn espressif:esp32:m5stack-atom firmware/atom-modem
-arduino-cli upload  --fqbn espressif:esp32:m5stack-atom -p /dev/ttyUSB0 firmware/atom-modem
+arduino-cli compile --fqbn esp32:esp32:m5stack-atom firmware/atom-modem
+arduino-cli upload  --fqbn esp32:esp32:m5stack-atom -p /dev/ttyUSB0 firmware/atom-modem
 ```
 
 ### esptool (a ready-built image)
@@ -388,8 +388,8 @@ reached the Psion, or at once if the WiFi drops.
 | `ATW"name,password"` | Zimodem: sets both and joins |
 | `ATW` | Lists the networks in range |
 | `ATC1` / `ATC0` | WiFi232: joins / leaves the saved network |
-| `AT$SB=`n / `AT$SB?` | The serial baud (300 to 921600). It changes **after** the `OK`, which goes at the old speed. `ATB`n (Zimodem) is the same |
-| `AT$PR=`n / `AT$PR=AUTO` / `AT$PR?` | Pacing rate towards the Psion in bytes/s. `0` turns pacing off. `AUTO` (the default) chooses from the baud rate |
+| `AT$SB=`n / `AT$SB?` | The serial baud (300 to 921600). It changes **after** the `OK`, which goes at the old speed. `ATB`n (Zimodem) is the same. A new speed is on trial: see the note below |
+| `AT$PR=`n / `AT$PR=AUTO` / `AT$PR?` | Pacing rate towards the Psion in bytes/s. `0` turns pacing off. `AUTO` (the default) chooses from the baud rate (see [Pacing in detail](#pacing-in-detail)) |
 | `AT$PB=`n / `AT$PB?` | Pacing burst: bytes sent back to back (the token bucket's depth) |
 | `AT$PG=`n / `AT$PG?` | An extra gap after each burst, in ms (default 0) |
 | `AT$PACE?` | The pacing in force, and the buffer size |
@@ -397,6 +397,18 @@ reached the Psion, or at once if the WiFi drops.
 | `AT$DCD=`n | The GPIO for an emulated DCD; `-1` (the default) for none |
 | `AT$PX=`n / `AT$PX?` | The web proxy: `1` on (simplified pages, the default), `2` text only, `3` pages unchanged (TLS only), `0` off. See [The web proxy](#the-web-proxy-for-psiweb) |
 | `AT$PZ=0/1` / `AT$PZ?` | Whether the web proxy gzips pages on the line (`1`, the default) |
+
+**A new speed falls back if nothing answers at it.** After `AT$SB` or `ATB`
+changes the speed, the modem waits for a valid command line (a plain `AT` is
+enough) at the new speed. If none arrives within 15 seconds, it goes back to
+the previous speed and says so on the USB console (*"No command at 230400 baud
+in 15 s: back to 115200 baud"*). So a speed the Psion cannot reach (230400
+without the kernel driver, say) never leaves the Atom unreachable. `AT&W`
+saves the new speed and ends the trial at once, so send it only once `AT` has
+answered at the new speed. The trial only applies in command mode: dialling
+(`ATDT`) at the new speed confirms it. The 230400 test is: at 115200, send
+`AT$SB=230400` and wait for `OK`; switch the Psion's UART; send `AT` and wait
+for `OK`; then `AT&W` if it should stay.
 
 ## Pacing in detail
 
@@ -410,6 +422,9 @@ Defaults (`AT$PR=AUTO`):
 
 | Baud | Line rate | `$PR` | `$PB` | 16 KB lasts |
 |---|---|---|---|---|
+| 921600 | 92160 B/s | 44000 B/s (48 %) | 16 | 0.4 s |
+| 460800 | 46080 B/s | 22000 B/s (48 %) | 16 | 0.7 s |
+| 230400 | 23040 B/s | 11000 B/s (48 %) | 16 | 1.5 s |
 | 115200 | 11520 B/s | 5500 B/s (48 %) | 16 | 3.0 s |
 | 57600 | 5760 B/s | 4000 B/s (69 %) | 16 | 4.1 s |
 | 38400 | 3840 B/s | 3000 B/s (78 %) | 16 | 5.5 s |
@@ -428,6 +443,11 @@ Why these values:
   any time the app is not reading. At 5500 B/s it lasts 3 seconds, which
   covers a page layout or a flash write. That rate is still faster than PsiWeb
   or PsiMail can use a TLS stream on a 36 MHz ARM, so little speed is lost.
+- **From 230400 up the same share holds.** These speeds need the kernel
+  driver that sets the Psion's UART divider. A 16-byte burst at 230400 leaves
+  the driver 0.69 ms to answer the FIFO interrupt (0.35 ms at 460800), and the
+  16 KB buffer lasts only 1.5 s (0.7 s), so a lower `AT$PR` may suit an app
+  that pauses for longer.
 - **TCP does the rest.** The ESP32's buffer (up to 128 KB) fills while the
   Psion is slow. When it is full the socket is not read, and the server is
   held back by TCP. No data is dropped anywhere on the way.
@@ -479,7 +499,7 @@ DCD on all the time.
 ## Building and testing
 
 - `pio run` builds the firmware. `arduino-cli compile --fqbn
-  espressif:esp32:m5stack-atom .` builds it the Arduino way, with no warnings
+  esp32:esp32:m5stack-atom .` builds it the Arduino way, with no warnings
   at `--warnings all`.
 - `make -C hosttest test` runs the unit tests on a PC (it needs zlib).
   - `test_modem`: the AT parser, `+++` with guard times (too soon, too slow,

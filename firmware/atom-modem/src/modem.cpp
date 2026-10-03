@@ -17,9 +17,16 @@ void AutoPacing(uint32_t aBaud, uint32_t& aRate, uint16_t& aBurst, uint16_t& aGa
 	// the line rate so the gaps between bursts let the driver catch up,
 	// and a 16 KB buffer lasts 3-4 s if the app stops reading for a while
 	// (a page being laid out, a flash write). See README "Pacing".
+	// From 230400 up the same holds at the same share of the line rate;
+	// a 16-byte burst then leaves the driver 0.69 ms (230400) or 0.35 ms
+	// (460800) to answer the FIFO interrupt, which only the kernel driver
+	// that sets those speeds can promise.
 	aGap = 0;
 	aBurst = 16;
-	if (aBaud >= 115200)      aRate = 5500;   // 48 % of 11520 bytes/s
+	if (aBaud >= 921600)      aRate = 44000;  // 48 % of 92160 bytes/s
+	else if (aBaud >= 460800) aRate = 22000;  // 48 % of 46080
+	else if (aBaud >= 230400) aRate = 11000;  // 48 % of 23040
+	else if (aBaud >= 115200) aRate = 5500;   // 48 % of 11520
 	else if (aBaud >= 57600)  aRate = 4000;   // 69 % of 5760
 	else if (aBaud >= 38400)  aRate = 3000;   // 78 % of 3840
 	else                      aRate = 0;      // slow enough as it is
@@ -230,7 +237,7 @@ static bool ValidBaud(long aB)
 Modem::Modem(Hal& aHal, uint8_t* aRing, size_t aRingSize)
 	: iHal(aHal), iLineLen(0), iOnline(false), iConnected(false), iClosing(false), iWifiWasUp(false),
 	  iLastSerialMs(0), iPluses(0), iLastPlusMs(0), iToPsion(0), iToServer(0), iLastDataMs(0),
-	  iPendingBaud(0), iLed(-1), iProxy(aHal), iProxyCall(false), iUpLen(0)
+	  iPendingBaud(0), iTrialFrom(0), iTrialStartMs(0), iTrialArmed(false), iTrialGen(0), iLed(-1), iProxy(aHal), iProxyCall(false), iUpLen(0)
 	{
 	iRing.Init(aRing, aRingSize);
 	iLast[0] = 0;
@@ -288,7 +295,13 @@ void Modem::Loop()
 		{
 		iHal.SerialBaud(iPendingBaud);          // (the HAL lets the OK go out first)
 		iPendingBaud = 0;
+		if (iTrialFrom)
+			{
+			iTrialArmed = true;                  // the 15 s start now, at the new speed
+			iTrialStartMs = iHal.Millis();
+			}
 		}
+	BaudTrialTick(iHal.Millis());
 	UpdateDcd();
 	UpdateLed(now);
 	}
@@ -409,7 +422,9 @@ void Modem::CommandChar(uint8_t aC)
 		iLineLen = 0;
 		if (iLast[0])
 			{
+			uint32_t gen = iTrialGen;
 			TResult r = RunCommands(iLast);
+			ConfirmBaud(gen, r);
 			if (r != RNone)
 				Result(r);
 			}
@@ -429,9 +444,60 @@ void Modem::RunCommandLine()
 	if (n >= sizeof(iLast)) n = sizeof(iLast) - 1;
 	memcpy(iLast, p, n);
 	iLast[n] = 0;
+	uint32_t gen = iTrialGen;
 	TResult r = RunCommands(iLast);
+	ConfirmBaud(gen, r);
 	if (r != RNone)
 		Result(r);
+	}
+
+// ----- AT$SB / ATB: back to the old speed if the new one never works ---------
+
+// a speed change from aOld to iS.baud: on trial until a valid command
+// line arrives at the new speed (or AT&W saves it)
+void Modem::StartBaudTrial(uint32_t aOld)
+	{
+	iTrialGen++;
+	// aOld is known to work if nothing is on trial, or if this command was
+	// heard at it (the trial is armed); otherwise (two changes on one line)
+	// the trial keeps the speed it started from
+	if (!iTrialFrom || iTrialArmed)
+		iTrialFrom = aOld;
+	if (iS.baud == iTrialFrom)
+		iTrialFrom = 0;                      // no change: nothing to fall back from
+	iTrialArmed = false;
+	}
+
+// a command line has run (aGen: iTrialGen before it). A valid one heard at
+// the new speed confirms it, unless that line itself started a new change
+void Modem::ConfirmBaud(uint32_t aGen, TResult aR)
+	{
+	if (iTrialFrom && iTrialArmed && aGen == iTrialGen && aR != RError)
+		iTrialFrom = 0;
+	}
+
+void Modem::BaudTrialTick(uint32_t aNow)
+	{
+	if (!iTrialFrom || !iTrialArmed || iOnline || iPendingBaud)
+		return;
+	if (iS.baud == iTrialFrom)
+		{
+		iTrialFrom = 0;                      // (ATZ or AT&F went back to it)
+		return;
+		}
+	if (aNow - iTrialStartMs < kBaudTrialMs)
+		return;
+	uint32_t from = iTrialFrom, to = iS.baud;
+	iTrialFrom = 0;
+	iTrialArmed = false;
+	iS.baud = from;
+	ApplyPacing();
+	iHal.SerialBaud(from);
+	iLineLen = 0;                            // (whatever arrived at the wrong speed)
+	char m[96];
+	snprintf(m, sizeof(m), "No command at %lu baud in %lu s: back to %lu baud",
+		(unsigned long)to, (unsigned long)(kBaudTrialMs / 1000), (unsigned long)from);
+	iHal.Log(m);
 	}
 
 Modem::TResult Modem::RunCommands(const char* aCmd)
@@ -616,9 +682,13 @@ Modem::TResult Modem::RunCommands(const char* aCmd)
 			v = Number(p, -1);
 			if (!ValidBaud(v))
 				return RError;
+			{
+			uint32_t old = iS.baud;
 			iS.baud = (uint32_t)v;
 			ApplyPacing();
 			iPendingBaud = iS.baud;
+			StartBaudTrial(old);
+			}
 			break;
 		case 'L': case 'M': case 'X': case 'N': case 'P': case 'T': case 'Y':
 			Number(p, 0);                    // speaker, result set, pulse/tone: accepted
@@ -677,10 +747,14 @@ Modem::TResult Modem::SetCommand(const char* aCmd, const char*& aP, bool& aHandl
 		if (query) { snprintf(m, sizeof(m), "%lu", (unsigned long)iS.baud); SayLine(m); return ROk; }
 		if (!num || !ValidBaud(v))
 			return RError;
+		{
+		uint32_t old = iS.baud;
 		iS.baud = (uint32_t)v;
 		ApplyPacing();
 		iPendingBaud = iS.baud;              // after the OK, at the old speed
+		StartBaudTrial(old);                 // and back to it if nothing works at the new one
 		return ROk;
+		}
 	case 3:                                  // PR: pacing rate, bytes/s; AUTO; 0 = off
 		if (query)
 			{

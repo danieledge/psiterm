@@ -347,7 +347,35 @@ static void TestPacing()
 	CHECK(n >= 3700 && n <= 4200);
 	CHECK(MaxInWindow(r.hal.wire, from, 20000) <= 64);
 	}
-	// 6. the keystroke echo is not held back: one byte goes at once
+	// 6. 230400 and 460800: auto pacing at about half the line rate, 16-byte bursts
+	{
+	uint32_t rate; uint16_t burst, gap;
+	am::AutoPacing(230400, rate, burst, gap);
+	CHECK(rate == 11000 && burst == 16 && gap == 0);
+	am::AutoPacing(460800, rate, burst, gap);
+	CHECK(rate == 22000 && burst == 16 && gap == 0);
+	am::AutoPacing(115200, rate, burst, gap);
+	CHECK(rate == 5500);
+	Rig r;
+	r.TypeRun("AT$SB=230400\r", 20);
+	CHECK(Has(r.Got(), "OK") && r.hal.baud == 230400);
+	r.TypeRun("AT$PR?\r", 50);
+	CHECK(Has(r.Got(), "AUTO 11000"));
+	r.TypeRun("ATDT example.com:443\r"); r.Got();
+	size_t from = r.hal.wire.size();
+	r.Feed(std::string(40000, 'x'));
+	r.Run(1000);
+	size_t n = r.hal.wire.size() - from;
+	printf("   230400: %zu bytes in the first second, most in 0.7 ms: %zu\n", n, MaxInWindow(r.hal.wire, from, 690));
+	CHECK(n >= 10600 && n <= 11500);
+	CHECK(MaxInWindow(r.hal.wire, from, 690) <= 17);              // 0.69 ms = 16 bytes at 230400
+	}
+	{
+	Rig r;
+	r.TypeRun("ATB460800\r", 20);
+	CHECK(r.hal.baud == 460800 && r.modem->Config().paceRate == 22000);
+	}
+	// 7. the keystroke echo is not held back: one byte goes at once
 	{
 	Rig r;
 	r.TypeRun("ATDT example.com:22\r"); r.Got();
@@ -393,6 +421,84 @@ static void TestSettings()
 	CHECK(strcmp(r2.modem->Config().ssid, "Home WiFi") == 0 && r2.hal.wifiSsid == "Home WiFi");
 	}
 
+// AT$SB / ATB: a speed nobody answers at goes back to the old one after 15 s
+static void TestBaudFallback()
+	{
+	// 1. nothing at the new speed: back to 115200 after 15 s, said on the console
+	{
+	Rig r;
+	r.TypeRun("AT$SB=230400\r", 20);
+	CHECK(Has(r.Got(), "OK") && r.hal.baud == 230400);
+	r.Run(14000);
+	CHECK(r.hal.baud == 230400 && r.hal.logs.empty());
+	r.Run(1100);
+	CHECK(r.hal.baud == 115200 && r.modem->Config().baud == 115200);
+	CHECK(r.modem->Config().paceRate == 5500);                   // the pacing follows
+	CHECK(r.hal.Logged("back to 115200"));
+	r.TypeRun("AT\r");
+	CHECK(Has(r.Got(), "OK"));                                   // reachable again
+	r.Run(16000);
+	CHECK(r.hal.baud == 115200 && r.hal.logs.size() == 1);       // and it stays
+	}
+	// garbage (no AT, or ERROR) at the new speed does not confirm it
+	{
+	Rig r;
+	r.TypeRun("ATB230400\r", 20);
+	r.Run(1000);
+	r.TypeRun("\x93\xf1x\r"); r.TypeRun("ATX\xff\r");
+	r.Run(15000);
+	CHECK(r.hal.baud == 115200 && r.hal.Logged("back to 115200"));
+	}
+	// 2. a plain AT at the new speed confirms it
+	{
+	Rig r;
+	r.TypeRun("AT$SB=230400\r", 20); r.Got();
+	r.Run(2000);
+	r.TypeRun("AT\r");
+	CHECK(Has(r.Got(), "OK"));
+	r.Run(16000);
+	CHECK(r.hal.baud == 230400 && r.modem->Config().baud == 230400 && r.hal.logs.empty());
+	}
+	// a change made at the new speed falls back to that speed, which worked
+	{
+	Rig r;
+	r.TypeRun("AT$SB=230400\r", 20); r.Run(1000);
+	r.TypeRun("AT$SB=460800\r", 20);
+	CHECK(r.hal.baud == 460800);
+	r.Run(15100);
+	CHECK(r.hal.baud == 230400 && r.hal.Logged("back to 230400"));
+	}
+	// 3. AT&W at the new speed confirms it (and saves it)
+	{
+	Rig r;
+	r.TypeRun("ATB230400\r", 20); r.Got();
+	r.Run(500);
+	r.TypeRun("AT&W\r");
+	CHECK(r.hal.haveSaved && r.hal.saved.baud == 230400);
+	r.Run(16000);
+	CHECK(r.hal.baud == 230400 && r.hal.logs.empty());
+	}
+	// 4. no change of speed: nothing to fall back from
+	{
+	Rig r;
+	r.TypeRun("AT$SB=115200\r", 20); r.Got();
+	r.Run(16000);
+	CHECK(r.hal.baud == 115200 && r.hal.logs.empty());
+	r.TypeRun("ATB115200\r", 20);
+	r.Run(16000);
+	CHECK(r.hal.baud == 115200 && r.hal.logs.empty());
+	}
+	// 5. a call dialled at the new speed confirms it; data mode is never touched
+	{
+	Rig r;
+	r.TypeRun("AT$SB=230400\r", 20); r.Got();
+	r.TypeRun("ATDT example.com:22\r");
+	CHECK(r.modem->Online());
+	r.Run(16000);
+	CHECK(r.hal.baud == 230400 && r.modem->Online() && r.hal.logs.empty());
+	}
+	}
+
 // exactly what PsiTerm/PsiMail/PsiWeb send (psiglue.cpp): the dial, and
 // the Connection settings test
 static void TestPsiglue()
@@ -435,6 +541,7 @@ int main()
 	printf("carrier\n");  TestCarrier();
 	printf("pacing\n");   TestPacing();
 	printf("settings\n"); TestSettings();
+	printf("baud fallback\n"); TestBaudFallback();
 	printf("psiglue\n");  TestPsiglue();
 	printf("%d checks, %d failed\n", gChecks, gFails);
 	return gFails ? 1 : 0;

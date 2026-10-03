@@ -16,13 +16,24 @@
 //    register, and only after EPalCheck's test has passed on those bytes, so
 //    a wrong guess about where the palette is writes nothing.
 //  - EPalRead, EPalCheck: read the palette and say whether it looks like one.
+//  - (0.3) Two register writes, each to one register, with a short list of
+//    values, saved first and put back by ERestore and on close:
+//     - EUbrcrSet: UART2's baud divider (UBRCR), 1 or 3, while the UART is on;
+//     - ERomProbe, ERomKeep: the ROM's wait states (the CS0 and CS1 bytes of
+//       MEMCFG1). ERomProbe runs with interrupts off and calls nothing, so
+//       no ROM code runs while the setting is on: only this driver (in RAM)
+//       reads the ROM as data, and compares it with a read at the normal
+//       setting. ERomKeep then sets a value that passed, for real.
 // It never touches user memory: every answer is DoControl's return value.
 #include "kern.h"
 #include <e32svr.h>
+#include <e32rom.h>
 #include "../psikern.h"
 
 const TUint32 KRegBase=0x58000000;      // the kernel's own "mov rX,#0x58000000"
 const TInt KPaletteBytes=32;            // 16 entries of 16 bits
+const TUint8 KRomTry[]={0x54,0x58,0x5c,0x70,0x74,0x78,0x7c};
+const TInt KUartEnable=0x01;            // UART2 CON: UARTEN
 
 // readable registers: offset and access width (4 or 1)
 struct TRegOk { TUint16 iOffset; TUint16 iWidth; };
@@ -80,11 +91,20 @@ private:
 	TInt Invert(TBool aOn);
 	TInt SetEntry(TInt aEntry,TInt aLevel);
 	void Restore();
+	TInt UbrcrSet(TInt aValue);
+	TInt RomProbe(TInt aByte);
+	TInt RomKeep(TInt aByte);
+	static TInt RomTryIndex(TInt aByte);
 private:
 	TUint32 iLatch;                    // the last ERead32
 	TUint8* iPalette;                  // non-NULL while we have written it
 	TUint8 iSaved[KPaletteBytes];      // the palette as we found it
 	TUint8 iWritten[KPaletteBytes];    // what we put there
+	TBool iUbrcrSet;                   // UBRCR written: iUbrcrSaved to put back
+	TUint32 iUbrcrSaved, iUbrcrWritten;
+	TBool iMemSet;                     // MEMCFG1 written: iMemSaved to put back
+	TUint32 iMemSaved, iMemWritten;
+	TUint iRomPassed;                  // bit i: KRomTry[i] passed ERomProbe
 	};
 
 // --- the device
@@ -173,11 +193,17 @@ TInt DPsiKernChannel::DoControl(TInt aFunction,TAny* a1,TAny* /*a2*/)
 		}
 	case EPalCheck:
 		{
-		if (iPalette)
-			return KErrNone;            // (ours now: it was checked before the first write)
 		TUint8* p=Palette();
 		if (!p)
 			return KErrNotSupported;
+		if (iPalette==p)
+			{
+			TInt i;
+			for (i=0; i<KPaletteBytes && p[i]==iWritten[i]; i++)
+				;
+			if (i==KPaletteBytes)
+				return KErrNone;            // ours: checked before the first write
+			}
 		return LooksLikePalette(p) ? KErrNone : KErrCorrupt;
 		}
 	case EPalSet:
@@ -185,6 +211,12 @@ TInt DPsiKernChannel::DoControl(TInt aFunction,TAny* a1,TAny* /*a2*/)
 	case ERestore:
 		Restore();
 		return KErrNone;
+	case EUbrcrSet:
+		return UbrcrSet(off);
+	case ERomProbe:
+		return RomProbe(off);
+	case ERomKeep:
+		return RomKeep(off);
 	default:
 		return KErrNotSupported;
 		}
@@ -235,14 +267,23 @@ TBool DPsiKernChannel::LooksLikePalette(const TUint8* aP)
 	return (up==0) != (down==0);       // one way only, and not all the same
 	}
 
-// Before the first write: check the bytes and keep them.
+// Before the first write: check the bytes and keep them. If EPOC has
+// written the palette since our last write (a 4- or 16-grey screen, a
+// contrast change, switch-on), its new one is taken as the palette to put
+// back, and checked again; ours is gone anyway.
 TInt DPsiKernChannel::Snapshot()
 	{
-	if (iPalette)
-		return KErrNone;
 	TUint8* p=Palette();
 	if (!p)
 		return KErrNotSupported;
+	if (iPalette==p)
+		{
+		TInt i;
+		for (i=0; i<KPaletteBytes && p[i]==iWritten[i]; i++)
+			;
+		if (i==KPaletteBytes)
+			return KErrNone;                 // still ours
+		}
 	if (!LooksLikePalette(p))
 		return KErrCorrupt;
 	for (TInt i=0; i<KPaletteBytes; i++)
@@ -288,12 +329,147 @@ TInt DPsiKernChannel::Invert(TBool aOn)
 // EPOC has set a new palette since (contrast, switch-on), that one stays.
 void DPsiKernChannel::Restore()
 	{
+	if (iMemSet)
+		{
+		volatile TUint32* mem=(volatile TUint32*)(KRegBase+ERegMemCfg1);
+		if (*mem==iMemWritten)
+			*mem=iMemSaved;
+		iMemSet=EFalse;
+		}
+	if (iUbrcrSet)
+		{
+		volatile TUint32* ubrcr=(volatile TUint32*)(KRegBase+ERegU2Ubrcr);
+		if (*ubrcr==iUbrcrWritten)
+			*ubrcr=iUbrcrSaved;
+		iUbrcrSet=EFalse;
+		}
 	if (!iPalette)
 		return;
 	for (TInt i=0; i<KPaletteBytes; i++)
 		if (iPalette[i]==iWritten[i])
 			iPalette[i]=iSaved[i];
 	iPalette=NULL;
+	}
+
+// --- the UART's baud divider
+
+// UBRCR = 7372800 / (16 x rate) - 1: 3 is 115200, 1 is 230400. Only while the
+// UART is on (a port is open), and only these two values.
+TInt DPsiKernChannel::UbrcrSet(TInt aValue)
+	{
+	if (aValue!=1 && aValue!=3)
+		return KErrArgument;
+	if (!(*(volatile TUint8*)(KRegBase+ERegU2Con) & KUartEnable))
+		return KErrNotReady;
+	volatile TUint32* ubrcr=(volatile TUint32*)(KRegBase+ERegU2Ubrcr);
+	if (!iUbrcrSet)
+		{
+		iUbrcrSaved=*ubrcr;
+		iUbrcrSet=ETrue;
+		}
+	iUbrcrWritten=(TUint32)aValue;
+	*ubrcr=iUbrcrWritten;
+	return KErrNone;
+	}
+
+// --- the ROM's wait states
+
+TInt DPsiKernChannel::RomTryIndex(TInt aByte)
+	{
+	for (TUint i=0; i<sizeof(KRomTry); i++)
+		if (KRomTry[i]==aByte)
+			return i;
+	return KErrNotFound;
+	}
+
+static inline TUint IntsOff()
+	{
+	TUint old,tmp;
+	asm volatile("mrs %0, cpsr\n\torr %1, %0, #0xc0\n\tmsr cpsr_c, %1" : "=r"(old), "=r"(tmp) : : "memory");
+	return old;
+	}
+
+static inline void IntsBack(TUint aOld)
+	{
+	asm volatile("msr cpsr_c, %0" : : "r"(aOld) : "memory");
+	}
+
+// A check sum of aBytes of ROM from aAddr, by words. (Written out where it is
+// used: nothing may be called while the ROM's setting is changed.)
+#define PSI_ROM_SUM(aSum,aAddr,aBytes) \
+	{ \
+	const volatile TUint32* _p=(const volatile TUint32*)(aAddr); \
+	const volatile TUint32* _e=_p+(aBytes)/4; \
+	TUint32 _s=0; \
+	while (_p<_e) { _s=((_s<<1)|(_s>>31))^*_p++; } \
+	(aSum)=_s; \
+	}
+
+// Sets aByte for CS0 and CS1 with interrupts off, reads two 64 KB stretches
+// of ROM four times, and puts the normal setting back before anything else
+// runs. The ROM is read at the normal setting first, and a third stretch
+// is read in between so that none of it is in the 8 KB cache.
+TInt DPsiKernChannel::RomProbe(TInt aByte)
+	{
+	TInt i=RomTryIndex(aByte);
+	if (i<0)
+		return KErrArgument;
+	if (iMemSet)
+		return KErrInUse;                // (ERestore first)
+	volatile TUint32* mem=(volatile TUint32*)(KRegBase+ERegMemCfg1);
+	TUint32 normal=*mem;
+	if ((normal&0xffff)!=((KRomNormal<<8)|KRomNormal))
+		return KErrNotSupported;         // not the setting this was made for
+	// the ROM's extent from its own header
+	const TRomHeader* rom=(const TRomHeader*)KRomHeaderLinAddr;
+	TUint32 base=rom->iRomBase;
+	TUint32 size=rom->iRomSize;
+	if (base!=KRomHeaderLinAddr || size<0x400000 || size>0x2000000 || (size&0xffff))
+		return KErrCorrupt;
+	TUint32 a=base+size/4, b=base+(size/4)*3, c=base+size/2;
+	TUint32 fast=(normal&0xffff0000)|((TUint32)aByte<<8)|(TUint32)aByte;
+	TUint32 refA,refB,flush,sumA,sumB;
+	TInt bad=0;
+	TUint ints=IntsOff();
+	PSI_ROM_SUM(refA,a,0x10000);
+	PSI_ROM_SUM(refB,b,0x10000);
+	PSI_ROM_SUM(flush,c,0x4000);
+	*mem=fast;
+	for (TInt pass=0; pass<4; pass++)
+		{
+		PSI_ROM_SUM(sumA,a,0x10000);
+		PSI_ROM_SUM(sumB,b,0x10000);
+		if (sumA!=refA || sumB!=refB)
+			bad=1;
+		}
+	*mem=normal;
+	PSI_ROM_SUM(sumA,a,0x10000);         // and the same again at the normal setting
+	IntsBack(ints);
+	(void)flush;
+	if (sumA!=refA)
+		return KErrGeneral;              // (the ROM reads differently even now: odd)
+	if (!bad)
+		iRomPassed|=1u<<i;
+	return bad;
+	}
+
+TInt DPsiKernChannel::RomKeep(TInt aByte)
+	{
+	TInt i=RomTryIndex(aByte);
+	if (i<0)
+		return KErrArgument;
+	if (!(iRomPassed&(1u<<i)))
+		return KErrNotReady;             // ERomProbe first
+	volatile TUint32* mem=(volatile TUint32*)(KRegBase+ERegMemCfg1);
+	TUint32 now=*mem;
+	if (!iMemSet)
+		{
+		iMemSaved=now;
+		iMemSet=ETrue;
+		}
+	iMemWritten=(iMemSaved&0xffff0000)|((TUint32)aByte<<8)|(TUint32)aByte;
+	*mem=iMemWritten;
+	return KErrNone;
 	}
 
 // --- the DLL
