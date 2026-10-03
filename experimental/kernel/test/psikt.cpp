@@ -32,7 +32,7 @@ const TInt KMaxLines=40;
 const TInt KLineLen=80;
 _LIT(KLogName,"PsiKern.log");
 _LIT(KOldName,"PsiKern.old");
-_LIT(KPsiKtVersion,"0.3");
+_LIT(KPsiKtVersion,"0.4");
 
 // the ROM the driver's ordinals come from (ekern_rom.def)
 const TInt KRomMajor=1, KRomMinor=5, KRomBuild=260;
@@ -424,6 +424,8 @@ private:
 	void KeepCurveL();
 	void HandleKeyEventL(const TKeyEvent& aKeyEvent,TEventCode aType);
 	TBool RomOk();
+	TBool Ask(const TDesC& aFirst, const TDesC& aSecond);
+	void EverythingL();
 	TBool PaletteReady();
 	void ReadPalette();
 	TInt ApplyCurve(TInt aCurve);
@@ -443,6 +445,7 @@ private:
 	TInt iKeepCurve;                  // -1: none kept
 	TBool iPicking;                   // keys 0-6 choose a curve
 	TInt iReapplied;                  // how often EPOC set its own again
+	TBool iAll;                       // Test everything: asked once, at the start
 	CPeriodic* iKeeper;
 	};
 
@@ -560,6 +563,8 @@ TInt CPsiKtAppUi::OpenDriver()
 		r=iKern.Open();
 		l.Format(_L("Open channel: %d"),r);
 		Say(l);
+		if (r==KErrNotSupported)
+			Say(_L("Another version of the driver is still loaded: restart the Psion"));
 		}
 	if (r==KErrNone)
 		{
@@ -803,7 +808,7 @@ void CPsiKtAppUi::InvertL()
 		return;
 	if (!PaletteReady())
 		return;
-	if (!iEikonEnv->QueryWinL(_L("The screen will be inverted for 3 seconds"),_L("Go ahead?")))
+	if (!Ask(_L("The screen will be inverted for 3 seconds"),_L("Go ahead?")))
 		return;
 	if (!BeginStepL(KStep))
 		return;
@@ -872,7 +877,7 @@ void CPsiKtAppUi::CurvesL()
 		Say(_L("Not available while a curve is kept (Write > Keep a grey curve, 0)"));
 		return;
 		}
-	if (!iEikonEnv->QueryWinL(_L("The greys will change for 35 seconds, then go back"),_L("Go ahead?")))
+	if (!Ask(_L("The greys will change for 35 seconds, then go back"),_L("Go ahead?")))
 		return;
 	if (!BeginStepL(KStep))
 		return;
@@ -1069,7 +1074,7 @@ void CPsiKtAppUi::SerialFastL()
 	TInt r=OpenDriver();
 	if (r!=KErrNone)
 		return;
-	if (!iEikonEnv->QueryWinL(_L("The Atom modem must be connected and idle"),_L("Try 230400 with it?")))
+	if (!Ask(_L("The Atom modem must be connected and idle"),_L("Try 230400 with it?")))
 		return;
 	if (!BeginStepL(KStep))
 		return;
@@ -1174,7 +1179,7 @@ void CPsiKtAppUi::RomL()
 	TInt r=OpenDriver();
 	if (r!=KErrNone)
 		return;
-	if (!iEikonEnv->QueryWinL(_L("The ROM will be read at faster settings, a moment each"),_L("Go ahead?")))
+	if (!Ask(_L("The ROM will be read at faster settings, a moment each"),_L("Go ahead?")))
 		return;
 	if (!BeginStepL(KStep))
 		return;
@@ -1223,7 +1228,7 @@ void CPsiKtAppUi::RomL()
 	name.Copy(TPtrC8((const TUint8*)KTries[best].iName));
 	TBuf<KLineLen> q;
 	q.Format(_L("The ROM reads correctly at %S"),&name);
-	if (!iEikonEnv->QueryWinL(q,_L("Run on it for a speed test (a few seconds)?")))
+	if (!Ask(q,_L("Run on it for a speed test (a few seconds)?")))
 		{
 		EndStep(KStep,KErrNone);
 		return;
@@ -1248,6 +1253,50 @@ void CPsiKtAppUi::RomL()
 		Say(l);
 		}
 	EndStep(KStep,r);
+	}
+
+// A question before a write test, unless Test everything has asked already
+TBool CPsiKtAppUi::Ask(const TDesC& aFirst, const TDesC& aSecond)
+	{
+	if (iAll)
+		{
+		iLog.Line(aFirst);
+		return ETrue;
+		}
+	return iEikonEnv->QueryWinL(aFirst,aSecond);
+	}
+
+// Every test in turn, the safest first, with one question at the start.
+// Each still writes its "> step" line first, so a test that stops the
+// machine is named on the next start, and asked about before it runs again.
+// The 230400 test needs the Atom: without it, it says so and goes on.
+void CPsiKtAppUi::EverythingL()
+	{
+	if (!iEikonEnv->QueryWinL(_L("All tests: screen, 230400 with the Atom, ROM timing"),
+		_L("Back up C: first. Run them all?")))
+		return;
+	if (iKeepCurve>=0)
+		{
+		Say(_L("Not available while a curve is kept (Write > Keep a grey curve, 0)"));
+		return;
+		}
+	iAll=ETrue;
+	TRAPD(err,
+		CheckL();
+		SpeedL();
+		RegistersL();
+		PaletteL();
+		SerialL();
+		InvertL();
+		CurvesL();
+		SerialFastL();
+		RomL();
+		);
+	iAll=EFalse;
+	TBuf<KLineLen> l;
+	l.Format(_L("All tests done: %d (the log has every result)"),err);
+	Say(l);
+	User::LeaveIfError(err);
 	}
 
 void CPsiKtAppUi::HandleCommandL(TInt aCommand)
@@ -1294,6 +1343,9 @@ void CPsiKtAppUi::HandleCommandL(TInt aCommand)
 		break;
 	case EPsiKtCmdRom:
 		RomL();
+		break;
+	case EPsiKtCmdEverything:
+		EverythingL();
 		break;
 		}
 	}

@@ -34,6 +34,7 @@ RESOURCE MENU_PANE r_pskt_write_menu
 	{
 	items=
 		{
+		MENU_ITEM { command=EPsiKtCmdEverything; txt="Test everything"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPsiKtCmdInvert; txt="Invert the screen (3 s)"; },
 		MENU_ITEM { command=EPsiKtCmdCurves; txt="Grey curves (35 s)"; },
 		MENU_ITEM { command=EPsiKtCmdKeepCurve; txt="Keep a grey curve"; flags=EEikMenuItemSeparatorAfter; },

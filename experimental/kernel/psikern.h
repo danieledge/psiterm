@@ -5,7 +5,11 @@
 #define PSIKERN_H
 #include <e32std.h>
 
-_LIT(KPsiKernName,"PsiKern");          // the device's name (Install)
+// The device's name (Install) carries the version: a driver stays loaded
+// until the Psion restarts, so with one name a newer harness found the old
+// driver (-11), which then refused it (-5). Each version loads beside the
+// last instead.
+_LIT(KPsiKernName,"PsiKern03");
 _LIT(KPsiKernFile,"PSIKERN.LDD");      // \System\Libs\ on any drive
 const TInt KPsiKernMajor=0;
 const TInt KPsiKernMinor=3;
