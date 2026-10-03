@@ -69,7 +69,6 @@ enum TPsiTermCommands
 	EPtCmdUpdate,
 	EPtCmdCharInfo,
 	EPtCmdScreenshot,
-	EPtCmdSendShots,
 	EPtCmdUpdateServer,      // (0.70: no longer on a menu - Update PsiTerm... asks where from)
 	EPtCmdBold,
 	EPtCmdConnSettings,

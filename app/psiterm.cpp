@@ -3639,81 +3639,10 @@ void CTermView::TakeScreenshotL()
 	User::LeaveIfError(file.Write(cells));
 	CleanupStack::PopAndDestroy(2);         // file, bmp
 	TBuf<64> m;
-	m.Format(_L("Screenshot %d saved - Tools > Debug > Send screenshots"), n);
+	TFileName dir;
+	ShotDir(dir);
+	m.Format(_L("Screenshot %d saved in %S"), n, &dir);
 	iEikonEnv->InfoMsg(m);
-	}
-
-// Deletes the sent .psi files; returns how many.
-TInt CTermView::DeleteShots()
-	{
-	RFs& fs = iCoeEnv->FsSession();
-	TFileName dir, spec;
-	ShotDir(dir);
-	spec.Copy(dir);
-	spec.Append(_L("*.psi"));
-	CDir* list = NULL;
-	if (fs.GetDir(spec, KEntryAttNormal, ESortByName, list) != KErrNone || !list)
-		return 0;
-	TInt n = list->Count();
-	for (TInt i = 0; i < n; i++)
-		{
-		TFileName f(dir);
-		f.Append((*list)[i].iName);
-		fs.Delete(f);
-		}
-	delete list;
-	return n;
-	}
-
-// Bundles every .psi into one file and POSTs it to the update server.
-void CTermView::SendScreenshotsL()
-	{
-	if (iSshActive || iGatheringEntropy)
-		return;
-	RFs& fs = iCoeEnv->FsSession();
-	TFileName dir, spec;
-	ShotDir(dir);
-	spec.Copy(dir);
-	spec.Append(_L("*.psi"));
-	CDir* list = NULL;
-	if (fs.GetDir(spec, KEntryAttNormal, ESortByName, list) != KErrNone || !list || list->Count() == 0)
-		{
-		delete list;
-		iEikonEnv->InfoMsg(_L("No screenshots to send - Shift+Ctrl+P takes one"));
-		return;
-		}
-	CleanupStack::PushL(list);
-	iUpdateFile.Copy(dir);
-	iUpdateFile.Append(_L("send.tmp"));
-	RFile out;
-	User::LeaveIfError(out.Replace(fs, iUpdateFile, EFileWrite));
-	CleanupClosePushL(out);
-	HBufC8* buf = HBufC8::NewLC(4096);
-	TPtr8 bp(buf->Des());
-	for (TInt i = 0; i < list->Count(); i++)
-		{
-		const TEntry& e = (*list)[i];
-		TBuf8<300> hdr;
-		hdr.Append(_L8("PSIFILE1"));
-		PutU32(hdr, e.iName.Length());
-		hdr.Append(e.iName);
-		PutU32(hdr, e.iSize);
-		User::LeaveIfError(out.Write(hdr));
-		TFileName f(dir);
-		f.Append(e.iName);
-		RFile in;
-		User::LeaveIfError(in.Open(fs, f, EFileRead));
-		for (;;)
-			{
-			in.Read(bp);
-			if (bp.Length() == 0)
-				break;
-			out.Write(bp);
-			}
-		in.Close();
-		}
-	CleanupStack::PopAndDestroy(3);         // buf, out, list
-	LaunchSshL(3);
 	}
 
 void CTermView::LaunchSshL(TInt aMode)
@@ -3826,19 +3755,6 @@ void CTermView::LaunchSshL(TInt aMode)
 	ps.Copy(iSettings.iPppStart);
 	ps.ZeroTerminate();
 	}
-	if (aMode == 3)
-		{
-		// send screenshots: POST the bundle to the update server
-		iShared->port = iSettings.iUpdPort > 0 ? iSettings.iUpdPort : 80;
-		host.Copy(iSettings.iUpdHost);
-		host.ZeroTerminate();
-		TPtr8 path((TUint8*)iShared->path, sizeof(iShared->path) - 1);
-		path.Copy(_L8("/upload"));
-		path.ZeroTerminate();
-		TPtr8 save((TUint8*)iShared->save_as, sizeof(iShared->save_as) - 1);
-		save.Copy(iUpdateFile);
-		save.ZeroTerminate();
-		}
 	if (aMode == 2)
 		{
 		// update: same link as SSH, to GitHub (HTTPS) or the local server
@@ -4237,20 +4153,6 @@ void CTermView::SshProcessEnded()
 		msg.Format(_L8("\r\n[SSH program finished]\r\n"));
 	LocalMessage(msg);
 	ApplySerialSettings();
-	if (iLaunchMode == 3)
-		{
-		iCoeEnv->FsSession().Delete(iUpdateFile);        // the bundle
-		if (type != EExitPanic && exitCode == 11)
-			{
-			TBuf8<64> m;
-			TInt sent = DeleteShots();
-			if (sent == 1)
-				m.Copy(_L8("[1 screenshot sent]\r\n"));
-			else
-				m.Format(_L8("[%d screenshots sent]\r\n"), sent);
-			LocalMessage(m);
-			}
-		}
 	if (iLaunchMode == 2 && type != EExitPanic && exitCode == 10)
 		{
 		LocalMessage(_L8("\r\nStarting the installer - PsiTerm will close.\r\n"));
@@ -5359,8 +5261,6 @@ TBool CToolDialog::OkToExitL(TInt /*aButtonId*/)
 
 void CUpdateDialog::PreLayoutDynInitL()
 	{
-	if (iNeedHost)
-		SetTitleL(_L("Send screenshots"));   // Debug > Send screenshots borrows the dialog
 	// choices: GitHub stable, GitHub testing, local server (iSource 0, 2, 1)
 	((CEikChoiceList*)Control(EPtDlgSource))->SetCurrentItem(iSource == 2 ? 1 : (iSource == 1 ? 2 : 0));
 	SetEdwinTextL(EPtDlgHost, &iHost);
@@ -5374,7 +5274,7 @@ TBool CUpdateDialog::OkToExitL(TInt /*aButtonId*/)
 	GetEdwinText(iHost, EPtDlgHost);
 	iHost.Trim();
 	iPort = NumberEditorValue(EPtDlgPort);
-	if (iHost.Length() == 0 && (iSource == 1 || iNeedHost))
+	if (iHost.Length() == 0 && iSource == 1)
 		{
 		CEikonEnv::Static()->InfoMsg(_L("No local server entered"));
 		TryChangeFocusToL(EPtDlgHost);
@@ -6345,34 +6245,23 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			iView->SerialInfo();
 		break;
 	case EPtCmdUpdate:
-	case EPtCmdSendShots:
 		{
 		if (!ConfirmDisconnectL(aCommand))
 			break;
 		// Tools > Update PsiTerm asks where from every time, then fetches (as
-		// PsiMail and PsiWeb do). Sending screenshots (a developer feature)
-		// always goes to the local server, so it only asks when none is set.
-		if (aCommand == EPtCmdUpdate || s.iUpdHost.Length() == 0)
-			{
-			if (aCommand == EPtCmdSendShots)
-				iEikonEnv->InfoWinL(_L("Screenshots go to a local server"),
-					_L("Run server/psion-update.sh from the PsiTerm source on a computer, then enter its address"));
-			TInt source = s.iUpdSource;
-			TBuf<100> host(s.iUpdHost);
-			TInt port = s.iUpdPort > 0 ? s.iUpdPort : 8686;
-			CUpdateDialog* dlg = new(ELeave) CUpdateDialog(source, host, port, aCommand == EPtCmdSendShots);
-			if (!dlg->ExecuteLD(R_PT_UPDATE_DIALOG))
-				break;
-			s.iUpdSource = source;
-			s.iUpdHost = host;
-			s.iUpdPort = port;
-			SaveSettings(s);
-			}
-		iView->BeginDebugL(aCommand == EPtCmdUpdate ? _L("Update PsiTerm") : _L("Send screenshots"));
-		if (aCommand == EPtCmdUpdate)
-			iView->StartUpdateL();
-		else
-			iView->SendScreenshotsL();
+		// PsiMail and PsiWeb do)
+		TInt source = s.iUpdSource;
+		TBuf<100> host(s.iUpdHost);
+		TInt port = s.iUpdPort > 0 ? s.iUpdPort : 8686;
+		CUpdateDialog* dlg = new(ELeave) CUpdateDialog(source, host, port);
+		if (!dlg->ExecuteLD(R_PT_UPDATE_DIALOG))
+			break;
+		s.iUpdSource = source;
+		s.iUpdHost = host;
+		s.iUpdPort = port;
+		SaveSettings(s);
+		iView->BeginDebugL(_L("Update PsiTerm"));
+		iView->StartUpdateL();
 		iView->RunToolDialogL();
 		break;
 		}

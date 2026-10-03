@@ -232,7 +232,6 @@ RESOURCE MENU_PANE r_pt_debug_menu
 		MENU_ITEM { command=EPtCmdCharInfo; txt="Character codes"; },
 		MENU_ITEM { command=EPtCmdCheckTabs; txt="Check tmux tabs"; },
 		MENU_ITEM { command=EPtCmdScreenshot; txt="Screenshot"; },
-		MENU_ITEM { command=EPtCmdSendShots; txt="Send screenshots"; },
 		MENU_ITEM { command=EPtCmdSendSize; txt="Type screen size"; },
 		MENU_ITEM { command=EPtCmdGreyCal; txt="Display calibration..."; }
 		};

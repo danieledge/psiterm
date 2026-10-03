@@ -419,8 +419,8 @@ private:
 class CUpdateDialog : public CEikDialog
 	{
 public:
-	CUpdateDialog(TInt& aSource, TDes& aHost, TInt& aPort, TBool aNeedHost)
-		: iSource(aSource), iHost(aHost), iPort(aPort), iNeedHost(aNeedHost) {}
+	CUpdateDialog(TInt& aSource, TDes& aHost, TInt& aPort)
+		: iSource(aSource), iHost(aHost), iPort(aPort) {}
 private:
 	void SetSizeAndPositionL(const TSize& aSize);
 	void PreLayoutDynInitL();
@@ -428,7 +428,6 @@ private:
 	TInt& iSource;
 	TDes& iHost;
 	TInt& iPort;
-	TBool iNeedHost;      // screenshots always need the local server
 	};
 
 // Add / edit one host
@@ -509,7 +508,6 @@ public:
 	void StartSpeedTestL();
 	void StartUpdateL();
 	void ScreenshotL();                 // after a short delay (menu gone)
-	void SendScreenshotsL();
 	static TInt ShotCallback(TAny* aSelf);
 	void DisconnectSsh();              // File > End SSH: asks psissh to stop (twice: ends it now)
 	void SshProcessEnded();
@@ -783,7 +781,6 @@ private:
 	CPeriodic* iShotTimer;    // screenshot a moment after the menu closes
 	void TakeScreenshotL();
 	void ShotDir(TDes& aDir);
-	TInt DeleteShots();
 	TInt iEntropyMode;        // what to launch once the randomness is gathered
 	TBool iModemOnline;       // the terminal saw CONNECT (and no NO CARRIER since)
 	TUint iLastRx;            // tick of the last serial data outside SSH
