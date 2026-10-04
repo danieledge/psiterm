@@ -38,6 +38,13 @@ endif
 ifneq ($(HINTED_DEFAULT),)
 LXFLAGS += -DPSI_HINTED_DEFAULT=$(HINTED_DEFAULT)
 endif
+# PW_DIAG=1 builds the diagnostic trace to PsiWeb.log (startup + per-frame;
+# off by default). Reaches the Links files and pwepoc.cpp. Pair with
+# PWEPOC_DEFS=-DPW_LOG_ON_D to write the log to D: instead of C:.
+ifeq ($(PW_DIAG),1)
+LXFLAGS     += -DPW_DIAG
+PWEPOC_DEFS += -DPW_DIAG
+endif
 
 SDK     ?= $(PSION_SDK)
 E       := $(SDK)/epoc_cpp_sdk/epoc32

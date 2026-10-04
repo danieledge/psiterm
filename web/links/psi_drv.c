@@ -81,7 +81,9 @@ static void present_bh(void *p)
 	(void)p;
 	if (!dirty) return;
 	dirty = 0;
+	PW_TRACE_ONCE("drv: present enter");
 	report_page();			/* (before the frame: the app reads them with it) */
+	PW_TRACE_ONCE("drv: present reported");
 	pwb_present(psi_fb, psi_w, dx0, dy0, dx1, dy1);
 }
 
@@ -388,6 +390,7 @@ static void psi_draw_bitmap(struct graphics_device *dev, struct bitmap *bmp, int
 	ssize_t skip = packed ? bmp->x : bmp->skip;
 	unsigned char *data = bmp->data;
 	unsigned short *d;
+	PW_TRACE_ONCE("drv: first bitmap");
 
 	if (!data) return;
 	TEST_INACTIVITY
@@ -421,13 +424,14 @@ static void psi_fill_area(struct graphics_device *dev, int x1, int y1, int x2, i
 {
 	unsigned short c = (unsigned short)color;
 	int y, n;
-
+	PW_TRACE_ONCE("drv: first fill");
 	TEST_INACTIVITY
 	CLIP_FILL_AREA
 	mark(x1, y1, x2, y2);
 	n = x2 - x1;
 	for (y = y1; y < y2; y++)
 		fill16(psi_fb + y * psi_w + x1, c, n);
+	PW_TRACE_ONCE("drv: fill done");
 }
 
 static void psi_draw_hline(struct graphics_device *dev, int x1, int y, int x2, long color)
@@ -1219,9 +1223,11 @@ static unsigned char *psi_init_driver(unsigned char *param, unsigned char *displ
 	int w = 640, h = 240;
 	(void)display;
 
+	PW_TRACE("drv: init");
 	psi_param = stracpy(param ? param : cast_uchar "");
 	if (pwb_open(&w, &h) != 0)
 		return stracpy(cast_uchar "psi: no screen\n");
+	PW_TRACE("drv: screen open");
 	psi_w = w; psi_h = h;
 	psi_fb = malloc((size_t)w * h * 2);
 	if (!psi_fb) {
@@ -1229,6 +1235,7 @@ static unsigned char *psi_init_driver(unsigned char *param, unsigned char *displ
 		return stracpy(cast_uchar "psi: no memory for the screen\n");
 	}
 	memset(psi_fb, 0xff, (size_t)w * h * 2);
+	PW_TRACE("drv: fb ok");
 
 	psi_driver.x = w;
 	psi_driver.y = h;
@@ -1240,6 +1247,7 @@ static unsigned char *psi_init_driver(unsigned char *param, unsigned char *displ
 		return stracpy(cast_uchar "psi: no colour function\n");
 	}
 	init_virtual_devices(&psi_driver, 1);
+	PW_TRACE("drv: vdev ok");
 #ifdef PSI_EPOC
 	/* PsiWeb.app's setting; off unless the user has asked for pictures */
 	dds.display_images = pwb_load_images() ? 1 : 0;
@@ -1247,6 +1255,7 @@ static unsigned char *psi_init_driver(unsigned char *param, unsigned char *displ
 	last_status = get_time();
 	last_active = last_status;		/* (quick while starting) */
 	poll_timer = install_timer(POLL_MS, poll_fn, NULL);
+	PW_TRACE("drv: ready");
 	return NULL;
 }
 

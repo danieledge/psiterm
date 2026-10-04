@@ -40,6 +40,19 @@ unsigned long pwb_ms(void);                           /* milliseconds, any origi
 void pw_grey_convert(const unsigned short *fb, int fbw, unsigned char *out, int stride,
                      int x0, int y0, int x1, int y1);
 
+/* Diagnostic trace to PsiWeb.log (startup, per-frame). OFF by default; a
+ * diagnostic build turns it on with PW_DIAG (web/links/epoc.mk:
+ * PWEPOC_DEFS="-DPW_DIAG -DPW_LOG_ON_D" to also write the log to D:). */
+void pw_log(const char *);
+#ifdef PW_DIAG
+#define PW_TRACE(msg)      pw_log(msg)
+#define PW_TRACE_ONCE(msg) do { static int pw_once_ = 0; \
+                                if (!pw_once_) { pw_once_ = 1; pw_log(msg); } } while (0)
+#else
+#define PW_TRACE(msg)      ((void)0)
+#define PW_TRACE_ONCE(msg) ((void)0)
+#endif
+
 #ifdef __cplusplus
 }
 #endif

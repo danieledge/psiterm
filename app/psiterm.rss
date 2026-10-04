@@ -307,32 +307,16 @@ RESOURCE MENU_PANE r_pt_keys_menu
 		MENU_ITEM { command=EPtCmdKeyShiftTab; txt="Shift+Tab"; },
 		MENU_ITEM { command=EPtCmdKeyInsert; txt="Insert"; },
 		MENU_ITEM { command=EPtCmdKeyCtrlBackslash; txt="Ctrl+\\"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { cascade=r_pt_claude_menu; txt="Claude Code"; },
 		MENU_ITEM { cascade=r_pt_fkeys_menu; txt="F1 to F6"; },
 		MENU_ITEM { cascade=r_pt_fkeys2_menu; txt="F7 to F12"; }
 		};
 	}
 
-// Claude Code: its keys and the most used commands (no line between them:
-// the style guide has no separators inside cascades)
-RESOURCE MENU_PANE r_pt_claude_menu
-	{
-	items=
-		{
-		MENU_ITEM { command=EPtCmdClaudeEsc; txt="Interrupt"; extratxt="Esc"; },
-		MENU_ITEM { command=EPtCmdClaudeEscEsc; txt="Rewind"; extratxt="Esc Esc"; },
-		MENU_ITEM { command=EPtCmdClaudeMode; txt="Switch mode"; extratxt="Shift+Tab"; },
-		MENU_ITEM { command=EPtCmdClaudeClear; txt="/clear"; },
-		MENU_ITEM { command=EPtCmdClaudeCompact; txt="/compact"; },
-		MENU_ITEM { command=EPtCmdClaudeResume; txt="/resume"; },
-		MENU_ITEM { command=EPtCmdClaudeHelp; txt="/help"; }
-		};
-	}
-
-// Snippets: "Manage snippets..." plus the first seven of your snippets,
-// added at run time (eight items at most on a half-VGA menu; the rest are
-// sent from the dialog or by their shortcut keys). The line under "Manage
-// snippets..." is added then too, only when there are some.
+// Snippets: "Manage snippets..." plus your top-level snippets and a cascade per
+// folder, added at run time (eight items at most on a half-VGA menu; the rest
+// are sent from the dialog or by their shortcut keys). The line under "Manage
+// snippets..." is added then too, only when there are some. (0.86: Claude Code's
+// keys and commands are now a default "Claude Code" folder of snippets.)
 RESOURCE MENU_PANE r_pt_snippets_menu
 	{
 	items=
@@ -340,6 +324,18 @@ RESOURCE MENU_PANE r_pt_snippets_menu
 		MENU_ITEM { command=EPtCmdSnippets; txt="Manage snippets..."; }
 		};
 	}
+
+// One empty cascade pane per snippet folder (0.86). Filled at run time in
+// DynInitMenuPaneL (the KSnipFolderMenu table); keep KMaxSnipFolders of them,
+// declared together so the table can list them in order.
+RESOURCE MENU_PANE r_pt_snip_folder_0 { items = { }; }
+RESOURCE MENU_PANE r_pt_snip_folder_1 { items = { }; }
+RESOURCE MENU_PANE r_pt_snip_folder_2 { items = { }; }
+RESOURCE MENU_PANE r_pt_snip_folder_3 { items = { }; }
+RESOURCE MENU_PANE r_pt_snip_folder_4 { items = { }; }
+RESOURCE MENU_PANE r_pt_snip_folder_5 { items = { }; }
+RESOURCE MENU_PANE r_pt_snip_folder_6 { items = { }; }
+RESOURCE MENU_PANE r_pt_snip_folder_7 { items = { }; }
 
 // tmux: sends the prefix (Ctrl+B or Ctrl+A) and the command key. The
 // right-hand column shows tmux's own key for each command (it teaches
@@ -351,8 +347,7 @@ RESOURCE MENU_PANE r_pt_tmux_menu
 		MENU_ITEM { command=EPtCmdTmuxCopy; txt="Scroll / copy mode"; extratxt="["; },
 		MENU_ITEM { command=EPtCmdTmuxDetach; txt="Detach"; extratxt="d"; },
 		MENU_ITEM { command=EPtCmdTmuxMouse; txt="Switch mouse mode"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdTmuxTabs; txt="Windows as tabs"; flags=EEikMenuItemCheckBox; },
-		MENU_ITEM { command=EPtCmdTabsSetup; txt="Set up tabs on this server"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxTabs; txt="Windows as tabs"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { cascade=r_pt_tmux_win_menu; txt="Windows"; },
 		MENU_ITEM { cascade=r_pt_tmux_pane_menu; txt="Panes"; },
 		MENU_ITEM { cascade=r_pt_tmux_prefix_menu; txt="Prefix key"; }
@@ -478,10 +473,14 @@ RESOURCE ARRAY r_pt_link_array
 // Saved servers: pick one and Connect, or manage the list. The dialog title
 // matches the command ("SSH to..."); "server" is the word for the remote
 // machine everywhere (the start screen, the messages, this list).
+// The server picker. Its five buttons sit along the bottom, not in a right-hand
+// column: with only one line of content, a tall button column left most of the
+// dialog empty (0.86). The SSH-keys dialog below does the same for the same
+// reason.
 RESOURCE DIALOG r_pt_hosts_dialog
 	{
 	title="SSH to";
-	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight;
+	flags=EEikDialogFlagWait;
 	buttons=r_pt_hosts_buttons;
 	items=
 		{
@@ -609,6 +608,7 @@ RESOURCE DIALOG r_pt_snippet_edit_dialog
 		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgSnipName; control=EDWIN { width=22; maxlength=24; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Text"; id=EPtDlgSnipText; control=EDWIN { width=22; maxlength=120; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgSnipHint; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="\\n presses Enter, \\t Tab, \\e Esc; ^C sends Ctrl+C"; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Folder"; id=EPtDlgSnipFolder; control=EDWIN { width=22; maxlength=24; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Then press Enter"; id=EPtDlgSnipEnter; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Shortcut key"; id=EPtDlgSnipKey; control=CHOICELIST { maxdisplaychar=14; }; }
 		};

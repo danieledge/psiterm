@@ -85,6 +85,13 @@ int main(int argc, char **argv)
 	   scaled ones (docs/display.md); before Links draws anything */
 	psi_hinted_fonts = !(s && (s->display & PW_DISPLAY_SCALED_TEXT));
 #endif
+#ifdef PW_DIAG
+	{
+		char dl[64];
+		snprintf(dl, sizeof(dl), "main: links_main, %d args", n);
+		pw_log(dl);
+	}
+#endif
 	r = links_main(n, args);
 	pwn_release_now();		/* hang up and give the serial port back */
 	return r;

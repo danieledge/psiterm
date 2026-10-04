@@ -52,7 +52,7 @@ static void SaveSharedLink(RFs& aFs, const TPwSettings& aSettings)
 
 _LIT(KEngineExe, "psiweb.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiWeb\\PsiWeb.ini");
-_LIT(KVersion, "0.67");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
+_LIT(KVersion, "0.68");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
 _LIT(KDefaultHome, "http://68k.news/");
 const TInt KZoomSteps[] = { 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200 };
 const TInt KZoomCount = 11;
@@ -180,6 +180,7 @@ void CPwView::ConstructL(const TRect& aRect, const TPwSettings& aSettings)
 
 	TSize size = iPageArea.Size();
 	if (size.iWidth > PW_MAX_W) size.iWidth = PW_MAX_W;
+	size.iWidth &= ~1;	/* the engine packs two pixels a word: width must be even */
 	if (size.iHeight > PW_MAX_H) size.iHeight = PW_MAX_H;
 	iBitmap = new(ELeave) CFbsBitmap;
 	User::LeaveIfError(iBitmap->Create(TSize(PW_MAX_W, PW_MAX_H), EGray16));
@@ -381,6 +382,7 @@ void CPwView::SetPageRectL(const TRect& aRect)
 	LayoutL();
 	TSize size = iPageArea.Size();
 	if (size.iWidth > PW_MAX_W) size.iWidth = PW_MAX_W;
+	size.iWidth &= ~1;	/* the engine packs two pixels a word: width must be even */
 	if (size.iHeight > PW_MAX_H) size.iHeight = PW_MAX_H;
 	iShared->width = size.iWidth;
 	iShared->height = size.iHeight;

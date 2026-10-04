@@ -18,9 +18,9 @@ palmtop.
 
 | App | What it is | Version | More |
 |---|---|---|---|
-| **PsiTerm** | An SSH terminal (xterm-256color) on a port of Dropbear: tmux, vim, htop and Claude Code on a palmtop, with file transfer | 0.73 | [below](#psiterm) |
-| **PsiMail** | Email for any IMAP/SMTP server with TLS (made for Fastmail), and a calendar that keeps the Agenda in step with CalDAV | 0.74 | [mail/README.md](mail/README.md) |
-| **PsiWeb** | The NetSurf web browser: HTML5 and CSS, no JavaScript | 0.57 | [web/README.md](web/README.md) |
+| **PsiTerm** | An SSH terminal (xterm-256color) on a port of Dropbear: tmux, vim, htop and Claude Code on a palmtop, with file transfer | 0.86 | [below](#psiterm) |
+| **PsiMail** | Email for any IMAP/SMTP server with TLS (made for Fastmail), and a calendar that keeps the Agenda in step with CalDAV | 0.83 | [mail/README.md](mail/README.md) |
+| **PsiWeb** | A web browser (Links 2): HTML and CSS, no JavaScript | 0.67 | [web/README.md](web/README.md) |
 | **Atom modem** | Firmware that turns an M5Stack Atom into a Wi-Fi modem tuned for the Psion | - | [firmware/atom-modem](firmware/atom-modem/README.md) |
 
 All three apps look and behave like the Psion's own programs - EIKON toolbars,
@@ -88,11 +88,21 @@ More PsiMail screenshots are in [mail/README.md](mail/README.md).
 
 ## What's new
 
-**PsiTerm 0.73**
-- A **Files** button on the toolbar pops up Send file, Get file and Log to
-  file. Zoom stays on the sidebar's zoom icons and in the View menu.
-- **tmux windows as tabs**, drawn as EIKON's own dialog page tabs in place of
-  tmux's status line: tap one to switch, Ctrl+Tab for the next.
+**PsiTerm 0.86**
+- **Snippets now have folders.** Each folder is a menu cascade, and a
+  ready-made **Claude Code** folder holds that program's keys (Interrupt,
+  Rewind, Switch mode) and its /clear, /compact, /resume, /help commands —
+  all ordinary, editable snippets. The old fixed Keys > Claude Code menu is
+  gone.
+- The **"SSH to" dialog** keeps its buttons on one bottom row, so it no longer
+  leaves a tall empty gap.
+- Screen greys are tuned from Preferences across all three programs, and every
+  settings dialog fits the 640x240 screen.
+
+**Earlier PsiTerm**
+- 0.73: a **Files** button on the toolbar pops up Send file, Get file and Log
+  to file; **tmux windows as tabs**, drawn as EIKON's own dialog page tabs in
+  place of tmux's status line (tap one to switch, Ctrl+Tab for the next).
 
 **PsiMail 0.74**
 - A **new message header**: the subject in large bold type, the sender and
@@ -143,14 +153,15 @@ and Claude Code - on a 1999 palmtop.
   (escape sequences taken out) or raw, to a file you choose; "Log" on the
   status line while it runs
 - Snippets: your own commands and prompts on a menu and on Shift+Ctrl
-  hotkeys, with escapes for any key sequence (`\n`, `^C`, `\e`)
+  hotkeys, grouped in folders (each a menu cascade), with escapes for any key
+  sequence (`\n`, `^C`, `\e`). A ready-made Claude Code folder has that
+  program's keys (interrupt, rewind, switch mode, /clear, /compact...)
 - tmux windows shown as tabs, drawn as EIKON's dialog page tabs at the top of
   the screen in place of tmux's status line: tap one to switch, Ctrl+Tab /
   Shift+Ctrl+Tab for the next / previous, arrows at the ends when there are
-  many. Read from tmux's status line, or exactly from tmux itself after
-  tmux > Set up tabs on this server
-- Claude Code keys (interrupt, rewind, switch mode, /clear, /compact...) and a
-  tmux menu (windows, splits, panes, zoom, scroll mode, detach)
+  many. PsiTerm asks tmux for the window list on a channel of its own, and
+  falls back to reading tmux's status line
+- A tmux menu (windows, splits, panes, zoom, scroll mode, detach)
 - Themes (classic, inverted, high contrast, soft), cursor styles, and a status
   line with the connection state and clock
 - Auto-reconnect when a session drops (Psion switched off, Wi-Fi gone), with an

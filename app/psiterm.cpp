@@ -87,7 +87,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.85");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.86");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -4618,40 +4618,66 @@ TInt CSnippetList::FindKey(TInt aKey) const
 	}
 
 static void AddSnippetL(CArrayFixFlat<TSnippet>& aList, const TDesC& aName,
-	const TDesC& aText, TInt aEnter, TInt aKey)
+	const TDesC& aText, TInt aEnter, TInt aKey, const TDesC& aFolder = KNullDesC)
 	{
 	TSnippet s;
 	s.iName = aName;
 	s.iText = aText;
 	s.iEnter = aEnter;
 	s.iKey = aKey;
+	s.iFolder = aFolder;
 	aList.AppendL(s);
+	}
+
+// Claude Code's keys and most-used commands, as a folder of snippets (0.86:
+// these used to be a fixed Keys > Claude Code menu). The three key ones are
+// escape sequences: \e is Esc, \e\e is Esc Esc, \e[Z is Shift+Tab (switch
+// mode). All can be edited, moved or deleted like any snippet.
+void CSnippetList::AddClaudeFolderL()
+	{
+	_LIT(KClaudeFolder, "Claude Code");
+	AddSnippetL(*iEntries, _L("Interrupt"),   _L("\\e"),       0, 0, KClaudeFolder);
+	AddSnippetL(*iEntries, _L("Rewind"),      _L("\\e\\e"),    0, 0, KClaudeFolder);
+	AddSnippetL(*iEntries, _L("Switch mode"), _L("\\e[Z"),     0, 0, KClaudeFolder);
+	AddSnippetL(*iEntries, _L("/clear"),      _L("/clear"),    1, 0, KClaudeFolder);
+	AddSnippetL(*iEntries, _L("/compact"),    _L("/compact"),  1, 0, KClaudeFolder);
+	AddSnippetL(*iEntries, _L("/resume"),     _L("/resume"),   1, 0, KClaudeFolder);
+	AddSnippetL(*iEntries, _L("/help"),       _L("/help"),     1, 0, KClaudeFolder);
 	}
 
 // A few useful ones to start with; all can be edited or deleted. Their keys
 // are letters from the command (cLaude, coNtinue, tmuX): never digits
 void CSnippetList::AddDefaultsL()
 	{
-	AddSnippetL(*iEntries, _L("Claude Code"), _L("claude"), 1, 'L');
+	AddSnippetL(*iEntries, _L("Claude: run"), _L("claude"), 1, 'L');
 	AddSnippetL(*iEntries, _L("Claude: continue"), _L("claude --continue"), 1, 'N');
 	AddSnippetL(*iEntries, _L("tmux: attach"), _L("tmux new -A -s psion"), 1, 'X');
 	AddSnippetL(*iEntries, _L("Git status"), _L("git status"), 1, 0);
 	AddSnippetL(*iEntries, _L("Disk space"), _L("df -h"), 1, 0);
+	AddClaudeFolderL();
 	}
 
-// Snippets.dat: "PN" 1 count last, then per snippet:
+// Snippets.dat: "PN" <ver> count last, then per snippet:
 //   name text (length-prefixed), enter (1 byte), key (1 byte)
+//   and, from version 2 (0.86), the folder name (length-prefixed; empty = top level)
+// A version-1 file has no folders: loading one migrates it to version 2 and adds
+// the default "Claude Code" folder once (so deleting that folder makes it stay
+// gone - a version-2 file is never re-seeded).
 void CSnippetList::Load()
 	{
 	iEntries->Reset();
 	iLast = 0;
+	iChanged = EFalse;
 	RFile file;
 	if (file.Open(iFs, KSnippetsFile, EFileRead) != KErrNone)
 		{
 		TRAP_IGNORE(AddDefaultsL());
+		iChanged = ETrue;                    // save the fresh defaults (as version 2)
+		if (iLast >= iEntries->Count())
+			iLast = 0;
 		return;
 		}
-	HBufC8* buf = HBufC8::New(KMaxSnippets * 160 + 16);
+	HBufC8* buf = HBufC8::New(KMaxSnippets * 200 + 16);
 	if (!buf)
 		{
 		file.Close();
@@ -4660,7 +4686,9 @@ void CSnippetList::Load()
 	TPtr8 data(buf->Des());
 	TInt r = file.Read(data);
 	file.Close();
-	if (r == KErrNone && data.Length() >= 5 && data[0] == 'P' && data[1] == 'N' && data[2] == 1)
+	TInt ver = (r == KErrNone && data.Length() >= 5 && data[0] == 'P' && data[1] == 'N')
+		? data[2] : 0;
+	if (ver == 1 || ver == 2)
 		{
 		TInt count = data[3];
 		iLast = data[4];
@@ -4672,11 +4700,21 @@ void CSnippetList::Load()
 				break;
 			s.iEnter = data[pos++] ? 1 : 0;
 			s.iKey = data[pos++];
+			s.iFolder.Zero();
+			if (ver >= 2 && !GetStr(data, pos, s.iFolder))
+				break;
 			if (SnippetKeyIndex(s.iKey) < 0)
 				s.iKey = 0;                  // (a digit from before 0.79, or a letter a menu took: none)
 			TRAPD(err, iEntries->AppendL(s));
 			if (err != KErrNone)
 				break;
+			}
+		if (ver == 1)
+			{
+			// one-time migration: everyone gets the Claude Code folder, then save as v2
+			if (!HasFolder(_L("Claude Code")))
+				TRAP_IGNORE(AddClaudeFolderL());
+			iChanged = ETrue;
 			}
 		}
 	delete buf;
@@ -4686,13 +4724,13 @@ void CSnippetList::Load()
 
 TInt CSnippetList::Save()
 	{
-	HBufC8* buf = HBufC8::New(KMaxSnippets * 160 + 16);
+	HBufC8* buf = HBufC8::New(KMaxSnippets * 200 + 16);
 	if (!buf)
 		return KErrNoMemory;
 	TPtr8 data(buf->Des());
 	data.Append('P');
 	data.Append('N');
-	data.Append(1);
+	data.Append(2);
 	data.Append((TUint8)iEntries->Count());
 	data.Append((TUint8)iLast);
 	for (TInt i = 0; i < iEntries->Count(); i++)
@@ -4702,10 +4740,39 @@ TInt CSnippetList::Save()
 		PutStr(data, s.iText);
 		data.Append((TUint8)(s.iEnter ? 1 : 0));
 		data.Append((TUint8)s.iKey);
+		PutStr(data, s.iFolder);
 		}
 	TInt r = SafeWrite(iFs, KSnippetsFile, data);
 	delete buf;
+	iChanged = EFalse;
 	return r;
+	}
+
+// The distinct folder names, in first-appearance order (the top level is not a
+// folder, so empty names are skipped). At most KMaxSnipFolders are returned.
+void CSnippetList::FoldersL(CDesCArray& aOut) const
+	{
+	aOut.Reset();
+	for (TInt i = 0; i < iEntries->Count() && aOut.Count() < KMaxSnipFolders; i++)
+		{
+		const TDesC& f = (*iEntries)[i].iFolder;
+		if (f.Length() == 0)
+			continue;
+		TBool seen = EFalse;
+		for (TInt j = 0; j < aOut.Count() && !seen; j++)
+			if (aOut[j].CompareF(f) == 0)
+				seen = ETrue;
+		if (!seen)
+			aOut.AppendL(f);
+		}
+	}
+
+TBool CSnippetList::HasFolder(const TDesC& aName) const
+	{
+	for (TInt i = 0; i < iEntries->Count(); i++)
+		if ((*iEntries)[i].iFolder.CompareF(aName) == 0)
+			return ETrue;
+	return EFalse;
 	}
 
 // Shortcut keys: Shift+Ctrl + the letters the menus leave free (H is
@@ -4766,7 +4833,7 @@ void CSnippetListDialog::PreLayoutDynInitL()
 	for (TInt i = 0; i < iList.Count(); i++)
 		{
 		const TSnippet& s = iList.At(i);
-		TBuf<40> line;
+		TBuf<64> line;
 		if (s.iKey)
 			{
 			line.Append((TChar)s.iKey);
@@ -4774,6 +4841,11 @@ void CSnippetListDialog::PreLayoutDynInitL()
 			}
 		else
 			line.Append(_L("    "));
+		if (s.iFolder.Length())            // show "Folder / Name" for a snippet in a folder
+			{
+			line.Append(s.iFolder);
+			line.Append(_L(" / "));
+			}
 		line.Append(s.iName);
 		names->AppendL(line);
 		}
@@ -4800,6 +4872,7 @@ void CSnippetEditDialog::PreLayoutDynInitL()
 	{
 	SetEdwinTextL(EPtDlgSnipName, &iEntry.iName);
 	SetEdwinTextL(EPtDlgSnipText, &iEntry.iText);
+	SetEdwinTextL(EPtDlgSnipFolder, &iEntry.iFolder);   // blank = top level
 	((CEikChoiceList*)Control(EPtDlgSnipEnter))->SetCurrentItem(iEntry.iEnter ? 1 : 0);
 	CDesCArrayFlat* keys = new(ELeave) CDesCArrayFlat(8);
 	CleanupStack::PushL(keys);
@@ -4841,6 +4914,9 @@ TBool CSnippetEditDialog::OkToExitL(TInt /*aButtonId*/)
 		TryChangeFocusToL(EPtDlgSnipKey);
 		return EFalse;
 		}
+	TBuf<24> folder;
+	GetEdwinText(folder, EPtDlgSnipFolder);
+	folder.Trim();
 	if (name.Length())
 		iEntry.iName = name;
 	else
@@ -4848,6 +4924,7 @@ TBool CSnippetEditDialog::OkToExitL(TInt /*aButtonId*/)
 	iEntry.iText = text;
 	iEntry.iEnter = ((CEikChoiceList*)Control(EPtDlgSnipEnter))->CurrentItem() == 1;
 	iEntry.iKey = key;
+	iEntry.iFolder = folder;
 	return ETrue;
 	}
 
@@ -5329,6 +5406,8 @@ void CPsiTermAppUi::ConstructL()
 	iKeys->MigrateL();
 	iSnippets = CSnippetList::NewL(iCoeEnv->FsSession());
 	iSnippets->Load();
+	if (iSnippets->iChanged)            // fresh defaults, or a version-1 file migrated to v2
+		iSnippets->Save();
 	TRAPD(pics, ToolbarPicturesL());
 	(void)pics;                              // (no PsiTerm.mbm: words only)
 	if (iToolBar && !settings.iToolbar)
@@ -6001,18 +6080,35 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPtCmdLog, PtLogging(*iView) ? EEikMenuItemSymbolOn : 0);
 		return;
 		}
+	// The resources for the folder cascades, one per folder (0.86). An explicit
+	// table rather than ID arithmetic, so it does not matter how the resource
+	// compiler numbers them.
+	static const TInt KSnipFolderMenu[KMaxSnipFolders] =
+		{ R_PT_SNIP_FOLDER_0, R_PT_SNIP_FOLDER_1, R_PT_SNIP_FOLDER_2, R_PT_SNIP_FOLDER_3,
+		  R_PT_SNIP_FOLDER_4, R_PT_SNIP_FOLDER_5, R_PT_SNIP_FOLDER_6, R_PT_SNIP_FOLDER_7 };
 	if (aMenuId == R_PT_SNIPPETS_MENU || aMenuId == R_PT_SNIPPETS_POPUP)
 		{
-		// the first KMenuSnippets of your snippets (a pane holds 8 items: the
-		// rest are sent from Manage snippets... or by their keys), each with
-		// its hotkey shown on the right (not on the toolbar's pop-up: it is
-		// for the pen). The line under Manage snippets... only when there
-		// are some, so an empty menu does not end in a line.
+		// Top-level snippets as direct items, then each folder as a cascade at
+		// the bottom (EIKON: cascades low). A pane holds 8 items incl. "Manage
+		// snippets...", so at most KMenuSnippets go here; the rest stay reachable
+		// from Manage snippets... or by their keys. Hotkeys show on the right of
+		// the menu, not the toolbar's pop-up (which is for the pen). The line
+		// under Manage snippets... only when there is something below it.
+		CDesCArrayFlat* folders = new(ELeave) CDesCArrayFlat(4);
+		CleanupStack::PushL(folders);
+		iSnippets->FoldersL(*folders);
+		TInt nFolders = folders->Count();
+		if (nFolders > KMenuSnippets)
+			nFolders = KMenuSnippets;
+		TInt rootSlots = KMenuSnippets - nFolders;      // folders always get a slot
 		if (iSnippets->Count() > 0)
 			aMenuPane->ItemData(EPtCmdSnippets).iFlags |= EEikMenuItemSeparatorAfter;
-		for (TInt i = 0; i < iSnippets->Count() && i < KMenuSnippets; i++)
+		TInt shown = 0;
+		for (TInt i = 0; i < iSnippets->Count() && shown < rootSlots; i++)
 			{
 			const TSnippet& sn = iSnippets->At(i);
+			if (sn.iFolder.Length() != 0)
+				continue;                               // in a folder: shown in its cascade
 			CEikMenuPane::TItem::SData item;
 			item.iCommandId = EPtCmdSnippet0 + i;
 			item.iCascadeId = 0;
@@ -6025,30 +6121,74 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 				item.iExtraText.Append((TChar)sn.iKey);
 				}
 			aMenuPane->AddMenuItemL(item);
+			shown++;
 			}
+		for (TInt f = 0; f < nFolders; f++)
+			{
+			CEikMenuPane::TItem::SData item;
+			item.iCommandId = 0;
+			item.iCascadeId = KSnipFolderMenu[f];
+			item.iFlags = 0;
+			item.iText = (*folders)[f];
+			item.iExtraText.Zero();
+			aMenuPane->AddMenuItemL(item);
+			}
+		CleanupStack::PopAndDestroy();   // folders
 		return;
 		}
-	// tmux and Claude Code keys only mean something in an SSH session
+	// A folder's own cascade: list the snippets in that folder (0.86).
+	for (TInt fm = 0; fm < KMaxSnipFolders; fm++)
+		{
+		if (aMenuId != KSnipFolderMenu[fm])
+			continue;
+		CDesCArrayFlat* folders = new(ELeave) CDesCArrayFlat(4);
+		CleanupStack::PushL(folders);
+		iSnippets->FoldersL(*folders);
+		if (fm < folders->Count())
+			{
+			TBuf<24> fname = (*folders)[fm];
+			TInt shown = 0;
+			for (TInt i = 0; i < iSnippets->Count() && shown < 8; i++)
+				{
+				const TSnippet& sn = iSnippets->At(i);
+				if (sn.iFolder.CompareF(fname) != 0)
+					continue;
+				CEikMenuPane::TItem::SData item;
+				item.iCommandId = EPtCmdSnippet0 + i;
+				item.iCascadeId = 0;
+				item.iFlags = 0;
+				item.iText = sn.iName;
+				item.iExtraText.Zero();
+				if (sn.iKey)
+					{
+					item.iExtraText.Append(_L("Shift+Ctrl+"));
+					item.iExtraText.Append((TChar)sn.iKey);
+					}
+				aMenuPane->AddMenuItemL(item);
+				shown++;
+				}
+			}
+		CleanupStack::PopAndDestroy();   // folders
+		return;
+		}
+	// tmux keys only mean something in an SSH session
 	if (aMenuId == R_PT_TMUX_MENU || aMenuId == R_PT_TMUX_WIN_MENU
-		|| aMenuId == R_PT_TMUX_PANE_MENU || aMenuId == R_PT_CLAUDE_MENU)
+		|| aMenuId == R_PT_TMUX_PANE_MENU)
 		{
 		if (aMenuId == R_PT_TMUX_MENU)
 			aMenuPane->SetItemButtonState(EPtCmdTmuxTabs,
 				iView->Settings().iTmuxTabs ? EEikMenuItemSymbolOn : 0);
 		if (!iView->SshLoggedIn())
 			{
-			static const TInt KTmux[] = { EPtCmdTmuxCopy, EPtCmdTmuxDetach, EPtCmdTmuxMouse, EPtCmdTabsSetup };
+			static const TInt KTmux[] = { EPtCmdTmuxCopy, EPtCmdTmuxDetach, EPtCmdTmuxMouse };
 			static const TInt KWin[] = { EPtCmdTmuxNew, EPtCmdTmuxNext, EPtCmdTmuxPrev,
 				EPtCmdTmuxChoose, EPtCmdTmuxRename };
 			static const TInt KPane[] = { EPtCmdTmuxSplitH, EPtCmdTmuxSplitV, EPtCmdTmuxPane,
 				EPtCmdTmuxZoom };
-			static const TInt KClaude[] = { EPtCmdClaudeEsc, EPtCmdClaudeEscEsc, EPtCmdClaudeMode,
-				EPtCmdClaudeClear, EPtCmdClaudeCompact, EPtCmdClaudeResume, EPtCmdClaudeHelp };
 			const TInt* ids = KTmux;
-			TInt n = 4;
+			TInt n = 3;
 			if (aMenuId == R_PT_TMUX_WIN_MENU) { ids = KWin; n = 5; }
 			else if (aMenuId == R_PT_TMUX_PANE_MENU) { ids = KPane; n = 4; }
-			else if (aMenuId == R_PT_CLAUDE_MENU) { ids = KClaude; n = 7; }
 			for (TInt i = 0; i < n; i++)
 				aMenuPane->SetItemDimmed(ids[i], ETrue);
 			}
@@ -6100,9 +6240,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			iView->SendSnippetText(iSnippets->At(i).iText, iSnippets->At(i).iEnter);
 		return;
 		}
-	if (((aCommand >= EPtCmdTmuxNew && aCommand <= EPtCmdTmuxDetach) || aCommand == EPtCmdTmuxMouse
-		|| aCommand == EPtCmdTabsSetup
-		|| (aCommand >= EPtCmdClaudeEsc && aCommand <= EPtCmdClaudeHelp))
+	if (((aCommand >= EPtCmdTmuxNew && aCommand <= EPtCmdTmuxDetach) || aCommand == EPtCmdTmuxMouse)
 		&& !iView->SshLoggedIn())
 		{
 		iEikonEnv->InfoMsg(_L("Not available - SSH is not connected"));
@@ -6263,17 +6401,6 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			}
 		break;
 		}
-	// Claude Code
-	case EPtCmdClaudeEsc:   iView->SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE); break;
-	case EPtCmdClaudeEscEsc:
-		iView->SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE);
-		iView->SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE);
-		break;
-	case EPtCmdClaudeMode:  iView->SendKey(VTERM_KEY_TAB, VTERM_MOD_SHIFT); break;
-	case EPtCmdClaudeClear: iView->SendSnippetText(_L("/clear"), ETrue); break;
-	case EPtCmdClaudeCompact: iView->SendSnippetText(_L("/compact"), ETrue); break;
-	case EPtCmdClaudeResume: iView->SendSnippetText(_L("/resume"), ETrue); break;
-	case EPtCmdClaudeHelp:  iView->SendSnippetText(_L("/help"), ETrue); break;
 	// tmux: the prefix, then the command key
 	case EPtCmdTmuxNew:     SendTmux('c'); break;
 	case EPtCmdTmuxNext:    SendTmux('n'); break;
@@ -6286,14 +6413,6 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdTmuxCopy:    SendTmux('['); break;
 	case EPtCmdTmuxRename:  SendTmux(','); break;
 	case EPtCmdTmuxDetach:  SendTmux('d'); break;
-	case EPtCmdTabsSetup:
-		// at a shell prompt inside tmux: tmux sends its window list as the
-		// terminal title, and ~/.tmux.conf keeps that for new tmux servers
-		iView->SendString(_L8(" tmux set -g set-titles on \\; set -g set-titles-string "
-			"'PSITABS #{W:#I:#W#F }'; grep -q PSITABS ~/.tmux.conf 2>/dev/null || "
-			"printf '%s\\n' 'set -g set-titles on' \"set -g set-titles-string 'PSITABS "
-			"#{W:#I:#W#F }'\" >> ~/.tmux.conf; echo 'PsiTerm: tabs set up'\r"));
-		break;
 	case EPtCmdCheckTabs:
 		iView->CheckTabsL();
 		break;

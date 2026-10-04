@@ -8,7 +8,7 @@ checked, and keeps the Psion's own Agenda in step with Fastmail's calendars
 WiRSa (`ATDT host:port`) or the Psion's own dial-up TCP/IP - and PsiTerm's
 TLS 1.3 client.
 
-**Status: 0.74, alpha.** The engine has been run against Dovecot, Radicale
+**Status: 0.83, alpha.** The engine has been run against Dovecot, Radicale
 and Fastmail both as PC code and as the exact ARM code in an emulator, and the
 EIKON app is driven screen by screen in a 5mx emulator. Expect bugs, and
 please report them via [GitHub issues](https://github.com/danieledge/psiterm/issues).

@@ -73,15 +73,8 @@ enum TPsiTermCommands
 	EPtCmdBold,
 	EPtCmdConnSettings,
 
-	// 0.35: snippets, Claude Code keys, tmux, appearance
+	// 0.35: snippets, tmux, appearance (0.86: Claude Code keys are now snippets)
 	EPtCmdSnippets,           // Snippets > Manage snippets...
-	EPtCmdClaudeEsc,
-	EPtCmdClaudeEscEsc,
-	EPtCmdClaudeMode,
-	EPtCmdClaudeClear,
-	EPtCmdClaudeCompact,
-	EPtCmdClaudeResume,
-	EPtCmdClaudeHelp,
 	EPtCmdTmuxNew,
 	EPtCmdTmuxNext,
 	EPtCmdTmuxPrev,
@@ -96,7 +89,6 @@ enum TPsiTermCommands
 	EPtCmdTmuxMouse,
 	EPtCmdTmuxTabs,
 	EPtCmdCheckTabs,
-	EPtCmdTabsSetup,
 	EPtCmdTmuxPrefixB,
 	EPtCmdTmuxPrefixA,
 	EPtCmdAppearance,         // Tools > Preferences...
@@ -165,6 +157,7 @@ enum TPsiTermDialogControls
 	EPtDlgSnipText,
 	EPtDlgSnipEnter,
 	EPtDlgSnipKey,
+	EPtDlgSnipFolder,
 	EPtDlgTheme,
 	EPtDlgCursor,
 	EPtDlgBlink,

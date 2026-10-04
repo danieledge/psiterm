@@ -169,7 +169,7 @@ static const char* ErrWords(TInt aErr)
 	switch (aErr)
 		{
 	case -3:    return "cancelled";
-	case -21:   return "the serial port is reserved - is the Remote link on?";
+	case -21:   return "the serial port is in use by another program";
 	case -33:   return "timed out";
 	case -34:   return "the server refused the connection";
 	case -36:   return "the connection was closed";
@@ -2007,7 +2007,7 @@ static int StartPpp(char* aResult, int aResultMax)
 		if (r == -10)
 			Say("  Serial port busy - the Internet connection is probably up already.\r\n");
 		else if (r == -13)
-			Say("  The serial port is held by the Remote link (System screen, Ctrl+L) or another program - trying anyway.\r\n");
+			Say("  The serial port is in use by another program - trying anyway.\r\n");
 		else
 			Say("  Could not open the serial port to start PPP - trying anyway.\r\n");
 		return 0;
@@ -2184,10 +2184,8 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 		TInt r = pg_link_open();
 		if (r != 0)
 			{
-			if (r == -10)
-				SetMsg(aResult, aResultMax, "the serial port is in use by another program (PsiTerm? Remote link?)");
-			else if (r == -13)
-				SetMsg(aResult, aResultMax, "the serial port is held by the Remote link - switch it off on the System screen (Ctrl+L)");
+			if (r == -10 || r == -13)
+				SetMsg(aResult, aResultMax, "the serial port is in use by another program");
 			else
 				SetMsgErr(aResult, aResultMax, "could not set up the serial port", r);   // (pg_link_open's step codes)
 			return -1;

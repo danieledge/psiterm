@@ -139,9 +139,28 @@ static PwShared* Pw()
 		pg_set_link_log(LogLink);
 		gInitResult = pg_attach();     // the chunk only: the serial port is
 		                               // opened when a page is fetched
+#ifdef PW_DIAG
+		{
+		char db[48];
+		TPtr8 p((TUint8*)db, 0, sizeof(db));
+		p.AppendFormat(_L8("chunk: pg_attach=%d"), gInitResult);
+		p.Append(TChar(0));
+		pw_log(db);
+		}
+#endif
 		PwShared* s = (PwShared*)pg_shared();
 		if (s && s->magic == PW_MAGIC)
 			gPw = s;
+#ifdef PW_DIAG
+		{
+		char db[48];
+		TPtr8 p((TUint8*)db, 0, sizeof(db));
+		p.AppendFormat(_L8("chunk: shared=%d magic=%s"),
+			s ? 1 : 0, (s && s->magic == PW_MAGIC) ? "ok" : "BAD");
+		p.Append(TChar(0));
+		pw_log(db);
+		}
+#endif
 		}
 	if (gPw)
 		return gPw;
@@ -180,6 +199,8 @@ extern "C" int pwb_open(int* aW, int* aH)
 	if (!gPw)
 		return -1;                     // not started by PsiWeb.app
 	*aW = Pw()->width > 0 && Pw()->width <= PW_MAX_W ? Pw()->width : PW_MAX_W;
+	*aW &= ~1;	/* even: the grey-convert/pack path reads/writes two pixels a word
+	             * (an odd width misaligns odd rows -> Data Abort on the ARM710) */
 	*aH = Pw()->height > 0 && Pw()->height <= PW_MAX_H ? Pw()->height : PW_MAX_H;
 	Pw()->dirty_y0 = *aH;
 	Pw()->dirty_y1 = 0;
@@ -195,6 +216,13 @@ extern "C" void pwb_close()
 extern "C" void pwb_present(const unsigned short* aFb, int aFbW, int aX0, int aY0, int aX1, int aY1)
 	{
 	PwShared* s = Pw();
+#ifdef PW_DIAG
+	{ static int once = 0;
+	  if (!once) { once = 1;
+	    char b[64]; TBuf8<64> t;
+	    t.Format(_L8("present: fbw=%d %d,%d-%d,%d"), aFbW, aX0, aY0, aX1, aY1);
+	    Mem::Copy(b, t.Ptr(), t.Length()); b[t.Length()] = 0; pw_log(b); } }
+#endif
 	pw_grey_convert(aFb, aFbW, s->fb, PW_STRIDE, aX0, aY0, aX1, aY1);
 	// widen the dirty band; the app resets it after copying
 	if (aY0 < s->dirty_y0) s->dirty_y0 = aY0;

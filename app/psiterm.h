@@ -79,10 +79,13 @@ const TInt KPtDisplayLightText = 2;    // Preferences > Coloured text: lighter g
 //   \n Enter   \e Esc   \t Tab   ^X Ctrl+X   \\ backslash   \^ caret
 // so a snippet can also be any key sequence (e.g. ^Bc = tmux new window).
 // ---------------------------------------------------------------------------
-const TInt KMaxSnippets = 20;
+const TInt KMaxSnippets = 40;
 // how many of them go on the Snippets menu and the toolbar's pop-up after
 // "Manage snippets...": a half-VGA menu holds 8 items (EIKON style guide)
 const TInt KMenuSnippets = 7;
+// Snippets can be grouped in folders, one level deep (a folder holds snippets,
+// never another folder). At most this many folders show as menu cascades.
+const TInt KMaxSnipFolders = 8;
 
 struct TSnippet
 	{
@@ -91,6 +94,7 @@ struct TSnippet
 	TInt iEnter;          // 1 = press Enter after the text
 	TInt iKey;            // Shift+Ctrl hotkey: 0 none, else a letter from KSnippetKeys
 	                      // (digits were allowed before 0.79; a saved digit loads as none)
+	TBuf<24> iFolder;     // folder name, or empty for the top level (0.86)
 	};
 
 class CSnippetList : public CBase
@@ -105,10 +109,16 @@ public:
 	void AddL(const TSnippet& aEntry) { iEntries->AppendL(aEntry); }
 	void Delete(TInt aIndex) { iEntries->Delete(aIndex); }
 	TInt FindKey(TInt aKey) const;   // index of the snippet on this hotkey, or -1
+	// Folders (one level). FoldersL fills aOut with the distinct folder names in
+	// first-appearance order (the top level is not a folder and is left out).
+	void FoldersL(CDesCArray& aOut) const;
+	TBool HasFolder(const TDesC& aName) const;
 	TInt iLast;
+	TBool iChanged;           // Load set up or migrated data that should be saved
 private:
 	CSnippetList(RFs& aFs) : iFs(aFs) {}
 	void AddDefaultsL();
+	void AddClaudeFolderL();  // the default "Claude Code" folder of snippets
 	RFs& iFs;
 	CArrayFixFlat<TSnippet>* iEntries;
 	};
