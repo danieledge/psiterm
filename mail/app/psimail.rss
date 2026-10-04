@@ -95,7 +95,8 @@ RESOURCE TOOLBAR r_pm_toolbar
 // about), then the built-in Email program's (Shift+Ctrl+C check mail, Ctrl+U
 // disconnect, Ctrl+X move, Shift+Ctrl+L folders, Shift+Ctrl+Q status,
 // Shift+Ctrl+B sort), then free shifted keys for the rest. The same keys
-// serve both menu bars (the mail's and the calendar's).
+// serve both menu bars (the mail's and the calendar's). Check this folder
+// is Shift+Ctrl+X: it was Ctrl+Y, which reads as Redo beside Ctrl+Z Undo.
 RESOURCE HOTKEYS r_pm_hotkeys
 	{
 	control=
@@ -113,7 +114,6 @@ RESOURCE HOTKEYS r_pm_hotkeys
 		HOTKEY { command=EPmCmdSaveAttach; key='s'; },
 		HOTKEY { command=EPmCmdFolders; key='g'; },
 		HOTKEY { command=EPmCmdInbox; key='i'; },
-		HOTKEY { command=EPmCmdRefresh; key='y'; },
 		HOTKEY { command=EPmCmdSearch; key='f'; },
 		HOTKEY { command=EPmCmdOutbox; key='b'; },
 		HOTKEY { command=EPmCmdMonth; key='q'; },
@@ -141,7 +141,8 @@ RESOURCE HOTKEYS r_pm_hotkeys
 		HOTKEY { command=EPmCmdHelp; key='h'; },
 		HOTKEY { command=EPmCmdPrintSetup; key='p'; },
 		HOTKEY { command=EPmCmdPrintPreview; key='v'; },
-		HOTKEY { command=EPmCmdSaveWord; key='s'; }
+		HOTKEY { command=EPmCmdSaveWord; key='s'; },
+		HOTKEY { command=EPmCmdRefresh; key='x'; }
 		};
 	}
 
@@ -180,7 +181,7 @@ RESOURCE MENU_PANE r_pm_file_menu
 		{
 		MENU_ITEM { command=EPmCmdSendRecv; txt="Check mail (send & receive)"; },
 		MENU_ITEM { command=EPmCmdFolderMenu; cascade=r_pm_folder_menu; txt="Folder"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdConnect; txt="Connect..."; },
+		MENU_ITEM { command=EPmCmdConnect; txt="Connect"; },
 		MENU_ITEM { command=EPmCmdHangup; txt="Disconnect"; },
 		MENU_ITEM { command=EPmCmdStop; txt="Stop"; extratxt="Esc"; },
 		MENU_ITEM { command=EPmCmdOffline; txt="Work offline"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
@@ -196,7 +197,7 @@ RESOURCE MENU_PANE r_pm_print_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPmCmdSaveWord; txt="Save as Word file..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdSaveWord; txt="Save as Word file..."; },
 		MENU_ITEM { command=EPmCmdPageSetup; txt="Page setup..."; },
 		MENU_ITEM { command=EPmCmdPrintSetup; txt="Print setup..."; },
 		MENU_ITEM { command=EPmCmdPrintPreview; txt="Print preview..."; },
@@ -211,7 +212,7 @@ RESOURCE MENU_PANE r_pm_folder_menu
 	items=
 		{
 		MENU_ITEM { command=EPmCmdRefresh; txt="Check this folder"; },
-		MENU_ITEM { command=EPmCmdOlder; txt="Get older messages"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPmCmdOlder; txt="Get older messages"; },
 		MENU_ITEM { command=EPmCmdNewFolder; txt="Create new..."; },
 		MENU_ITEM { command=EPmCmdRenameFolder; txt="Rename..."; },
 		MENU_ITEM { command=EPmCmdDeleteFolder; txt="Delete"; }
@@ -266,8 +267,8 @@ RESOURCE MENU_PANE r_pm_message_menu
 		MENU_ITEM { command=EPmCmdForward; txt="Forward..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdUnread; txt="Unread"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPmCmdFlag; txt="Flagged"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdAttachMenu; cascade=r_pm_attach_menu; txt="Attachments"; },
 		MENU_ITEM { command=EPmCmdWhole; txt="Get whole message"; },
+		MENU_ITEM { command=EPmCmdAttachMenu; cascade=r_pm_attach_menu; txt="Attachments"; },
 		MENU_ITEM { command=EPmCmdWebMenu; cascade=r_pm_web_menu; txt="Web"; },
 		MENU_ITEM { command=EPmCmdReplyMenu; cascade=r_pm_reply_menu; txt="Reply to"; }
 		};
@@ -352,8 +353,8 @@ RESOURCE MENU_PANE r_pm_switch_view_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPmCmdWeekView; txt="Week"; flags=EEikMenuItemCheckBox; },
-		MENU_ITEM { command=EPmCmdMonthView; txt="Month"; flags=EEikMenuItemCheckBox; }
+		MENU_ITEM { command=EPmCmdWeekView; txt="Week"; flags=EEikMenuItemRadioStart; },
+		MENU_ITEM { command=EPmCmdMonthView; txt="Month"; flags=EEikMenuItemRadioEnd; }
 		};
 	}
 
@@ -586,7 +587,7 @@ RESOURCE DLG_BUTTONS r_pm_compose_buttons
 		{
 		DLG_BUTTON { id=EPmBidSend; button=CMBUT { txt="Send"; }; hotkey='S'; },
 		DLG_BUTTON { id=EPmBidSave; button=CMBUT { txt="Save as\ndraft"; }; hotkey='D'; },
-		DLG_BUTTON { id=EPmBidAttach; button=CMBUT { txt="Attach-\nments"; }; hotkey='A'; },
+		DLG_BUTTON { id=EPmBidAttach; button=CMBUT { txt="Add\nfile"; }; hotkey='A'; },
 		DLG_BUTTON { id=EPmBidContacts; button=CMBUT { txt="Contacts"; }; hotkey='L'; },
 		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Close"; }; hotkey=EEikBidCancel; flags=0; }
 		};
@@ -699,13 +700,26 @@ RESOURCE ARRAY r_pm_options_lines
 		};
 	}
 
-// Preferences: two pages (0.74), General and New mail (pmauto.cpp)
+// Preferences: two pages (0.74), General and New mail (pmauto.cpp).
+// Screen greys... opens the greys screen shared with PsiTerm and PsiWeb
+// (ssh/psigreyui.cpp; docs/display.md) on top; the dialog is still there
+// when it closes.
 RESOURCE DIALOG r_pm_prefs_dialog
 	{
 	title="Preferences";
 	flags=EEikDialogFlagWait;
-	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	buttons=r_pm_prefs_buttons;
 	pages=r_pm_prefs_pages;
+	}
+
+RESOURCE DLG_BUTTONS r_pm_prefs_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPmBidGreys; button=CMBUT { txt="Screen greys..."; }; hotkey='G'; flags=0; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="OK"; }; hotkey=EEikBidOk; flags=0; }
+		};
 	}
 
 RESOURCE ARRAY r_pm_prefs_pages
@@ -713,7 +727,8 @@ RESOURCE ARRAY r_pm_prefs_pages
 	items=
 		{
 		PAGE { text="General"; id=EPmPagePrefsGeneral; lines=r_pm_prefs_lines; },
-		PAGE { text="New mail"; id=EPmPagePrefsNewMail; lines=r_pm_prefs_newmail_lines; }
+		PAGE { text="New mail"; id=EPmPagePrefsNewMail; lines=r_pm_prefs_newmail_lines; },
+		PAGE { text="Screen"; id=EPmPagePrefsScreen; lines=r_pm_prefs_screen_lines; }
 		};
 	}
 
@@ -759,11 +774,13 @@ RESOURCE ARRAY r_pm_check_connect_array
 		};
 	}
 
+// (No, Yes: the one order every yes/no list in the suite has; pmauto.cpp
+// maps the stored bits accordingly)
 RESOURCE ARRAY r_pm_yes_no_array
 	{
 	items=
 		{
-		LBUF { txt="Yes"; }, LBUF { txt="No"; }
+		LBUF { txt="No"; }, LBUF { txt="Yes"; }
 		};
 	}
 
@@ -777,12 +794,33 @@ RESOURCE ARRAY r_pm_prefs_lines
 			control=NUMBER_EDITOR { min=0; max=50; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Keep mail on"; id=EPmDlgStore;
 			control=CHOICELIST { array_id=r_pm_store_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Email icon opens"; id=EPmDlgEmailButton;
+			control=CHOICELIST { array_id=r_pm_email_button_array; }; }
+		};
+	}
+
+// (0.82) pictures and the screen: a page of their own, so the dialog fits
+// the 240-pixel screen; Screen greys... (the button) belongs with them
+RESOURCE ARRAY r_pm_prefs_screen_lines
+	{
+	items=
+		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Show pictures"; id=EPmDlgPictures;
 			control=CHOICELIST { array_id=r_pm_pictures_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Web pictures"; id=EPmDlgWebPictures;
 			control=CHOICELIST { array_id=r_pm_web_pictures_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Email icon opens"; id=EPmDlgEmailButton;
-			control=CHOICELIST { array_id=r_pm_email_button_array; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Reading mode"; id=EPmDlgReading;
+			control=CHOICELIST { array_id=r_pm_reading_array; }; }
+		};
+	}
+
+// docs/display.md: contrast up and the backlight on while a message is
+// open (how much is set in Preferences > Screen greys)
+RESOURCE ARRAY r_pm_reading_array
+	{
+	items=
+		{
+		LBUF { txt="Off"; }, LBUF { txt="While reading a message"; }
 		};
 	}
 
@@ -880,7 +918,7 @@ RESOURCE ARRAY r_pm_link_array
 
 RESOURCE DIALOG r_pm_cal_dialog
 	{
-	title="Calendar";
+	title="Calendar settings";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	pages=r_pm_cal_pages;
@@ -891,7 +929,8 @@ RESOURCE ARRAY r_pm_cal_pages
 	items=
 		{
 		PAGE { text="Server"; id=EPmPageCalServer; lines=r_pm_cal_server_lines; },
-		PAGE { text="Agenda"; id=EPmPageCalAgenda; lines=r_pm_cal_agenda_lines; }
+		PAGE { text="Agenda"; id=EPmPageCalAgenda; lines=r_pm_cal_agenda_lines; },
+		PAGE { text="Dates"; id=EPmPageCalDates; lines=r_pm_cal_dates_lines; }
 		};
 	}
 
@@ -920,14 +959,23 @@ RESOURCE ARRAY r_pm_cal_agenda_lines
 			control=EDWIN { width=20; maxlength=120; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Time zone"; id=EPmDlgCalZone;
 			control=CHOICELIST { array_id=r_pm_zones; }; },
-		DLG_LINE { type=EEikCtNumberEditor; prompt="Days back"; id=EPmDlgCalBack;
-			control=NUMBER_EDITOR { min=0; max=365; }; },
-		DLG_LINE { type=EEikCtNumberEditor; prompt="Days ahead"; id=EPmDlgCalAhead;
-			control=NUMBER_EDITOR { min=7; max=730; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Alarms"; id=EPmDlgCalAlarms;
 			control=CHOICELIST { array_id=r_pm_cal_alarm_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Existing Psion entries"; id=EPmDlgCalExisting;
 			control=CHOICELIST { array_id=r_pm_cal_existing_array; }; }
+		};
+	}
+
+// (0.83) the dates synced: a page of their own, so the dialog fits the
+// 240-pixel screen (with six lines on Agenda its title was off the top)
+RESOURCE ARRAY r_pm_cal_dates_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Days back"; id=EPmDlgCalBack;
+			control=NUMBER_EDITOR { min=0; max=365; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Days ahead"; id=EPmDlgCalAhead;
+			control=NUMBER_EDITOR { min=7; max=730; }; }
 		};
 	}
 

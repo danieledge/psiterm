@@ -20,11 +20,15 @@
 #include <eikdialg.h>
 #include <eikdialg.hrh>
 #include <fbs.h>
+#include <eiksbfrm.h>
+#include <eiksbobs.h>
 
 extern "C" {
 #include <psiweb.h>
 }
+#include "psibell.h"           // (0.81) doorbells with the engine: power
 
+#include "psidisp.h"
 #include <psiweb.rsg>
 #include "psiweb.hrh"
 
@@ -51,7 +55,12 @@ struct TPwSettings
 	TInt iImages;
 	TInt iZoom;            // percent
 	TInt iToolbar;         // View > Show toolbar
+	TInt iDisplay;         // KPwDisplay* bits (docs/display.md)
 	};
+
+// TPwSettings::iDisplay, one byte at the end of PsiWeb.ini (0.81); all 0 is the standard
+const TInt KPwDisplayReading = 1;      // View > Reading mode
+const TInt KPwDisplayScaledText = 2;   // Preferences > Text: scaled (Links' own fonts)
 
 class CPwView;
 
@@ -69,7 +78,7 @@ private:
 	};
 
 class CPwUpdateProgress;
-class CPwView : public CCoeControl
+class CPwView : public CCoeControl, public MEikScrollBarObserver
 	{
 public:
 	~CPwView();
@@ -91,8 +100,18 @@ public:
 	void SetPageRectL(const TRect& aRect);
 	const TDesC& UpdateLog() const { return iUpdLog; }
 	TBool Updating() const { return iUpdState == PW_UPD_RUNNING; }
-	void StopUpdate() { if (iShared) iShared->net.quit = 1; }   // the updater gives up and says so
+	void StopUpdate() { if (iShared) { iShared->net.quit = 1; RingEngine(); } }   // the updater gives up and says so
+	void RingEngine();                       // (0.81) something for the engine in the chunk: wake it
+	TBool PicturesShown() const;             // this page's pictures are shown (the Pictures button)
 private:
+	// the page's scroll bar: EIKON's, beside the page (the engine says where
+	// the page is: psiweb.h page_*)
+	void LayoutL();                          // the bar and the page's room in Rect()
+	void UpdateScrollBarL();                 // the thumb where the engine says the page is
+	void ScrollTo(TInt aY);
+	void HandleScrollEventL(CEikScrollBar* aScrollBar, TEikScrollEvent aEventType);
+	TInt CountComponentControls() const;
+	CCoeControl* ComponentControl(TInt aIndex) const;
 	static TInt StartCallback(TAny* aSelf);
 	void Draw(const TRect& aRect) const;
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
@@ -101,6 +120,15 @@ private:
 	void AddEntropy(TUint aValue);
 	static TInt TickCallback(TAny* aSelf);
 	void Tick();
+	// (0.81) power: 16 ticks a second while pages load or frames come, else
+	// one every 2 s with the doorbell armed (the engine rings it with news)
+	TBool TickWanted() const;
+	void TickFast();
+	void TickQuiet();
+	static TInt BellCallback(TAny* aSelf);
+	static TInt AskCallback(TAny* aSelf);    // the engine's questions (Links phase 5)
+	void AskAuthL();                         // a user name and password
+	void AskSaveL();                         // where to save a file PsiWeb cannot show
 	void UpdateTickL();
 	void UpdateLine(const TDesC& aLine);        // adds to the progress window's text
 	void UpdateDialogL();                       // the progress window, then what the update came to
@@ -115,6 +143,11 @@ private:
 	TBool iRunning;
 	CPwWatcher* iWatcher;
 	CPeriodic* iTimer;
+	CPsiBellWaiter* iBellWaiter;  // (0.81) the engine's news
+	TPsiBellRinger iEngRinger;    // ...and its doorbell
+	TBool iTickQuiet;             // the tick is on its slow pace
+	TInt iCalmTicks;              // ticks in a row with nothing going on
+	TUint iFrameAt;               // tick count of the last new frame
 	CIdle* iStarter;
 	TBuf<PW_URL_MAX> iStartUrl;
 	TUint iLastFrame;
@@ -131,6 +164,31 @@ private:
 	TBuf<1200> iUpdLog;        // the progress window's text (paragraphs)
 	CPwUpdateProgress* iUpdDlg;   // the window, while it is up
 	TFileName iUpdateFile;
+	CIdle* iAsker;             // shows the engine's questions outside Tick
+	TBool iAsking;             // one of its dialogs is up
+	CEikScrollBarFrame* iSBFrame;   // the page's scroll bar
+	TRect iPageArea;           // the room the engine draws in (Rect() less the bar)
+	TInt iSbH, iSbY, iSbVh;    // what the bar shows: the page's height, the view's top and height
+	TInt iEngH, iEngY, iEngVh; // ...and what the engine last said (it may not have caught up)
+	TBool iSbDragging;         // the thumb is being dragged: the engine's place waits
+	TBool iSbPen;              // the pen went down on the bar: its events are the bar's
+	TInt iPics;                // page_pics last seen (-1: not yet)
+	};
+
+// A page or the proxy needs a user name and password (HTTP authentication,
+// Links phase 5): the engine asks through the shared chunk (psiweb.h auth_*)
+class CPwAuthDialog : public CEikDialog
+	{
+public:
+	CPwAuthDialog(const TDesC& aWho, const TDesC& aRealm, TDes& aUser, TDes& aPass)
+		: iWho(aWho), iRealm(aRealm), iUser(aUser), iPass(aPass) {}
+private:
+	void PreLayoutDynInitL();
+	TBool OkToExitL(TInt aButtonId);
+	const TDesC& iWho;
+	const TDesC& iRealm;
+	TDes& iUser;
+	TDes& iPass;
 	};
 
 // Page information: up to five lines of text (the title is the resource's)
@@ -238,7 +296,14 @@ class CPwAppUi : public CEikAppUi
 public:
 	void ConstructL();
 	~CPwAppUi();
+	void ShowPicturesState(TBool aOn);  // the Pictures button pressed in or not
 private:
+	// Reading mode (ssh/psidisp.h): on while PsiWeb is in front with the
+	// tick on; off in the background, at switch-on and on closing
+	void HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination);
+	void UpdateReading(TBool aEnterOnly = EFalse);
+	TPsiReading iReading;
+	TBool iForeground;
 	void HandleCommandL(TInt aCommand);
 	void HandleSwitchOnEventL(CCoeControl* aDestination);
 	TBool ProcessCommandParametersL(TApaCommand aCommand, TFileName& aDocumentName, const TDesC8& aTail);

@@ -107,7 +107,7 @@ void CPmView::StoreRoot(TChar aDrive, TDes& aRoot)
 			r = fs.Rename(oldDir, newDir);
 		if (busy == KErrNone)
 			env->BusyMsgCancel();
-		TBuf<160> log;
+		TBuf<200> log;                       // (three 40-character names and the words: 160 was not enough for the longest)
 		if (r != KErrNone)
 			{
 			// keep using the old folder: nothing has moved

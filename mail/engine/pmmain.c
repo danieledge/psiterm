@@ -85,13 +85,21 @@ int pm_fclose(FILE *f)
 	return bad ? -1 : 0;
 }
 
+/* set by pm_replace (pmepoc.cpp) when the last failure was the file being
+   in use - the app reading it - rather than the card: said as such below,
+   and cleared once said */
+int pm_replace_busy;
+
 void pm_write_why(char *why, int whymax, const char *what, const char *path)
 {
 	long kb = pm_free_kb(path);
 	char drive[3];
 	drive[0] = 0;
 	if (path && path[0] && path[1] == ':') { drive[0] = path[0]; drive[1] = ':'; drive[2] = 0; }
-	if (kb >= 0 && kb < 8)
+	if (pm_replace_busy) {
+		pm_replace_busy = 0;
+		snprintf(why, whymax, "Could not save %s - it is in use (try again in a moment)", what);
+	} else if (kb >= 0 && kb < 8)
 		snprintf(why, whymax, "Could not save %s: no room left on %s", what, drive[0] ? drive : "the disk");
 	else
 		snprintf(why, whymax, "Could not save %s on %s - is the card in, and not full or write-protected?",
@@ -158,12 +166,22 @@ static int send_outbox(int acct, char *why, int whymax, int *nsent)
 	pm_list_dir(obox, ".txt", add_name, &l);
 	qsort(l.names, l.n, sizeof(l.names[0]), cmp_names);
 	for (i = 0; i < l.n; i++) {
-		char rfolder[128];
+		char rfolder[128], snt[200];
 		unsigned int ruid = 0;
 		FILE *f;
 		snprintf(path, sizeof(path), "%s%s", obox, l.names[i]);
 		snprintf(eml, sizeof(eml), "%s%.*s.eml", obox, (int)strlen(l.names[i]) - 4, l.names[i]);
 		snprintf(err, sizeof(err), "%s%.*s.err", obox, (int)strlen(l.names[i]) - 4, l.names[i]);
+		snprintf(snt, sizeof(snt), "%s%.*s.snt", obox, (int)strlen(l.names[i]) - 4, l.names[i]);
+		/* The point of no return was passed last time (smtp.c wrote the
+		   marker before the final ".") and the server's answer was lost:
+		   the message may well have been delivered, so it is never sent
+		   again by itself. Its .err says so; the user deletes it, or opens
+		   it and sends it again (the app removes the marker then). */
+		if ((f = fopen(snt, "r")) != 0) {
+			fclose(f);
+			continue;
+		}
 		/* reply bookkeeping from the header */
 		rfolder[0] = 0;
 		if ((f = fopen(path, "r")) != 0) {
@@ -181,9 +199,15 @@ static int send_outbox(int acct, char *why, int whymax, int *nsent)
 		r = compose_mime(acct, path, eml, from, sizeof(from), rcpts, sizeof(rcpts), why, whymax);
 		if (r == PM_RES_OK) {
 			pm_progress("Sending message %d of %d...", i + 1, l.n);
-			r = smtp_send(acct, eml, from, rcpts, why, whymax);
+			r = smtp_send(acct, eml, from, rcpts, snt, why, whymax);
 		}
 		if (r != PM_RES_OK) {
+			if ((f = fopen(snt, "r")) != 0) {
+				/* sent in full, but no answer came: in doubt (see above) */
+				fclose(f);
+				snprintf(why, whymax, "May already have been sent - the server did not answer. Delete it, or open it and send again");
+				pm_log("smtp: %s left in doubt: %s", l.names[i], why);
+			}
 			if ((f = fopen(err, "w")) != 0) { fprintf(f, "%s\n", why); fclose(f); }
 			remove(eml);
 			st_changed();
@@ -208,6 +232,7 @@ static int send_outbox(int acct, char *why, int whymax, int *nsent)
 		remove(path);
 		remove(eml);
 		remove(err);
+		remove(snt);
 		st_changed();
 	}
 	if (r == PM_RES_OK) {
@@ -373,7 +398,11 @@ static int run(PmCmd *c, char *why, int whymax)
 	if (c->op == PM_CMD_HANGUP) { pm_log("net: the app asked to hang up"); pmn_release_now(); snprintf(why, whymax, "Hung up"); return PM_RES_OK; }
 	if (c->op == PM_CMD_TRUST) {
 		if (!s->trust_fp[0]) { snprintf(why, whymax, "Nothing to trust"); return PM_RES_FAILED; }
-		st_pin_save(c->arg, s->trust_fp);
+		if (st_pin_save(c->arg, s->trust_fp) != 0) {
+			/* (the card full: said so, rather than "Trusted" and asked again next time) */
+			pm_write_why(why, whymax, "the trusted certificate", s->store_dir);
+			return PM_RES_FAILED;
+		}
 		snprintf(why, whymax, "Trusted %s", c->arg);
 		s->trust_fp[0] = 0;
 		return PM_RES_OK;
@@ -413,28 +442,36 @@ static int run(PmCmd *c, char *why, int whymax)
 	case PM_CMD_WEBPICS:
 		r = web_fetch(a, c->folder, c->uid, why, whymax);
 		break;
+	/* A flag change or a move is noted in pending.txt BEFORE the local files
+	   change, and the note taken out again once the server has it: an engine
+	   that stops between the two (a crash, the battery) leaves the change
+	   queued rather than lost, so the message does not come back from the
+	   server at the next sync as if it were new. (Replaying a change the
+	   server already had is harmless: the uid is simply not there.) */
 	case PM_CMD_FLAG:
+		snprintf(line, sizeof(line), "FLAG\t%s\t%u\t%s", c->folder, c->uid, c->arg);
+		st_pending_add(a, line);
 		local_update(a, c->folder, c->uid, c->arg, 0);
 		r = s->offline ? PM_RES_OFFLINE : imap_flag(a, c->folder, c->uid, c->arg, why, whymax);
 		if (queued(r)) {
-			snprintf(line, sizeof(line), "FLAG\t%s\t%u\t%s", c->folder, c->uid, c->arg);
-			st_pending_add(a, line);
 			snprintf(why, whymax, "Changed here; the server will be told next time");
 			r = PM_RES_OFFLINE;
-		}
+		} else
+			st_pending_drop(a, line);
 		break;
 	case PM_CMD_MOVE:
+		snprintf(line, sizeof(line), "MOVE\t%s\t%u\t%s", c->folder, c->uid, c->arg);
+		st_pending_add(a, line);
 		undo_note_move(a, c->folder, c->uid, c->arg);   /* (keeps its line and files for Edit > Undo) */
 		local_update(a, c->folder, c->uid, "", 1);
 		imap_copyuid_clear();
 		r = s->offline ? PM_RES_OFFLINE : imap_move(a, c->folder, c->uid, c->arg, why, whymax);
 		undo_note_result(a, queued(r) ? PM_RES_OFFLINE : r, imap_copyuid());
 		if (queued(r)) {
-			snprintf(line, sizeof(line), "MOVE\t%s\t%u\t%s", c->folder, c->uid, c->arg);
-			st_pending_add(a, line);
 			snprintf(why, whymax, "Moved here; the server will be told next time");
 			r = PM_RES_OFFLINE;
-		}
+		} else
+			st_pending_drop(a, line);
 		break;
 	case PM_CMD_UNDO:
 		r = undo_run(a, c->folder, c->uid, why, whymax);
@@ -506,6 +543,17 @@ void pm_do_command(PmCmd *c)
 	pm_copy(s->last_folder, c->folder, sizeof(s->last_folder));
 	pm_copy(s->last_msg, why, sizeof(s->last_msg));
 	s->last_res = r;
+	{
+		/* and the same in the ring, so the app can take every command's
+		   outcome in turn when two finish between its ticks */
+		PmDone *d = &s->done[s->done_seq % PM_CMDQ];
+		d->op = c->op;
+		d->res = r;
+		d->uid = c->uid;
+		pm_copy(d->msg, why, sizeof(d->msg));
+		pm_copy(d->file, s->last_file, sizeof(d->file));
+		d->update_ready = s->update_ready;
+	}
 	s->progress[0] = 0;
 	s->net.quit = 0;
 	s->busy = 0;

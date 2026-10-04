@@ -20,7 +20,18 @@ enum
 	PW_CMD_IMAGES,                  /* cmd_arg = "1" load images, "0" don't */
 	PW_CMD_QUIT,
 	PW_CMD_UPDATE,                  /* download a newer PsiWeb.sis (pwupdate.c) */
-	PW_CMD_HANGUP                   /* hang up and give the serial port back now */
+	PW_CMD_HANGUP,                  /* hang up and give the serial port back now */
+	PW_CMD_SCROLL                   /* cmd_arg = the top of the view, pixels down the
+	                                   page (the app's scroll bar: page_y) */
+	};
+
+/* auth_state, save_state (psiweb.h) */
+enum
+	{
+	PW_ASK_NONE = 0,
+	PW_ASK_ASKING,                  /* psiweb: show the dialog */
+	PW_ASK_OK,                      /* app: answered */
+	PW_ASK_CANCEL                   /* app: cancelled */
 	};
 
 /* update_state */

@@ -28,6 +28,8 @@ _LIT(KPortName, "COMM::0");
 // engine's writable statics below.
 #ifndef PG_LINK_TEST_ONLY
 
+#include "psibell.h"
+
 // EXEs may have writable static data on EPOC R5 (unlike .app DLLs), but
 // global objects with constructors are avoided: handles live on the heap.
 static RChunk* gChunk = 0;
@@ -133,6 +135,17 @@ static int gDcdFail = 0;                  // KConfigFailDCD is set on the port
 static int gDcdLost = 0;                  // a read or write failed with -29: no carrier
 static TUint gCommHandshake = 0;          // iHandshake without the DCD bit
 static int gNetClosedWhy = 0;             // the error that set gNetClosed (0: EOF/none)
+static int gModemOnline = 0;              // modem route: CONNECT seen, not hung up since
+static int gLinkDoubt = 0;                // switched on with no DCD to ask: probe the link (pg_take_link_doubt)
+
+// 1 once after a switch-on left the modem link in doubt (no carrier detect
+// to ask): the protocol should send something the server answers, now.
+extern "C" int pg_take_link_doubt()
+	{
+	int d = gLinkDoubt;
+	gLinkDoubt = 0;
+	return d;
+	}
 
 static int LinkOpen()
 	{
@@ -156,7 +169,7 @@ static const char* ErrWords(TInt aErr)
 	switch (aErr)
 		{
 	case -3:    return "cancelled";
-	case -21:   return "the serial port is reserved - is the Remote link on?";
+	case -21:   return "the serial port is in use by another program";
 	case -33:   return "timed out";
 	case -34:   return "the server refused the connection";
 	case -36:   return "the connection was closed";
@@ -198,28 +211,67 @@ static void SetMsgErr(char* aOut, int aMax, const char* aText, TInt aErr)
 
 static TInt64 NowMicro();
 static void RxFill(int aTimeoutUs);
+static void LinkLog(const char* aText);
 extern "C" int pg_quit_requested();
 
-// Waits for aStat for at most aTimeoutUs (aTimeoutUs < 0: no limit), giving
-// up early if PsiTerm asks us to quit and aQuitAware is set.
-// Returns 1 if aStat completed, 0 if not (aStat is then still outstanding).
+// Abandoned requests (gLookupOrphan and friends) that have completed: note
+// it, so that nothing waits on them again (see WaitFor).
+static void NoteOrphans()
+	{
+	if (gLookupOrphan && gLookupStat != KRequestPending)
+		{
+		gLookupOrphan = 0;
+		LinkLog("the abandoned lookup has completed");
+		}
+	if (gConnOrphan && gConnStat != KRequestPending)
+		{
+		gConnOrphan = 0;
+		LinkLog("the abandoned connect has completed");
+		}
+	if (gShutOrphan && gShutStat != KRequestPending)
+		{
+		gShutOrphan = 0;
+		LinkLog("the abandoned shutdown has completed");
+		}
+	}
+
+// Makes the one timer every wait here uses. 1 if there is one.
+static int TimerReady()
+	{
+	if (gTimerOpen)
+		return 1;
+	if (!gTimer) gTimer = new RTimer;
+	if (gTimer && gTimer->CreateLocal() == KErrNone)
+		gTimerOpen = 1;
+	return gTimerOpen;
+	}
+
+// Waits for aStat for at most aTimeoutUs, giving up early if the app asks
+// us to quit and aQuitAware is set.
+// Returns 1 if aStat has completed, 0 if not (aStat is then still outstanding).
+//
+// The thread's request semaphore (e32/euasyn): every completion adds one
+// count, and every User::WaitForRequest takes counts until the status it was
+// given has completed. The two-status wait below therefore swallows the
+// count of any *other* request that completes meanwhile - an abandoned
+// lookup, or the receive that pg_wait leaves outstanding while NetWrite
+// waits. So the rule for this file: never wait on a status that has already
+// completed. Its count may be gone, and a wait with nothing else outstanding
+// then never returns (the hang after "Securing the connection", seen on the
+// device). The other way round - a count left over for a status nobody waits
+// on again - does no harm: the engines run no active scheduler, and every
+// wait here loops until its own status has completed.
 static int WaitFor(TRequestStatus& aStat, TInt aTimeoutUs, int aQuitAware)
 	{
 	if (aStat != KRequestPending)
+		return 1;                        // completed already: never wait on it (above)
+	if (!TimerReady())
 		{
-		User::WaitForRequest(aStat);     // completed already: take its signal
-		return 1;
-		}
-	if (!gTimerOpen)
-		{
-		if (!gTimer) gTimer = new RTimer;
-		if (gTimer && gTimer->CreateLocal() == KErrNone)
-			gTimerOpen = 1;
-		}
-	if (!gTimerOpen)
-		{
-		User::WaitForRequest(aStat);     // no timer: nothing better to do
-		return 1;
+		// no timer (handles exhausted?): an unbounded wait could hang the
+		// engine with no quit check, so this counts as a timeout instead and
+		// the caller cancels its request as it would after one
+		LinkLog("wait: no timer; treating the wait as timed out");
+		return 0;
 		}
 	TInt64 start = NowMicro();
 	for (;;)
@@ -232,45 +284,41 @@ static int WaitFor(TRequestStatus& aStat, TInt aTimeoutUs, int aQuitAware)
 				return 0;
 			if (left < slice)
 				slice = left.Low();
+			if (slice < 1000)
+				slice = 1000;
 			}
 		TRequestStatus timerStat;
 		gTimer->After(timerStat, slice);
 		for (;;)
 			{
 			User::WaitForRequest(aStat, timerStat);
+			NoteOrphans();               // an orphan done meanwhile: its count went with this wait
 			if (aStat != KRequestPending)
 				{
 				gTimer->Cancel();
-				User::WaitForRequest(timerStat);
+				if (timerStat == KRequestPending)
+					User::WaitForRequest(timerStat);   // the cancel completes it
 				return 1;
 				}
 			if (timerStat != KRequestPending)
 				break;                   // the slice is over
-			// neither: a stray signal - an abandoned request completing (see
-			// gLookupOrphan). Its signal has now been taken, so it needs no
-			// WaitForRequest of its own. Keep waiting on the same timer: a
-			// second After() on a running RTimer would panic.
-			if (gLookupOrphan && gLookupStat != KRequestPending)
-				gLookupOrphan = 0;
-			else if (gConnOrphan && gConnStat != KRequestPending)
-				gConnOrphan = 0;
-			else if (gShutOrphan && gShutStat != KRequestPending)
-				gShutOrphan = 0;
+			// neither (a stray count on the semaphore): keep waiting on the
+			// same timer - a second After() on a running RTimer would panic
 			}
 		if (aQuitAware && pg_quit_requested())
 			return 0;
 		}
 	}
 
-// After Cancel(): waits a bounded time for the request to complete and takes
-// its signal. Returns 1 if it did, 0 if it is still outstanding (abandoned).
+// After Cancel(): waits a bounded time for the request to complete. Returns
+// 1 if it did, 0 if it is still outstanding (abandoned).
 static int TakeCancelled(TRequestStatus& aStat)
 	{
 	return WaitFor(aStat, KCancelWaitUs, 0);
 	}
 
-// Abandoned requests that have since completed: take their signals so the
-// thread's request semaphore stays in step with the statuses we wait on.
+// Abandoned requests: give each a bounded wait, and forget those that have
+// completed. (WaitFor returns at once for a status that has completed.)
 static void ReapOrphans(TInt aWaitUs)
 	{
 	if (gLookupOrphan && WaitFor(gLookupStat, aWaitUs, 0))
@@ -416,20 +464,31 @@ static TInt NifStage()
 	}
 
 // ----- keeping the Psion awake ---------------------------------------------
-// Called whenever data has just flowed: every 30 s of that, the auto
-// switch-off timer is reset, so the Psion does not switch off in the middle
-// of a download. An idle connection lets it sleep as before.
-static void KeepAwake()
+// Called whenever data has just flowed, with how much: the auto switch-off
+// timer is reset at most every 30 s, and only if at least 2 KB went or came
+// in that time, so the Psion does not switch off in the middle of a
+// download. (0.81) An idle connection lets it sleep: before, any byte
+// counted, and an idle SSH session's keepalive (every 10 s), tmux's status
+// line or PsiTerm's tmux window list kept the Psion on for ever.
+const int KKeepAwakeMinBytes = 2048;
+static int gAwakeBytes = 0;               // bytes since gKeepAwakeAt
+
+static void KeepAwake(int aBytes)
 	{
+	gAwakeBytes += aBytes;
 	TInt64 now = NowMicro();
 	if (gKeepAwakeAt != TInt64(0) && now - gKeepAwakeAt < KKeepAwakeEveryUs)
 		return;
+	TBool flowing = gKeepAwakeAt == TInt64(0) || gAwakeBytes >= KKeepAwakeMinBytes;
 	gKeepAwakeAt = now;
+	gAwakeBytes = 0;
+	if (!flowing)
+		return;
 	UserHal::ResetAutoSwitchOffTimer();
 	if (!gKeptAwake)
 		{
 		gKeptAwake = 1;
-		LinkLog("keeping the Psion awake while data flows (auto switch-off timer reset every 30 s)");
+		LinkLog("keeping the Psion awake while data flows (auto switch-off timer reset every 30 s while 2 KB or more moves)");
 		}
 	}
 
@@ -493,8 +552,13 @@ static void NetCloseSocket(int aAbort)
 		return;
 	if (gRecvPending)
 		{
+		// (WaitFor: no wait if the receive has completed already - its count
+		// went with the wait it completed during; a cancel completes it at
+		// once otherwise. Its status is static, so even a late completion
+		// lands in memory that exists.)
 		gSock->CancelRecv();
-		User::WaitForRequest(gRecvStat);
+		if (!WaitFor(gRecvStat, KCancelWaitUs, 0))
+			LinkLog("socket: the cancelled receive did not complete in 5 s; going on (its status is static)");
 		gRecvPending = 0;
 		}
 	gSockOpen = 0;
@@ -777,10 +841,14 @@ static int NetConnect(char* aResult, int aMax)
 				SetMsg(aResult, aMax, "Stopped");
 			else
 				{
+				// (the host is clipped: Format panics rather than truncates,
+				// and the host field is 128 bytes)
 				char m[160];
 				TPtr8 p((TUint8*)m, 0, sizeof(m) - 1);
-				p.Format(_L8("Timed out looking up %s: the Psion's Internet connection did not come up in %d s"),
-					gShared->host, KLookupTimeoutUs / 1000000);
+				TPtrC8 h((const TUint8*)gShared->host);
+				if (h.Length() > 60) h.Set(h.Left(60));
+				p.Format(_L8("Timed out looking up %S: the Psion's Internet connection did not come up in %d s"),
+					&h, KLookupTimeoutUs / 1000000);
 				p.ZeroTerminate();
 				SetMsg(aResult, aMax, m);
 				}
@@ -794,7 +862,9 @@ static int NetConnect(char* aResult, int aMax)
 			NetHint(gLookupStat.Int());
 			char m[160];
 			TPtr8 p((TUint8*)m, 0, sizeof(m) - 1);
-			p.Format(_L8("Could not connect: looking up %s failed"), gShared->host);
+			TPtrC8 h((const TUint8*)gShared->host);
+			if (h.Length() > 60) h.Set(h.Left(60));
+			p.Format(_L8("Could not connect: looking up %S failed"), &h);
 			p.ZeroTerminate();
 			SetMsgNet(aResult, aMax, m, gLookupStat.Int());
 			NetFail();
@@ -874,6 +944,7 @@ static int NetConnect(char* aResult, int aMax)
 
 // Moves a completed receive into gRx. Keeps one receive outstanding at all
 // times instead of cancelling, so no data can be lost to a cancel race.
+static void NetRxDone();
 static void NetRxFill(int aTimeoutUs)
 	{
 	if (gRxPos < gRxLen || !gSockOpen || gNetClosed)
@@ -884,24 +955,26 @@ static void NetRxFill(int aTimeoutUs)
 		gSock->RecvOneOrMore(*gRecvDes, 0, gRecvStat, gRecvLen);
 		gRecvPending = 1;
 		}
-	// Take the receive's completion signal exactly once. WaitFor returning 1
-	// has already taken it; User::WaitForRequest on a request whose signal is
-	// gone blocks until some other request completes - with nothing else
-	// outstanding that is forever (the hang after "Securing the connection").
-	if (gRecvStat == KRequestPending)
-		{
-		if (!WaitFor(gRecvStat, aTimeoutUs, 0))
-			return;                      // still waiting (signal not taken)
-		}
-	else
-		User::WaitForRequest(gRecvStat); // completed earlier: take its signal
+	// A receive that completed during another wait (NetWrite's, a lookup's:
+	// pg_wait leaves one outstanding when its slice ends) has had its count
+	// taken by that wait, so it must not be waited on again - that was the
+	// hang after "Securing the connection". WaitFor returns at once for a
+	// status that has completed; otherwise it waits, bounded.
+	if (!WaitFor(gRecvStat, aTimeoutUs, 0))
+		return;                          // still waiting
+	NetRxDone();
+	}
+
+// The receive has completed: its data into gRx, or the connection closed.
+static void NetRxDone()
+	{
 	gRecvPending = 0;
 	gRxPos = 0;
 	if (gRecvStat.Int() == KErrNone)
 		{
 		gRxLen = gRecvDes->Length();
 		if (gRxLen > 0)
-			KeepAwake();
+			KeepAwake(gRxLen);
 		if (!gNetGotData && gRxLen > 0)
 			{
 			gNetGotData = 1;
@@ -956,7 +1029,7 @@ static int NetWrite(const void* aBuf, int aLen)
 		gNetSent = 1;
 		LinkMsg("  Request sent, waiting for the reply...\r\n");
 		}
-	KeepAwake();
+	KeepAwake(aLen);
 	return aLen;
 	}
 
@@ -972,11 +1045,34 @@ static TBps BaudFromIndex(int aIndex)
 		}
 	}
 
+// Elapsed time for every wait and timeout here, from the system tick (64 Hz
+// on the 5mx: User::TickCount), not from the clock. TTime has a one-second
+// step on the Psion, so a wait measured by it ran on to the next whole
+// second - a 20 ms wait (PsiWeb's input poll over Psion Internet) took up to
+// a second, and every timeout rounded up. The count is kept monotonic across
+// the tick counter's wrap, and the user setting the clock does not move it.
+// (Ticks stop while the Psion is off, as RTimer does; SwitchOnCheck covers
+// what happened meanwhile.) Never 0: "0 = never" is used by the callers.
+static TInt64 gMonoUs;
+static TUint gMonoTick = 0;
+static TInt gTickUs = 0;
+
 static TInt64 NowMicro()
 	{
-	TTime t;
-	t.HomeTime();
-	return t.Int64();
+	if (gTickUs <= 0)
+		{
+		TTimeIntervalMicroSeconds32 period;
+		if (UserHal::TickPeriod(period) != KErrNone || period.Int() <= 0)
+			period = 15625;
+		gTickUs = period.Int();
+		gMonoTick = User::TickCount();
+		gMonoUs = TInt64(1);
+		}
+	TUint now = User::TickCount();
+	TUint ticks = now - gMonoTick;       // (unsigned: right across the wrap)
+	gMonoTick = now;
+	gMonoUs += TInt64(ticks) * TInt64(gTickUs);
+	return gMonoUs;
 	}
 
 extern "C" PsiShared* pg_shared()
@@ -1208,7 +1304,18 @@ static void SwitchOnCheck()
 		}
 	if (!gDcdFail)
 		{
-		LinkLog("switch-on: modem port open, no carrier detect to check (FailDCD off)");
+		// No DCD to ask (a 3-wire cable, a modem without &C1): whether the
+		// modem still has the call shows only when something is sent and
+		// answered. Say so, and let the protocol probe it at once (psissh
+		// sends an SSH keepalive: pg_take_link_doubt) rather than have the
+		// user type into a dead line until the keepalive limit notices.
+		if (gModemOnline && !gNetClosed)
+			{
+			gLinkDoubt = 1;
+			LinkMsg("  The modem link is in doubt after switching on - checking...\r\n");
+			}
+		else
+			LinkLog("switch-on: modem port open, no carrier detect to check (FailDCD off)");
 		return;
 		}
 	if (gComm->Signals(KSignalDCD) & KSignalDCD)
@@ -1247,6 +1354,14 @@ extern "C" int pg_attach()
 		return -3;
 		}
 	gNet = gShared->net_mode ? 1 : 0;   // Psion TCP/IP: the socket opens in pg_dial
+	// the one timer every bounded wait uses: without it a wait would have no
+	// limit (or, now, fail at once), so an engine does not start without it
+	if (!TimerReady())
+		{
+		gShared = 0;
+		gChunk->Close();
+		return -20;
+		}
 	return 0;
 	}
 
@@ -1271,6 +1386,8 @@ extern "C" void pg_link_close()
 		gComm->Close();
 		gCommOpen = 0;
 		}
+	gModemOnline = 0;
+	gLinkDoubt = 0;
 	gRxPos = gRxLen = 0;
 	}
 
@@ -1362,6 +1479,197 @@ extern "C" void pg_msleep(int aMs)
 	User::After(aMs * 1000);
 	}
 
+// ----- doorbells (0.81: power) ------------------------------------------------
+// The CPU halts only while every thread waits on a request. pg_wait used to
+// look at the keyboard ring every tick (1/64 s), so an idle SSH session kept
+// psissh waking 64 times a second, and PsiTerm as often to see its output.
+// Now, once nothing has moved for KQuietAfterUs, the wait is for a request
+// instead: the app's ring (eng_bell: keys, quit, a resize, a request), the
+// link's data (a socket receive, or a serial ReadOneOrMore) or a timer of up
+// to KQuietSliceUs. Output for the app rings app_bell. See psibell.h.
+const TInt64 KQuietAfterUs = TInt64(250000);    // quick waits for 1/4 s after keys or data (a serial
+                                                // burst is then read in slices, not byte by byte)
+const TInt KQuietSliceUs = 5000000;             // longest quiet wait: the heartbeat check (quit, keys
+                                                // and a switch-on ring the bell)
+
+static TInt64 gActiveAt;                  // keys, data or output last moved
+static TRequestStatus gBellStat;          // eng_bell's request (static: the app completes it)
+static int gBellArmed = 0;
+static unsigned int gBellSeen = 0;        // eng_bell.seq when last looked at
+static TPsiBellRinger* gAppRinger = 0;    // rings app_bell
+static TRequestStatus gIdleReadStat;      // serial: the ReadOneOrMore of a quiet wait
+static TPtr8* gIdleDes = 0;
+static unsigned int gXferSeen = 0, gTqSeen = 0;   // requests seen by pg_wait
+static void CarrierLost(TInt aErr);
+
+static void NoteActive()
+	{
+	gActiveAt = NowMicro();
+	}
+
+// The app rings eng_bell for everything an engine waits for (bell_magic),
+// and the bell works: an engine may then wait for longer than a tick.
+static int BellsOn()
+	{
+	return gShared && gShared->bell_magic == PSI_BELL_MAGIC && !gShared->eng_bell.broken && gTimerOpen;
+	}
+
+extern "C" int pg_bells()
+	{
+	return BellsOn();
+	}
+
+// Waits on eng_bell from now. 1 if it was rung since the last look (then
+// don't wait: look first).
+static int BellArm()
+	{
+	PsiBell* b = &gShared->eng_bell;
+	gBellStat = KRequestPending;
+	b->status = &gBellStat;
+	b->tid = PsiBellMyTid();
+	b->armed = 1;
+	gBellArmed = 1;
+	return b->seq != gBellSeen;
+	}
+
+static void BellDisarm()
+	{
+	if (!gBellArmed)
+		return;
+	gBellArmed = 0;
+	PsiBell* b = &gShared->eng_bell;
+	if (PsiBellSwap(&b->armed, 0) != 1)
+		{
+		// the app has taken it and completes it now: take that completion
+		// (never wait on a status that has already completed: see WaitFor)
+		if (gBellStat == KRequestPending)
+			PsiBellTakeBack(b, gBellStat);   // (bounded: the app may have died ringing)
+		b->wakes++;
+		}
+	gBellSeen = b->seq;
+	}
+
+// Rings app_bell: the app has output, a result or news to look at. Cheap
+// unless the app is waiting on it.
+extern "C" void pg_ring_app()
+	{
+	if (!gShared || gShared->bell_magic != PSI_BELL_MAGIC)
+		return;
+	if (!gAppRinger)
+		gAppRinger = new TPsiBellRinger;
+	if (gAppRinger)
+		gAppRinger->Ring(&gShared->app_bell);
+	}
+
+static int IdleDesReady()
+	{
+	if (!gIdleDes)
+		gIdleDes = new TPtr8(0, 0);
+	return gIdleDes != 0;
+	}
+
+// A quiet wait: returns when the app rings, aNet's link has data (aNet: it
+// is open and wanted), or aSliceUs has passed. The link's data, if any, is
+// in gRx (or the connection is marked closed) as after RxFill.
+static void QuietWait(TInt aSliceUs, int aNet)
+	{
+	if (BellArm())
+		{
+		BellDisarm();                    // rung meanwhile: back to look
+		return;
+		}
+	TRequestStatus timerStat;
+	gTimer->After(timerStat, aSliceUs);
+	TRequestStatus* net = 0;
+	int serial = 0;
+	if (aNet && gRxPos >= gRxLen)
+		{
+		if (gNet)
+			{
+			if (gSockOpen && !gNetClosed)
+				{
+				if (!gRecvPending)
+					{
+					gRecvDes->Set(gRx, 0, sizeof(gRx));
+					gSock->RecvOneOrMore(*gRecvDes, 0, gRecvStat, gRecvLen);
+					gRecvPending = 1;
+					}
+				net = &gRecvStat;
+				}
+			}
+		else if (gCommOpen && !(gDcdLost && gDcdFail) && IdleDesReady())
+			{
+			// completes as soon as one byte has come (the active waits then
+			// take the rest in slices); cancelled below if it has not
+			gRxPos = 0;
+			gRxLen = 0;
+			gIdleDes->Set(gRx, 0, sizeof(gRx));
+			gComm->ReadOneOrMore(gIdleReadStat, *gIdleDes);
+			net = &gIdleReadStat;
+			serial = 1;
+			}
+		}
+	while (gBellStat == KRequestPending && timerStat == KRequestPending && (!net || *net == KRequestPending))
+		User::WaitForAnyRequest();
+	NoteOrphans();                       // an orphan done meanwhile: its count went with this wait
+	if (timerStat == KRequestPending)
+		{
+		gTimer->Cancel();
+		User::WaitForRequest(timerStat);   // the cancel completes it
+		}
+	BellDisarm();
+	if (serial)
+		{
+		if (gIdleReadStat == KRequestPending)
+			{
+			gComm->ReadCancel();
+			User::WaitForRequest(gIdleReadStat);
+			}
+		// a ReadOneOrMore that is cancelled has taken no data; one that
+		// completed has (a cancel that came too late is KErrNone too)
+		TInt r = gIdleReadStat.Int();
+		TInt len = gIdleDes->Length();
+		if (len > 0 && (r == KErrNone || r == KErrCancel))
+			{
+			gRxPos = 0;
+			gRxLen = len;
+			KeepAwake(len);
+			}
+		else if (r == KErrCommsLineFail && gDcdFail)
+			CarrierLost(r);              // DCD dropped: the line has gone
+		else if (r != KErrNone && r != KErrCancel)
+			{
+			gRxErrors++;                 // line error: dropped, SSH will notice
+			gRxLastErr = r;
+			}
+		}
+	else if (net && gRecvStat != KRequestPending)
+		NetRxDone();                     // (the receive stays outstanding otherwise, as NetRxFill leaves it)
+	}
+
+// For an engine with nothing to do: waits until the app rings or aMs has
+// passed. 1 if rung. Without the bells it is a plain sleep.
+extern "C" int pg_bell_wait(int aMs)
+	{
+	if (!BellsOn())
+		{
+		User::After(aMs * 1000);
+		return 0;
+		}
+	unsigned int seen = gBellSeen;
+	QuietWait(aMs * 1000, 0);
+	return gBellSeen != seen;
+	}
+
+// Ends the engine's process here and now, with aCode as the exit reason the
+// app reads (RProcess::ExitReason). psishim calls it after CloseSTDLIB(),
+// which frees the C library's per-thread state: returning to ecrt0, whose
+// exit() would use that state again, is not an option then.
+extern "C" void pg_exit_process(int aCode)
+	{
+	User::Exit(aCode);
+	}
+
 // ----- serial ("network") ---------------------------------------------------
 
 // The carrier went (FailDCD: -29 on a read or write): the connection is
@@ -1369,6 +1677,7 @@ extern "C" void pg_msleep(int aMs)
 static void CarrierLost(TInt aErr)
 	{
 	gDcdLost = 1;
+	gModemOnline = 0;
 	if (gNetClosed)
 		return;
 	gNetClosed = 1;
@@ -1394,7 +1703,7 @@ extern "C" int pg_serial_write(const void* aBuf, int aLen)
 	if (stat.Int() == KErrCommsLineFail && gDcdFail)
 		CarrierLost(stat.Int());
 	if (stat.Int() == KErrNone)
-		KeepAwake();
+		KeepAwake(aLen);
 	return (stat.Int() == KErrNone) ? aLen : -1;
 	}
 
@@ -1420,7 +1729,7 @@ static void RxFill(int aTimeoutUs)
 		{
 		gRxLen = p.Length();
 		if (gRxLen > 0)
-			KeepAwake();
+			KeepAwake(gRxLen);
 		}
 	else if (stat.Int() == KErrCommsLineFail && gDcdFail)
 		CarrierLost(stat.Int());         // DCD dropped: not a line error, the line has gone
@@ -1496,6 +1805,7 @@ extern "C" void pg_out_write(const void* aBuf, int aLen)
 			{
 			if (pg_quit_requested())    // (or the app has gone: nobody will drain it)
 				return;
+			pg_ring_app();
 			User::After(10000);         // PsiTerm will drain it shortly
 			continue;
 			}
@@ -1511,6 +1821,8 @@ extern "C" void pg_out_write(const void* aBuf, int aLen)
 		in += n;
 		aLen -= n;
 		}
+	NoteActive();
+	pg_ring_app();                       // (0.81) PsiTerm may be waiting on its bell
 	}
 
 extern "C" void pg_winsize(int* aRows, int* aCols)
@@ -1532,8 +1844,16 @@ extern "C" int pg_take_resize()
 	}
 
 // ----- waiting ----------------------------------------------------------------
-// Returns a bit mask: 1 = network data, 2 = keyboard data, 4 = resize, 8 = quit.
+// Returns a bit mask: 1 = network data, 2 = keyboard data, 4 = resize, 8 = quit,
+// 16 = the app has posted a request (file transfer, tmux: xfer_req, tq_req),
+// only to a wait that takes keys too (the session's select: psishim.c), so
+// a wait for a reply alone never ends early without one.
 // aMs < 0 waits forever.
+//
+// For 1/4 s after keys or data it looks every tick (1/64 s), as it always
+// did, so a burst of data is read in slices. After that, if the app rings
+// its doorbell (BellsOn), it waits for a request instead - the app's ring,
+// the link's data or a timer of up to 5 s - and the CPU can halt (QuietWait).
 extern "C" int pg_wait(int aMs, int aWantNet, int aWantKbd)
 	{
 	TInt64 start = NowMicro();
@@ -1549,9 +1869,22 @@ extern "C" int pg_wait(int aMs, int aWantNet, int aWantKbd)
 			mask |= 4;
 		if (pg_quit_requested())
 			mask |= 8;
+		if (aWantKbd && gShared && (gShared->xfer_req != gXferSeen || gShared->tq_req != gTqSeen))
+			{
+			gXferSeen = gShared->xfer_req;
+			gTqSeen = gShared->tq_req;
+			mask |= 16;
+			}
 		if (mask)
+			{
+			if (mask & 3)
+				NoteActive();
 			return mask;
+			}
 		int slice = 15625;                  // look at the keyboard every tick (1/64 s)
+		int quiet = BellsOn() && NowMicro() - gActiveAt > KQuietAfterUs;
+		if (quiet)
+			slice = KQuietSliceUs;
 		if (aMs >= 0)
 			{
 			TInt64 left = TInt64(aMs) * 1000 - (NowMicro() - start);
@@ -1562,7 +1895,10 @@ extern "C" int pg_wait(int aMs, int aWantNet, int aWantKbd)
 			if (slice < 1000)
 				slice = 1000;
 			}
-		if (aWantNet && LinkOpen() && !gNetClosed)
+		int net = aWantNet && LinkOpen() && !gNetClosed;
+		if (quiet && slice > 15625)
+			QuietWait(slice, net);
+		else if (net)
 			RxFill(slice);
 		else
 			User::After(slice);
@@ -1671,7 +2007,7 @@ static int StartPpp(char* aResult, int aResultMax)
 		if (r == -10)
 			Say("  Serial port busy - the Internet connection is probably up already.\r\n");
 		else if (r == -13)
-			Say("  The serial port is held by the Remote link (System screen, Ctrl+L) or another program - trying anyway.\r\n");
+			Say("  The serial port is in use by another program - trying anyway.\r\n");
 		else
 			Say("  Could not open the serial port to start PPP - trying anyway.\r\n");
 		return 0;
@@ -1770,6 +2106,8 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 	gNetClosed = 0;                      // a fresh connection (update does two)
 	gNetClosedWhy = 0;
 	gKeptAwake = 0;
+	gModemOnline = 0;
+	gLinkDoubt = 0;
 	gRxPos = gRxLen = 0;
 	if (gNet)
 		{
@@ -1846,10 +2184,8 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 		TInt r = pg_link_open();
 		if (r != 0)
 			{
-			if (r == -10)
-				SetMsg(aResult, aResultMax, "the serial port is in use by another program (PsiTerm? Remote link?)");
-			else if (r == -13)
-				SetMsg(aResult, aResultMax, "the serial port is held by the Remote link - switch it off on the System screen (Ctrl+L)");
+			if (r == -10 || r == -13)
+				SetMsg(aResult, aResultMax, "the serial port is in use by another program");
 			else
 				SetMsgErr(aResult, aResultMax, "could not set up the serial port", r);   // (pg_link_open's step codes)
 			return -1;
@@ -1952,6 +2288,7 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 			while (gRxPos < gRxLen && (gRx[gRxPos] == '\r' || gRx[gRxPos] == '\n'))
 				gRxPos++;
 			DcdArm();                    // carrier detect, if the modem gives us DCD
+			gModemOnline = 1;
 			return 0;
 			}
 		if (StartsWith(line, "NO CARRIER") || StartsWith(line, "ERROR") ||
@@ -1979,6 +2316,8 @@ extern "C" void pg_hangup()
 	if (!gCommOpen)
 		return;
 	int lost = gDcdLost && gDcdFail;
+	gModemOnline = 0;
+	gLinkDoubt = 0;
 	DcdDisarm();                         // the AT dialogue needs the plain setup
 	if (lost)
 		{
@@ -2010,7 +2349,9 @@ extern "C" int pg_entropy(unsigned char* aOut, int aMax)
 		for (int i = 0; i < e && n < aMax; i++)
 			aOut[n++] = gShared->entropy[i];
 		}
-	TInt64 t = NowMicro();
+	TTime now;
+	now.HomeTime();                      // (the clock: NowMicro is ticks since the start now)
+	TInt64 t = now.Int64();
 	PUT(t.Low());
 	PUT(t.High());
 	PUT(User::TickCount());
@@ -2029,7 +2370,7 @@ extern "C" int pg_entropy(unsigned char* aOut, int aMax)
 		TUint32 spins = 0;
 		while (User::TickCount() == tick && spins < 2000000)
 			spins++;
-		PUT(spins ^ (NowMicro().Low() << 8));
+		PUT(spins ^ (User::TickCount() << 8));
 		}
 	#undef PUT
 	return n;
@@ -2340,6 +2681,19 @@ static void LtReportNet(PgLinkTest* aT)
 		case 2: LtSay1(aT, "Sent ", cmd, " - no CONNECT from the modem"); break;
 		case 3: LtSay1(aT, "Did not send ", cmd, " - the serial port is in use"); break;
 		case 4: LtSay1(aT, "Did not send ", cmd, " - the modem does not answer AT"); break;
+		case 5:
+			{
+			char* l = LtNewLine(aT);
+			if (l)
+				{
+				LtCat(l, PG_LT_LINE, "Did not send ");
+				LtCat(l, PG_LT_LINE, cmd);
+				LtCat(l, PG_LT_LINE, " - could not set the serial port up (");
+				LtCatNum(l, PG_LT_LINE, aT->port_err);
+				LtCat(l, PG_LT_LINE, ")");
+				}
+			break;
+			}
 		default: break;
 			}
 		if (aT->net_after == 1)
@@ -2362,6 +2716,8 @@ static void LtReportNet(PgLinkTest* aT)
 			}
 		LtSay1(aT, "Looked up ", aT->host, ": ", a, " - DNS works");
 		}
+	else if (aT->dns == -14)                 // KErrInUse: lookup_leaked
+		LtSay1(aT, "The last test's name lookup has not ended yet - test again in a minute");
 	else if (aT->dns != 1)
 		{
 		char* l = LtNewLine(aT);
@@ -2396,8 +2752,16 @@ extern "C" void pg_lt_report(PgLinkTest* aT)
 // --- the EPOC part ---
 #ifndef PG_LINK_TEST_HOST
 
+// The progress text goes into the test's own record (busy, busy_seq): the
+// app's thread shows it as the busy message, since this runs in a thread of
+// its own (pglinktest.cpp) that may not touch the screen. A callback, if
+// set, is called too.
 static void LtProgress(PgLinkTest* aT, const char* aText)
 	{
+	int k = 0;
+	while (aText[k] && k < (int)sizeof(aT->busy) - 1) { aT->busy[k] = aText[k]; k++; }
+	aT->busy[k] = 0;
+	aT->busy_seq++;
 	if (aT->progress)
 		aT->progress(aT->ctx, aText);
 	}
@@ -2438,10 +2802,11 @@ static int LtDoneFn(const char* aLine, void* /*aCtx*/)
 	}
 
 // Sends aCmd and collects the reply in aBuf until a final result line, or
-// aWaitMs. KErrNone, KErrTimedOut if the write stalled (CTS low), or the
-// write's error. Line errors (framing, overrun: a wrong speed) are kept in
-// the reply as a 0xFF byte so they count as garbage.
-static TInt LtCommand(RComm& aComm, const TDesC8& aCmd, TDes8& aBuf, TInt aWaitMs)
+// aWaitMs, or the app asks the test to stop (aT->abort_test). KErrNone,
+// KErrTimedOut if the write stalled (CTS low), or the write's error. Line
+// errors (framing, overrun: a wrong speed) are kept in the reply as a 0xFF
+// byte so they count as garbage.
+static TInt LtCommand(RComm& aComm, const TDesC8& aCmd, TDes8& aBuf, TInt aWaitMs, PgLinkTest* aT)
 	{
 	aBuf.Zero();
 	aComm.ResetBuffers();
@@ -2487,6 +2852,8 @@ static TInt LtCommand(RComm& aComm, const TDesC8& aCmd, TDes8& aBuf, TInt aWaitM
 			aBuf.Append(0xff);
 		if (deadlineDone)
 			break;
+		if (aT && aT->abort_test)
+			break;                           // Esc: the reply so far is what there is
 		if (LtLines(aBuf.Ptr(), aBuf.Length(), LtDoneFn, 0))
 			break;
 		}
@@ -2501,7 +2868,7 @@ static TInt LtCommand(RComm& aComm, const TDesC8& aCmd, TDes8& aBuf, TInt aWaitM
 
 static int LtAt(RComm& aComm, TDes8& aBuf, PgLinkTest* aT, TInt aWaitMs)
 	{
-	TInt r = LtCommand(aComm, _L8("AT\r"), aBuf, aWaitMs);
+	TInt r = LtCommand(aComm, _L8("AT\r"), aBuf, aWaitMs, aT);
 	if (r == KErrTimedOut)
 		return PG_AT_NOTSENT;
 	if (r != KErrNone)
@@ -2589,10 +2956,16 @@ static void LtModem(RComm& aComm, PgLinkTest* aT)
 	if (at == PG_AT_NOTSENT && !aT->cts_blocked)
 		{
 		// the write stalled although CTS read high: try without flow control
-		aT->cts_blocked = 1;
-		LtSetConfig(aComm, aT->baud_index, 0);
-		aT->at_noflow = at = LtAt(aComm, buf, aT, 1500);
+		// (if the port will not take the new setting, the stalled write is
+		// the result: "CTS is low")
+		if (LtSetConfig(aComm, aT->baud_index, 0) == KErrNone)
+			{
+			aT->cts_blocked = 1;
+			aT->at_noflow = at = LtAt(aComm, buf, aT, 1500);
+			}
 		}
+	if (aT->abort_test)
+		return;
 	if (at == PG_AT_ECHO || at == PG_AT_NOTHING || at == PG_AT_TEXT)
 		{
 		// still in a call from an old connection? (as pg_dial does)
@@ -2610,7 +2983,7 @@ static void LtModem(RComm& aComm, PgLinkTest* aT)
 		{
 		// the other speeds, flow control off: does the modem answer at one?
 		LtProgress(aT, "Testing the modem at other baud rates...");
-		for (int b = 4; b >= 0 && aT->found_baud < 0; b--)
+		for (int b = 4; b >= 0 && aT->found_baud < 0 && !aT->abort_test; b--)
 			{
 			if (b == aT->baud_index)
 				continue;
@@ -2619,16 +2992,19 @@ static void LtModem(RComm& aComm, PgLinkTest* aT)
 			User::After(50000);
 			TBuf8<256> other;
 			char dummy[8];
-			TInt r = LtCommand(aComm, _L8("\rAT\r"), other, 700);
+			TInt r = LtCommand(aComm, _L8("\rAT\r"), other, 700, aT);
 			if (r == KErrNone && pg_lt_classify(other.Ptr(), other.Length(), dummy, sizeof(dummy)) == PG_AT_OK)
 				aT->found_baud = b;
 			}
+		// (back to the chosen rate for the rest; nothing below depends on the
+		// rate if this fails: ATI is only asked when the modem answered OK at
+		// it, and the signals are read regardless)
 		LtSetConfig(aComm, aT->baud_index, aT->cts_blocked ? 0 : aT->rtscts);
 		}
-	if (at == PG_AT_OK)
+	if (at == PG_AT_OK && !aT->abort_test)
 		{
 		// its name, for the result
-		if (LtCommand(aComm, _L8("ATI\r"), buf, 1500) == KErrNone)
+		if (LtCommand(aComm, _L8("ATI\r"), buf, 1500, aT) == KErrNone)
 			pg_lt_first_line(buf.Ptr(), buf.Length(), "ATI", aT->modem, sizeof(aT->modem));
 		}
 	// signals again: some modems raise CTS only once they have been spoken to
@@ -2649,35 +3025,44 @@ static void LtPppStart(PgLinkTest* aT)
 	int p = LtOpen(server, comm, serverOpen, aT);
 	if (p == PG_PORT_OK)
 		{
-		LtSetConfig(comm, aT->baud_index, aT->rtscts);
-		LtWake(comm);
-		TRequestStatus s;
-		comm.Write(s, TTimeIntervalMicroSeconds32(1000000), _L8("\r"));
-		User::WaitForRequest(s);
-		User::After(200000);
-		TBuf8<256> buf;
-		int at = LtAt(comm, buf, aT, 1500);
-		if (at != PG_AT_OK)
+		TInt r = LtSetConfig(comm, aT->baud_index, aT->rtscts);
+		if (r != KErrNone)
 			{
-			LtEscape(comm);
-			at = LtAt(comm, buf, aT, 1500);
+			aT->ppp = 5;                     // (not sent: the port would be at the wrong rate)
+			aT->port_err = r;
 			}
-		if (at != PG_AT_OK)
-			aT->ppp = 4;
 		else
 			{
-			TBuf8<48> cmd;
-			cmd.Copy(TPtrC8((const TUint8*)aT->ppp_start));
-			cmd.Append('\r');
-			aT->ppp = 2;
-			if (LtCommand(comm, cmd, buf, 30000) == KErrNone)
+			LtWake(comm);
+			TRequestStatus s;
+			comm.Write(s, TTimeIntervalMicroSeconds32(1000000), _L8("\r"));
+			User::WaitForRequest(s);
+			User::After(200000);
+			TBuf8<256> buf;
+			int at = LtAt(comm, buf, aT, 1500);
+			if (at != PG_AT_OK && !aT->abort_test)
 				{
-				char first[24];
-				pg_lt_first_line(buf.Ptr(), buf.Length(), "AT", first, sizeof(first));
-				if (LtStarts(first, "CONNECT"))
-					aT->ppp = 1;
+				LtEscape(comm);
+				at = LtAt(comm, buf, aT, 1500);
+				}
+			if (at != PG_AT_OK)
+				aT->ppp = 4;
+			else if (!aT->abort_test)
+				{
+				TBuf8<48> cmd;
+				cmd.Copy(TPtrC8((const TUint8*)aT->ppp_start));
+				cmd.Append('\r');
+				aT->ppp = 2;
+				if (LtCommand(comm, cmd, buf, 30000, aT) == KErrNone)
+					{
+					char first[24];
+					pg_lt_first_line(buf.Ptr(), buf.Length(), "AT", first, sizeof(first));
+					if (LtStarts(first, "CONNECT"))
+						aT->ppp = 1;
+					}
 				}
 			}
+		comm.Cancel();
 		comm.Close();                        // hand the port to the Psion's TCP/IP
 		}
 	else
@@ -2700,70 +3085,130 @@ static int LtNifActive()
 	return active ? 1 : 0;
 	}
 
+// The name lookup's requests live in a block the app's thread made in its
+// own heap (pg_lt_lookup_new), not on the stack of the thread running the
+// test. A lookup that NetDial completes neither on Cancel nor on closing its
+// sessions (it is busy with its own dialogs) is abandoned after a bounded
+// wait, and must then complete into memory that still exists: the block is
+// left alone for good (lookup_leaked), and the test's thread can end.
+struct TLtLookup
+	{
+	RSocketServ iSs;
+	RHostResolver iRes;
+	TNameEntry iEntry;
+	TRequestStatus iLook;
+	};
+
+extern "C" void* pg_lt_lookup_new()
+	{
+	return new TLtLookup;                    // (0 when there is no memory)
+	}
+
+extern "C" void pg_lt_lookup_free(void* aLookup)
+	{
+	delete (TLtLookup*)aLookup;
+	}
+
+// Waits for aStat in slices of a second, so a stop (aT->abort_test, from
+// Esc) is seen soon. 1 completed, 0 timed out, -1 stopped. A status that has
+// completed is never waited on again: the two-status wait took its count
+// with it (see WaitFor in the engine part). A timer count left over, when
+// both completed together, does no harm in a thread with no active
+// scheduler.
+static int LtWaitSlices(RTimer& aTimer, TRequestStatus& aStat, TInt aTimeoutUs, PgLinkTest* aT)
+	{
+	TInt waited = 0;
+	while (aStat == KRequestPending)
+		{
+		if (waited >= aTimeoutUs)
+			return 0;
+		if (aT && aT->abort_test)
+			return -1;
+		TInt slice = aTimeoutUs - waited < 1000000 ? aTimeoutUs - waited : 1000000;
+		TRequestStatus tick;
+		aTimer.After(tick, slice);
+		User::WaitForRequest(aStat, tick);
+		if (tick == KRequestPending)
+			{
+			aTimer.Cancel();
+			User::WaitForRequest(tick);      // the cancel completes it
+			}
+		waited += slice;
+		}
+	return 1;
+	}
+
 // Looks aT->host up (this is what starts the dial-up when the link is
-// down). Every request is completed before it returns: a cancelled lookup
-// that does not finish is ended by closing its sessions, then waited for.
+// down), for at most aTimeoutUs. A lookup that does not finish is cancelled,
+// then its sessions are closed, each with a bounded wait; one that still
+// does not finish is abandoned (above).
 static void LtLookup(PgLinkTest* aT, TInt aTimeoutUs)
 	{
-	RSocketServ ss;
-	TInt r = ss.Connect();
+	TLtLookup* k = (TLtLookup*)aT->lookup;
+	if (!k)
+		{
+		aT->dns = KErrNoMemory;
+		return;
+		}
+	if (aT->lookup_leaked)
+		{
+		aT->dns = KErrInUse;                 // the last test's lookup is still out
+		return;
+		}
+	TInt r = k->iSs.Connect();
 	if (r != KErrNone)
 		{
 		aT->dns = r;
 		return;
 		}
-	RHostResolver res;
-	r = res.Open(ss, KAfInet, KProtocolInetUdp);
+	r = k->iRes.Open(k->iSs, KAfInet, KProtocolInetUdp);
 	if (r != KErrNone)
 		{
-		ss.Close();
+		k->iSs.Close();
 		aT->dns = r;
 		return;
 		}
 	RTimer timer;
 	if (timer.CreateLocal() != KErrNone)
 		{
-		res.Close();
-		ss.Close();
+		k->iRes.Close();
+		k->iSs.Close();
 		aT->dns = KErrNoMemory;
 		return;
 		}
 	TBuf<64> name;
 	name.Copy(TPtrC8((const TUint8*)aT->host));
-	TNameEntry entry;
-	TRequestStatus look, tick;
-	res.GetByName(name, entry, look);
-	timer.After(tick, aTimeoutUs);
-	User::WaitForRequest(look, tick);
-	if (look == KRequestPending)
+	k->iLook = KRequestPending;
+	k->iRes.GetByName(name, k->iEntry, k->iLook);
+	int w = LtWaitSlices(timer, k->iLook, aTimeoutUs, aT);
+	if (w == 1)
 		{
-		res.Cancel();
-		timer.After(tick, 10000000);
-		User::WaitForRequest(look, tick);
-		if (look == KRequestPending)
-			{
-			res.Close();
-			ss.Close();
-			User::WaitForRequest(look);
-			}
-		else
-			{
-			timer.Cancel();
-			User::WaitForRequest(tick);
-			}
-		aT->dns = KErrTimedOut;
+		aT->dns = k->iLook.Int();
+		if (aT->dns == KErrNone)
+			aT->addr = TInetAddr(k->iEntry().iAddr).Address();
+		k->iRes.Close();
+		k->iSs.Close();
 		}
 	else
 		{
-		timer.Cancel();
-		User::WaitForRequest(tick);
-		aT->dns = look.Int();
-		if (look.Int() == KErrNone)
-			aT->addr = TInetAddr(entry().iAddr).Address();
+		aT->dns = w < 0 ? KErrCancel : KErrTimedOut;
+		k->iRes.Cancel();
+		if (LtWaitSlices(timer, k->iLook, 10000000, 0) == 1)
+			{
+			k->iRes.Close();
+			k->iSs.Close();
+			}
+		else
+			{
+			// not even a cancel ends it (NetDial busy with its own dialogs):
+			// closing its sessions usually does...
+			k->iRes.Close();
+			k->iSs.Close();
+			if (LtWaitSlices(timer, k->iLook, 10000000, 0) != 1)
+				aT->lookup_leaked = 1;       // ...and if not, it is left out: its memory stays
+			}
 		}
 	timer.Close();
-	res.Close();                             // (harmless if closed above)
-	ss.Close();
 	}
 
 extern "C" int pg_link_test(PgLinkTest* aT)
@@ -2804,8 +3249,9 @@ extern "C" int pg_link_test(PgLinkTest* aT)
 			LtProgress(aT, "Connecting...");
 			LtPppStart(aT);
 			// (no OK to AT: the modem may be in PPP already - go on, as
-			// StartPpp does; a refused command is a definite failure)
-			if (aT->ppp != 2)
+			// StartPpp does; a refused command, or a port that could not be
+			// set up, is a definite failure)
+			if (aT->ppp != 2 && aT->ppp != 5 && !aT->abort_test)
 				LtLookup(aT, 90000000);          // starts the Psion's dial-up
 			aT->net_after = LtNifActive();
 			}

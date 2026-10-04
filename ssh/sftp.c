@@ -82,6 +82,31 @@ static int ch_state = CH_NONE;
 static struct Channel *ch;
 static int close_when_open;           /* the shell went while ours was opening */
 static int running;                   /* logged in: requests can be served */
+/* CHANNEL_OPENs sent that the server has neither confirmed nor refused. A
+   request gives up on one after REPLY_SECS; the next request may send
+   another, so more than one can be out. A confirmation that arrives for one
+   we gave up on (sftp_chan_init with nothing waiting) is closed at once. */
+static int opens_pending;
+/* Channels of ours that Dropbear still holds but we have let go of: one we
+   closed because it was not wanted, or one whose CLOSE the server never
+   answered. Their later cleanup is nothing of ours. */
+#define DETACHED_MAX 4
+static struct Channel *detached[DETACHED_MAX];
+
+static void note_detached(struct Channel *c)
+{
+	int i;
+	for (i = 0; i < DETACHED_MAX; i++)
+		if (!detached[i]) { detached[i] = c; return; }
+}
+
+static int is_detached(const struct Channel *c)
+{
+	int i;
+	for (i = 0; i < DETACHED_MAX; i++)
+		if (detached[i] == c) { detached[i] = NULL; return 1; }
+	return 0;
+}
 
 static unsigned char inbuf[IN_MAX];
 static unsigned int inlen;
@@ -350,6 +375,7 @@ static void open_channel(void)
 		return;
 	}
 	encrypt_packet();
+	opens_pending++;
 	ch_state = CH_OPENING;
 	ch = NULL;
 	close_when_open = 0;
@@ -358,26 +384,58 @@ static void open_channel(void)
 	last_heard = time(NULL);
 }
 
+/* sends CLOSE on a channel and stops Dropbear moving data on it */
+static void send_close(struct Channel *c)
+{
+	if (c->sent_close) return;
+	CHECKCLEARTOWRITE();
+	buf_putbyte(ses.writepayload, SSH_MSG_CHANNEL_CLOSE);
+	buf_putint(ses.writepayload, c->remotechan);
+	encrypt_packet();
+	c->sent_eof = 1;
+	c->sent_close = 1;
+	c->readfd = -1;                   /* FD_CLOSED: Dropbear moves no more data here */
+	c->writefd = -1;
+}
+
 /* our end of the channel: send CLOSE and stop moving data on it. The
-   channel goes (sftp_chan_cleanup) when the server closes its end too. */
+   channel goes (sftp_chan_cleanup) when the server closes its end too;
+   until then a new request waits, and after REPLY_SECS without that
+   answer the channel is left to Dropbear (detach_channel) and another is
+   opened. */
 static void close_channel(void)
 {
 	if (!ch) return;
 	if (ch->await_open) { close_when_open = 1; return; }
 	if (ch->sent_close) return;
-	CHECKCLEARTOWRITE();
-	buf_putbyte(ses.writepayload, SSH_MSG_CHANNEL_CLOSE);
-	buf_putint(ses.writepayload, ch->remotechan);
-	encrypt_packet();
-	ch->sent_eof = 1;
-	ch->sent_close = 1;
-	ch->readfd = -1;                  /* FD_CLOSED: Dropbear moves no more data here */
-	ch->writefd = -1;
+	send_close(ch);
 	ch_state = CH_CLOSING;
+	last_heard = time(NULL);          /* the wait for the server's close starts now */
+}
+
+/* lets go of the channel in hand without waiting for the server */
+static void detach_channel(void)
+{
+	if (ch) note_detached(ch);
+	ch = NULL;
+	ch_state = CH_NONE;
+	inlen = 0;
+	outlen = outpos = 0;
 }
 
 static int sftp_chan_init(struct Channel *c)
 {
+	if (opens_pending > 0) opens_pending--;
+	if (ch_state != CH_OPENING || ch) {
+		/* the answer to an open that was given up on (no reply in time):
+		   nothing is waiting for it, or another channel is in hand - close
+		   it, and ignore its going */
+		c->errfd = -1;
+		c->extrabuf = NULL;
+		send_close(c);
+		note_detached(c);
+		return 0;
+	}
 	ch = c;
 	c->errfd = -1;                    /* the server's stderr: not wanted */
 	c->extrabuf = NULL;
@@ -398,7 +456,19 @@ static int sftp_chan_init(struct Channel *c)
 static void sftp_chan_cleanup(const struct Channel *c)
 {
 	int was = ch_state;
-	(void)c;
+	if (is_detached(c))
+		return;                       /* a channel let go of earlier: nothing of ours */
+	if (c != ch) {
+		/* not the channel in hand: an open the server refused - the one a
+		   request is waiting for, if no other open is still out - or one
+		   that was given up on */
+		if (opens_pending > 0) opens_pending--;
+		if (ch_state == CH_OPENING && !ch && opens_pending == 0) {
+			ch_state = CH_NONE;
+			if (op) finish(PSI_XFER_NO_SFTP);
+		}
+		return;
+	}
 	ch = NULL;
 	ch_state = CH_NONE;
 	inlen = 0;
@@ -531,6 +601,10 @@ static void start_op(void)
 		finish(PSI_XFER_NOT_FOUND);
 		return;
 	}
+	/* the wait for an answer starts with the request, not with whatever
+	   the channel was last heard from (a channel still closing after the
+	   last request's timeout would otherwise fail this one at once) */
+	last_heard = time(NULL);
 	if (ch_state == CH_NONE)
 		open_channel();
 	/* the first request goes once the channel is ready (step_ready) */
@@ -734,6 +808,10 @@ static void handle_reply(const unsigned char *p, unsigned int n)
 		case K_CLOSE:
 			/* for an upload, the last chance for the server to say "disk full" */
 			if (code != FX_OK && op == PSI_XOP_PUT) status_fail(code, msg, mlen);
+			/* for a download, every byte STAT promised must have come: an
+			   early EOF (the file shrank, an odd server) is not a whole file */
+			if (op == PSI_XOP_GET && total && total != 0xffffffffUL && done_bytes < total)
+				set_fail(PSI_XFER_FAILED, "the file was cut short");
 			finish(failed ? failed : PSI_XFER_OK);
 			return;
 		}
@@ -910,6 +988,14 @@ int psi_sftp_pending(void)
 /* logged in: the select() wait is kept short so a new request is seen soon */
 int psi_sftp_running(void) { return running; }
 
+/* (0.81) a request in hand or waiting: select() then keeps its waits short,
+   for the time limits and Stop (otherwise PsiTerm's doorbell wakes it) */
+int psi_sftp_busy(void)
+{
+	PsiShared *s = sh();
+	return op != 0 || (running && s && s->xfer_req != s->xfer_ack);
+}
+
 /* every turn of Dropbear's main loop, once logged in */
 void psi_sftp_loop(void)
 {
@@ -927,9 +1013,12 @@ void psi_sftp_loop(void)
 		return;
 	}
 	if (s->xfer_cancel && (!have_handle || ch_state != CH_READY)
-		&& !(op == PSI_XOP_PUT && ch_state == CH_READY && count_reqs(K_OPEN))) {
+		&& !(op == PSI_XOP_PUT && ch_state == CH_READY && count_reqs(K_OPEN))
+		&& !(ch_state == CH_READY && count_reqs(K_CLOSE))) {
 		/* (an upload's OPEN still on its way has made the file: wait for
-		   the handle, then pump() closes and removes it) */
+		   the handle, then pump() closes and removes it; a CLOSE on its way
+		   means every byte went, so its answer says how it ended, not
+		   "stopped") */
 		finish(PSI_XFER_CANCELLED);
 		return;
 	}
@@ -939,7 +1028,25 @@ void psi_sftp_loop(void)
 	}
 	if ((busy_reqs() > 0 || ch_state != CH_READY) && time(NULL) - last_heard > REPLY_SECS) {
 		/* no answer for a minute: the link or the server is stuck */
-		finish(ch_state == CH_READY ? PSI_XFER_TIMEOUT : PSI_XFER_NO_SFTP);
+		if (ch_state == CH_CLOSING) {
+			/* our CLOSE went unanswered: leave that channel to Dropbear and
+			   open another for this request */
+			detach_channel();
+			return;
+		}
+		if (ch_state == CH_OPENING && !ch) {
+			/* no answer to CHANNEL_OPEN: nothing to close yet. The next
+			   request may open another; a late answer to this one is closed
+			   on arrival (sftp_chan_init). Not "no SFTP": the server has not
+			   said anything. */
+			ch_state = CH_NONE;
+			set_fail(PSI_XFER_TIMEOUT, "the server did not answer");
+			finish(PSI_XFER_TIMEOUT);
+			return;
+		}
+		if (ch_state != CH_READY)
+			set_fail(PSI_XFER_TIMEOUT, "the server did not answer");
+		finish(PSI_XFER_TIMEOUT);
 		close_channel();
 		return;
 	}
@@ -949,7 +1056,10 @@ void psi_sftp_loop(void)
 /* psissh is ending (the connection went): leave no half-written file */
 void psi_sftp_session_ended(void)
 {
+	int i;
 	ch = NULL;                        /* nothing more can be sent */
 	ch_state = CH_NONE;
+	opens_pending = 0;
+	for (i = 0; i < DETACHED_MAX; i++) detached[i] = NULL;
 	if (op) finish(PSI_XFER_LINK);
 }

@@ -179,7 +179,7 @@ void CPmHdChip::DrawIn(CGraphicsContext& aGc, const TRect& aBox, const CFont* aF
 	aGc.SetPenColor(KRgbBlack);
 	aGc.DrawText(iName, TPoint(x, base));
 	x += aFont->TextWidthInPixels(iName) + 8;
-	aGc.SetPenColor(KPmDarkGrey);
+	aGc.SetPenColor(KRgbBlack);              // (black: grey text is hard to read on the 5mx)
 	aGc.DrawText(iSize, TPoint(x, base));
 	aGc.DiscardFont();
 	}
@@ -393,6 +393,17 @@ static CFont* ZoomFont(MGraphicsDeviceMap* aMap, TInt aTwips, TBool aBold)
 	return f;
 	}
 
+// HeaderTextL's working text, on the heap: about 2.5 KB of TBufs, which
+// in one frame under CONE's and EIKON's own (the app thread's stack is
+// small, and not ours to set) is more than is safe
+struct THdScratch
+	{
+	TBuf<300> iV, iLine, iFrom, iShown, iNext;
+	TBuf<500> iTo, iCc;
+	TBuf<96> iMe;
+	TBuf<80> iNm;
+	};
+
 void CPmView::HeaderTextL(TDes& aText, const TPmRow* aRow)
 	{
 	if (!iHeaderRuns)
@@ -403,6 +414,15 @@ void CPmView::HeaderTextL(TDes& aText, const TPmRow* aRow)
 		iHeaderUid = iMsgUid;
 		iHeaderAllTo = EFalse;
 		}
+	THdScratch* sc = new(ELeave) THdScratch;
+	CleanupStack::PushL(sc);
+	TDes& v = sc->iV;
+	TDes& line = sc->iLine;
+	TDes& from = sc->iFrom;
+	TDes& shown = sc->iShown;
+	TDes& to = sc->iTo;
+	TDes& cc = sc->iCc;
+	TDes& me = sc->iMe;
 	const TChar KPara(CEditableText::EParagraphDelimiter);
 	CArrayFixFlat<TInt>& runs = *iHeaderRuns;
 	// the room across the reader (as it is laid out at this zoom), less a
@@ -425,8 +445,6 @@ void CPmView::HeaderTextL(TDes& aText, const TPmRow* aRow)
 		if (smallFont) iZoomFactor->ReleaseFont(smallFont);
 		User::Leave(KErrNoMemory);
 		}
-	TBuf<300> v;
-	TBuf<300> line;
 	TInt p0;
 
 	// the subject: the flag (and unread) in front, two lines at most
@@ -462,7 +480,7 @@ void CPmView::HeaderTextL(TDes& aText, const TPmRow* aRow)
 
 	// the sender and the date: "Name  address" on the left, the date on the right
 	TPtrC name, addr;
-	TBuf<300> from;
+	from.Zero();
 	if (MessageHeader(_L("From"), from) && from.Length())
 		SplitAddress(from, name, addr);
 	else if (aRow)
@@ -542,10 +560,11 @@ void CPmView::HeaderTextL(TDes& aText, const TPmRow* aRow)
 
 	// the recipients, smaller: on one line ("To: me, Alice, +3 others"),
 	// all of them once "+3 others" is tapped
-	TBuf<500> to, cc;
+	to.Zero();
+	cc.Zero();
 	MessageHeader(_L("To"), to);
 	MessageHeader(_L("Cc"), cc);
-	TBuf<96> me;
+	me.Zero();
 	if (iSettings->iAcct >= 0 && iSettings->iAcct < PM_MAX_ACCOUNTS)
 		{
 		const char* e = iSettings->iAccounts[iSettings->iAcct].email;
@@ -595,7 +614,7 @@ void CPmView::HeaderTextL(TDes& aText, const TPmRow* aRow)
 			// names only; first names if that is what it takes; then as
 			// many as fit, and how many more
 			TInt total = CountAddresses(to) + CountAddresses(cc);
-			TBuf<300> shown;
+			shown.Zero();
 			TInt fitted = 0;
 			TBool done = EFalse;
 			for (TInt pass = 0; pass < 3 && !done; pass++)
@@ -612,9 +631,10 @@ void CPmView::HeaderTextL(TDes& aText, const TPmRow* aRow)
 					TBool first = ETrue;
 					while (NextAddress(rest, item))
 						{
-						TBuf<80> nm;
+						TDes& nm = sc->iNm;
 						ShortName(item, me, shortNames, nm);
-						TBuf<300> next(shown);
+						TDes& next = sc->iNext;
+						next = shown;
 						if (first)
 							{
 							if (next.Length()) next.Append(_L("   "));
@@ -707,6 +727,7 @@ void CPmView::HeaderTextL(TDes& aText, const TPmRow* aRow)
 	iZoomFactor->ReleaseFont(subjFont);
 	iZoomFactor->ReleaseFont(nameFont);
 	iZoomFactor->ReleaseFont(smallFont);
+	CleanupStack::PopAndDestroy();           // sc
 	}
 
 void CPmView::HeaderFormatL(CRichText& aText)
@@ -738,7 +759,10 @@ void CPmView::HeaderFormatL(CRichText& aText)
 			cm.SetAttrib(EAttFontHeight);
 			break;
 		case EHdGrey:
-			cf.iFontPresentation.iTextColor = KPmDarkGrey;
+			// (0.82) the secondary parts (address, date, To and Cc) stay
+			// smaller but are black: small dark grey text is made on the
+			// 5mx's passive screen by flickering pixels, and was hard to read
+			cf.iFontPresentation.iTextColor = KRgbBlack;
 			cm.SetAttrib(EAttColor);
 			break;
 		case EHdUnder:

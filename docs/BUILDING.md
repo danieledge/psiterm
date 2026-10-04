@@ -1,6 +1,6 @@
 # Building, layout and releases
 
-Developer notes for PsiTerm and PsiMail. For what the apps do and how
+Developer notes for PsiTerm, PsiMail and PsiWeb. For what the apps do and how
 to install them, see the [README](../README.md).
 
 ## What you need
@@ -19,25 +19,17 @@ This builds libvterm (`build_vterm.sh`), `psissh.exe` (`ssh/Makefile`), the
 PsiTerm app and its toolbar pictures (`tools/mkicons.py`), and packages
 `dist/PsiTerm.sis`.
 
-## PsiMail
+## PsiMail and PsiWeb
 
 ```sh
 PSION_SDK=/path/to/psion_cpp_sdk_linux mail/build.sh [host]   # dist/PsiMail.sis
+PSION_SDK=/path/to/psion_cpp_sdk_linux web/build.sh [host]    # dist/PsiWeb.sis
 ```
 
-`host` also builds a PC version of the engine for the tests. PsiMail's tests
+`host` also builds a PC version of the engine for the tests. PsiWeb's first
+build fetches NetSurf and its libraries at fixed commits and needs a few more
+PC packages: see [web/README.md](../web/README.md#building). PsiMail's tests
 are described in [mail/test/README.md](../mail/test/README.md).
-
-## The web browser
-
-PsiWeb, a web browser, is in development on the `dev` branch. It does not
-work yet, so it is not released from `main`. Its source is in `web/`; build
-and test it from `dev` (see `web/README.md` there).
-
-## The Atom modem firmware (dev only)
-
-The Wi-Fi modem firmware for the M5Stack Atom has not been tested on hardware
-yet, so it is only on the `dev` branch (`firmware/atom-modem`).
 
 ## Layout
 
@@ -52,7 +44,7 @@ yet, so it is only on the `dev` branch (`firmware/atom-modem`).
 | `app/pttabs.cpp` | tmux windows drawn as EIKON page tabs |
 | `libvterm/` | terminal emulation |
 | `mail/` | PsiMail - IMAP/SMTP over TLS and CalDAV: see [mail/README.md](../mail/README.md) |
-| `web/` | PsiWeb, the web browser in development (released from `dev` only) |
+| `web/` | PsiWeb - the NetSurf browser: see [web/README.md](../web/README.md) |
 | `pkg/` | installer definition, font and icon files |
 | `server/` | optional local update/debug server (plain HTTP) |
 | `tools/` | font and icon converters, screenshot renderer, release signing, test harnesses |
@@ -65,14 +57,15 @@ yet, so it is only on the `dev` branch (`firmware/atom-modem`).
 local server), then fetches `dist/version.txt` and `dist/PsiTerm.sis`
 from this repository over HTTPS. The Psion speaks a minimal TLS 1.3 client
 (`ssh/tls13.c`: X25519, ChaCha20-Poly1305) over the same modem or dial-up link
-SSH uses. PsiMail does the same with `dist/PsiMail-version.txt`, downloading in 64 KB pieces that are each checked.
+SSH uses. PsiMail and PsiWeb do the same with `dist/PsiMail-version.txt` and
+`dist/PsiWeb-version.txt`, downloading in 64 KB pieces that are each checked.
 
 Every release is signed. `dist/PsiTerm.sis.sig` holds an Ed25519 signature
 over the version and the SHA-256 of the .sis, and PsiTerm checks it against the
 public key built into `ssh/psishim.c` before installing anything. The Psion
 does not check TLS certificates for updates (no CA store, too slow), so the
 signature is what makes updates trustworthy, from GitHub or anywhere else.
-PsiMail's signed text names the product ("PsiMail update"), so
+PsiMail's and PsiWeb's signed text names the product ("PsiWeb update"...), so
 one app's signature can never pass for another's.
 
 To make a PsiTerm release: build, run
@@ -81,7 +74,8 @@ To make a PsiTerm release: build, run
 commit `v<version>`** and push the tag. PsiTerm reads `version.txt` from
 `main`, then fetches the signature and the .sis from the tag
 (`.../v0.31/dist/`), so GitHub's 5-minute cache can never mix old and new
-files. For PsiMail use `tools/release/sign.py --product PsiMail` and set the version in the app's source, its `.pkg` and its
+files. For PsiMail and PsiWeb use `tools/release/sign.py --product PsiMail`
+(or `PsiWeb`) and set the version in the app's source, its `.pkg` and its
 `dist/*-version.txt`.
 
 The dialog's Local server choice points the apps at your own server instead

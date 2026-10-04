@@ -2,6 +2,9 @@
 // checkout's build output.
 //   node --experimental-strip-types tools/emu/mkcard.ts psimail [--seed] [out.img]
 //   node --experimental-strip-types tools/emu/mkcard.ts psiterm|psiweb [out.img]
+// Options: --file CARDPATH=HOSTFILE adds a file, 8.3 names only (e.g. --file
+// PSIKEY=id_ed25519 for PsiTerm's key Import); EMU_PKG=DIR takes the app's
+// files from DIR instead of pkg/, build/mail-pkg/ or build/web-pkg/.
 // Default output: build/emu/card.img. Needs $PSION_EMU (the psionEmulators
 // checkout; default ../psionEmulators next to this repo) for its FAT16 writer.
 // --seed adds a mailbox and calendar for PsiMail's TESTSEED (tools/emu/seed.py).
@@ -15,27 +18,37 @@ const { createBlankImage, writeFileAtPath } = await import(EMU + '/frontend/src/
 const args = process.argv.slice(2);
 const app = args[0];
 const seedOn = args.includes('--seed');
+const extra: [string, string][] = [];
+for (let i = 1; i < args.length; i++)
+	if (args[i] === '--file') { const [d, ...r] = args[i + 1].split('='); extra.push([d, r.join('=')]); args.splice(i, 2); i--; }
 const out = args.find((x, i) => i > 0 && x !== '--seed') || REPO + 'build/emu/card.img';
+const pkg = (dflt: string) => process.env.EMU_PKG ? resolve(process.env.EMU_PKG) + '/' : dflt;
 const img = createBlankImage(16*1024*1024);
 const w = (p: string, d: Uint8Array) => { const r = writeFileAtPath(img, p, d); if (!r.ok) throw new Error(p + ': ' + r.reason); };
 const t = (s: string) => new Uint8Array(Buffer.from(s, 'latin1'));
 const f = (p: string) => new Uint8Array(readFileSync(p));
-w('PAD.BIN', new Uint8Array(3000));   // (shifts the layout: the harness's CF emulation can wedge on some)
+w('PAD.BIN', new Uint8Array(Number(process.env.EMU_PAD || 9000)));   // (shifts the layout: the harness's CF emulation can wedge on some)
 w('SYSTEM/LIBS/ESTLIB.DLL', f(HERE + 'ESTLIB.DLL'));   // the EPOC C library (from the SDK's redistributable stdlib.sis)
 if (app === 'psimail') {
-	const P = REPO + 'build/mail-pkg/';
+	const P = pkg(REPO + 'build/mail-pkg/');
 	for (const n of ['psimail.app','psimail.rsc','psimail.exe','psimail.aif','psimail.mbm','pmbutton.exe'])
 		w('SYSTEM/APPS/PSIMAIL/' + n.toUpperCase(), f(P + n));
 } else if (app === 'psiterm') {
-	const P = REPO + 'pkg/';
+	const P = pkg(REPO + 'pkg/');
 	for (const n of ['psiterm.app','psiterm.rsc','psissh.exe','psiterm.aif','psiterm.gdr','psiterm.mbm'])
 		w('SYSTEM/APPS/PSITERM/' + n.toUpperCase(), f(P + n));
 } else if (app === 'psiweb') {
-	const P = REPO + 'build/web-pkg/';
+	const P = pkg(REPO + 'build/web-pkg/');
 	for (const n of ['psiweb.app','psiweb.rsc','psiweb.exe','psiweb.aif','psiweb.mbm'])
 		w('SYSTEM/APPS/PSIWEB/' + n.toUpperCase(), f(P + n));
+} else if (app === 'psikern') {
+	// experimental/kernel: the test harness and the driver (never released)
+	const P = pkg(REPO + 'build/kernel-pkg/');
+	w('SYSTEM/APPS/PSIKT/PSIKT.APP', f(P + 'psikt.app'));
+	w('SYSTEM/APPS/PSIKT/PSIKT.RSC', f(P + 'psikt.rsc'));
+	w('SYSTEM/LIBS/PSIKERN6.LDD', f(P + 'psikern.ldd'));
 } else {
-	console.error('usage: mkcard.ts psimail|psiterm|psiweb [--seed] [out.img]'); process.exit(1);
+	console.error('usage: mkcard.ts psimail|psiterm|psiweb|psikern [--seed] [out.img]'); process.exit(1);
 }
 if (seedOn) {
 	const A = 'SEEDA0/';    // (TESTSEED copies it to C:\PsiMail\A0)
@@ -102,5 +115,6 @@ if (seedOn) {
 	evs += ev('work','b4','','202610150900','202610151700','-1','Conference','Birmingham');
 	w(CAL+'EVENTS.TXT', t(evs));
 }
+for (const [d, src] of extra) w(d.toUpperCase(), f(src));
 mkdirSync(dirname(out), { recursive: true });
 writeFileSync(out, img); console.log(out);

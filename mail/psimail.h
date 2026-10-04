@@ -117,6 +117,18 @@ typedef struct
 	char arg[PM_ARG_MAX];
 	} PmCmd;
 
+/* a command's outcome (engine): what last_res, last_msg and last_file say
+   for the last one, kept per command */
+typedef struct
+	{
+	int op;
+	int res;                 /* PM_RES_* */
+	unsigned int uid;
+	char msg[160];
+	char file[128];
+	int update_ready;        /* (PM_CMD_UPDATE) */
+	} PmDone;
+
 /* engine state */
 enum { PM_STATE_STARTING = 0, PM_STATE_READY, PM_STATE_EXITED };
 
@@ -188,6 +200,12 @@ typedef struct
 	/* (0.75) the heartbeat's other half, and the log (app) */
 	volatile unsigned int app_pid;  /* PsiMail.app's process id: the engine quits on a silent heartbeat only once that has gone */
 	char app_note[96];              /* why the last engine ended ("panic KERN-EXEC 3"), for psimail.log */
+
+	/* every command's outcome, by sequence (engine): done[(seq - 1) % PM_CMDQ]
+	   is the command whose completion took done_seq to seq. The app walks
+	   them in order, so two commands finishing between its ticks are both
+	   acted on (last_* alone held only the later one). */
+	PmDone done[PM_CMDQ];
 	} PmShared;
 
 #endif

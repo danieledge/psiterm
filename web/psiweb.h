@@ -114,7 +114,41 @@ typedef struct
 	volatile unsigned int heap_used;
 	volatile unsigned int app_beat;    /* app: +1 every tick; psiweb quits if it stops */
 
+	/* Questions psiweb asks the user through the app (Links phase 5): the
+	   engine fills in the question and sets the state to PW_ASK_ASKING;
+	   the app shows its dialog, fills in the answer and sets PW_ASK_OK
+	   or PW_ASK_CANCEL; the engine takes it and sets PW_ASK_NONE. */
+	/* a page or the proxy needs a user name and password (HTTP Basic or
+	   Digest authentication) */
+	volatile int auth_state;           /* PW_ASK_* */
+	int auth_proxy;                    /* psiweb: 1 = the proxy asks */
+	char auth_host[64];                /* psiweb: who asks (UTF-8) */
+	char auth_realm[96];               /* psiweb: the server's name for it */
+	char auth_user[64];                /* app: the answer (UTF-8) */
+	char auth_pass[64];                /* app; psiweb wipes it once used */
+	/* a file PsiWeb cannot show: save it? */
+	volatile int save_state;           /* PW_ASK_* */
+	char save_name[64];                /* psiweb: the server's filename */
+	char save_type[64];                /* psiweb: its type, e.g. application/pdf */
+	int save_size;                     /* psiweb: bytes, or -1 if not known */
+	int save_max;                      /* psiweb: the biggest file it saves */
+	char save_path[256];               /* app: where, e.g. D:\Documents\x.pdf */
+
+	/* display work (docs/display.md): app sets before the engine starts */
+	int display;                       /* PW_DISPLAY_* bits */
+
+	/* the page showing, for the app's scroll bar (EIKON's, beside the page)
+	   and its Pictures button: psiweb writes them before each new frame.
+	   Pixels; page_h 0 when there is nothing to scroll (no page, a frameset) */
+	volatile int page_h;               /* the whole page's height */
+	volatile int page_y;               /* the top of the view, down the page */
+	volatile int page_vh;              /* the view's height */
+	volatile int page_pics;            /* its pictures are shown (View > Show pictures) */
+
 	unsigned char fb[PW_MAX_H * PW_STRIDE];
 	} PwShared;
+
+/* PwShared.display (Preferences > Text; all 0 is the standard) */
+#define PW_DISPLAY_SCALED_TEXT	1	/* Links' scaled fonts, not the pre-drawn sharp ones */
 
 #endif

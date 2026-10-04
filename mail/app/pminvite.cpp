@@ -355,14 +355,10 @@ void CPmView::InviteLinkL(TInt aLink)
 // day): how many; removed if aRemove
 static TInt AgendaMatchL(const TDesC& aFile, const TDesC& aTitle, const TTime& aStart, TBool aAllDay, TBool aRemove)
 	{
-	RFs fs;
-	User::LeaveIfError(fs.Connect());
-	TEntry entry;
-	TInt r = fs.Entry(aFile, entry);
-	fs.Close();
-	if (r != KErrNone)
-		User::Leave(KErrNotFound);
 	CEikonEnv* env = CEikonEnv::Static();
+	TEntry entry;
+	if (env->FsSession().Entry(aFile, entry) != KErrNone)   // (the app's session, not one per call)
+		User::Leave(KErrNotFound);
 	env->BusyMsgL(_L("Looking in the Agenda..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(300000));
 	CParaFormatLayer* para = CParaFormatLayer::NewL();
 	CleanupStack::PushL(para);

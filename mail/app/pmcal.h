@@ -91,8 +91,9 @@ public:
 private:
 	enum TPhase { EIdle, EOpen, EPushed, EMapped, ENew, ELocal, EFinish };
 	CPmCalSync(MPmCalObserver& aObserver);
-	void RunL();
-	TInt RunError(TInt aError);
+	void RunL();                 // one step, trapped: ER5's CActive has no RunError, so a leave is caught here
+	void StepL();                // the step itself
+	void Failed(TInt aError);    // a step left: close the Agenda, keep what was done, tell the observer
 	void DoCancel();
 	void Next();
 	void Close();

@@ -2,7 +2,7 @@
 """Chunk-capable update server like the Mac's, with fault injection:
 the 2nd request for chunk o=16384 is truncated, the 1st for o=32768 is corrupted."""
 import http.server, zlib, urllib.parse, sys, os
-ROOT = "/tmp/updsrv"
+ROOT = os.environ.get("UPDSRV_ROOT", "/tmp/updsrv")
 seen = {}
 class H(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"

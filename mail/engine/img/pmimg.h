@@ -60,6 +60,9 @@ typedef struct
 	long max_src_pixels;     /* refuse a source with more (0: 24 million) */
 	long max_full_bytes;     /* whole-picture buffer for interlaced files (0: 640 KB) */
 	int no_dither;           /* 1: plain rounding to 16 greys */
+	int ordered;             /* 1: a 4x4 ordered dither in place of error diffusion */
+	const unsigned char *levels; /* how light each of the 16 levels looks (ssh/psigrey.h);
+	                            0: linear (level k is 17k) */
 	PmImgAbort abort;        /* may be 0 */
 	void *abort_ctx;
 	} PmImgOpts;

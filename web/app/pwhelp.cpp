@@ -16,13 +16,14 @@ struct TPwHelpTopic { const char* iTitle; const char* iText; };
 static const TPwHelpTopic KHelpTopics[] =
 	{
 	{ "Getting started",
-	  "PsiWeb is the NetSurf web browser on the Psion: HTML, CSS and GIF pictures, no JavaScript. It "
+	  "PsiWeb is the Links web browser on the Psion: pages are shown as plain documents, with JPEG, "
+	  "PNG and GIF pictures when you ask for them; no JavaScript and no style sheets. It "
 	  "reaches the Internet through a WiFi modem on the serial port or the Psion's own Internet "
 	  "connection, as PsiTerm and PsiMail do.\n"
 	  "\n"
 	  "File > Open address (Ctrl+O, or the Open button) asks for an address; words instead of an "
 	  "address are searched for. File > Home page (Ctrl+H) opens your home page, which is set in "
-	  "Tools > Preferences.\n"
+	  "Tools > Preferences. PsiWeb starts on its own welcome page, which needs no connection.\n"
 	  "\n"
 	  "PsiWeb starts its browser engine when it opens; the engine then dials or connects when a page "
 	  "needs it, and says what it is doing at the bottom left." },
@@ -30,21 +31,51 @@ static const TPwHelpTopic KHelpTopics[] =
 	{ "Reading pages",
 	  "Up and Down scroll a line; Fn+Up and Fn+Down (Pg Up and Pg Dn) a screen; Go > Top of page and "
 	  "End of page go to the ends. Tap a link to follow it, a field to type in it, a button to press "
-	  "it; the scroll bars work with the pen too.\n"
+	  "it; once a field is chosen, type into it. Left and Right scroll a wide page sideways.\n"
+	  "\n"
+	  "The scroll bar beside the page works with the pen: tap its arrows to move a few lines, tap "
+	  "above or below its thumb to move a screen, or drag the thumb.\n"
 	  "\n"
 	  "Go > Back (Ctrl+B, or the Back button) and Forward (Ctrl+F) move through the pages you have "
 	  "seen. Esc stops a page that is loading; File > Reload (Ctrl+R) fetches it again.\n"
 	  "\n"
-	  "View > Zoom in and Zoom out (Ctrl+M and Shift+Ctrl+M, or the Zoom button) go round the sizes "
-	  "from 50% to 200%; Normal size is 100%. View > Show pictures (Ctrl+I) fetches pictures or "
-	  "leaves them out, which is faster. View > Show toolbar (Ctrl+T) gives the page the toolbar's "
+	  "View > Zoom in and Zoom out (Ctrl+M and Shift+Ctrl+M, or the Zoom in and Zoom out icons "
+	  "beside the screen) go round the sizes from 50% to 200%; Normal size is 100%.\n"
+	  "\n"
+	  "Pictures are left out, which is much faster over a modem: View > Show pictures (Ctrl+I, or "
+	  "the Pictures button) fetches the pictures of the page showing, and takes them away again. "
+	  "The button stays pressed in while they show. To have them on every page, set Pictures in "
+	  "Tools > Preferences. View > Show toolbar (Ctrl+T) gives the page the toolbar's "
 	  "room; the engine starts again to draw at the new width.\n"
 	  "\n"
 	  "View > Page information (Shift+Ctrl+Q) shows the page's title and address, what the engine "
 	  "is doing, the free memory and the connection in use.\n"
 	  "\n"
+	  "A page that asks for a user name and password brings up a dialog for them; PsiWeb remembers "
+	  "them until it closes. A file PsiWeb cannot show, such as a PDF, can be saved to a disk (up "
+	  "to 4 MB): PsiWeb says what it is and offers the Save as dialog; the bottom left shows how much "
+	  "has come, and Esc stops it.\n"
+	  "\n"
 	  "Light sites suit the Psion's memory best - 68k.news, FrogFind, DuckDuckGo Lite, text.npr.org, "
-	  "lite.cnn.com. A page of a few hundred KB can be too much for a 16 MB machine." },
+	  "lite.cnn.com. On a long page with pictures, those far from the screen are let go, and made "
+	  "again from memory when you come back to them; a page that still does not fit says \"Page too "
+	  "big\" and shows what fits." },
+
+	{ "Screen & greys",
+	  "View > Reading mode (Shift+Ctrl+R) raises the screen's contrast and keeps the backlight on "
+	  "while PsiWeb is in front; your own settings come back when it goes to the background or "
+	  "closes, or the Psion is switched off (the next key turns it on again).\n"
+	  "\n"
+	  "Pictures are dithered once, as they are set out, by error diffusion; text and the page's "
+	  "own colours are drawn in plain greys, with no pattern. Tools > Preferences > Screen greys "
+	  "shows a picture four ways: choose the one that looks best with 1 to 4, fine-tune it lighter "
+	  "or darker with Up and Down, and press Enter. The new greys are used from the next page, and "
+	  "by PsiTerm and PsiMail too. A there opens the detailed settings, which can also choose the "
+	  "ordered pattern of earlier versions.\n"
+	  "\n"
+	  "Tools > Preferences > Text: Sharp (the standard) draws text with fonts made ahead for the "
+	  "Psion's greys at 100%; other zoom sizes use the scaled fonts. Scaled (as before) uses Links' "
+	  "own fonts at every size. The engine starts again when it changes." },
 
 	{ "Connections & proxy",
 	  "Tools > Connection settings chooses how PsiWeb reaches the Internet, the same way as PsiTerm "
@@ -71,9 +102,8 @@ static const TPwHelpTopic KHelpTopics[] =
 	  "port can be used by one program at a time; the Remote link must be off too." },
 
 	{ "If the engine stops",
-	  "The browser engine runs as its own program, so a page that is too big for the memory stops "
-	  "the engine rather than the Psion. PsiWeb then says so on the page and Tools > Restart browser "
-	  "engine starts it again. Preferences and connection settings that the engine reads when it "
+	  "The browser engine runs as its own program, so if it stops, the Psion carries on. PsiWeb "
+	  "then says so on the page and Tools > Restart browser engine starts it again. Preferences and connection settings that the engine reads when it "
 	  "starts also restart it, on the same page." },
 
 	{ "Updating PsiWeb",
@@ -91,9 +121,10 @@ static const TPwHelpTopic KHelpTopics[] =
 	  "Ctrl+O or Ctrl+L: open an address, or search for words\n"
 	  "Ctrl+H / Ctrl+R: home page / reload\n"
 	  "Ctrl+B / Ctrl+F: back / forward\n"
-	  "Ctrl+M / Shift+Ctrl+M: zoom in / out\n"
-	  "Ctrl+I / Ctrl+T: show pictures / show toolbar\n"
+	  "Ctrl+M / Shift+Ctrl+M, or the Zoom icons: zoom in / out\n"
+	  "Ctrl+I / Ctrl+T: show pictures (this page, on or off) / show toolbar\n"
 	  "Shift+Ctrl+Q: page information\n"
+	  "Shift+Ctrl+R: Reading mode\n"
 	  "Ctrl+U: disconnect\n"
 	  "Ctrl+K / Shift+Ctrl+H / Shift+Ctrl+A / Ctrl+E: preferences / help / about / close" }
 	};

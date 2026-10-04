@@ -38,7 +38,9 @@ static int hexv(int c)
 }
 
 /* Decodes a piece of the stream; state carries across calls, so the input
- * can be split anywhere. Output is never longer than the input. */
+ * can be split anywhere. Output is at most n + 2 bytes: base64 and 7-bit
+ * never exceed the input, but quoted-printable can hold "=X" from earlier
+ * calls and emit all three bytes ("=", "X", c) when c is not hex. */
 int dec_feed(PmDecoder *d, const char *in, int n, char *out)
 {
 	int i, k = 0;

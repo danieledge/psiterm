@@ -133,13 +133,22 @@ static void ParentDir(TDes8& aDir)
 		aDir.SetLength(slash);
 	}
 
-static void JoinDir(const TDesC8& aDir, const TDesC8& aName, TDes8& aOut)
+// "<dir>/<name>" in aOut. EFalse (and an infoprint) when it does not fit:
+// a cut name would send the file under another name, or stat one that is
+// not there
+static TBool JoinDir(const TDesC8& aDir, const TDesC8& aName, TDes8& aOut)
 	{
-	aOut.Copy(aDir.Left(aDir.Length() < aOut.MaxLength() ? aDir.Length() : aOut.MaxLength()));
-	if (aOut.Length() == 0 || aOut[aOut.Length() - 1] != '/')
-		if (aOut.Length() < aOut.MaxLength()) aOut.Append('/');
-	TInt room = aOut.MaxLength() - aOut.Length();
-	aOut.Append(aName.Left(aName.Length() < room ? aName.Length() : room));
+	TInt slash = (aDir.Length() == 0 || aDir[aDir.Length() - 1] != '/') ? 1 : 0;
+	if (aDir.Length() + slash + aName.Length() > aOut.MaxLength())
+		{
+		CEikonEnv::Static()->InfoMsg(_L("Not available - the name is too long"));
+		return EFalse;
+		}
+	aOut.Copy(aDir);
+	if (slash)
+		aOut.Append('/');
+	aOut.Append(aName);
+	return ETrue;
 	}
 
 // ============================================================================
@@ -251,6 +260,7 @@ TBool CPtXferDialog::OkToExitL(TInt aButtonId)
 	PsiShared* s = iView.XferShared();
 	if (s)
 		s->xfer_cancel = 1;
+	iView.RingSsh();
 	iStopping = ETrue;
 	ShowProgressL(ETrue);
 	return EFalse;
@@ -278,6 +288,7 @@ static TInt RunXferL(CTermView& aView, TInt aOp, const TDesC8& aRemote, const TD
 	s->xfer_total = 0;
 	TUint req = s->xfer_req + 1;
 	s->xfer_req = req;                   // last: psissh starts now
+	aView.RingSsh();
 	// a quick request (a folder list on a fast link) needs no window
 	for (TInt i = 0; i < 8; i++)
 		{
@@ -374,6 +385,8 @@ public:
 	TPtrC8 Name(TInt aIndex) const { return iText->Mid(At(aIndex).iOff, At(aIndex).iLen); }
 private:
 	TInt Compare(const TRemoteEntry& aA, const TRemoteEntry& aB) const;
+	void Sort();
+	void SiftDown(TInt aRoot, TInt aEnd);
 	HBufC8* iText;
 	CArrayFixFlat<TRemoteEntry>* iEntries;
 	};
@@ -413,13 +426,45 @@ void CRemoteList::SetL(const TDesC8& aText)
 				e.iSize = e.iSize * 10 + (line[i] - '0');
 			e.iOff = pos + tab + 1;
 			e.iLen = line.Length() - tab - 1;
-			// sorted as they go in (a few hundred at most)
-			TInt at = iEntries->Count();
-			while (at > 0 && Compare((*iEntries)[at - 1], e) > 0)
-				at--;
-			iEntries->InsertL(at, e);
+			iEntries->AppendL(e);
 			}
 		pos += nl + 1;
+		}
+	Sort();
+	}
+
+// Sorted once, in place, in n log n compares: inserting each entry in order
+// as it came was n squared, which on a /usr/bin-sized folder froze the UI
+// for seconds at 36 MHz. (A heap sort: no extra memory, no recursion.)
+void CRemoteList::Sort()
+	{
+	TInt n = iEntries->Count();
+	for (TInt start = n / 2 - 1; start >= 0; start--)
+		SiftDown(start, n);
+	for (TInt end = n - 1; end > 0; end--)
+		{
+		TRemoteEntry t = (*iEntries)[0];
+		(*iEntries)[0] = (*iEntries)[end];
+		(*iEntries)[end] = t;
+		SiftDown(0, end);
+		}
+	}
+
+void CRemoteList::SiftDown(TInt aRoot, TInt aEnd)
+	{
+	for (;;)
+		{
+		TInt child = 2 * aRoot + 1;
+		if (child >= aEnd)
+			return;
+		if (child + 1 < aEnd && Compare((*iEntries)[child], (*iEntries)[child + 1]) < 0)
+			child++;
+		if (Compare((*iEntries)[aRoot], (*iEntries)[child]) >= 0)
+			return;
+		TRemoteEntry t = (*iEntries)[aRoot];
+		(*iEntries)[aRoot] = (*iEntries)[child];
+		(*iEntries)[child] = t;
+		aRoot = child;
 		}
 	}
 
@@ -458,10 +503,14 @@ void CPtRemoteDialog::SetSizeAndPositionL(const TSize& aSize)
 
 void CPtRemoteDialog::PreLayoutDynInitL()
 	{
-	TBuf<512> dir;
-	Utf8ToText(iDir, dir, EFalse);
 	TBuf<44> shown;
-	Tail(dir, shown, 40);
+	{
+	HBufC* dir = HBufC::NewLC(512);         // (on the heap: the stack is small)
+	TPtr d = dir->Des();
+	Utf8ToText(iDir, d, EFalse);
+	Tail(d, shown, 40);
+	CleanupStack::PopAndDestroy();          // dir
+	}
 	if (iMore && shown.Length() < 30)
 		shown.Append(_L(" (first part)"));
 	SetLabelReserveLengthL(EPtDlgRemoteDir, 40);
@@ -486,8 +535,15 @@ void CPtRemoteDialog::PreLayoutDynInitL()
 		{
 		const TRemoteEntry& e = iList.At(i);
 		Utf8ToText(iList.Name(i), name, EFalse);
+		// the row shows at most 100 characters of the name (and a folder's
+		// "/" must have room: Append on a full TBuf panics USER 11 - a server
+		// name can be 255 bytes)
+		if (name.Length() > 100)
+			name.SetLength(100);
 		if (e.iType == 'd')
 			{
+			if (name.Length() >= 100)
+				name.SetLength(99);
 			name.Append('/');
 			size.Copy(_L("Folder"));
 			}
@@ -495,7 +551,7 @@ void CPtRemoteDialog::PreLayoutDynInitL()
 			size.Copy(_L("Link"));
 		else
 			SizeText(e.iSize, size);
-		row.Copy(name.Left(name.Length() < 100 ? name.Length() : 100));
+		row.Copy(name);
 		row.Append('\t');
 		row.Append(size);
 		rows->AppendL(row);
@@ -635,7 +691,9 @@ static TBool BrowseL(CTermView& aView, TBool aSend, TDes8& aPick, TUint& aSize)
 		mem.iRemoteHost = host;
 		mem.iRemoteDir.Zero();           // another server: start at its home folder
 		}
-	TBuf8<512> dir(mem.iRemoteDir);
+	TBuf8<512>& dir = mem.iDir;              // (the view's scratch: see CPtXferMemory)
+	TBuf8<512>& path = mem.iPath;
+	dir = mem.iRemoteDir;
 	CRemoteList* list = new(ELeave) CRemoteList;
 	CleanupStack::PushL(list);
 	TBool chosen = EFalse;
@@ -675,8 +733,8 @@ static TBool BrowseL(CTermView& aView, TBool aSend, TDes8& aPick, TUint& aSize)
 			}
 		if (index < 0 || index >= list->Count())
 			continue;
-		TBuf8<512> path;
-		JoinDir(dir, list->Name(index), path);
+		if (!JoinDir(dir, list->Name(index), path))
+			continue;                        // (too long: it has said so)
 		TInt type = list->At(index).iType;
 		aSize = list->At(index).iSize;
 		if (type == 'l')
@@ -741,14 +799,15 @@ void PtSendFileL(CTermView& aView)
 		env->InfoMsg(_L("File not found"));
 		return;
 		}
-	TBuf8<512> dir;
+	TBuf8<512>& dir = mem.iPick;             // (the view's scratch: see CPtXferMemory)
+	TBuf8<512>& remote = mem.iRemote;
 	TUint dummy = 0;
 	if (!BrowseL(aView, ETrue, dir, dummy))
 		return;
 	TBuf8<300> leaf;
 	TextToUtf8(parse.NameAndExt(), leaf);
-	TBuf8<512> remote;
-	JoinDir(dir, leaf, remote);
+	if (!JoinDir(dir, leaf, remote))
+		return;                              // (too long: it has said so)
 
 	// already there? (a folder of that name cannot be replaced)
 	TInt r = RunXferL(aView, PSI_XOP_STAT, remote, KNullDesC, _L("Sending file"), _L("Looking on the server..."));
@@ -772,7 +831,7 @@ void PtSendFileL(CTermView& aView)
 		if (!env->QueryWinL(what, _L("Replace it?")))
 			return;
 		}
-	TBuf<512> dirText;
+	TBuf<512>& dirText = mem.iText;
 	Utf8ToText(dir, dirText, EFalse);
 	TBuf<30> dirShort;
 	Tail(dirText, dirShort, 26);
@@ -800,7 +859,8 @@ void PtGetFileL(CTermView& aView)
 	if (NeedLoginL(aView))
 		return;
 	CEikonEnv* env = CEikonEnv::Static();
-	TBuf8<512> remote;
+	CPtXferMemory& mem = Mem(aView);
+	TBuf8<512>& remote = mem.iPick;          // (the view's scratch: see CPtXferMemory)
 	TUint size = 0;
 	if (!BrowseL(aView, EFalse, remote, size))
 		return;
@@ -811,7 +871,6 @@ void PtGetFileL(CTermView& aView)
 		leaf.Delete(0, 1);               // (".bashrc": EPOC names cannot start with a dot)
 	if (leaf.Length() == 0)
 		leaf.Copy(_L("File from server"));
-	CPtXferMemory& mem = Mem(aView);
 	TFileName name;
 	if (mem.iSaveTo.Length())
 		name = TParsePtrC(mem.iSaveTo).DriveAndPath();
@@ -1198,12 +1257,7 @@ void PtLogCommandL(CTermView& aView)
 	d.Append(raw ? '1' : '0');
 	d.Append(replace ? '1' : '0');
 	d.Append(file.Left(file.Length() < 256 ? file.Length() : 256));
-	fs.MkDirAll(KLogIni);
-	if (ini.Replace(fs, KLogIni, EFileWrite) == KErrNone)
-		{
-		ini.Write(d);
-		ini.Close();
-		}
+	SafeWrite(fs, KLogIni, d);           // (into a temporary, then swapped in, as every data file)
 	if (!aView.iLog)
 		aView.iLog = CPtLog::NewL(fs);
 	TInt r = aView.iLog->Start(file, raw, !replace);

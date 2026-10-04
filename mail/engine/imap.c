@@ -19,6 +19,8 @@
 
 #define RESP_MAX   (48 * 1024)
 #define STREAM_MIN 1024        /* literals bigger than this go to the stream callback */
+#define KEEP_MARGIN 512        /* room kept after an in-line literal for the rest of its line */
+#define PIECE_SLICE 1024       /* the most one StreamFn call is given (see on_piece_quoted) */
 #define TIMEOUT    60000
 
 static int  g_acct = -1;       /* logged-in account, or -1 */
@@ -109,11 +111,15 @@ static int read_response(void)
 			/* (n is compared on its own: g_rlen + n could wrap round for a
 			   {2147483640}-sized literal and land in the "keep it" branch,
 			   which reads n bytes into g_resp) */
-			if ((g_stream && n > 0) || n > (long)(RESP_MAX - g_rlen - 8)) {
+			/* A literal is kept in line only if the rest of the response -
+			   the FLAGS and UID after a BODY[] piece, say - still has room
+			   after it: KEEP_MARGIN bytes, not the 16 pmn_readline is given,
+			   which was nothing at all once the literal filled the buffer */
+			if ((g_stream && n > 0) || n > (long)(RESP_MAX - g_rlen - KEEP_MARGIN)) {
 				/* stream it (or throw it away if too big to keep) */
 				static char chunk[1024];
 				long left = n;
-				StreamFn fn = n > (long)(RESP_MAX - g_rlen - 8) && !g_stream ? 0 : g_stream;
+				StreamFn fn = n > (long)(RESP_MAX - g_rlen - KEEP_MARGIN) && !g_stream ? 0 : g_stream;
 				g_rlen = (int)(o - g_resp);
 				memcpy(g_resp + g_rlen, "{0}\r\n", 5);
 				g_rlen += 5;
@@ -917,10 +923,21 @@ static void piece_stream(const char *d, int n, void *ctx)
 
 static ImapNode *body_item(ImapNode *r);
 
+/* A part sent as a quoted string comes whole (up to RESP_MAX): it is passed
+   on in slices no bigger than a streamed literal's (1 KB), the bound every
+   StreamFn's decode buffer is sized for. */
 static void on_piece_quoted(ImapNode *r, void *ctx)
 {
 	ImapNode *v = body_item(r);
-	if (v) piece_stream(v->s, v->len, ctx);
+	const char *s;
+	int left;
+	if (!v) return;
+	for (s = v->s, left = v->len; left > 0; ) {
+		int k = left > PIECE_SLICE ? PIECE_SLICE : left;
+		piece_stream(s, k, ctx);
+		s += k;
+		left -= k;
+	}
 }
 
 /* On a modem line a piece must fit the serial port's 16 KB receive buffer
@@ -1398,10 +1415,22 @@ static int imap_body_1(int acct, const char *folder, unsigned int uid, int full,
 				st_flag_set(m->flags, 'S', 1);
 			st_flag_set(m->flags, 'B', 1);
 			m->attach = b.st.nattach > 0;
-			st_index_save(acct, folder, "index.txt", &ix);
+			/* (the text is saved whatever happens here; the list saying
+			   "not downloaded" is put right by the next sync) */
+			if (st_index_save(acct, folder, "index.txt", &ix) != 0)
+				pm_log("imap: %s %u is saved but the message list could not be updated", folder, uid);
 		}
 		st_index_free(&ix);
-		if (!was_seen && !keep_unread) cmd(0, 0, why, whymax, "UID STORE %u +FLAGS.SILENT (\\Seen)", uid);
+		if (!was_seen && !keep_unread) {
+			/* the server is told it is read; if the line has gone, next time
+			   (pending.txt), so the next sync doesn't make it unread again */
+			char w2[100];
+			if (cmd(0, 0, w2, sizeof(w2), "UID STORE %u +FLAGS.SILENT (\\Seen)", uid) != PM_RES_OK) {
+				char line[200];
+				snprintf(line, sizeof(line), "FLAG\t%s\t%u\t+S", folder, uid);
+				st_pending_add(acct, line);
+			}
+		}
 	}
 	st_changed();
 	return PM_RES_OK;
@@ -1430,6 +1459,10 @@ static void att_stream(const char *data, int n, void *ctx)
 		pc -= pc % 5;
 		if (pc != c->percent) { c->percent = pc; pm_progress("Downloading %s... %d%%", c->label ? c->label : "the attachment", pc); }
 	}
+	/* (a streamed literal comes in 1 KB pieces and a quoted body is sliced
+	   to the same - dec_feed writes up to n + 2 bytes - so this is only
+	   against a caller that forgets) */
+	if (n > PIECE_SLICE) { c->err = 1; return; }
 	dn = dec_feed(&c->dec, data, n, dec);
 	if (c->err) return;
 	if (dn && fwrite(dec, 1, dn, c->f) != (size_t)dn) c->err = 1;

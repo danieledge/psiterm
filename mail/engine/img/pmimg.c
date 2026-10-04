@@ -1,7 +1,12 @@
 /* pmimg.c - the parts the decoders share: the buffered reader, the sink
  * that shrinks 8-bit grey rows by a whole number and dithers them to 16
- * greys (Floyd-Steinberg, serpentine), and the front door (pmimg_decode).
- * See pmimg.h.
+ * greys (Floyd-Steinberg, serpentine; or a 4x4 ordered dither), and the
+ * front door (pmimg_decode). See pmimg.h.
+ *
+ * The 16 levels need not be evenly spaced: opts->levels says how light each
+ * looks (the grey calibration, ssh/psigrey.h). The nearest level is taken
+ * and the error diffused is v - levels[q], so the picture's average
+ * lightness is kept on the screen as it really is.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -130,12 +135,37 @@ struct PmImgSink
 	int out_rows;            /* rows written */
 	int *err_cur, *err_next;     /* dithering error, out_w + 2 each, [x + 1] */
 	int serp;                /* this row goes right to left */
-	int dither;
+	int dither;              /* 0 rounding, 1 error diffusion, 2 ordered */
+	unsigned char lv[16];    /* how light each level looks */
+	unsigned char cal[256];  /* v -> the nearest level */
+	unsigned char frac[256]; /* ordered: how far v is from cal's level to the next, 0..254 */
 	PmImgAbort abort;
 	void *abort_ctx;
 	int aborted;
 	int type;
 	};
+
+/* the level tables: nearest level, and for the ordered dither the level at
+   or below v with how far v is towards the next (0..254) */
+static void sink_levels(PmImgSink *s, const unsigned char *levels)
+{
+	int k, v, q = 0;
+	for (k = 0; k < 16; k++) {
+		int l = levels ? levels[k] : k * 17;
+		if (k && l <= s->lv[k - 1]) l = s->lv[k - 1] + 1;    /* (strictly increasing) */
+		if (l > 240 + k) l = 240 + k;
+		s->lv[k] = (unsigned char)l;
+	}
+	for (v = 0; v < 256; v++) {
+		while (q < 15 && (int)s->lv[q + 1] - v < v - (int)s->lv[q]) q++;
+		s->cal[v] = (unsigned char)q;
+	}
+	for (v = 0, q = 0; v < 256; v++) {
+		while (q < 15 && v >= s->lv[q + 1]) q++;
+		if (q == 15 || v <= s->lv[q]) s->frac[v] = 0;
+		else s->frac[v] = (unsigned char)(((v - s->lv[q]) * 255) / (s->lv[q + 1] - s->lv[q]));
+	}
+}
 
 PmImgSink *pmimg_sink_new(int src_w, int src_h, const PmImgOpts *from, int type, int *err)
 {
@@ -159,7 +189,8 @@ PmImgSink *pmimg_sink_new(int src_w, int src_h, const PmImgOpts *from, int type,
 	s->out_w = (src_w + f - 1) / f;
 	s->out_h = (src_h + f - 1) / f;
 	s->stride = ((s->out_w + 7) / 8) * 4;
-	s->dither = !o.no_dither;
+	s->dither = o.no_dither ? 0 : o.ordered ? 2 : 1;
+	sink_levels(s, o.levels);
 	s->abort = o.abort;
 	s->abort_ctx = o.abort_ctx;
 	s->type = type;
@@ -195,9 +226,6 @@ int pmimg_sink_rows_done(const PmImgSink *s)
 	return s->src_rows;
 }
 
-/* v / 255 for 0 <= v < 65535 (the ARM has no divide) */
-#define DIV255(v) (((v) + 1 + ((v) >> 8)) >> 8)
-
 /* a finished band: average, dither, pack one output row. With f == 1, row
    is the source row itself and acc is not used. */
 static void sink_flush_band(PmImgSink *s, const unsigned char *row)
@@ -215,7 +243,7 @@ static void sink_flush_band(PmImgSink *s, const unsigned char *row)
 		rcp = (1UL << 24) / (unsigned long)(rows * f);
 		rcp_last = (1UL << 24) / (unsigned long)(rows * lastw);
 	}
-	if (s->dither) {
+	if (s->dither == 1) {
 		/* Floyd-Steinberg, serpentine: of each pixel's error, 7/16 goes on
 		   to the next pixel (carried in fwd), 3/16 back and down, 5/16 down
 		   and 1/16 on and down. The row below is built up in dn1 (the column
@@ -231,8 +259,8 @@ static void sink_flush_band(PmImgSink *s, const unsigned char *row)
 			v += ec[x + 1] + fwd;
 			if (v < 0) v = 0;
 			if (v > 255) v = 255;
-			q = DIV255(v * 15 + 127);
-			e = v - q * 17;
+			q = s->cal[v];
+			e = v - s->lv[q];
 			dst[x >> 1] |= (unsigned char)(q << ((x & 1) * 4));
 			d = (e * 7) >> 4;
 			e3 = (e * 3) >> 4;
@@ -245,11 +273,24 @@ static void sink_flush_band(PmImgSink *s, const unsigned char *row)
 		en[x + 1 - step] = dn1;                 /* the last column */
 		s->serp = !s->serp;
 	} else {
+		/* rounding to the nearest level, or the 4x4 ordered dither: the
+		   level at or below v, one up where v's distance on towards the
+		   next level passes the threshold */
+		static const unsigned char bayer[16] = {
+			  8, 136,  40, 168, 200,  72, 232, 104,
+			 56, 184,  24, 152, 248, 120, 216,  88 };
+		const unsigned char *th = bayer + ((s->out_rows & 3) << 2);
 		for (x = 0; x < ow; x++) {
 			int v, q;
 			if (f == 1) v = row[x];
 			else v = (int)((s->acc[x] * (x == ow - 1 ? rcp_last : rcp) + (1UL << 23)) >> 24);
-			q = DIV255(v * 15 + 127);
+			if (v > 255) v = 255;
+			if (s->dither == 2) {
+				q = s->cal[v];
+				if (q && s->lv[q] > v) q--;     /* the level at or below */
+				q += s->frac[v] + th[x & 3] >= 255;
+			} else
+				q = s->cal[v];
 			dst[x >> 1] |= (unsigned char)(q << ((x & 1) * 4));
 		}
 	}

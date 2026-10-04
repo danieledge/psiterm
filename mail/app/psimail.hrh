@@ -165,6 +165,7 @@ enum TPmDialogControls
 	EPmDlgHelpText,
 	EPmDlgPictures,          // Preferences: Show pictures
 	EPmDlgEmailButton,       // Preferences: Email icon opens
+	EPmDlgReading,           // Preferences: Reading mode (0.81, docs/display.md)
 	EPmDlgAlert,             // Preferences > New mail: Alert for new mail (0.74)
 	EPmDlgCheckEvery,        // Check for new mail
 	EPmDlgCheckConnect,      // If not connected
@@ -190,8 +191,10 @@ enum TPmPages
 	EPmPageOptions,
 	EPmPageCalServer,
 	EPmPageCalAgenda,
+	EPmPageCalDates,
 	EPmPagePrefsGeneral,     // Preferences (0.74: two pages)
-	EPmPagePrefsNewMail
+	EPmPagePrefsNewMail,
+	EPmPagePrefsScreen
 	};
 
 // Connection settings > Test (0.74): the button, and the result dialog's lines
@@ -199,6 +202,13 @@ enum TPmLinkTest
 	{
 	EPmBidTest = 0x7400,
 	EPmDlgTest1, EPmDlgTest2, EPmDlgTest3, EPmDlgTest4, EPmDlgTest5
+	};
+
+// Preferences > Screen greys... (0.84): the button, the same id in all
+// three apps (ssh/psigreyui.cpp)
+enum TPmGreyButton
+	{
+	EPmBidGreys = 0x7480
 	};
 
 // Help on PsiMail (0.75): the text with its scroll bar, a custom dialog control (pmhelp.cpp)

@@ -44,9 +44,11 @@ class CEikMsgWin;
 extern "C" {
 #include <psimail.h>
 }
+#include "psibell.h"           // (0.81) doorbells with the engine: power
 #include "pmui.h"
 #include "pmcal.h"
 
+#include "psidisp.h"
 #include <psimail.rsg>
 #include "psimail.hrh"
 
@@ -66,6 +68,10 @@ const TInt KPmViewNoAutoSend = 0x40000;     // don't send the Outbox when a conn
 // standard) shows one busy message per command and its outcome, as the
 // built-in Email does; on, every step the engine and the link report (pmstatus.cpp)
 const TInt KPmViewDetailedProgress = 0x80000;
+// bit 20 (0.81, docs/display.md): Preferences > General > Reading mode. Off
+// (the standard); on, the contrast goes up and the backlight stays on while
+// a message is open in front (ssh/psidisp.h)
+const TInt KPmViewReading = 0x100000;
 
 // app-wide settings (accounts are PmAccount, as the engine uses them)
 struct TPmSettings
@@ -85,6 +91,7 @@ struct TPmSettings
 	                       // 0x100 the Email icon below the screen opens PsiMail (pmbutton.exe), 0x200 that was asked once
 	                       // 0x3000, 0x1C000, 0x20000, 0x40000: new mail alert, timed check, sending (KPmView* above)
 	                       // 0x80000: show detailed progress (0.75)
+	                       // 0x100000: Reading mode (0.81)
 	TInt iSpare[2];        // (TPmSettings is saved whole: keep its size)
 	                       // iSpare[0]: pictures in messages - 0 shown, 1 only attached files, 2 none (pmnative.cpp);
 	                       //   bits 8-9 (0x300, 0.75): pictures from the web - 0 ask, 1 always, 2 never (pmwebpic.cpp)
@@ -189,9 +196,14 @@ public:
 	void FinishStartL();                     // after the first draw: the engine, the lists, the calendar
 	TMode Mode() const { return iMode; }
 	PmShared* Shared() { return iShared; }
+	void RingEngine();                       // (0.81) something for the engine in the chunk: wake it
 	TBool EngineRunning() const { return iRunning; }
 	void StartEngineL();
-	void StopEngine();
+	void StopEngine(TBool aWait = ETrue);    // asks it to quit and waits a bounded time (then kills it); aWait EFalse: kill now if it hasn't gone
+	void AskEngineToStop();                  // the first half of StopEngine, for a wait driven by a timer (CPmAppUi's Close)
+	TBool EngineExited() const { return !iRunning || iShared->state == PM_STATE_EXITED; }
+	void RestartEngineL();                   // Tools > Restart mail engine (and the update window's way out)
+	TBool Closing() const { return iClosing; }
 	void EngineEnded();
 	void SettingsChanged();                  // accounts or connection edited
 	void AccountChangedL();                  // switched to another account
@@ -213,6 +225,7 @@ public:
 	void UpdateDialogL();                    // Tools > Update: the progress window, then what it came to
 	const TDesC& UpdateLog() const { return iUpdLog; }
 	void StopUpdate() { StopEngineWork(KNullDesC); }
+	void UpdateEnded(const TDesC& aLine);    // the update is over without a result from the engine (it was restarted)
 	void SetStatus(const TDesC& aText);
 	void OpenSidebarItemL(TInt aIndex);
 	TInt CurrentSidebarItem() const;
@@ -330,6 +343,13 @@ private:
 	static TInt TickCallback(TAny* aSelf);
 	void Tick();
 	void TickL();
+	// (0.81) power: the tick goes 4 times a second while the engine works
+	// or something on the screen waits on it, else every 2 s with the
+	// doorbell armed (the engine rings it with news)
+	TBool TickWanted() const;
+	void TickFast();
+	void TickQuiet();
+	static TInt BellCallback(TAny* aSelf);
 	void HandleResultL(const PmCmd& aCmd);
 	void HandleCalResultL(const PmCmd& aCmd, TInt aRes, const TDesC& aMsg);
 	void CalCmd(const TDesC8& aArg);
@@ -368,8 +388,16 @@ private:
 	PmShared* iShared;
 	RProcess iProcess;
 	TBool iRunning;
+	TBool iClosing;                  // the app is closing: the engine has been asked to stop (keys and pointer ignored meanwhile)
+	TUint iOldEngineUntil;           // ConstructL found the last PsiMail's engine still on the chunk: wait for it until this tick (0 none)
+	TBool iOldEngineNoted;           // ... and said so (a busy message)
+	TInt iKeptCmds;                  // StartEngineL: commands the last engine left queued, kept for this one
 	CPmWatcher* iWatcher;
 	CPeriodic* iTimer;
+	CPsiBellWaiter* iBellWaiter;     // (0.81) the engine's news
+	TPsiBellRinger iEngRinger;       // ...and its doorbell
+	TBool iTickQuiet;                // the tick is on its slow pace
+	TInt iCalmTicks;                 // ticks in a row with nothing going on
 	TMode iMode;
 	TMode iListMode;                 // EList or EOutbox: where Esc returns from a message
 	TBool iSidebar;                  // keys move in the folder column
@@ -542,6 +570,7 @@ private:
 public:
 	void EngineStoppedL(const TDesC& aWhy);  // from EngineEnded: the reader stops waiting, the engine starts again
 	TBool EngineBackL();                     // from Cmd with no engine: start it again, ETrue if it is running
+	void KillStrayEngines();                 // a psimail.exe that is not ours and would not quit (FinishStartL)
 	void PicturesDoneL(const PmCmd& aCmd);   // a PICTURES / WEBPICS command ended: frames still waiting say so
 	TInt WebPicturesPref() const;            // 0 ask, 1 always, 2 never
 	TBool WebPicturesOn() const;             // this message's web pictures are shown (asked for, or Always)
@@ -744,6 +773,7 @@ private:
 	void SetButtonTextL(const TDesC& aText);
 	CPmView& iView;
 	TBool iFinished;
+	TUint iStopAt;                           // when Stop was first pressed (0 not yet): pressed again later, it offers a new engine
 	};
 
 class CPmUpdateDialog : public CEikDialog
@@ -908,6 +938,22 @@ private:
 	void AddSenderL();                             // Edit > Add sender to Contacts
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
 	void HandleSwitchOnEventL(CCoeControl* aDestination);
+	void HandleSystemEventL(const TWsEvent& aEvent);   // a PsiWin backup: the engine's files are closed meanwhile
+	// Reading mode (docs/display.md): looked at after each key, tap and
+	// focus change - on while a message is open with PsiMail in front
+	void HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination);
+	void UpdateReading();
+	TPsiReading iReading;
+	TBool iForeground;
+	// Close: the engine is asked to stop, and the app closes once it has
+	// (or after 6 s), from a timer rather than a wait in the UI thread
+	void BeginExitL();
+	static TInt ExitCallback(TAny* aSelf);
+	void ExitTick();
+	CPeriodic* iExitTimer;
+	TUint iExitStart;
+	TBool iExiting;
+	TBool iBackupStopped;              // the engine was stopped for a backup: started again when it ends
 	void LoadSettings();
 	void ApplyEmailButton();                   // start or stop pmbutton.exe as the setting says
 	TBool EditAccountL(TInt aIndex, TBool aNew);

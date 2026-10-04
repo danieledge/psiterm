@@ -67,8 +67,15 @@ extern "C" int pwb_gettimeofday(void* aTv, void*)
 // One line per event, "mm:ss.t text", for finding out where a page stops:
 // status text, busy changes, link messages, fetch errors, frames drawn.
 // The last run's log is kept as PsiWeb.old.
-_LIT(KLogFile, "C:\\System\\Data\\PsiWeb.log");
-_LIT(KLogOld, "C:\\System\\Data\\PsiWeb.old");
+// (a test build can put it on the emulator's card, where it can be read
+// back: web/links/epoc.mk PWEPOC_DEFS=-DPW_LOG_ON_D)
+#ifdef PW_LOG_ON_D
+#define PW_LOG_DIR "D:\\"
+#else
+#define PW_LOG_DIR "C:\\System\\Data\\"
+#endif
+_LIT(KLogFile, PW_LOG_DIR "PsiWeb.log");
+_LIT(KLogOld, PW_LOG_DIR "PsiWeb.old");
 static RFs gLogFs;
 static RFile gLog;
 static TInt gLogOpen = 0;       // 0 not tried, 1 open, -1 failed
@@ -132,9 +139,28 @@ static PwShared* Pw()
 		pg_set_link_log(LogLink);
 		gInitResult = pg_attach();     // the chunk only: the serial port is
 		                               // opened when a page is fetched
+#ifdef PW_DIAG
+		{
+		char db[48];
+		TPtr8 p((TUint8*)db, 0, sizeof(db));
+		p.AppendFormat(_L8("chunk: pg_attach=%d"), gInitResult);
+		p.Append(TChar(0));
+		pw_log(db);
+		}
+#endif
 		PwShared* s = (PwShared*)pg_shared();
 		if (s && s->magic == PW_MAGIC)
 			gPw = s;
+#ifdef PW_DIAG
+		{
+		char db[48];
+		TPtr8 p((TUint8*)db, 0, sizeof(db));
+		p.AppendFormat(_L8("chunk: shared=%d magic=%s"),
+			s ? 1 : 0, (s && s->magic == PW_MAGIC) ? "ok" : "BAD");
+		p.Append(TChar(0));
+		pw_log(db);
+		}
+#endif
 		}
 	if (gPw)
 		return gPw;
@@ -173,6 +199,8 @@ extern "C" int pwb_open(int* aW, int* aH)
 	if (!gPw)
 		return -1;                     // not started by PsiWeb.app
 	*aW = Pw()->width > 0 && Pw()->width <= PW_MAX_W ? Pw()->width : PW_MAX_W;
+	*aW &= ~1;	/* even: the grey-convert/pack path reads/writes two pixels a word
+	             * (an odd width misaligns odd rows -> Data Abort on the ARM710) */
 	*aH = Pw()->height > 0 && Pw()->height <= PW_MAX_H ? Pw()->height : PW_MAX_H;
 	Pw()->dirty_y0 = *aH;
 	Pw()->dirty_y1 = 0;
@@ -188,6 +216,13 @@ extern "C" void pwb_close()
 extern "C" void pwb_present(const unsigned short* aFb, int aFbW, int aX0, int aY0, int aX1, int aY1)
 	{
 	PwShared* s = Pw();
+#ifdef PW_DIAG
+	{ static int once = 0;
+	  if (!once) { once = 1;
+	    char b[64]; TBuf8<64> t;
+	    t.Format(_L8("present: fbw=%d %d,%d-%d,%d"), aFbW, aX0, aY0, aX1, aY1);
+	    Mem::Copy(b, t.Ptr(), t.Length()); b[t.Length()] = 0; pw_log(b); } }
+#endif
 	pw_grey_convert(aFb, aFbW, s->fb, PW_STRIDE, aX0, aY0, aX1, aY1);
 	// widen the dirty band; the app resets it after copying
 	if (aY0 < s->dirty_y0) s->dirty_y0 = aY0;
@@ -420,6 +455,20 @@ extern "C" const char* pwb_home_url()
 		}
 	s->start_taken = 1;
 	return s->home_url[0] ? s->home_url : "about:welcome";
+	}
+/* Links (web/links): the first page is the one another program (PsiMail)
+   asked for, else PsiWeb's built-in welcome page - never the home page, so
+   starting PsiWeb needs no network. Home then goes to the home page. */
+extern "C" const char* pwb_first_url()
+	{
+	PwShared* s = Pw();
+	if (s->start_url[0] && !s->start_taken)
+		{
+		s->start_taken = 1;
+		return s->start_url;
+		}
+	s->start_taken = 1;
+	return "about:welcome";
 	}
 extern "C" const char* pwb_res_dir() { return Pw()->res_dir; }
 extern "C" int pwb_load_images() { return Pw()->load_images; }

@@ -17,6 +17,7 @@ int  pwn_is_open(const char *host, int port, int tls);   /* reusable? */
 int  pwn_write(const void *buf, int len);                  /* 0 ok */
 int  pwn_read(void *buf, int max, int timeout_ms);         /* >0, 0 closed, <0 */
 void pwn_close(int hangup);
+int  pwn_dead(void);           /* the modem said NO CARRIER: a read says closed */
 int  pwn_modem(void);          /* 1 = WiRSa-style modem (in-band NO CARRIER) */
 void pwn_idle_tick(void);      /* hang up and free the port when idle */
 void pwn_release_now(void);    /* hang up and free the port now */

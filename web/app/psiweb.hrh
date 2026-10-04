@@ -23,7 +23,8 @@ enum TPwCommands
 	EPwCmdHangup,
 	EPwCmdConnect,           // File > Connect (as PsiTerm's)
 	EPwCmdToggleToolbar,
-	EPwCmdHelp               // Tools > Help on PsiWeb
+	EPwCmdHelp,              // Tools > Help on PsiWeb
+	EPwCmdReading            // View > Reading mode (docs/display.md)
 	};
 
 enum TPwDialogControls
@@ -53,7 +54,13 @@ enum TPwDialogControls
 	EPwDlgAbout5,
 	EPwDlgAbout6,
 	EPwDlgHelpTopic,         // Help on PsiWeb
-	EPwDlgHelpText
+	EPwDlgHelpText,
+	EPwDlgPictures,          // Preferences: pictures on every page (0.62)
+	EPwDlgAuthWho,           // User name and password (Links phase 5)
+	EPwDlgAuthRealm,
+	EPwDlgAuthUser,
+	EPwDlgAuthPass,
+	EPwDlgText               // Preferences > Text: sharp or scaled (docs/display.md)
 	};
 
 // Connection settings > Test (0.74): the button, and the result dialog's lines
@@ -61,4 +68,11 @@ enum TPwLinkTest
 	{
 	EPwBidTest = 0x7400,
 	EPwDlgTest1, EPwDlgTest2, EPwDlgTest3, EPwDlgTest4, EPwDlgTest5
+	};
+
+// Preferences > Screen greys... (0.84): the button, the same id in all
+// three apps (ssh/psigreyui.cpp)
+enum TPwGreyButton
+	{
+	EPwBidGreys = 0x7480
 	};

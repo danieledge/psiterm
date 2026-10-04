@@ -12,13 +12,18 @@ extern "C" {
 #include "psimail.h"
 #include <stdio.h>
 #include <stdarg.h>
+#include <sys/reent.h>                   // CloseSTDLIB
 int snprintf(char* str, size_t size, const char* fmt, ...);
 int vsnprintf(char* str, size_t size, const char* fmt, va_list ap);
 void pmn_idle_tick(void);
 void pm_log(const char* aFmt, ...);
 extern PsiShared* pg_shared();
 extern int pg_attach();
+extern int pg_bells();
+extern int pg_bell_wait(int aMs);
+extern void pg_ring_app();
 void pm_loop(int (*housekeeping)(void));
+extern int pm_replace_busy;              // (pmmain.c) the last pm_replace failed because the file was in use
 }
 
 static RFs* gFs = 0;
@@ -158,25 +163,31 @@ extern "C" int pm_write_whole(const char* aPath, const void* aData, long aLen)
 
 // tmp takes path's place in one file-server call (RFs::Replace), so there is
 // no moment when neither exists. The app may have the old file open to read
-// it (a message being shown, the list): then it is tried again after a moment.
+// it (a message being shown, the list): then it is tried again, for up to
+// three seconds - parsing a long index.txt from the card on an ARM710 can
+// take longer than the 300 ms this used to allow, and a failure here was
+// blamed on the card ("is the card in...?"). pm_replace_in_use says whether
+// the last failure was that, so pm_write_why can say so instead.
 extern "C" int pm_replace(const char* aTmp, const char* aPath)
 	{
+	pm_replace_busy = 0;
 	if (!gFs && (Fs(), !gFs))
 		return -1;
 	TFileName from, to;
 	ToName(from, aTmp);
 	ToName(to, aPath);
 	TInt r = KErrNone;
-	for (TInt i = 0; i < 5; i++)
+	for (TInt i = 0; i < 30; i++)
 		{
 		r = Fs().Replace(from, to);
 		if (r == KErrNone)
 			return 0;
 		if (r != KErrInUse && r != KErrAccessDenied)
 			break;
-		User::After(60000);
+		User::After(100000);
 		}
-	pm_log("replace %s -> %s: %d", aTmp, aPath, r);
+	pm_replace_busy = (r == KErrInUse || r == KErrAccessDenied);
+	pm_log("replace %s -> %s: %d%s", aTmp, aPath, r, pm_replace_busy ? " (the file is in use)" : "");
 	return -1;
 	}
 
@@ -202,6 +213,7 @@ extern "C" long pm_free_kb(const char* aPath)
 
 static FILE* gLog = 0;
 static long gLogLen = 0;
+static TUint gLogFailAt = 0;             // when opening the log last failed (0 = never): tried again a minute later
 
 static void LogPath(char* aOut, int aMax, const char* aName)
 	{
@@ -242,16 +254,21 @@ extern "C" void pm_log(const char* aFmt, ...)
 		}
 	if (!gLog)
 		{
-		if (gLogLen < 0)
+		// could not be opened (the card out for a moment, C: full): tried
+		// again a minute later rather than never - the sessions that go
+		// wrong are the ones whose log is wanted
+		TUint now = User::TickCount();
+		if (gLogFailAt && now - gLogFailAt < 64 * 60)
 			return;
 		char path[160];
 		LogPath(path, sizeof(path), "psimail.log");
-		gLog = fopen(path, "w");
+		gLog = fopen(path, gLogFailAt ? "a" : "w");
 		if (!gLog)
 			{
-			gLogLen = -1;
+			gLogFailAt = now ? now : 1;
 			return;
 			}
+		gLogFailAt = 0;
 		gLogLen = 0;
 		}
 	// the time, so a long gap (a decode, a stall) shows
@@ -264,9 +281,31 @@ extern "C" void pm_log(const char* aFmt, ...)
 	gLogLen += n + tn;
 	}
 
+// (0.81) Nothing to do. The app's news first: a command has finished,
+// files have changed, the line has gone - its doorbell (psibell.h), which
+// it waits on when it has nothing going on. Then, with the doorbells, wait
+// until the app rings (a command, quit, Stop, a switch-on) for up to 2 s
+// (housekeeping), instead of looking 10 times a second.
+static TUint gRungDone = 0, gRungChanged = 0;
+static TInt gRungOnline = -1, gRungBusy = -1, gRungState = -1;
+
 extern "C" void pm_idle(int aMs)
 	{
-	User::After(aMs * 1000);
+	PmShared* s = pm_shared();
+	if (s->done_seq != gRungDone || s->changed_seq != gRungChanged || s->online != gRungOnline
+		|| s->busy != gRungBusy || s->state != gRungState)
+		{
+		gRungDone = s->done_seq;
+		gRungChanged = s->changed_seq;
+		gRungOnline = s->online;
+		gRungBusy = s->busy;
+		gRungState = s->state;
+		pg_ring_app();
+		}
+	if (pg_bells())
+		pg_bell_wait(2000);
+	else
+		User::After(aMs * 1000);
 	}
 
 // ----- housekeeping: about once a second ------------------------------------
@@ -374,6 +413,7 @@ int main(int, char**)
 		gFs->Close();
 		delete gFs;
 		}
+	CloseSTDLIB();                           // the thread's C library state (stdio, errno): robustness notes, section 8
 	delete cleanup;
 	return 0;
 	}

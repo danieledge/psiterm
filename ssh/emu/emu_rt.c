@@ -201,6 +201,7 @@ int pg_kbd_read(void *b, int m) { return emu_hc(PG(12), (int)b, m, 0, 0); }
 void pg_out_write(const void *b, int n) { emu_hc(PG(13), (int)b, n, 0, 0); }
 void pg_winsize(int *r, int *c) { emu_hc(PG(14), (int)r, (int)c, 0, 0); }
 int pg_take_resize(void) { return emu_hc(PG(15), 0, 0, 0, 0); }
+int pg_rx_errors(int *last) { if (last) *last = 0; return 0; }   /* (no serial line here) */
 int pg_wait(int ms, int n, int k) { return emu_hc(PG(16), ms, n, k, 0); }
 int pg_dial(char *why, int max) { return emu_hc(PG(17), (int)why, max, 0, 0); }
 void pg_hangup(void) { emu_hc(PG(18), 0, 0, 0, 0); }

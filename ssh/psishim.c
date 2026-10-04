@@ -29,12 +29,16 @@
 #include "../db/libtomcrypt/src/headers/tomcrypt.h"
 #include "zlib.h"
 #include "tls13.h"
+#include "session.h"                 /* ses: the keepalive clock, for the switch-on probe */
 #include <termios.h>
 #include <sys/uio.h>
 #ifdef PSI_HOST_TEST
 #include <sys/ioctl.h>
 int psi_tcgetattr(int, struct termios*);
 int psi_tcsetattr(int, int, const struct termios*);
+#else
+#include <sys/reent.h>               /* CloseSTDLIB */
+extern void pg_exit_process(int);
 #endif
 
 /* from psiglue.cpp */
@@ -61,6 +65,7 @@ extern int pg_dial(char*, int);
 extern void pg_hangup(void);
 extern int pg_entropy(unsigned char*, int);
 extern const char* pg_home(void);
+extern int pg_take_link_doubt(void);
 
 #define PSI_FD_SIGR 51
 #define PSI_FD_SIGW 52
@@ -72,11 +77,13 @@ extern int psi_sftp_read(void*, int);
 extern int psi_sftp_write(const void*, int);
 extern int psi_sftp_pending(void);
 extern int psi_sftp_running(void);
+extern int psi_sftp_busy(void);
 extern void psi_sftp_session_ended(void);
 /* from tmuxq.c */
 extern int psi_tq_read(void*, int);
 extern int psi_tq_write(const void*, int);
 extern int psi_tq_running(void);
+extern int psi_tq_busy(void);
 extern void psi_tq_session_ended(void);
 
 static FILE psi_tty_file;                    /* marker for "/dev/tty" */
@@ -110,10 +117,29 @@ static void term_out_text(const char* s, int len)
 
 /* ---------------------------------------------------------------- printf */
 
+/* ESTLIB has no vsnprintf, so the text is formatted into a buffer of its
+   own and then cut to size. Every caller is Dropbear's, whose own limits
+   keep the text well under the buffer; should one ever run past it the
+   memory after the buffer is already spoilt, so the engine stops at once
+   rather than go on in that state. */
+static int psi_end(int code);
+
+static void psi_overrun(const char *what)
+{
+	char m[80];
+	sprintf(m, "\r\n[psissh: internal text too long (%.30s) - stopping]\r\n", what);
+	pg_out_write(m, strlen(m));
+	pg_set_exit(1);
+	psi_end(1);
+	exit(1);                       /* (the host build only: psi_end ends the process on the Psion) */
+}
+
 int psi_vsnprintf(char *str, size_t size, const char *fmt, va_list ap)
 {
-	static char tmp[4096];
+	static char tmp[8192];
 	int n = vsprintf(tmp, fmt, ap);
+	if (n >= (int)sizeof(tmp))
+		psi_overrun(fmt);
 	if (size > 0) {
 		size_t c = (n < 0) ? 0 : (size_t)n;
 		if (c >= size) c = size - 1;
@@ -136,6 +162,8 @@ int psi_vfprintf(FILE *f, const char *fmt, va_list ap)
 {
 	if (is_term_stream(f)) {
 		int n = vsprintf(psi_fmtbuf, fmt, ap);
+		if (n >= (int)sizeof(psi_fmtbuf))
+			psi_overrun(fmt);
 		if (n > 0)
 			term_out_text(psi_fmtbuf, n);
 		return n;
@@ -414,6 +442,14 @@ int psi_pipe(int fds[2])
 	return 0;
 }
 
+/* (0.81) PsiTerm rings psissh's doorbell when it posts a request, and
+   pg_wait then returns at once (psibell.h) */
+static int bells_on(void)
+{
+	PsiShared *s = pg_shared();
+	return s && s->bell_magic == PSI_BELL_MAGIC && !s->eng_bell.broken;
+}
+
 int psi_select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv)
 {
 	int wantNet = r && FD_ISSET(PSI_FD_NET, r);
@@ -429,8 +465,21 @@ int psi_select(int n, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv)
 	ms = tv ? (int)(tv->tv_sec * 1000 + tv->tv_usec / 1000) : -1;
 	if (wantW || (wantSig && psi_sig_pending) || sftpOut)
 		ms = 0;
-	else if ((psi_sftp_running() || psi_tq_running()) && (ms < 0 || ms > 250))
-		ms = 250;                      /* look for file transfer and tmux requests 4 times a second */
+	else if ((psi_sftp_busy() || psi_tq_busy()) && (ms < 0 || ms > 250))
+		ms = 250;                      /* a file transfer or tmux request in hand: its time limits and Stop */
+	else if ((psi_sftp_running() || psi_tq_running()) && !bells_on() && (ms < 0 || ms > 250))
+		ms = 250;                      /* look for file transfer and tmux requests 4 times a second
+		                                  (with the doorbell (0.81), PsiTerm's ring ends the wait) */
+
+	if (pg_take_link_doubt() && ses.authstate.authdone) {
+		/* switched back on with no carrier detect to ask (psiglue): send a
+		   keepalive now, so a line the modem has dropped is found at the
+		   keepalive limit (30 s) rather than after the next quiet spell plus
+		   it, while the user types into nothing */
+		ses.last_packet_time_any_sent = 0;
+		ses.last_packet_time_keepalive_sent = 0;
+		ms = 0;                        /* back to Dropbear's loop at once: checktimeouts sends it */
+	}
 
 	mask = pg_wait(ms, wantNet, wantKbd);
 
@@ -625,6 +674,21 @@ void psi_save_seed(const unsigned char *pool, int len)
 extern int psi_dropbear_main(int argc, char **argv);
 extern int psi_bench_case(int which);
 
+/* The end of the engine. The C library's per-thread state (stdio, errno:
+   the _reent) is freed, as the robustness notes ask (section 8) - ecrt0
+   does not do it - and the process ends there and then, never through
+   exit(), which would use what was just freed. The exit reason the app
+   reads is the same either way. (The host build returns as before.) */
+static int psi_end(int code)
+{
+	pg_close();
+#ifndef PSI_HOST_TEST
+	CloseSTDLIB();
+	pg_exit_process(code);
+#endif
+	return code;
+}
+
 static double now_sec(void)
 {
 	struct timeval tv;
@@ -700,8 +764,15 @@ static void run_speed_test(void)
    the source is HTTPS (GitHub) and the raw link otherwise. */
 static int g_tls;
 
+extern int pg_take_resize(void);
+extern int pg_rx_errors(int *last);
+
 static int io_read(unsigned char *buf, int max, int timeout_ms)
 {
+	/* (0.83) a resize means nothing to an update or an upload, and a flag
+	   left up ends psiglue's waits at once, before they take in any data:
+	   every reply then came out "cut short" (psiterm.cpp Layout) */
+	pg_take_resize();
 	if (g_tls)
 		return tls_read(buf, max, timeout_ms);   /* >0, 0 closed, -1 error, -2 cancelled */
 	if (pg_net_avail() == 0) {
@@ -717,6 +788,14 @@ static int io_write(const void *buf, int len)
 	if (g_tls)
 		return tls_write(buf, len) == 0 ? len : -1;
 	return pg_serial_write(buf, len);
+}
+
+/* ends the connection: the TLS keys go with it */
+static void io_hangup(void)
+{
+	if (g_tls)
+		tls_close();
+	pg_hangup();
 }
 
 static int net_read_byte(int timeout_ms)
@@ -739,10 +818,11 @@ static long http_request(const char *path, long rfrom, long rlen, char *why, int
 {
 	PsiShared *s = pg_shared();
 	char req[384];
+	pg_take_resize();
 	if (pg_dial(why, whymax) != 0)
 		return -2;
 	if (g_tls && tls_connect(s->host, why, whymax) != 0) {
-		pg_hangup();
+		io_hangup();
 		return -2;
 	}
 	sprintf(req, "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: PsiTerm/%s\r\nConnection: close\r\n",
@@ -752,7 +832,7 @@ static long http_request(const char *path, long rfrom, long rlen, char *why, int
 	strcat(req, "\r\n");
 	if (io_write(req, strlen(req)) < 0) {
 		sprintf(why, "could not send the request");
-		pg_hangup();
+		io_hangup();
 		return -2;
 	}
 	{
@@ -760,7 +840,7 @@ static long http_request(const char *path, long rfrom, long rlen, char *why, int
 		   online keeps streaming the download into PsiTerm's terminal */
 		long r = http_response(path, why, whymax);
 		if (r == -2)
-			pg_hangup();
+			io_hangup();
 		return r;
 	}
 }
@@ -841,7 +921,7 @@ static int fetch_small(const char *name, char *buf, int max, char *why, int whym
 		if (len == -2) return -1;
 		want = (len < 0 || len > max - 1) ? max - 1 : len;
 		k = read_body((unsigned char *)buf, (int)want);
-		pg_hangup();
+		io_hangup();
 		if (k < 0) { sprintf(why, "cancelled"); return -1; }
 		buf[k] = 0;
 		if (len < 0 || k >= want)
@@ -1023,7 +1103,7 @@ static int run_update(void)
 				continue;
 			}
 			if (g_total < 0) {
-				pg_hangup();
+				io_hangup();
 				fclose(f);
 				sprintf(why, "server does not support partial downloads");
 				goto fail;
@@ -1031,7 +1111,7 @@ static int run_update(void)
 			total = g_total;
 			want = total - got < chunk ? total - got : chunk;
 			k = (clen == want) ? read_body(buf, (int)want) : -1;
-			pg_hangup();
+			io_hangup();
 			if (k == -2) { fclose(f); remove(s->save_as); sprintf(why, "cancelled"); goto fail; }
 			if (k != want || (g_has_crc && (crc32(0L, buf, (unsigned)want) & 0xffffffffUL) != g_crc)) {
 				if (++tries > 6) {
@@ -1051,7 +1131,13 @@ static int run_update(void)
 			pg_out_write(msg, strlen(msg));
 		}
 	}
-	fclose(f);
+	/* (stdio's last piece is written here: a disk that filled on it shows
+	   only now, and must not be taken for a bad signature) */
+	if (fclose(f) != 0) {
+		remove(s->save_as);
+		sprintf(why, "could not finish writing %s - disk full?", s->save_as);
+		goto fail;
+	}
 	pg_out_write("\r\nChecking the release signature...\r\n", 37);
 	if (verify_file(s->save_as, remote, sig) != 0) {
 		remove(s->save_as);
@@ -1065,6 +1151,16 @@ static int run_update(void)
 fail:
 	sprintf(msg, "\r\nUpdate failed: %s\r\n", why);
 	pg_out_write(msg, strlen(msg));
+	{
+		/* (0.83) bytes the serial port lost (overruns, framing): if there
+		   were any, the link itself is dropping data, so say so */
+		int last = 0, errs = pg_rx_errors(&last);
+		if (errs > 0) {
+			sprintf(msg, "(The serial line lost data %d times, last error %d: try 57600 baud,\r\n"
+				" or RTS/CTS on at both ends if the modem and cable have them.)\r\n", errs, last);
+			pg_out_write(msg, strlen(msg));
+		}
+	}
 	return 2;
 }
 
@@ -1193,8 +1289,7 @@ int main(int argc, char **argv)
 	if (s && (s->mode == 4 || s->mode == 5)) {   /* no serial port needed */
 		r = run_keytool(s->mode == 5);
 		pg_set_exit(r);
-		pg_close();
-		return r;
+		return psi_end(r);
 	}
 	if (r != 0) {
 		if (s) {
@@ -1203,13 +1298,14 @@ int main(int argc, char **argv)
 				sprintf(msg, "\r\n[The serial port is held by the Remote link - switch it off on the System screen (Ctrl+L)]\r\n");
 			else if (r == -10)
 				sprintf(msg, "\r\n[The serial port is in use by another program (PsiMail? PsiWeb? Comms?)]\r\n");
+			else if (r == -20)
+				sprintf(msg, "\r\n[psissh: could not make a timer - close another program and try again]\r\n");
 			else
 				sprintf(msg, "\r\n[psissh: could not open the serial port (%d)]\r\n", r);
 			pg_out_write(msg, strlen(msg));
 			pg_set_exit(1);
 		}
-		pg_close();
-		return 1;
+		return psi_end(1);
 	}
 
 	/* the window for an update, an upload or the speed test shows each step
@@ -1221,15 +1317,13 @@ int main(int argc, char **argv)
 	if (s->mode == 2 || s->mode == 3) {
 		r = (s->mode == 2) ? run_update() : run_upload();
 		pg_set_exit(r);
-		pg_close();
-		return r;
+		return psi_end(r);
 	}
 
 	if (s->mode == 1) {
 		run_speed_test();
 		pg_set_exit(0);
-		pg_close();
-		return 0;
+		return psi_end(0);
 	}
 
 	/* estlib environment Dropbear expects */
@@ -1248,8 +1342,7 @@ int main(int argc, char **argv)
 		pg_out_write(psi_fmtbuf, strlen(psi_fmtbuf));
 		s->lost_link = 2;
 		pg_set_exit(2);
-		pg_close();
-		return 2;
+		return psi_end(2);
 	}
 	pg_set_state(PSI_STATE_KEYEX);
 	{
@@ -1280,11 +1373,12 @@ int main(int argc, char **argv)
 
 	r = psi_dropbear_main(dargc, dargv);   /* normally exits via dropbear_exit() */
 	pg_set_exit(r);
-	pg_close();
-	return r;
+	return psi_end(r);
 }
 
-/* Called from our patched cli_dropbear_exit before the process ends */
+/* Called from our patched cli_dropbear_exit before the process ends (on
+   the Psion the process ends here, in psi_end; the host build returns to
+   Dropbear's exit()) */
 void psi_session_ended(int code, int lost)
 {
 	PsiShared *s = pg_shared();
@@ -1294,7 +1388,7 @@ void psi_session_ended(int code, int lost)
 		s->lost_link = 1;      /* logged in, then the link failed: PsiTerm may reconnect */
 	pg_hangup();
 	pg_set_exit(code);
-	pg_close();
+	psi_end(code);
 }
 
 #ifndef PSI_HOST_TEST

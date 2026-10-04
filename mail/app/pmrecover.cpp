@@ -16,6 +16,7 @@
 // goes to the new engine, which writes it at the top of psimail.log, and
 // the old engine's log is kept as psimail.old.
 
+#include <e32hal.h>
 #include "pmapp.h"
 #include "pmpict.h"
 
@@ -47,8 +48,13 @@ void CPmView::EngineStoppedL(const TDesC& aWhy)
 	// started again, unless it keeps stopping
 	TUint now = User::TickCount();
 	TInt recent = 0;
+	// ten minutes in ticks (the tick is not 1/64 s on every machine: ask)
+	TTimeIntervalMicroSeconds32 period;
+	if (UserHal::TickPeriod(period) != KErrNone || period.Int() <= 0)
+		period = 15625;
+	TUint tenMinutes = (TUint)(600000000 / period.Int());
 	for (TInt k = 0; k < 3; k++)
-		if (iEngineStops[k] && now - iEngineStops[k] < 64 * 600)
+		if (iEngineStops[k] && now - iEngineStops[k] < tenMinutes)
 			recent++;
 	iEngineStops[0] = iEngineStops[1];
 	iEngineStops[1] = iEngineStops[2];
@@ -64,6 +70,8 @@ void CPmView::EngineStoppedL(const TDesC& aWhy)
 	if (iRunning)
 		{
 		status.Format(_L("The mail engine stopped (%S) and was started again"), &iEngineNote);
+		if (iKeptCmds)
+			status.AppendFormat(_L(" - %d waiting command%s kept"), iKeptCmds, iKeptCmds == 1 ? _S("") : _S("s"));
 		if (bodyWaiting)
 			Cmd(PM_CMD_BODY, iFolder, iMsgUid, KNullDesC8);      // the text, again
 		}
@@ -71,7 +79,7 @@ void CPmView::EngineStoppedL(const TDesC& aWhy)
 		{
 		status.Format(_L("The mail engine stopped (%S) - use Tools > Restart mail engine"), &iEngineNote);
 		if (bodyWaiting)
-			iBodyError = _L("Not downloaded - the mail engine stopped. Tools > Restart mail engine starts it again");
+			iBodyError = _L("Not downloaded - the mail engine stopped - Tools > Restart mail engine starts it again");
 		}
 	SetStatus(status);
 	iReaderUid = 0;                          // the reader laid out again with what it has

@@ -51,6 +51,16 @@ int main(int argc, char **argv)
 	   their coefficients within it), IMG_NO_DITHER=1: plain rounding */
 	if (getenv("IMG_MAX_FULL")) o.max_full_bytes = atol(getenv("IMG_MAX_FULL"));
 	if (getenv("IMG_NO_DITHER")) o.no_dither = 1;
+	if (getenv("IMG_ORDERED")) o.ordered = 1;
+	if (getenv("IMG_LEVELS")) {               /* "0 12 26 ... 255": the grey calibration */
+		static unsigned char lv[16];
+		const char *p = getenv("IMG_LEVELS");
+		int k;
+		for (k = 0; k < 16; k++) {
+			lv[k] = (unsigned char)strtol(p, (char **)&p, 10);
+		}
+		o.levels = lv;
+	}
 	if (argc >= 4 && !strcmp(argv[1], "decode")) {
 		if (argc >= 5) o.max_w = atoi(argv[4]);
 		if (argc >= 6) o.max_h = atoi(argv[5]);

@@ -62,6 +62,16 @@ public:
 	TBuf<100> iRemoteHost;
 	TFileName iSendFrom;
 	TFileName iSaveTo;
+	// Scratch for one transfer at a time, here rather than on the stack: an
+	// EIKON app thread's stack is small (the SDK's default is 8 KB) and
+	// Send file -> BrowseL -> the folder dialog held about 4.7 KB of these
+	// at once. BrowseL uses iDir and iPath; its callers iPick, iRemote and
+	// iText - never the same one from both sides.
+	TBuf8<512> iPick;                  // the chosen server file (Get) or folder (Send)
+	TBuf8<512> iDir;                   // the folder being browsed
+	TBuf8<512> iPath;                  // an entry's full name
+	TBuf8<512> iRemote;                // Send: the file's full name on the server
+	TBuf<512> iText;                   // a server name as Psion text
 	};
 
 // File menu commands

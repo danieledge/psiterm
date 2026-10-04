@@ -1,5 +1,11 @@
 # PsiWeb never shows a web page
 
+> **Superseded, 3 October 2026.** This issue is about the **NetSurf** engine (PsiWeb up to 0.61). From 0.62 PsiWeb's engine is **Links 2**, and NetSurf is only kept in the tree as a fallback (`PSIWEB_ENGINE=netsurf web/build.sh`). See [`web/links/PORTING.md`](../../web/links/PORTING.md).
+>
+> The symptom reported here ("Checking the modem…" staying up after a page) was reproduced with Links in the 5mx emulator (`python3 tools/emu/net.py web`) and fixed in phase 5: the modem reports the server closing in-band ("NO CARRIER"), and the engine's main loop did not count that as the connection being readable, so the page stayed "loading" until a time-out. Links pages do render in the 5mx emulator over the emulated modem. What is still to be confirmed is a page on Dan's real 5mx (PORTING.md, phase 5, "What Dan should test").
+>
+> The NetSurf notes below are left as they were.
+
 Status: **fix in 0.58, to be confirmed on the 5mx**. Logged 2 Oct 2026, last seen in PsiWeb 0.57 (dev c5dcd44).
 
 ## Finding (2 Oct 2026)

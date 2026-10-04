@@ -28,6 +28,7 @@ static int gRaw = 0;
 static long long now_us(void) { struct timeval tv; gettimeofday(&tv, NULL); return tv.tv_sec * 1000000LL + tv.tv_usec; }
 
 PsiShared* pg_shared(void) { return &g; }
+int pg_take_link_doubt(void) { return 0; }   /* (no switch-on on a PC) */
 
 static void restore_tty(void) { if (gRaw) tcsetattr(0, TCSANOW, &gOld); }
 /* test hook: SIGUSR1 simulates PsiTerm switching to the large font */
@@ -203,6 +204,7 @@ int pg_kbd_read(void* b, int m) { int n = 0; unsigned char* o = b; pump_stdin(0)
 void pg_out_write(const void* b, int n) { fwrite(b, 1, n, stdout); fflush(stdout); }
 void pg_winsize(int* r, int* c) { *r = g.rows; *c = g.cols; }
 int pg_take_resize(void) { if (g.resized) { g.resized = 0; return 1; } return 0; }
+int pg_rx_errors(int *last) { if (last) *last = 0; return 0; }   /* (no serial line here) */
 
 int pg_wait(int ms, int wantNet, int wantKbd)
 {

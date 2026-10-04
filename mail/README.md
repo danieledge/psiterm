@@ -8,7 +8,7 @@ checked, and keeps the Psion's own Agenda in step with Fastmail's calendars
 WiRSa (`ATDT host:port`) or the Psion's own dial-up TCP/IP - and PsiTerm's
 TLS 1.3 client.
 
-**Status: 0.74, alpha.** The engine has been run against Dovecot, Radicale
+**Status: 0.83, alpha.** The engine has been run against Dovecot, Radicale
 and Fastmail both as PC code and as the exact ARM code in an emulator, and the
 EIKON app is driven screen by screen in a 5mx emulator. Expect bugs, and
 please report them via [GitHub issues](https://github.com/danieledge/psiterm/issues).
@@ -107,9 +107,8 @@ please report them via [GitHub issues](https://github.com/danieledge/psiterm/iss
   after Check mail so they open at once.
 * HTML mail is shown as rich text - headings, bold and italic, lists,
   quotes, links you can move to with Tab and open with Enter - and
-  Message > Web > View as web page opens the original in a web browser, as
-  do links. The browser is in development on the `dev` branch and is not in
-  this release yet. Plain text gets its quotes and links shown the same way.
+  Message > Web > View as web page opens the original in PsiWeb (NetSurf),
+  as do links. Plain text gets its quotes and links shown the same way.
 * HTML newsletters without the empty space: hidden preheaders, spacer
   cells and pictures, empty paragraphs and cells are left out, and blank
   lines come one at a time (`engine/html.c`).
@@ -122,7 +121,7 @@ please report them via [GitHub issues](https://github.com/danieledge/psiterm/iss
 * Attachments: Message > Attachments > Open opens one in its own program
   (Word, Sketch and so on); Save (Ctrl+S) puts it in
   `D:\Documents\Attachments\` (your files, so in your Documents).
-* File > Save as Word file (Shift+Ctrl+S): the open message as a Psion Word
+* File > Printing > Save as Word file (Shift+Ctrl+S): the open message as a Psion Word
   file (header, text, bold/italic/underline, headings, lists), through the
   Word engine itself (CWordModel), so the built-in Word opens it.
 * File > Printing: Page setup, Print setup, Print preview and Print
@@ -219,7 +218,7 @@ save the upload time).
 | New mail | Alert for new mail | Sound & message, Message only, Off |
 | | Check for new mail | Off, every 10, 15 or 30 minutes, every hour |
 | | If not connected | Wait for a connection, or Connect |
-| | Send waiting mail when connected | Yes, No |
+| | Send waiting mail when connected | No, Yes |
 | | Show detailed progress | every engine and link step, for finding connection problems |
 
 **Tools > Calendar settings**: see [The calendar](#the-calendar).
@@ -228,16 +227,17 @@ save the upload time).
 ## Connections
 
 Tools > Connection settings chooses how PsiMail reaches the Internet; the
-settings are shared with PsiTerm.
+settings are shared with PsiTerm and PsiWeb.
 
-* **Modem**: a serial Wi-Fi modem (such as a WiRSa or a WiFi232) on the Psion's serial port.
+* **Modem**: a serial Wi-Fi modem (such as a WiRSa or a WiFi232) on the
+  Psion's serial port.
   PsiMail dials the server with `ATDT host:port`. Set the baud rate to the
   modem's; 115200 with RTS/CTS flow control is fastest if the cable carries
   those lines. The line is only taken while PsiMail needs it, and File >
-  Disconnect (Ctrl+U) hangs up so PsiTerm can have it.
+  Disconnect (Ctrl+U) hangs up so PsiTerm or PsiWeb can have it.
 * **Psion Internet (PPP)**: the Psion's own dial-up connection, set up in the
   Control panel's Internet and Modems settings. PsiMail starts it when it
-  needs to and the Psion's connection dialogs appear; PsiTerm shares it.
+  needs to and the Psion's connection dialogs appear; PsiWeb shares it.
 * **Test** (Ctrl+T) tries the settings shown, before OK: whether the modem
   answers and at what speed, CTS and DCD, the modem's name, and whether
   RTS/CTS will work; for Psion Internet, whether the connection is up and
@@ -294,7 +294,7 @@ lists, anniversaries, more than one calendar account.
   pictures would tell the sender when, and where, you read it. A message
   with some says "Pictures from the web are not shown - Show them" at the
   top; Show them, or Message > Web > Show web pictures, fetches them for that
-  message. Tools > Preferences > Web pictures: Ask (the default), Always or
+  message. Tools > Preferences > Screen > Web pictures: Ask (the default), Always or
   Never (`engine/webpics.c`, `app/pmwebpic.cpp`).
 * Even when asked, PsiMail never fetches spacers or tracking pixels, sends
   no password with the pictures, and keeps to at most 16 pictures, 300 KB
@@ -326,9 +326,9 @@ lists, anniversaries, more than one calendar account.
 | Ctrl+P / Shift+Ctrl+P / Shift+Ctrl+V | print / print setup / print preview |
 | Shift+Ctrl+U / Shift+Ctrl+F | unread / flagged |
 | Ctrl+S | save an attachment (Message > Attachments > Open / Save) |
-| Shift+Ctrl+S | save the open message as a Word file (File > Save as Word file) |
+| Shift+Ctrl+S | save the open message as a Word file (File > Printing > Save as Word file) |
 | Ctrl+I / Ctrl+G / Ctrl+B / Ctrl+F | inbox / go to folder / outbox / find |
-| Ctrl+Y / Shift+Ctrl+G | check this folder / get older messages (File > Folder, with Create new / Rename / Delete) |
+| Shift+Ctrl+X / Shift+Ctrl+G | check this folder / get older messages (File > Folder, with Create new / Rename / Delete) |
 | Ctrl+M / Shift+Ctrl+M | zoom in / out (three sizes, going round) |
 | Ctrl+T / Shift+Ctrl+T / Shift+Ctrl+L | show the toolbar / title bar / folder list |
 | Shift+Ctrl+Q / Shift+Ctrl+B | status information / sort |
@@ -375,7 +375,7 @@ without the `cryptography` package too). The version must go up each time.
   set Tools > Preferences > New mail > Show detailed progress to Yes and
   try again: every step (dialling, the modem's answer, logging in, each
   message) is shown at the bottom left. Check that the Remote link is off
-  and that PsiTerm isn't holding the serial port.
+  and that PsiTerm or PsiWeb isn't holding the serial port.
 * **`psimail.log`**, next to the program in `\System\Apps\PsiMail\` (on the
   disk PsiMail is installed on), records what the mail engine did, each line
   timed; after a crash or a restart the previous engine's log is kept as
@@ -394,7 +394,7 @@ without the `cryptography` package too). The version must go up each time.
 
 ## How it works
 
-Like PsiTerm, two programs share a chunk of memory (`psimail.h`):
+Like PsiWeb, two programs share a chunk of memory (`psimail.h`):
 
 * `psimail.exe` (`engine/`, C): IMAP (`imap.c`, `imapparse.c`), SMTP
   (`smtp.c`), MIME (`mime.c`, `compose.c`), character sets (`charset.c`:

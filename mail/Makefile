@@ -104,7 +104,7 @@ else
 $(O)/pmepoc.o: engine/pmepoc.cpp $(HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CXXFLAGS) $< -o $@
-$(O)/psiglue.o: $(TOP)/ssh/psiglue.cpp $(TOP)/ssh/psishared.h
+$(O)/psiglue.o: $(TOP)/ssh/psiglue.cpp $(TOP)/ssh/psishared.h $(TOP)/ssh/psibell.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CXXFLAGS) '-DPSI_SHARED_NAME="PsiMailShared"' $< -o $@
 $(O)/nsprintf.o: $(TOP)/web/compat/nsprintf.c

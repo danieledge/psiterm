@@ -11,6 +11,7 @@
 
 #include <e32std.h>
 #include <s32file.h>
+#include <eikenv.h>
 #include <txtrich.h>
 #include <txtfmlyr.h>
 #include <agmmodel.h>
@@ -226,7 +227,11 @@ void CPmCalSync::DoCancel()
 	{
 	}
 
-TInt CPmCalSync::RunError(TInt aError)
+// A step left. (This used to be called RunError, which ER5's CActive never
+// calls - e32base.h declares only RunL and DoCancel - so a leave went to
+// CONE's error dialog and the sync stayed "running" with the Agenda held
+// open for the rest of the session. RunL traps StepL and calls this.)
+void CPmCalSync::Failed(TInt aError)
 	{
 	// keep what was done: entries added so far must stay linked
 	if (iMap && iPush && iFsOpen)
@@ -243,19 +248,34 @@ TInt CPmCalSync::RunError(TInt aError)
 	Reset();
 	iPhase = EIdle;
 	TBuf<80> why;
-	if (aError == KErrNotFound)
-		why = _L("Agenda file not found");
-	else if (aError == KErrInUse || aError == KErrLocked)
-		why = _L("The Agenda file is busy");
-	else if (aError == KErrNoMemory)
-		why = _L("Not enough memory for the calendar");
-	else
-		why.Format(_L("Calendar sync failed (%d)"), aError);
+	// the likely cause, rather than a bare number (style guide 6)
+	switch (aError)
+		{
+	case KErrNotFound: why = _L("Agenda file not found"); break;
+	case KErrPathNotFound: why = _L("The Agenda file's folder is not there"); break;
+	case KErrInUse:
+	case KErrLocked: why = _L("The Agenda file is busy"); break;
+	case KErrNoMemory: why = _L("Not enough memory for the calendar"); break;
+	case KErrDiskFull: why = _L("Calendar not synced - no room left on the disk"); break;
+	case KErrNotReady:
+	case KErrDisMounted: why = _L("Calendar not synced - the memory disk is not there"); break;
+	case KErrAccessDenied: why = _L("Calendar not synced - the disk is write-protected"); break;
+	case KErrCorrupt:
+	case KErrEof: why = _L("The Agenda file could not be read"); break;
+	case KErrCancel: why = _L("Calendar sync stopped"); break;
+	default: why.Format(_L("Calendar sync failed (%d)"), aError); break;
+		}
 	iObserver.CalSyncDone(aError, why, EFalse);
-	return KErrNone;
 	}
 
 void CPmCalSync::RunL()
+	{
+	TRAPD(err, StepL());
+	if (err != KErrNone)
+		Failed(err);
+	}
+
+void CPmCalSync::StepL()
 	{
 	TBool more = EFalse;
 	switch (iPhase)
@@ -525,9 +545,30 @@ void CPmCalSync::SaveMapL()
 		line.Append('\n');
 		User::LeaveIfError(f.Write(line));
 		}
+	User::LeaveIfError(f.Flush());
 	CleanupStack::PopAndDestroy();          // f
-	iFs.Delete(path);
-	User::LeaveIfError(iFs.Rename(tmp, path));
+	User::LeaveIfError(iFs.Replace(tmp, path));   // (one step: no moment with neither file)
+	}
+
+// A small file written whole and put in place in one step (robustness
+// notes, section 4): a failure never leaves a short file where the old one was
+static void WriteFileSafeL(RFs& aFs, const TDesC& aPath, const TDesC8& aText)
+	{
+	TFileName tmp(aPath);
+	tmp.Append('~');
+	RFile f;
+	User::LeaveIfError(f.Replace(aFs, tmp, EFileWrite));
+	TInt r = f.Write(aText);
+	if (r == KErrNone)
+		r = f.Flush();
+	f.Close();
+	if (r == KErrNone)
+		r = aFs.Replace(tmp, aPath);
+	if (r != KErrNone)
+		{
+		aFs.Delete(tmp);
+		User::Leave(r);
+		}
 	}
 
 void CPmCalSync::LoadCalendarsL()
@@ -551,12 +592,12 @@ void CPmCalSync::LoadCalendarsL()
 	CleanupStack::PopAndDestroy();
 	}
 
+// (the static functions below use the app's own file server session: one
+// per app, as the robustness notes have it, not one per call)
 void CPmCalSync::CalendarsL(const TDesC& aStoreDir, CDesCArray& aNames, CDesC8Array& aIds, TInt& aDefault)
 	{
 	aDefault = -1;
-	RFs fs;
-	User::LeaveIfError(fs.Connect());
-	CleanupClosePushL(fs);
+	RFs& fs = CEikonEnv::Static()->FsSession();
 	TFileName path(aStoreDir);
 	path.Append(_L("cal\\calendars.txt"));
 	RFile f;
@@ -590,37 +631,29 @@ void CPmCalSync::CalendarsL(const TDesC& aStoreDir, CDesCArray& aNames, CDesC8Ar
 			}
 		CleanupStack::PopAndDestroy(2);   // text, f
 		}
-	CleanupStack::PopAndDestroy();        // fs
 	}
 
 void CPmCalSync::SetDefaultCalendarL(const TDesC& aStoreDir, const TDesC8& aId)
 	{
-	RFs fs;
-	User::LeaveIfError(fs.Connect());
-	CleanupClosePushL(fs);
+	RFs& fs = CEikonEnv::Static()->FsSession();
 	TFileName path(aStoreDir);
 	path.Append(_L("cal\\"));
 	fs.MkDirAll(path);
 	path.Append(_L("default.txt"));
-	RFile f;
-	User::LeaveIfError(f.Replace(fs, path, EFileWrite));
-	f.Write(aId);
-	f.Write(_L8("\n"));
-	f.Close();
-	CleanupStack::PopAndDestroy();
+	TBuf8<64> text(Clip(aId, 60));
+	text.Append('\n');
+	WriteFileSafeL(fs, path, text);
 	}
 
 void CPmCalSync::ForgetL(const TDesC& aStoreDir)
 	{
-	RFs fs;
-	User::LeaveIfError(fs.Connect());
+	RFs& fs = CEikonEnv::Static()->FsSession();
 	TFileName path(aStoreDir);
 	path.Append(_L("cal\\agenda.txt"));
 	fs.Delete(path);
 	path = aStoreDir;
 	path.Append(_L("cal\\push.txt"));
 	fs.Delete(path);
-	fs.Close();
 	}
 
 // changes not yet sent (the engine may have been offline): kept, unless
@@ -669,15 +702,21 @@ void CPmCalSync::SavePushL()
 		iFs.Delete(path);
 		return;
 		}
+	// (these are the user's unsent Agenda changes: written whole to a
+	// temporary first, then put in place, as agenda.txt is)
+	TFileName tmp;
+	Path(_L("push.tmp"), tmp);
 	RFile f;
-	User::LeaveIfError(f.Replace(iFs, path, EFileWrite));
+	User::LeaveIfError(f.Replace(iFs, tmp, EFileWrite));
 	CleanupClosePushL(f);
 	for (TInt i = 0; i < iPush->Count(); i++)
 		{
 		User::LeaveIfError(f.Write(*(*iPush)[i]));
 		User::LeaveIfError(f.Write(_L8("\n")));
 		}
+	User::LeaveIfError(f.Flush());
 	CleanupStack::PopAndDestroy();
+	User::LeaveIfError(iFs.Replace(tmp, path));
 	}
 
 TBool CPmCalSync::Writable(const TDesC8& aLine) const
@@ -1158,13 +1197,9 @@ void CPmCalSync::FinishL()
 void CPmCalSync::AddToAgendaL(const TDesC& aFile, const TDesC& aTitle, const TDesC& aLocation,
 	const TTime& aStart, const TTime& aEnd, TBool aAllDay, TInt aAlarm)
 	{
-	RFs fs;
-	User::LeaveIfError(fs.Connect());
-	CleanupClosePushL(fs);
 	TEntry entry;
-	if (fs.Entry(aFile, entry) != KErrNone)
+	if (CEikonEnv::Static()->FsSession().Entry(aFile, entry) != KErrNone)
 		User::Leave(KErrNotFound);
-	CleanupStack::PopAndDestroy();       // fs
 	CParaFormatLayer* para = CParaFormatLayer::NewL();
 	CleanupStack::PushL(para);
 	CCharFormatLayer* chr = CCharFormatLayer::NewL();

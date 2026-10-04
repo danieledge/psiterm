@@ -115,7 +115,9 @@ typedef struct
 enum { ENC_7BIT = 0, ENC_BASE64 = 1, ENC_QP = 2 };
 int  mime_enc_from_name(const char *name);
 void dec_init(PmDecoder *d, int enc);
-int  dec_feed(PmDecoder *d, const char *in, int n, char *out); /* out >= n */
+/* out must have room for n + 2 bytes: quoted-printable split across calls
+   as "=", "Z", "Z" gives 3 bytes for the last 1 byte of input */
+int  dec_feed(PmDecoder *d, const char *in, int n, char *out);
 
 /* message structure from BODYSTRUCTURE */
 #define PM_MAX_PARTS 24
@@ -208,7 +210,10 @@ unsigned long web_hash(const char *url);   /* <uid>_W<hash>.pmi: FNV-1a of the a
 int  web_is_spacer(const char *url, int w, int h);
 
 /* ---- SMTP (smtp.c) */
-int  smtp_send(int acct, const char *mime_path, const char *from, const char *rcpts, char *why, int whymax);
+/* sent_mark: a file written just before the final "." goes - the point past
+   which a lost answer means the message may have been delivered */
+int  smtp_send(int acct, const char *mime_path, const char *from, const char *rcpts, const char *sent_mark,
+               char *why, int whymax);
 void genrandom(unsigned char *buf, unsigned int len);
 
 /* ---- composing (compose.c): outbox file -> MIME file */
@@ -237,6 +242,7 @@ void st_index_remove(PmIndex *ix, unsigned int uid);
 void st_flag_set(char *flags, char f, int on);
 int  st_flag_has(const char *flags, char f);
 int  st_pending_add(int acct, const char *line);
+int  st_pending_drop(int acct, const char *line);        /* takes one line out again (the server has it now) */
 int  st_pending_replay(int acct, char *why, int whymax);
 void st_msg_path(int acct, const char *folder, unsigned int uid, const char *ext, char *out, int max);
 void st_changed(void);

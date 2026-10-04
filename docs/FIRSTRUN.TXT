@@ -160,15 +160,18 @@ AUTO-RECONNECT (new in 0.22)
        tmux new -A -s psion
    puts you straight back into the same tmux session.
 
-SNIPPETS, HOTKEYS, CLAUDE CODE AND TMUX (new in 0.35)
+SNIPPETS, HOTKEYS, CLAUDE CODE AND TMUX
    Snippets menu: your own text to send, e.g. commands or
      Claude prompts. Manage snippets... to add, edit, delete.
      Each can press Enter after, and can have a hotkey:
-     Shift+Ctrl + 0-9 or a free letter. The menu shows it.
+     Shift+Ctrl + a free letter. The menu shows it. A snippet
+     can sit in a folder (type the folder name); each folder
+     is a cascade on the menu.
      In the text: \n = Enter  ^C = Ctrl+C  \e = Esc  \t = Tab
      (so a snippet can be any key sequence, e.g. ^Bc).
-   Keys > Claude Code: Interrupt (Esc), Rewind (Esc Esc),
-     Switch mode (Shift+Tab), /clear, /compact, /resume, /help.
+   The ready-made Claude Code folder: Interrupt (\e),
+     Rewind (\e\e), Switch mode (\e[Z), /clear, /compact,
+     /resume, /help. Change or delete them like any snippet.
    tmux menu: new/next/previous window, splits, next pane,
      zoom, scroll mode, rename, detach. Prefix Ctrl+B or
      Ctrl+A (chosen at the bottom of the menu).

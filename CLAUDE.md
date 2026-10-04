@@ -27,7 +27,8 @@ The apps reach the internet in one of two ways, and the user chooses which in th
 
 ## Open issues
 
-- **PsiWeb never shows a web page** (device and emulator). See `docs/issues/psiweb-no-render.md` before working on PsiWeb.
+- **PsiWeb now uses Links 2.30 as its engine** (the NetSurf "never shows a page" issue in `docs/issues/psiweb-no-render.md` is superseded). Read `web/links/PORTING.md` before working on PsiWeb. It has not yet been confirmed on a real 5mx.
+- `main` deliberately leaves out PsiWeb and the Atom modem firmware until they are proven: promote `dev` to `main` with a merge that keeps those deletions.
 
 ## Architecture
 
@@ -206,5 +207,6 @@ Use the `epoc-eikon-ui-guide` skill if it is available. The essentials:
 - **Long work in the engine:** must not starve the UI. Decode at low priority and keep heartbeats going.
 - **Card writes:** the emulator's CF card emulation can wedge on many small writes, which is why `pm_write_whole` exists.
 - **`.gitignore`:** has broad rules (`*seed*`, `screenshots/`, vendored `.gitignore`s). Use `git add -f` for real source files they hide.
+- **Testing:** `docs/TESTING.md` is the test strategy (host tests, fuzzers, the ARM harness, the emulator with `tools/emu/net.py` network tests, the device, and the release checklist).
 - **References in `docs/`:** `epoc-robustness-best-practices.md` covers SDK-derived practice for memory, leaves, active objects, files and power. `epoc-comms-best-practices.md` covers serial (C32), sockets (ESOCK), dial-up (NIFMAN), our compliance and open recommendations. The comms best-practice notes cover serial, ESOCK and PPP. The SDK's own docs are HTML under `$EPOCROOT/sysdoc/`, and its headers are in `$EPOCROOT/epoc32/include`.
 - **Writing style:** British English, plain short sentences, and the EIKON glossary terms.

@@ -44,3 +44,4 @@ known_hosts
 *.swp
 tools/shot/host.raw
 tools/shot/host.screen
+.claude/

@@ -19,12 +19,18 @@
 #include <eikbutb.h>
 #include <badesca.h>
 
+class CFbsBitmap;
+
 extern "C" {
 #include "psishared.h"
 }
+#include "psibell.h"           // (0.81) doorbells with psissh: power
 
 #include "vterm.h"
 #include "termsb.h"
+
+#include "psigrey.h"
+#include "psidisp.h"
 
 #include <psiterm.rsg>
 #include "psiterm.hrh"
@@ -60,7 +66,12 @@ struct TPsiSettings
 	TInt iTmuxTabs;       // 1 = draw tmux's window list as tabs
 	TBuf<40> iPppStart;   // Psion Internet: sent to the modem first (empty = nothing)
 	TInt iToolbar;        // 1 = the toolbar is showing (0.71: saved as one more byte, v13)
+	TInt iDisplay;        // v14 (docs/display.md): KPtDisplay* bits
 	};
+
+// TPsiSettings::iDisplay bits (all 0 is the standard)
+const TInt KPtDisplayReading = 1;      // View > Reading mode
+const TInt KPtDisplayLightText = 2;    // Preferences > Coloured text: lighter greys (as before 0.81)
 
 // ---------------------------------------------------------------------------
 // Snippets (C:\System\Apps\PsiTerm\Snippets.dat): named text to send, each
@@ -68,14 +79,22 @@ struct TPsiSettings
 //   \n Enter   \e Esc   \t Tab   ^X Ctrl+X   \\ backslash   \^ caret
 // so a snippet can also be any key sequence (e.g. ^Bc = tmux new window).
 // ---------------------------------------------------------------------------
-const TInt KMaxSnippets = 20;
+const TInt KMaxSnippets = 40;
+// how many of them go on the Snippets menu and the toolbar's pop-up after
+// "Manage snippets...": a half-VGA menu holds 8 items (EIKON style guide)
+const TInt KMenuSnippets = 7;
+// Snippets can be grouped in folders, one level deep (a folder holds snippets,
+// never another folder). At most this many folders show as menu cascades.
+const TInt KMaxSnipFolders = 8;
 
 struct TSnippet
 	{
 	TBuf<24> iName;
 	TBuf<120> iText;
 	TInt iEnter;          // 1 = press Enter after the text
-	TInt iKey;            // Shift+Ctrl hotkey: 0 none, else 'A'..'Z' or '0'..'9'
+	TInt iKey;            // Shift+Ctrl hotkey: 0 none, else a letter from KSnippetKeys
+	                      // (digits were allowed before 0.79; a saved digit loads as none)
+	TBuf<24> iFolder;     // folder name, or empty for the top level (0.86)
 	};
 
 class CSnippetList : public CBase
@@ -90,17 +109,30 @@ public:
 	void AddL(const TSnippet& aEntry) { iEntries->AppendL(aEntry); }
 	void Delete(TInt aIndex) { iEntries->Delete(aIndex); }
 	TInt FindKey(TInt aKey) const;   // index of the snippet on this hotkey, or -1
+	// Folders (one level). FoldersL fills aOut with the distinct folder names in
+	// first-appearance order (the top level is not a folder and is left out).
+	void FoldersL(CDesCArray& aOut) const;
+	TBool HasFolder(const TDesC& aName) const;
 	TInt iLast;
+	TBool iChanged;           // Load set up or migrated data that should be saved
 private:
 	CSnippetList(RFs& aFs) : iFs(aFs) {}
 	void AddDefaultsL();
+	void AddClaudeFolderL();  // the default "Claude Code" folder of snippets
 	RFs& iFs;
 	CArrayFixFlat<TSnippet>* iEntries;
 	};
 
-// Hotkeys a snippet can use: Shift+Ctrl + a digit or a letter the menus
-// don't already use (E H S T C V P are menu shortcuts)
+// Hotkeys a snippet can use: Shift+Ctrl + a letter the menus don't already
+// use (E H S T C V P are menu shortcuts). Never digits: the style guide's
+// shortcuts are all Ctrl+letter or Shift+Ctrl+letter.
 TInt SnippetKeyCount();
+
+// Saves a whole data file safely (into "<name>~", then swapped in), so a
+// flat battery mid-write never leaves a half-written file. psiterm.cpp;
+// used by every data file PsiTerm writes (settings, hosts, keys, snippets,
+// the log's choices).
+TInt SafeWrite(RFs& aFs, const TDesC& aName, const TDesC8& aData);
 TInt SnippetKeyAt(TInt aIndex);          // 0 = none
 TInt SnippetKeyIndex(TInt aKey);
 void SnippetKeyName(TInt aKey, TDes& aText);
@@ -397,8 +429,8 @@ private:
 class CUpdateDialog : public CEikDialog
 	{
 public:
-	CUpdateDialog(TInt& aSource, TDes& aHost, TInt& aPort, TBool aNeedHost)
-		: iSource(aSource), iHost(aHost), iPort(aPort), iNeedHost(aNeedHost) {}
+	CUpdateDialog(TInt& aSource, TDes& aHost, TInt& aPort)
+		: iSource(aSource), iHost(aHost), iPort(aPort) {}
 private:
 	void SetSizeAndPositionL(const TSize& aSize);
 	void PreLayoutDynInitL();
@@ -406,7 +438,6 @@ private:
 	TInt& iSource;
 	TDes& iHost;
 	TInt& iPort;
-	TBool iNeedHost;      // screenshots always need the local server
 	};
 
 // Add / edit one host
@@ -473,10 +504,11 @@ public:
 	HBufC* DebugTextLC() const;        // collected output as editor text
 	void StopTool();
 	TBool InstallPending() const { return iInstallPending; }
-	void RunAfterDisconnectL(TInt aCommand);   // disconnect SSH, then run aCommand
+	void RunAfterDisconnectL(TInt aCommand);   // end SSH, then run aCommand
 	TInt Cols() const { return iCols; }
 	TInt Rows() const { return iRows; }
 	TPsiSettings& Settings() { return iSettings; }
+	void SetGreys(const PsiGrey& aGrey);   // the calibration (PsiGrey.ini): colours are drawn again
 
 	// SSH (Dropbear in psissh.exe)
 	void StartSshL();
@@ -486,14 +518,16 @@ public:
 	void StartSpeedTestL();
 	void StartUpdateL();
 	void ScreenshotL();                 // after a short delay (menu gone)
-	void SendScreenshotsL();
 	static TInt ShotCallback(TAny* aSelf);
-	void DisconnectSsh();
+	void DisconnectSsh();              // File > End SSH: asks psissh to stop (twice: ends it now)
 	void SshProcessEnded();
 	TBool SshActive() const { return iSshActive; }
+	TBool SshQuitting() const { return iQuitAsked; }   // asked to stop, not yet gone
 	TBool ReconnectWaiting() const { return iReconnectWait; }
 	// (0.68) the Psion was switched back on: psissh checks the link is still there
-	void LinkSwitchedOn() { if (iSshActive && iShared) iShared->switch_on++; }
+	void LinkSwitchedOn() { if (iSshActive && iShared) { iShared->switch_on++; RingSsh(); } }
+	void RingSsh();          // (0.81) something for psissh in the chunk: ring its doorbell
+	void SetForeground(TBool aForeground);   // (0.81) in front or behind: the tick's pace
 	TBool ModemOnline() const;
 	TBool SshLoggedIn() const;
 	TBool InTmux() const { return iTabRow >= 0; }
@@ -571,6 +605,13 @@ private:
 	void PumpSsh();
 	void AddKeyEntropy(TUint aCode);
 	TBool SeedFileExists();
+	// Ending psissh: AskQuit sets the quit flag and arms a watchdog; if the
+	// program has not gone when it fires (wedged in a wait that nothing
+	// completes), EndSshNow kills it and gives NIFMAN its timers back. A
+	// second End SSH / Stop while it is being asked ends it at once.
+	void AskQuit();
+	void EndSshNow();
+	static TInt QuitCallback(TAny* aSelf);
 
 private:
 	TPsiSettings iSettings;
@@ -601,8 +642,12 @@ private:
 	TInt Theme(TInt aGrey) const;                   // theme mapping of a grey 0..15
 	TRgb Grey(TInt aGrey) const { return TRgb::Gray16(Theme(aGrey)); }
 	void ThemePair(TInt aFg, TInt aBg, TInt& aThemedFg, TInt& aThemedBg) const;
+	TUint8 iGreyCal[256];     // 8-bit grey -> level, from the calibration (ssh/psigrey.h)
+	TBool iGreyOn;            // the calibration is on (else the old mapping, exactly)
 	TInt iStatusH;            // status line height in pixels (0 = off)
-	CPeriodic* iTick;         // 0.5 s: clock, status line, cursor blink
+	CPeriodic* iTick;         // 0.5 s (2 s when nothing moves: TickBusy): clock, status line, cursor blink
+	TBool iForeground;        // (0.81) PsiTerm is in front: the tick draws (CPsiTermAppUi::HandleWsEventL)
+	TInt iTickUs;             // the tick's period now
 	TBool iBlinkHidden;       // cursor in the "off" half of a blink
 	TBuf<120> iStatusDrawn;   // what the status line shows now
 	TTime iReconnectAt;       // when the next reconnect attempt starts
@@ -611,7 +656,8 @@ private:
 	void Tick();
 	static TInt TickCallback(TAny* aSelf);
 	void StartTick();
-	void SyncToolbar();       // the first toolbar button: SSH to..., or Disconnect
+	TBool TickBusy() const;
+	void SyncToolbar();       // the first toolbar button: SSH to..., or End SSH
 	TInt iTbBusy;             // what it shows now (-1 = not yet set)
 	short* iSbCols;
 	TInt iLinesPushed;    // absolute number of the top screen row
@@ -716,6 +762,17 @@ private:
 	RProcess iSshProcess;
 	CSshWatcher* iWatcher;
 	CPeriodic* iPump;
+	// (0.81) power: the pump looks every tick only while output flows; then
+	// it waits on the doorbell psissh rings (psibell.h), with a slow tick
+	// for the heartbeat. Keys and requests ring psissh's bell.
+	CPsiBellWaiter* iBellWaiter;
+	TPsiBellRinger iSshRinger;
+	TBool iPumpQuiet;         // the pump is on its slow tick, the bell armed
+	TInt iPumpIdle;           // ticks with nothing from psissh
+	void PumpFast();
+	void PumpQuiet();
+	static TInt BellCallback(TAny* aSelf);
+	TUint iUserAt;            // tick of the last key typed (tmux window list: how often)
 	TUint8 iEntropy[PSI_ENTROPY_SIZE];
 	TInt iEntropyPos;
 	TInt iEntropyFill;
@@ -734,7 +791,6 @@ private:
 	CPeriodic* iShotTimer;    // screenshot a moment after the menu closes
 	void TakeScreenshotL();
 	void ShotDir(TDes& aDir);
-	TInt DeleteShots();
 	TInt iEntropyMode;        // what to launch once the randomness is gathered
 	TBool iModemOnline;       // the terminal saw CONNECT (and no NO CARRIER since)
 	TUint iLastRx;            // tick of the last serial data outside SSH
@@ -752,7 +808,10 @@ private:
 	TBuf8<64> iSshPassword;   // saved password for the next launch, then wiped
 	// auto-reconnect
 	TBuf8<64> iReconnectPw;   // the saved password of this session (RAM only)
-	TBool iUserQuit;          // Disconnect was chosen: don't reconnect
+	TBool iUserQuit;          // End SSH was chosen: don't reconnect
+	CPeriodic* iQuitTimer;    // the watchdog after a quit was asked for
+	TBool iQuitAsked;         // quit = 1 has been set for this psissh
+	TBool iKilled;            // the watchdog (or a second End SSH) killed it
 	TBool iReconnecting;      // the current/next launch is a reconnect
 	TBool iReconnectWait;     // counting down to the next attempt
 	TInt iReconnectTries;
@@ -771,10 +830,18 @@ class CPsiTermAppUi : public CEikAppUi
 public:
 	void ConstructL();
 	~CPsiTermAppUi();
+	void ScreenGreysL();               // Preferences > Screen greys... (ssh/psigreyui.cpp)
 private:
+	// Reading mode (View > Reading mode; ssh/psidisp.h): on while PsiTerm
+	// is in front, off in the background, at switch-on and on closing
+	void UpdateReading(TBool aEnterOnly = EFalse);
+	TPsiReading iReading;
+	TBool iForeground;
+	TBool iGreysOpen;                  // the greys screen is up (Reading mode stays off)
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
 	void HandleSwitchOnEventL(CCoeControl* aDestination);
+	void HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination);   // a backup is starting: close the log
 	TBool ConfirmDisconnectL(TInt aCommand);
 	void LoadSettings(TPsiSettings& aSettings);
 	void SshToL();
@@ -783,7 +850,7 @@ private:
 public:
 	// the toolbar (View > Show toolbar hides it: the terminal takes its room)
 	void ShowToolBarL(TBool aShow);
-	void SetConnectButton(TBool aBusy);     // SSH to... <-> Disconnect
+	void SetConnectButton(TBool aBusy);     // SSH to... <-> End SSH
 	TBool ToolbarShown() const;
 private:
 	void ToolbarPicturesL();

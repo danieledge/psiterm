@@ -1,7 +1,10 @@
 // PSIWEB.CPP - PsiWeb.app: screen, keyboard, pen, menus and settings for the
-// NetSurf engine (psiweb.exe). See psiweb.h.
+// browser engine, psiweb.exe (Links 2 from 0.62: web/links; NetSurf before).
+// See psiweb.h.
 
 #include <e32keys.h>
+#include <eikkeys.h>
+#include <eikscrlb.h>
 #include <e32hal.h>
 #include <eikchlst.h>
 #include <eikedwin.h>
@@ -13,10 +16,14 @@
 #include <eiktbar.h>
 #include <eikimage.h>
 #include <apgcli.h>
+#include <eikcfdlg.h>
+#include <eikseced.h>
+#include <eikon.rsg>
 #include "pwapp.h"
 #include "pwicons.h"
 #include "psilink.h"
 #include "pglinktest.h"
+#include "psigreyui.h"
 
 // The link settings are shared with PsiTerm and PsiMail (psilink.h)
 static void UseSharedLink(RFs& aFs, TPwSettings& aSettings)
@@ -45,11 +52,13 @@ static void SaveSharedLink(RFs& aFs, const TPwSettings& aSettings)
 
 _LIT(KEngineExe, "psiweb.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiWeb\\PsiWeb.ini");
-_LIT(KVersion, "0.61");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
+_LIT(KVersion, "0.68");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
 _LIT(KDefaultHome, "http://68k.news/");
 const TInt KZoomSteps[] = { 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200 };
 const TInt KZoomCount = 11;
 const TInt KTick = 62500;            // look for new frames 16 times a second
+const TInt KTickQuiet = 2000000;     // (0.81) ...or every 2 s when nothing is going on: the doorbell brings news
+const TInt KCalmTicks = 16;          // quick ticks with nothing going on before the slow pace (1 s)
 
 static void CopyToC(char* aDst, TInt aMax, const TDesC& aSrc)
 	{
@@ -79,6 +88,28 @@ static void FromUtf8(TDes& aDst, const char* aSrc)
 			}
 		aDst.Append(TChar(c));
 		}
+	}
+
+// text from the Psion's 8-bit UI (Latin-1 here) -> UTF-8 for the engine
+static void ToUtf8(char* aDst, TInt aMax, const TDesC& aSrc)
+	{
+	TInt n = 0;
+	for (TInt i = 0; i < aSrc.Length(); i++)
+		{
+		TUint c = aSrc[i];
+		if (c < 0x80)
+			{
+			if (n + 1 >= aMax) break;
+			aDst[n++] = (char)c;
+			}
+		else
+			{
+			if (n + 2 >= aMax) break;
+			aDst[n++] = (char)(0xc0 | (c >> 6));
+			aDst[n++] = (char)(0x80 | (c & 0x3f));
+			}
+		}
+	aDst[n] = 0;
 	}
 
 // ===========================================================================
@@ -122,8 +153,12 @@ CPwView::~CPwView()
 	{
 	StartBusyCancel();
 	StopEngine();
+	delete iSBFrame;
+	delete iAsker;
 	delete iStarter;
 	delete iTimer;
+	delete iBellWaiter;                  // (before the chunk it points into goes)
+	iEngRinger.Close();
 	delete iWatcher;
 	delete iBitmap;
 	if (iChunkOpen)
@@ -136,9 +171,16 @@ void CPwView::ConstructL(const TRect& aRect, const TPwSettings& aSettings)
 	CreateBackedUpWindowL(iCoeEnv->RootWin(), EGray16);
 	SetRectL(aRect);
 	EnableDragEvents();
+	iPics = -1;
+	// the page's scroll bar, as the built-in programs have it: always there
+	// (dimmed when the page fits), beside the page
+	iSBFrame = new(ELeave) CEikScrollBarFrame(this, this);
+	iSBFrame->SetScrollBarVisibilityL(CEikScrollBarFrame::EOff, CEikScrollBarFrame::EOn);
+	LayoutL();
 
-	TSize size = aRect.Size();
+	TSize size = iPageArea.Size();
 	if (size.iWidth > PW_MAX_W) size.iWidth = PW_MAX_W;
+	size.iWidth &= ~1;	/* the engine packs two pixels a word: width must be even */
 	if (size.iHeight > PW_MAX_H) size.iHeight = PW_MAX_H;
 	iBitmap = new(ELeave) CFbsBitmap;
 	User::LeaveIfError(iBitmap->Create(TSize(PW_MAX_W, PW_MAX_H), EGray16));
@@ -160,6 +202,7 @@ void CPwView::ConstructL(const TRect& aRect, const TPwSettings& aSettings)
 	// PsiMail) can be the first page: see CPwAppUi::ProcessCommandParametersL
 	iStarter = CIdle::NewL(CActive::EPriorityStandard);
 	iStarter->Start(TCallBack(StartCallback, this));
+	iAsker = CIdle::NewL(CActive::EPriorityStandard);
 	}
 
 TInt CPwView::StartCallback(TAny* aSelf)
@@ -170,7 +213,7 @@ TInt CPwView::StartCallback(TAny* aSelf)
 	return 0;
 	}
 
-// a page to open: now if NetSurf is running, else as its first page
+// a page to open: now if the engine is running, else as its first page
 void CPwView::OpenUrlL(const TDesC& aUrl)
 	{
 	if (iRunning)
@@ -189,11 +232,16 @@ void CPwView::StartEngineL()
 		return;
 	PwShared* s = iShared;
 	TInt w = s->width, h = s->height;
+	if (iBellWaiter)
+		iBellWaiter->Cancel();               // (before the bell it waits on is cleared)
+	iEngRinger.Close();                      // (a new engine: a new thread)
+	TickFast();                              // (and the tick follows it from the start)
 	Mem::FillZ(s, sizeof(PwShared) - sizeof(s->fb));
 	s->width = w;
 	s->height = h;
 	s->magic = PW_MAGIC;
 	s->net.magic = PSI_SHARED_MAGIC;
+	s->net.bell_magic = PSI_BELL_MAGIC;      // (0.81) we ring eng_bell with every key, tap, command and quit
 	UseSharedLink(iCoeEnv->FsSession(), iSettings);   // may have changed in another app
 	s->net.baud_index = iSettings.iBaudIndex;
 	s->net.rtscts = iSettings.iRtsCts;
@@ -207,6 +255,7 @@ void CPwView::StartEngineL()
 	s->proxy_port = iSettings.iProxyPort;
 	s->load_images = iSettings.iImages;
 	s->zoom = iSettings.iZoom;
+	s->display = (iSettings.iDisplay & KPwDisplayScaledText) ? PW_DISPLAY_SCALED_TEXT : 0;
 	CopyToC(s->net.version, sizeof(s->net.version), KVersion);
 	// updates are saved to the CF card if there is one (D:), else C:
 	TVolumeInfo vol;
@@ -229,7 +278,7 @@ void CPwView::StartEngineL()
 	iMsg2.Zero();
 	iShowMsg = ETrue;
 	DrawNow();
-	// Loading the engine (2.6 MB) and its start-up take many seconds, during
+	// Loading the engine (1.9 MB) and its start-up take some seconds, during
 	// which this thread is held in Create(): say so, bottom left, and flush
 	// the window server's buffer so the message and the blank page show now
 	// rather than when Create() returns. Tick takes it down when the first
@@ -282,7 +331,8 @@ void CPwView::StopEngine()
 	iShared->quitting = 1;
 	iShared->net.quit = 1;
 	iShared->cmd = PW_CMD_QUIT;
-	// give NetSurf a few seconds to hang up and save cookies
+	RingEngine();
+	// give the engine a few seconds to hang up and close
 	for (TInt i = 0; i < 40 && iShared->state != PW_STATE_EXITED; i++)
 		User::After(100000);
 	if (iWatcher)
@@ -329,8 +379,10 @@ void CPwView::SetPageRectL(const TRect& aRect)
 		StopEngine();
 		}
 	SetRectL(aRect);
-	TSize size = aRect.Size();
+	LayoutL();
+	TSize size = iPageArea.Size();
 	if (size.iWidth > PW_MAX_W) size.iWidth = PW_MAX_W;
+	size.iWidth &= ~1;	/* the engine packs two pixels a word: width must be even */
 	if (size.iHeight > PW_MAX_H) size.iHeight = PW_MAX_H;
 	iShared->width = size.iWidth;
 	iShared->height = size.iHeight;
@@ -342,6 +394,132 @@ void CPwView::SetPageRectL(const TRect& aRect)
 		}
 	else
 		DrawNow();
+	}
+
+// ----- the page's scroll bar --------------------------------------------------------
+
+// The bar takes its breadth from the right of Rect(); the engine draws in
+// what is left (iPageArea, at the window's origin)
+void CPwView::LayoutL()
+	{
+	TEikScrollBarModel hModel(0, 0, 0);
+	TEikScrollBarModel vModel(iSbH, iSbH > 0 ? iSbVh : 0, iSbH > 0 ? iSbY : 0);
+	TRect inclusive(Rect());
+	TRect client(Rect());
+	TEikScrollBarFrameLayout layout;
+	layout.iTilingMode = TEikScrollBarFrameLayout::EInclusiveRectConstant;
+	iSBFrame->TileL(&hModel, &vModel, client, inclusive, layout);
+	iPageArea = client;
+	}
+
+TInt CPwView::CountComponentControls() const
+	{
+	return iSBFrame ? iSBFrame->CountComponentControls() : 0;
+	}
+
+CCoeControl* CPwView::ComponentControl(TInt aIndex) const
+	{
+	return iSBFrame->ComponentControl(aIndex);
+	}
+
+// The engine has said where the page is (psiweb.h page_*): the thumb goes
+// there, unless the pen is dragging it. Only a change from the engine moves
+// it, so a tap on the bar is not undone while the engine catches up.
+void CPwView::UpdateScrollBarL()
+	{
+	PwShared* s = iShared;
+	TInt h = 0, y = 0, vh = 0;
+	if (s && iRunning && !iShowMsg && s->page_h > 0 && s->page_vh > 0)
+		{
+		h = s->page_h;
+		y = s->page_y;
+		vh = s->page_vh;
+		}
+	if (iSbDragging || (h == iEngH && y == iEngY && vh == iEngVh))
+		return;
+	iEngH = h;
+	iEngY = y;
+	iEngVh = vh;
+	if (h == iSbH && y == iSbY && vh == iSbVh)
+		return;
+	iSbH = h;
+	iSbY = y;
+	iSbVh = vh;
+	CEikScrollBar* sb = iSBFrame->GetScrollBarHandle(CEikScrollBar::EVertical);
+	if (!sb)
+		return;
+	TEikScrollBarModel model(h, h > 0 ? vh : 0, h > 0 ? y : 0);
+	sb->SetModelL(&model);
+	sb->DrawNow();
+	}
+
+// The pen on the bar: the arrows move a few lines, the shaft a screen (as
+// Fn+Up and Fn+Down), the thumb where it is put
+void CPwView::HandleScrollEventL(CEikScrollBar* aScrollBar, TEikScrollEvent aEventType)
+	{
+	if (!iRunning || iSbH <= 0 || iUpdState == PW_UPD_RUNNING)
+		return;
+	TInt line = iSbVh / 8 < 16 ? 16 : iSbVh / 8;
+	TInt y = iSbY;
+	switch (aEventType)
+		{
+	case EEikScrollUp:
+		y -= line;
+		break;
+	case EEikScrollDown:
+		y += line;
+		break;
+	case EEikScrollPageUp:
+		y -= iSbVh - line;
+		break;
+	case EEikScrollPageDown:
+		y += iSbVh - line;
+		break;
+	case EEikScrollTop:
+	case EEikScrollHome:
+		y = 0;
+		break;
+	case EEikScrollBottom:
+	case EEikScrollEnd:
+		y = iSbH;
+		break;
+	case EEikScrollThumbDragVert:
+		iSbDragging = ETrue;
+		y = aScrollBar->ThumbPosition();
+		break;
+	case EEikScrollThumbReleaseVert:
+		iSbDragging = EFalse;
+		y = aScrollBar->ThumbPosition();
+		break;
+	default:
+		return;
+		}
+	ScrollTo(y);
+	}
+
+void CPwView::ScrollTo(TInt aY)
+	{
+	if (aY > iSbH - iSbVh) aY = iSbH - iSbVh;
+	if (aY < 0) aY = 0;
+	if (aY == iSbY && !iSbDragging)
+		return;
+	iSbY = aY;
+	CEikScrollBar* sb = iSBFrame->GetScrollBarHandle(CEikScrollBar::EVertical);
+	if (sb && !iSbDragging)
+		{
+		sb->SetModelThumbPosition(aY);
+		sb->DrawNow();
+		}
+	TBuf<12> arg;
+	arg.Num(aY);
+	Command(PW_CMD_SCROLL, arg);
+	}
+
+// the page's pictures are showing: on every page (Preferences), or asked
+// for this one (View > Show pictures, the Pictures button)
+TBool CPwView::PicturesShown() const
+	{
+	return iSettings.iImages || (iRunning && iShared && iShared->page_pics);
 	}
 
 void CPwView::EngineEnded()
@@ -399,6 +577,70 @@ void CPwView::Command(TInt aCmd, const TDesC& aArg)
 	if (aCmd == PW_CMD_STOP)
 		iShared->net.quit = 1;          // also interrupts a dial or download
 	iShared->cmd = aCmd;
+	iShared->net.resized = 1;            // wakes the engine's wait (see psi_os.c)
+	RingEngine();
+	TickFast();
+	}
+
+// (0.81) The engine waits on a doorbell when nothing is happening
+// (psibell.h): every key, tap, command, answer and quit rings it.
+void CPwView::RingEngine()
+	{
+	if (iRunning && iShared)
+		iEngRinger.Ring(&iShared->net.eng_bell);
+	}
+
+// Is anything going on that the tick must follow closely? A page loading,
+// frames coming (within the last second), input not yet taken, a message
+// about the link, a question, an update, the start-up message.
+TBool CPwView::TickWanted() const
+	{
+	PwShared* s = iShared;
+	if (!s || iStartBusy || iLinkBusy || iAsking || iUpdState == PW_UPD_RUNNING)
+		return ETrue;
+	if (!iRunning)
+		return EFalse;                       // (the engine has stopped: nothing to follow)
+	if (s->busy || s->state != PW_STATE_READY || s->ev_tail != s->ev_head || s->cmd != PW_CMD_NONE)
+		return ETrue;
+	if (s->frame_seq != iLastFrame || s->net.link_seq != iLinkSeq || s->update_state != iUpdState)
+		return ETrue;
+	if (s->auth_state == PW_ASK_ASKING || s->save_state == PW_ASK_ASKING)
+		return ETrue;
+	if (User::TickCount() - iFrameAt < 64)
+		return ETrue;
+	return EFalse;
+	}
+
+void CPwView::TickFast()
+	{
+	iCalmTicks = 0;
+	if (!iTickQuiet || !iTimer)
+		return;
+	iTickQuiet = EFalse;
+	iTimer->Cancel();
+	iTimer->Start(KTick, KTick, TCallBack(TickCallback, this));
+	}
+
+void CPwView::TickQuiet()
+	{
+	iCalmTicks = 0;
+	if (iTickQuiet || !iTimer || !iShared)
+		return;
+	if (!iBellWaiter)
+		iBellWaiter = new CPsiBellWaiter(TCallBack(BellCallback, this));   // (no memory: stays quick)
+	if (!iBellWaiter || iBellWaiter->Arm(&iShared->net.app_bell) || !iBellWaiter->IsActive())
+		return;                              // (rung just now, or no doorbell: stays quick)
+	iTickQuiet = ETrue;
+	iTimer->Cancel();
+	iTimer->Start(KTickQuiet, KTickQuiet, TCallBack(TickCallback, this));
+	}
+
+TInt CPwView::BellCallback(TAny* aSelf)
+	{
+	CPwView* self = (CPwView*)aSelf;
+	self->TickFast();
+	self->Tick();
+	return 0;
 	}
 
 TInt CPwView::TickCallback(TAny* aSelf)
@@ -413,6 +655,12 @@ void CPwView::Tick()
 	PwShared* s = iShared;
 	if (s)
 		s->app_beat++;                   // "still here": see pwepoc.cpp
+	// (0.81) the pace: quick while anything is going on, else slow with the
+	// doorbell armed (the heartbeat above still goes every 2 s)
+	if (TickWanted())
+		TickFast();
+	else if (!iTickQuiet && ++iCalmTicks >= KCalmTicks)
+		TickQuiet();
 	// "Starting the browser engine...": down once the engine starts loading
 	// its first page (its window is up by then; its first frame is only the
 	// blank background, seconds before that), or after a minute regardless
@@ -449,21 +697,45 @@ void CPwView::Tick()
 			iLinkBusy = err == KErrNone;
 			}
 		else if (m.Length())
+			{
+			// a plain note after a busy one ("Checking the modem..." then
+			// "CONNECT 115200"): that step is over
+			if (iLinkBusy)
+				{
+				iEikonEnv->BusyMsgCancel();
+				iLinkBusy = EFalse;
+				}
 			iEikonEnv->InfoMsg(m);
+			}
 		}
 	if (s && iLinkBusy && !s->busy)
 		{
 		iEikonEnv->BusyMsgCancel();
 		iLinkBusy = EFalse;
 		}
+	// the engine asks something (a password, where to save a file): the
+	// dialog is shown from an idle callback, not inside this tick
+	if (s && !iAsking && iAsker && !iAsker->IsActive()
+		&& (s->auth_state == PW_ASK_ASKING || s->save_state == PW_ASK_ASKING))
+		iAsker->Start(TCallBack(AskCallback, this));
 	if (s && (iUpdState == PW_UPD_RUNNING || s->update_state != iUpdState))
 		{
 		TRAPD(err, UpdateTickL());
 		(void)err;
 		}
+	if (s && iRunning && s->page_pics != iPics)
+		{
+		iPics = s->page_pics;
+		((CPwAppUi*)iEikonEnv->EikAppUi())->ShowPicturesState(PicturesShown());
+		}
 	if (!s || s->frame_seq == iLastFrame || iUpdState == PW_UPD_RUNNING)
+		{
+		TRAPD(se, UpdateScrollBarL());
+		(void)se;
 		return;
+		}
 	iLastFrame = s->frame_seq;
+	iFrameAt = User::TickCount();
 	TInt y0 = s->dirty_y0, y1 = s->dirty_y1;
 	s->dirty_y0 = s->height;
 	s->dirty_y1 = 0;
@@ -487,6 +759,157 @@ void CPwView::Tick()
 	ActivateGc();
 	SystemGc().BitBlt(r.iTl, iBitmap, r);
 	DeactivateGc();
+	TRAPD(se, UpdateScrollBarL());
+	(void)se;
+	}
+
+// ----- the engine's questions (Links phase 5) --------------------------------------
+
+TInt CPwView::AskCallback(TAny* aSelf)
+	{
+	CPwView* v = (CPwView*)aSelf;
+	PwShared* s = v->iShared;
+	if (!s || v->iAsking)
+		return 0;
+	v->iAsking = ETrue;
+	if (v->iLinkBusy)
+		{
+		CEikonEnv::Static()->BusyMsgCancel();
+		v->iLinkBusy = EFalse;
+		}
+	if (s->auth_state == PW_ASK_ASKING)
+		{
+		TRAPD(err, v->AskAuthL());
+		if (err != KErrNone && s->auth_state == PW_ASK_ASKING)
+			s->auth_state = PW_ASK_CANCEL;
+		}
+	if (s->save_state == PW_ASK_ASKING)
+		{
+		TRAPD(err, v->AskSaveL());
+		if (err != KErrNone && s->save_state == PW_ASK_ASKING)
+			s->save_state = PW_ASK_CANCEL;
+		}
+	s->net.resized = 1;                  // wakes the engine's wait (psi_os.c)
+	v->RingEngine();
+	v->iAsking = EFalse;
+	return 0;
+	}
+
+// User name and password: who asks, and the server's name for it
+void CPwView::AskAuthL()
+	{
+	PwShared* s = iShared;
+	TBuf<64> host;
+	TBuf<96> realm;
+	FromUtf8(host, s->auth_host);
+	FromUtf8(realm, s->auth_realm);
+	TBuf<100> who;
+	TPtrC h = Clip(host, 60);
+	if (s->auth_proxy)
+		who.Format(_L("The proxy %S needs a password"), &h);
+	else
+		who.Format(_L("%S needs a password"), &h);
+	TBuf<100> what;
+	if (realm.Length() && realm.Compare(host))
+		{
+		TPtrC r = Clip(realm, 90);
+		what.Format(_L("\"%S\""), &r);
+		}
+	TBuf<60> user;
+	TBuf<CEikSecretEditor::EMaxSecEdLength> pass;
+	CPwAuthDialog* dlg = new(ELeave) CPwAuthDialog(who, what, user, pass);
+	if (dlg->ExecuteLD(R_PW_AUTH_DIALOG))
+		{
+		ToUtf8(s->auth_user, sizeof(s->auth_user), user);
+		ToUtf8(s->auth_pass, sizeof(s->auth_pass), pass);
+		s->auth_state = PW_ASK_OK;
+		}
+	else
+		s->auth_state = PW_ASK_CANCEL;
+	pass.FillZ();
+	}
+
+void CPwAuthDialog::PreLayoutDynInitL()
+	{
+	((CEikLabel*)Control(EPwDlgAuthWho))->SetTextL(Clip(iWho, 60));
+	if (iRealm.Length())
+		((CEikLabel*)Control(EPwDlgAuthRealm))->SetTextL(Clip(iRealm, 70));
+	else
+		MakeLineVisible(EPwDlgAuthRealm, EFalse);
+	}
+
+TBool CPwAuthDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	((CEikEdwin*)Control(EPwDlgAuthUser))->GetText(iUser);
+	iUser.Trim();
+	if (iUser.Length() == 0)
+		{
+		TryChangeFocusToL(EPwDlgAuthUser);
+		iEikonEnv->InfoMsg(_L("No user name entered"));
+		return EFalse;
+		}
+	((CEikSecretEditor*)Control(EPwDlgAuthPass))->GetText(iPass);
+	return ETrue;
+	}
+
+// A file PsiWeb cannot show: say what it is, then the standard Save as
+// dialog (on the Memory disk if there is one). The engine saves it, with
+// its progress as the busy message and "Saved" at the end.
+void CPwView::AskSaveL()
+	{
+	PwShared* s = iShared;
+	TBuf<64> name, type;
+	FromUtf8(name, s->save_name);
+	FromUtf8(type, s->save_type);
+	for (TInt i = 0; i < name.Length(); i++)
+		{
+		TChar c = name[i];
+		if (c < ' ' || c == '\\' || c == '/' || c == ':' || c == '*' || c == '?' || c == '"' || c == '<' || c == '>' || c == '|')
+			name[i] = '_';
+		}
+	name.Trim();
+	if (name.Length() == 0)
+		name = _L("Download");
+	TBuf<120> what;
+	TPtrC n = Clip(name, 36), t = Clip(type, 30);
+	if (s->save_size >= 0)
+		what.Format(_L("PsiWeb cannot show \"%S\" (%S, %d KB)"), &n, &t, (s->save_size + 1023) / 1024);
+	else
+		what.Format(_L("PsiWeb cannot show \"%S\" (%S)"), &n, &t);
+	if (!iEikonEnv->QueryWinL(what, _L("Save it to a file?")))
+		{
+		s->save_state = PW_ASK_CANCEL;
+		return;
+		}
+	RFs& fs = iCoeEnv->FsSession();
+	TDriveInfo di;
+	TBool memDisk = fs.Drive(di, EDriveD) == KErrNone && di.iType != EMediaNotPresent;
+	TFileName path;
+	path = memDisk ? _L("D:\\Documents\\") : _L("C:\\Documents\\");
+	fs.MkDirAll(path);
+	path.Append(name);
+	TBuf<40> title(_L("Save to file"));
+	CEikFileSaveAsDialog* dlg = new(ELeave) CEikFileSaveAsDialog(&path, &title, NULL, EFalse);
+	if (!dlg->ExecuteLD(R_EIK_DIALOG_FILE_SAVEAS))
+		{
+		s->save_state = PW_ASK_CANCEL;
+		return;
+		}
+	// room for it? (if the size is not known, the engine finds out)
+	TInt drive;
+	TVolumeInfo vol;
+	if (s->save_size >= 0 && RFs::CharToDrive(path[0], drive) == KErrNone && fs.Volume(vol, drive) == KErrNone
+		&& vol.iFree < TInt64(s->save_size) + TInt64(16384))
+		{
+		TBuf<80> m;
+		m.Format(_L("Not enough room on the disk - the file is %d KB"), (s->save_size + 1023) / 1024);
+		iEikonEnv->InfoMsg(m);
+		s->save_state = PW_ASK_CANCEL;
+		return;
+		}
+	fs.MkDirAll(TParsePtrC(path).DriveAndPath());
+	ToUtf8(s->save_path, sizeof(s->save_path), path);
+	s->save_state = PW_ASK_OK;
 	}
 
 // ----- Update PsiWeb ------------------------------------------------------------
@@ -678,7 +1101,7 @@ void CPwView::Draw(const TRect& aRect) const
 		gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 		gc.SetBrushColor(KRgbWhite);
 		gc.SetPenStyle(CGraphicsContext::ENullPen);
-		gc.DrawRect(Rect());
+		gc.DrawRect(iPageArea);
 		gc.SetPenStyle(CGraphicsContext::ESolidPen);
 		gc.SetPenColor(KRgbBlack);
 		const CFont* font = iEikonEnv->TitleFont();
@@ -691,7 +1114,10 @@ void CPwView::Draw(const TRect& aRect) const
 		gc.DiscardFont();
 		return;
 		}
-	gc.BitBlt(aRect.iTl, iBitmap, aRect);
+	TRect r(aRect);
+	r.Intersection(iPageArea);           // (the scroll bar draws itself)
+	if (!r.IsEmpty())
+		gc.BitBlt(r.iTl, iBitmap, r);
 	}
 
 void CPwView::PushEvent(TInt aType, TInt aCode, TInt aX, TInt aY)
@@ -705,6 +1131,9 @@ void CPwView::PushEvent(TInt aType, TInt aCode, TInt aX, TInt aY)
 	e.x = aX;
 	e.y = aY;
 	s->ev_head++;
+	s->net.resized = 1;                  // wakes the engine's wait (see psi_os.c)
+	RingEngine();                        // (0.81) it may be waiting on its doorbell
+	TickFast();                          // ...and the frame it draws is wanted soon
 	}
 
 // Key and pen timings: the randomness behind TLS keys (see psiglue pg_entropy)
@@ -734,6 +1163,13 @@ TKeyResponse CPwView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 	TUint mods = aKeyEvent.iModifiers;
 	if (code == EKeyMenu)
 		return EKeyWasNotConsumed;
+	// the Zoom in and Zoom out icons beside the screen: as View > Zoom in
+	// and Zoom out (Ctrl+M, Shift+Ctrl+M)
+	if (code == (TUint)EEikSidebarZoomInKey || code == (TUint)EEikSidebarZoomOutKey)
+		{
+		iEikonEnv->EikAppUi()->HandleCommandL(code == (TUint)EEikSidebarZoomInKey ? EPwCmdZoomIn : EPwCmdZoomOut);
+		return EKeyWasConsumed;
+		}
 	AddEntropy(code);
 	if (mods & EModifierCtrl)
 		{
@@ -742,10 +1178,11 @@ TKeyResponse CPwView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aTyp
 		TUint letter = (code >= 1 && code <= 26) ? 'a' + code - 1 : (code | 0x20);
 		if (mods & EModifierShift)
 			{
-			// Shift+Ctrl+M zoom out, Q page information, H help, A about
+			// Shift+Ctrl+M zoom out, Q page information, H help, A about,
+			// R Reading mode
 			switch (letter)
 				{
-				case 'm': case 'q': case 'h': case 'a':
+				case 'm': case 'q': case 'h': case 'a': case 'r':
 					return EKeyWasNotConsumed;
 				}
 			}
@@ -779,6 +1216,16 @@ void CPwView::HandlePointerEventL(const TPointerEvent& aEvent)
 	{
 	TPoint p = aEvent.iPosition;
 	AddEntropy(p.iX * 1000 + p.iY);
+	// the pen went down on the scroll bar: it has the pen until it comes up
+	if (aEvent.iType == TPointerEvent::EButton1Down)
+		iSbPen = !iPageArea.Contains(p);
+	if (iSbPen)
+		{
+		CCoeControl::HandlePointerEventL(aEvent);
+		if (aEvent.iType == TPointerEvent::EButton1Up)
+			iSbPen = EFalse;
+		return;
+		}
 	switch (aEvent.iType)
 		{
 	case TPointerEvent::EButton1Down:
@@ -907,10 +1354,24 @@ void CPwPrefsDialog::PreLayoutDynInitL()
 	SetEdwinTextL(EPwDlgProxyHost, &iSettings.iProxyHost);
 	SetNumberEditorValue(EPwDlgProxyPort, iSettings.iProxyPort);
 	SetEdwinTextL(EPwDlgHome, &iSettings.iHome);
+	((CEikChoiceList*)Control(EPwDlgPictures))->SetCurrentItem(iSettings.iImages ? 1 : 0);
+	((CEikChoiceList*)Control(EPwDlgText))->SetCurrentItem((iSettings.iDisplay & KPwDisplayScaledText) ? 1 : 0);
 	}
 
-TBool CPwPrefsDialog::OkToExitL(TInt /*aButtonId*/)
+TBool CPwPrefsDialog::OkToExitL(TInt aButtonId)
 	{
+	if (aButtonId == EPwBidGreys)
+		{
+		// the greys screen shared with PsiTerm and PsiMail, on top of this
+		// dialog; the engine reads PsiGrey.ini at each page load
+		PsiGrey grey;
+		TInt r = PsiGreyScreenL(grey);
+		if (r > 0)
+			iEikonEnv->InfoMsg(_L("Greys saved - used from the next page"));
+		else if (r < 0)
+			iEikonEnv->InfoMsg(_L("Not saved - the internal disk is full or in use"));
+		return EFalse;                        // (the dialog stays open)
+		}
 	TInt proxy = ((CEikChoiceList*)Control(EPwDlgProxy))->CurrentItem() == 1;
 	TBuf<60> host;
 	GetEdwinText(host, EPwDlgProxyHost);
@@ -926,6 +1387,11 @@ TBool CPwPrefsDialog::OkToExitL(TInt /*aButtonId*/)
 	iSettings.iProxyPort = NumberEditorValue(EPwDlgProxyPort);
 	GetEdwinText(iSettings.iHome, EPwDlgHome);
 	iSettings.iHome.Trim();
+	iSettings.iImages = ((CEikChoiceList*)Control(EPwDlgPictures))->CurrentItem() == 1;
+	if (((CEikChoiceList*)Control(EPwDlgText))->CurrentItem() == 1)
+		iSettings.iDisplay |= KPwDisplayScaledText;
+	else
+		iSettings.iDisplay &= ~KPwDisplayScaledText;
 	return ETrue;
 	}
 
@@ -940,12 +1406,49 @@ void CPwAppUi::ConstructL()
 	LoadSettings(settings);
 	TRAPD(pics, ToolbarPicturesL());
 	(void)pics;                              // (no PsiWeb.mbm: words only)
+	// the Pictures button stays pressed in while the page's pictures show
+	CEikButtonBase* picsButton = iToolBar ? (CEikButtonBase*)iToolBar->ControlById(EPwCmdImages) : NULL;
+	if (picsButton)
+		picsButton->SetBehavior(EEikButtonLatches);
+	ShowPicturesState(settings.iImages);
 	if (iToolBar && !settings.iToolbar)
 		iToolBar->MakeVisible(EFalse);       // remembered from last time
 	iView = new(ELeave) CPwView;
 	iView->ConstructL(PageRect(settings.iToolbar), settings);
 	AddToStackL(iView);
 	iCoeEnv->RootWin().EnableOnEvents(EEventControlAlways);   // (0.54) switch-on events even when in the background
+	// the user's contrast and backlight back if a program stopped in
+	// Reading mode without doing it (docs/display.md)
+	TPsiReading::Recover(iCoeEnv->FsSession(), iCoeEnv->WsSession(), KUidPsiWeb);
+	iForeground = ETrue;
+	UpdateReading();
+	}
+
+// ----- Reading mode (docs/display.md) ----------------------------------------------
+
+void CPwAppUi::UpdateReading(TBool aEnterOnly)
+	{
+	if (!iView)
+		return;
+	if (iForeground && (iView->Settings().iDisplay & KPwDisplayReading))
+		iReading.Enter(iCoeEnv->FsSession(), KUidPsiWeb);
+	else if (!aEnterOnly)
+		iReading.Leave(iCoeEnv->FsSession(), KUidPsiWeb);
+	}
+
+// Reading mode follows PsiWeb in and out of the foreground (CCoeAppUi's
+// HandleForegroundEventL is private on ER5: the focus events are seen here);
+// after a switch-on turned it off, the next key turns it on again
+void CPwAppUi::HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination)
+	{
+	if (aEvent.Type() == EEventFocusGained || aEvent.Type() == EEventFocusLost)
+		{
+		iForeground = aEvent.Type() == EEventFocusGained;
+		UpdateReading();
+		}
+	else if (aEvent.Type() == EEventKey && iForeground && !iReading.Active())
+		UpdateReading(ETrue);
+	CEikAppUi::HandleWsEventL(aEvent, aDestination);
 	}
 
 // The Psion was switched back on (0.54): the engine re-checks the link
@@ -954,7 +1457,11 @@ void CPwAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
 	{
 	(void)aDestination;                  // (the CONE default does nothing, and is private)
 	if (iView && iView->Shared())
+		{
 		iView->Shared()->net.switch_on++;
+		iView->RingEngine();             // (0.81) it may be waiting on its doorbell
+		}
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiWeb);   // (back on with the next key)
 	}
 
 // a toolbar button's picture, from PsiWeb.mbm (made by web/tools/mkicons.py):
@@ -979,6 +1486,20 @@ void CPwAppUi::ButtonPictureL(TInt aId, TInt aIcon)
 	b->LayoutComponentsL();
 	}
 
+// the Pictures button pressed in (the page's pictures show) or not
+void CPwAppUi::ShowPicturesState(TBool aOn)
+	{
+	CEikButtonBase* b = iToolBar ? (CEikButtonBase*)iToolBar->ControlById(EPwCmdImages) : NULL;
+	if (!b)
+		return;
+	CEikButtonBase::TState st = aOn ? CEikButtonBase::ESet : CEikButtonBase::EClear;
+	if (b->State() == st)
+		return;
+	b->SetState(st);
+	if (iToolBar->IsVisible())
+		b->DrawNow();
+	}
+
 void CPwAppUi::ToolbarPicturesL()
 	{
 	if (!iToolBar)
@@ -986,7 +1507,7 @@ void CPwAppUi::ToolbarPicturesL()
 	ButtonPictureL(EPwCmdOpen, EMbmToolOpen);
 	ButtonPictureL(EPwCmdBack, EMbmToolBack);
 	ButtonPictureL(EPwCmdHome, EMbmToolHome);
-	ButtonPictureL(EPwCmdZoomIn, EMbmToolZoom);
+	ButtonPictureL(EPwCmdImages, EMbmToolPictures);
 	}
 
 // the page's room: ClientRect() keeps the toolbar's width back even when
@@ -1017,6 +1538,7 @@ void CPwAppUi::ShowToolBarL(TBool aShow)
 
 CPwAppUi::~CPwAppUi()
 	{
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiWeb);   // the user's contrast and backlight back
 	if (iView)
 		{
 		RemoveFromStack(iView);
@@ -1034,9 +1556,10 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 	aSettings.iProxyHost.Zero();
 	aSettings.iProxyPort = 8080;
 	aSettings.iHome = KDefaultHome;
-	aSettings.iImages = 1;
+	aSettings.iImages = 0;            // pictures only when asked (View > Show pictures)
 	aSettings.iZoom = 100;
 	aSettings.iToolbar = 1;
+	aSettings.iDisplay = 0;           // sharp text, Reading mode off (docs/display.md)
 	RFile file;
 	if (file.Open(iCoeEnv->FsSession(), KIniFile, EFileRead) != KErrNone)
 		{
@@ -1052,7 +1575,7 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 		aSettings.iNetMode = d[pos++] != 0;
 		aSettings.iUseProxy = d[pos++] != 0;
 		aSettings.iProxyPort = d[pos] | (d[pos + 1] << 8); pos += 2;
-		aSettings.iImages = d[pos++] != 0;
+		pos++;               // (NetSurf's pictures setting, up to 0.61: see below)
 		aSettings.iZoom = d[pos++];
 		if (aSettings.iZoom < 30) aSettings.iZoom = 100;
 		TInt len = d[pos++];
@@ -1069,6 +1592,12 @@ void CPwAppUi::LoadSettings(TPwSettings& aSettings)
 					pos += len;
 					if (pos < d.Length())            // (0.55) after the home page
 						aSettings.iToolbar = d[pos++] != 0;
+					// (0.62) pictures on every page: a new byte, so that
+					// NetSurf's setting (on by default) does not carry over
+					if (pos < d.Length())
+						aSettings.iImages = d[pos++] != 0;
+					if (pos < d.Length())            // (0.81) display: Reading mode, text
+						aSettings.iDisplay = d[pos++] & (KPwDisplayReading | KPwDisplayScaledText);
 					}
 				}
 			}
@@ -1082,8 +1611,12 @@ void CPwAppUi::SaveSettings(const TPwSettings& aSettings)
 	RFs& fs = iCoeEnv->FsSession();
 	SaveSharedLink(fs, aSettings);
 	fs.MkDirAll(KIniFile);
+	// (0.81) to a temporary file, then renamed over the old one, so a full
+	// disk or a switch-off part way never leaves half a settings file
+	TFileName tmpName(KIniFile);
+	tmpName.Append('~');
 	RFile file;
-	if (file.Replace(fs, KIniFile, EFileWrite) != KErrNone)
+	if (file.Replace(fs, tmpName, EFileWrite) != KErrNone)
 		return;
 	TBuf8<400> d;
 	d.Append(1);                         // version
@@ -1103,8 +1636,16 @@ void CPwAppUi::SaveSettings(const TPwSettings& aSettings)
 	d.Append((TUint8)tmp.Length());
 	d.Append(tmp);
 	d.Append((TUint8)aSettings.iToolbar);
-	file.Write(d);
+	d.Append((TUint8)aSettings.iImages);    // (0.62)
+	d.Append((TUint8)aSettings.iDisplay);   // (0.81)
+	TInt r = file.Write(d);
+	if (r == KErrNone)
+		r = file.Flush();
 	file.Close();
+	if (r == KErrNone)
+		r = fs.Replace(tmpName, KIniFile);
+	if (r != KErrNone)
+		fs.Delete(tmpName);
 	}
 
 void CPwAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
@@ -1122,10 +1663,11 @@ void CPwAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		}
 	else if (aMenuId == R_PW_VIEW_MENU)
 		{
-		aMenuPane->SetItemButtonState(EPwCmdImages,
-			iView->Settings().iImages ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPwCmdToggleToolbar,
 			iView->Settings().iToolbar ? EEikMenuItemSymbolOn : 0);
+		aMenuPane->SetItemButtonState(EPwCmdReading,
+			(iView->Settings().iDisplay & KPwDisplayReading) ? EEikMenuItemSymbolOn : 0);
+		aMenuPane->SetItemButtonState(EPwCmdImages, iView->PicturesShown() ? EEikMenuItemSymbolOn : 0);
 		}
 	}
 
@@ -1272,6 +1814,11 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 	{
 	TPwSettings& st = iView->Settings();
 	PwShared* sh = iView->Shared();
+	// the Zoom in and Zoom out icons beside the screen come as EIKON's own
+	// zoom commands (or as their keys: CPwView::OfferKeyEventL)
+	if (aCommand == EEikCmdZoomIn) aCommand = EPwCmdZoomIn;
+	else if (aCommand == EEikCmdZoomOut) aCommand = EPwCmdZoomOut;
+	else if (aCommand == EEikCmdZoomNormal) aCommand = EPwCmdZoomNormal;
 	switch (aCommand)
 		{
 	case EEikCmdExit:
@@ -1343,15 +1890,45 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 		break;
 		}
 	case EPwCmdImages:
-		st.iImages = !st.iImages;
-		iView->Command(PW_CMD_IMAGES, st.iImages ? _L("1") : _L("0"));
-		iEikonEnv->InfoMsg(st.iImages ? _L("Pictures shown from the next page on") : _L("Pictures not shown from the next page on"));
-		SaveSettings(st);
+		{
+		// View > Show pictures (a tick box) and the Pictures button: the
+		// pictures of the page showing, on or off (pictures on every page is
+		// in Preferences). The button shows what the page has come to.
+		TBool on = iView->PicturesShown();
+		if (!iView->EngineRunning())
+			iView->Command(PW_CMD_IMAGES, _L("1"));   // (says why not)
+		else if (st.iImages)
+			iEikonEnv->InfoMsg(_L("Pictures are already shown on every page"));
+		else if (sh->page_pics)
+			{
+			iView->Command(PW_CMD_IMAGES, _L("0"));
+			on = EFalse;
+			}
+		else
+			{
+			TBuf<16> u;
+			FromUtf8(u, sh->url);
+			if (u.Length() == 0 || u.Left(6).Compare(_L("about:")) == 0)
+				iEikonEnv->InfoMsg(_L("No pictures to show"));
+			else
+				{
+				iView->Command(PW_CMD_IMAGES, _L("1"));
+				on = ETrue;
+				}
+			}
+		ShowPicturesState(on);
 		break;
+		}
 	case EPwCmdToggleToolbar:
 		st.iToolbar = !st.iToolbar;
 		SaveSettings(st);
 		ShowToolBarL(st.iToolbar);
+		break;
+	case EPwCmdReading:                      // View > Reading mode (docs/display.md)
+		st.iDisplay ^= KPwDisplayReading;
+		SaveSettings(st);
+		UpdateReading();
+		iEikonEnv->InfoMsg((st.iDisplay & KPwDisplayReading) ? _L("Reading mode on") : _L("Reading mode off"));
 		break;
 	case EPwCmdPageInfo:
 		PageInfoL();
@@ -1372,6 +1949,7 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 		if (dlg->ExecuteLD(R_PW_PREFS_DIALOG))
 			{
 			SaveSettings(st);
+			ShowPicturesState(st.iImages);   // (pictures on every page, or not)
 			RestartEngineL();
 			}
 		break;

@@ -25,11 +25,13 @@
 #include <eikbtpan.h>
 #include <eiktbar.h>
 #include <eikimage.h>
+#include <apgtask.h>        // TApaSystemEvent: a backup starting
 #include "psiterm.h"
 #include "ptxfer.h"
 #include "pticons.h"
 #include "psilink.h"
 #include "pglinktest.h"
+#include "psigreyui.h"
 
 static void UseSharedLink(RFs& aFs, TPsiSettings& aSettings);
 static void SaveSharedLink(RFs& aFs, const TPsiSettings& aSettings);
@@ -74,11 +76,18 @@ const TInt KEntropyKeysNeeded = 40;
 const TInt KScrollbackLines = 300;       // ~150 KB of history
 const TInt KScrollbackCols = 128;
 const TInt KClipMax = 16384;            // most text copied/pasted at once
+// (0.81) power: the SSH pump and the status tick (see PumpQuiet, StartTick)
+const TInt KPumpTickUs = 15625;         // every system tick while output flows
+const TInt KPumpQuietAfter = 32;        // ticks with nothing before it goes quiet (1/2 s)
+const TInt KPumpQuietUs = 1000000;      // quiet with no status tick to beat for it (heartbeat)
+const TInt KPumpNoBellUs = 125000;      // quiet without a working doorbell
+const TInt KTickUs = 500000;            // status line, cursor blink, tmux, the log
+const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (TickBusy)
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.78");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.86");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -99,7 +108,8 @@ static TPtrC LeftSafe(const TDesC& aText, TInt aMax)
 
 // Saves a whole data file safely: into "<name>~" first, then swapped in, so
 // a flat battery mid-write never leaves a half-written (or empty) file
-static TInt SafeWrite(RFs& aFs, const TDesC& aName, const TDesC8& aData)
+// (declared in psiterm.h: ptxfer.cpp uses it for Log.ini too)
+TInt SafeWrite(RFs& aFs, const TDesC& aName, const TDesC8& aData)
 	{
 	aFs.MkDirAll(aName);
 	TFileName tmp(aName);
@@ -352,7 +362,11 @@ CTermView::~CTermView()
 	delete iXferMem;
 	if (iSshActive && iShared)
 		{
+		// closing with a session up: psissh gets 3 s to hang up and go; the
+		// wait is in this thread, so say so (bottom left, as busy messages go)
+		TRAP_IGNORE(iEikonEnv->BusyMsgL(_L("Ending SSH..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
 		iShared->quit = 1;
+		RingSsh();
 		for (TInt i = 0; i < 30 && iSshProcess.ExitType() == EExitPending; i++)
 			User::After(100000);
 		if (iSshProcess.ExitType() == EExitPending)
@@ -360,13 +374,17 @@ CTermView::~CTermView()
 			iSshProcess.Kill(0);
 			PsiLinkTimersBack();         // it never got to give NIFMAN its timers back
 			}
+		iEikonEnv->BusyMsgCancel();
 		}
 	delete iPump;
+	delete iBellWaiter;                  // (before the chunk it points into goes)
+	iSshRinger.Close();
 	delete iWatcher;
 	delete iShotTimer;
 	delete iPendingIdle;
 	delete iTick;
 	delete iReconnectTimer;
+	delete iQuitTimer;
 	delete iDebugText;
 	if (iSshActive)
 		iSshProcess.Close();
@@ -396,6 +414,7 @@ void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	{
 	iSettings = aSettings;
 	iTabRow = -1;
+	iForeground = ETrue;                     // (until a focus event says otherwise)
 	CreateBackedUpWindowL(iCoeEnv->RootWin(), EGray16);
 	SetRectL(aRect);
 	EnableDragEvents();                      // pen drag selects text
@@ -577,11 +596,16 @@ void CTermView::Layout()
 	iCacheValid = EFalse;
 	vterm_set_size(iVt, iRows, iCols);
 	vterm_screen_flush_damage(iScreen);
-	if (iSshActive && iShared)
+	if (iSshActive && iShared && iShared->mode == 0)
 		{
+		// (0.83) an SSH session only: an update or an upload never takes the
+		// flag, and while it was up psiglue's waits ended at once and took
+		// in no data, so every reply came out "cut short" - as when Update
+		// ended a tmux session and the tab strip went
 		iShared->rows = iRows;
 		iShared->cols = iCols;
 		iShared->resized = 1;
+		RingSsh();
 		}
 	iDamaged = EFalse;
 	if (IsActivated())
@@ -621,7 +645,7 @@ void CTermView::SizeAtZoom(TInt aZoom, TInt& aCols, TInt& aRows) const
 	}
 
 // the toolbar's first button follows the connection: SSH to... when idle,
-// Disconnect while a session is up or a reconnect is counting down
+// End SSH while a session is up or a reconnect is counting down
 void CTermView::SyncToolbar()
 	{
 	TInt busy = (iSshActive || iReconnectWait) ? 1 : 0;
@@ -789,12 +813,15 @@ void CTermView::RunToolDialogL()
 		}
 	}
 
+// Stop (or Esc) in the tool window: asks the job to end, under the watchdog;
+// a second Stop ends it at once (AskQuit), so the window can always close
 void CTermView::StopTool()
 	{
 	if (iSshActive && iShared)
 		{
-		iShared->quit = 1;
-		AppendDebug(_L8("\r\nStopping...\r\n"));
+		if (!iQuitAsked)
+			AppendDebug(_L8("\r\nStopping...\r\n"));
+		AskQuit();
 		}
 	}
 
@@ -818,7 +845,7 @@ void CTermView::StartInstallerL()
 		iEikonEnv->EikAppUi()->HandleCommandL(EEikCmdExit);
 		return;
 		}
-	TBuf<160> m;
+	TBuf<KMaxFileName + 80> m;           // (iUpdateFile is a TFileName: Format panics if it cannot fit)
 	m.Format(_L("The installer did not start (%d) - open %S from the System screen"), err, &iUpdateFile);
 	iEikonEnv->InfoWinL(_L("Update downloaded"), m);
 	}
@@ -1005,6 +1032,7 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 			{
 			while (iShared->kbd_head - iShared->kbd_tail >= PSI_KBD_SIZE && waited < 400)
 				{
+				RingSsh();
 				User::After(5000);
 				waited++;
 				}
@@ -1016,6 +1044,11 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 			iShared->kbd[iShared->kbd_head % PSI_KBD_SIZE] = aBytes[i];
 			iShared->kbd_head++;
 			}
+		RingSsh();                       // (0.81) psissh may be waiting on its doorbell
+		PumpFast();                      // ...and the echo is on its way
+		iUserAt = User::TickCount();
+		if (iTick && iTickUs != KTickUs && TickBusy())
+			StartTick();
 		return;
 		}
 	if (iSettings.iNetMode)
@@ -1140,7 +1173,8 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 	else if (iSshActive)
 		{
 		TInt state = iShared ? iShared->state : PSI_STATE_STARTING;
-		if (iLaunchMode == 1) aText.Append(_L("Running the speed test..."));
+		if (iQuitAsked) aText.Append(_L("Ending SSH..."));   // (the watchdog ends it if it will not stop)
+		else if (iLaunchMode == 1) aText.Append(_L("Running the speed test..."));
 		else if (iLaunchMode == 2) aText.Append(_L("Updating PsiTerm..."));
 		else if (iLaunchMode == 3) aText.Append(_L("Sending screenshots..."));
 		else if (iLaunchMode == 4) aText.Append(_L("Making an SSH key..."));
@@ -1219,7 +1253,8 @@ void CTermView::DrawStatus(CWindowGc& aGc) const
 	aGc.DiscardFont();
 	}
 
-// Every 0.5 s: blink the cursor, and refresh the status line if it changed
+// Every 0.5 s: blink the cursor, and refresh the status line if it changed.
+// (0.81) Every 2 s with PsiTerm in the background, where nothing is drawn.
 TInt CTermView::TickCallback(TAny* aSelf)
 	{
 	((CTermView*)aSelf)->Tick();
@@ -1228,8 +1263,34 @@ TInt CTermView::TickCallback(TAny* aSelf)
 
 void CTermView::Tick()
 	{
+	if (iSshActive && iShared)
+		{
+		// (0.81) the heartbeat, while the pump waits on its doorbell; and
+		// output a ring did not bring (it should never happen) is taken
+		iShared->app_beat++;
+		if (iPumpQuiet && iShared->out_tail != iShared->out_head)
+			{
+			PumpFast();
+			PumpSsh();
+			}
+		}
 	if (!IsActivated() || iPaintGc || iCapture)
 		return;
+	if (!iForeground)
+		{
+		// in the background: only what can't wait (nothing on the screen)
+		if (iLog)
+			iLog->Flush();
+		TInt bstate = (iSshActive && iShared) ? iShared->state : -1;
+		if (bstate != iLastState)
+			{
+			iLastState = bstate;
+			iStateSince = User::TickCount();
+			}
+		if (SshLoggedIn())
+			iEverLoggedIn = ETrue;
+		return;
+		}
 	if (iSettings.iBlink && iCurVisible && iScrollOffset == 0)
 		{
 		iBlinkHidden = !iBlinkHidden;
@@ -1281,6 +1342,30 @@ void CTermView::Tick()
 			DeactivateGc();
 			}
 		}
+	if (iTick && iTickUs != (TickBusy() ? KTickUs : KTickSlowUs))
+		StartTick();                         // (0.81) the pace for what is on the screen now
+	}
+
+// (0.81) The tick goes every 0.5 s while something on the screen moves or
+// waits on it, otherwise every 2 s: the clock in the status line then
+// turns within 2 s of the minute. In the background it is always 2 s.
+TBool CTermView::TickBusy() const
+	{
+	if (!iForeground)
+		return EFalse;
+	if (iSettings.iBlink || iReconnectWait || iQuitAsked)
+		return ETrue;
+	if (iSshActive && (!iShared || iShared->state != PSI_STATE_CONNECTED || iLaunchMode != 0))
+		return ETrue;                        // connecting (the spinner), a job, or not up yet
+	if (iTqSent || iTqKickAt)
+		return ETrue;                        // a tmux query on its way
+	if (iLastTx && !iNoReplyShown)
+		return ETrue;                        // typed to the modem: is it answering?
+	if (iTabsTop && iTabMiss > 0 && iTabMiss < KTabMissLimit)
+		return ETrue;                        // the tab strip may be about to go
+	if (iUserAt && (TInt)(User::TickCount() - iUserAt) < 10 * 64)
+		return ETrue;                        // typing in the last 10 s
+	return EFalse;
 	}
 
 void CTermView::StartTick()
@@ -1291,8 +1376,26 @@ void CTermView::StartTick()
 		return;
 	iTick->Cancel();
 	iBlinkHidden = EFalse;
-	// always: the status line, the cursor blink and the tmux tabs
-	iTick->Start(500000, 500000, TCallBack(TickCallback, this));
+	// always: the status line, the cursor blink and the tmux tabs (every
+	// 0.5 s; 2 s when nothing moves, or in the background: TickBusy)
+	iTickUs = TickBusy() ? KTickUs : KTickSlowUs;
+	iTick->Start(iTickUs, iTickUs, TCallBack(TickCallback, this));
+	}
+
+// (0.81) PsiTerm came to the front or went behind another program
+// (CPsiTermAppUi::HandleWsEventL): the tick slows down behind, and in front
+// the blink and the status line are put right at once
+void CTermView::SetForeground(TBool aForeground)
+	{
+	if (aForeground == iForeground)
+		return;
+	iForeground = aForeground;
+	if (iTick && iTick->IsActive() && iTickUs != (TickBusy() ? KTickUs : KTickSlowUs))
+		StartTick();
+	if (iForeground && iTqDueAt)
+		iTqKickAt = User::TickCount();   // the tmux window list, which waited
+	if (iForeground)
+		Tick();
 	}
 
 void CTermView::ApplyAppearanceL()
@@ -1738,6 +1841,7 @@ TBool CTermView::TmuxQueryPost(TInt aOp, TInt aIndex)
 		}
 	TUint req = s->tq_req + 1;
 	s->tq_req = req;                           // last: psissh starts now
+	RingSsh();
 	iTqSent = req ? req : 1;
 	iTqStartedAt = User::TickCount();
 	return ETrue;
@@ -1902,6 +2006,8 @@ void CTermView::TmuxQueryTick()
 		if (TmuxQueryPost(PSI_TQ_SELECT, i))
 			return;
 		}
+	if (!iForeground)
+		return;                              // (0.81) not drawn: asked again on coming back (SetForeground)
 	TBool kick = iTqKickAt && (TInt)(now - iTqKickAt) >= 0;
 	if (!kick && (TInt)(now - iTqDueAt) < 0)
 		return;
@@ -1910,8 +2016,12 @@ void CTermView::TmuxQueryTick()
 	if (TmuxQueryPost(PSI_TQ_LIST, 0))
 		{
 		iTqKickAt = 0;
-		// about every 4 s while tmux answers; less often while it does not
-		iTqDueAt = now + (iTqState == 1 ? 4 * 64 : iTqNone >= 3 ? 30 * 64 : 10 * 64);
+		// about every 4 s while tmux answers; less often while it does not.
+		// (0.81) Each query is a channel and a command on the server, and
+		// wakes the Psion: after a minute without a key, every 14 s, which
+		// still keeps the answer fresh enough to use (KTqFreshTicks)
+		TBool userIdle = !iUserAt || (TInt)(now - iUserAt) > 60 * 64;
+		iTqDueAt = now + (iTqState == 1 ? (userIdle ? 14 * 64 : 4 * 64) : iTqNone >= 3 ? 30 * 64 : 10 * 64);
 		}
 	}
 
@@ -2338,14 +2448,29 @@ TInt CTermView::TextByte(const TLook& aLook) const
 
 // Colour -> one of 16 greys. The Psion screen is dark-on-light, so text
 // colours are kept dark enough to read and backgrounds are kept light
-// unless they are genuinely dark.
-static TInt GreyOf(const VTermScreen* aScreen, VTermColor aCol)
+// unless they are genuinely dark. With the grey calibration on (docs/
+// display.md) the 8-bit grey takes the level that looks nearest to it on
+// this screen (aCal); off, the old mapping exactly.
+static TInt GreyOf(const VTermScreen* aScreen, VTermColor aCol, const TUint8* aCal)
 	{
 	vterm_screen_convert_color_to_rgb(aScreen, &aCol);
+	TUint x = aCol.rgb.red * 30 + aCol.rgb.green * 59 + aCol.rgb.blue * 11;
+	if (aCal)
+		return aCal[(x * 5243u) >> 19];      // x / 100 (exact to 25500): 0..255
 	// ((r*30 + g*59 + b*11) / 100) / 17 without two software divisions:
 	// x*9869 >> 24 == x/1700 for every x <= 25500
-	TUint x = aCol.rgb.red * 30 + aCol.rgb.green * 59 + aCol.rgb.blue * 11;
 	return (TInt)((x * 9869u) >> 24);    // 0..15
+	}
+
+void CTermView::SetGreys(const PsiGrey& aGrey)
+	{
+	unsigned char lv[16], cal[256];
+	psigrey_levels(&aGrey, lv);
+	psigrey_nearest(lv, cal);
+	Mem::Copy(iGreyCal, cal, sizeof(iGreyCal));
+	iGreyOn = aGrey.on;
+	if (IsActivated())
+		DrawNow();
 	}
 
 void CTermView::CellColours(const VTermScreenCell& aCell, TInt& aFg, TInt& aBg) const
@@ -2354,15 +2479,24 @@ void CTermView::CellColours(const VTermScreenCell& aCell, TInt& aFg, TInt& aBg) 
 	TInt bg = 15;
 	TBool fgDefault = VTERM_COLOR_IS_DEFAULT_FG(&aCell.fg);
 	TBool bgDefault = VTERM_COLOR_IS_DEFAULT_BG(&aCell.bg);
+	const TUint8* cal = iGreyOn ? iGreyCal : NULL;
 	if (!fgDefault)
 		{
-		fg = GreyOf(iScreen, aCell.fg);
-		// light text colours were chosen for black backgrounds: darken them
+		fg = GreyOf(iScreen, aCell.fg, cal);
+		// light text colours were chosen for black backgrounds: darken them.
+		// Dark greys (the standard, docs/display.md): 0..6 in the colour's
+		// own order, so text never goes to a mid grey on the white; lighter
+		// greys (as before 0.81): up to 9, the lightest colours folded back
 		if (bgDefault)
-			fg = (fg > 9) ? 9 - (fg - 9) / 2 : fg * 2 / 3;
+			{
+			if (iSettings.iDisplay & KPtDisplayLightText)
+				fg = (fg > 9) ? 9 - (fg - 9) / 2 : fg * 2 / 3;
+			else
+				fg = (fg * 6 + 7) / 15;
+			}
 		}
 	if (!bgDefault)
-		bg = GreyOf(iScreen, aCell.bg);
+		bg = GreyOf(iScreen, aCell.bg, cal);
 	if (aCell.attrs.reverse)
 		{
 		TInt t = fg; fg = bg; bg = t;
@@ -3227,6 +3361,11 @@ void CTermView::StartSshL()
 		return;
 	if (iSettings.iSshHost.Length() == 0 || iSettings.iSshUser.Length() == 0)
 		return;
+	// the user asked for this session: it is not a reconnect, whatever a
+	// failed retry may have left behind, and a countdown to one stops
+	if (iReconnectWait)
+		CancelReconnect(_L8("\r\n[Reconnect cancelled]\r\n"));
+	iReconnecting = EFalse;
 	if (!SeedFileExists() && iKeyCount < KEntropyKeysNeeded)
 		{
 		// first ever SSH: gather randomness from the user's typing
@@ -3501,81 +3640,10 @@ void CTermView::TakeScreenshotL()
 	User::LeaveIfError(file.Write(cells));
 	CleanupStack::PopAndDestroy(2);         // file, bmp
 	TBuf<64> m;
-	m.Format(_L("Screenshot %d saved - Tools > Debug > Send screenshots"), n);
+	TFileName dir;
+	ShotDir(dir);
+	m.Format(_L("Screenshot %d saved in %S"), n, &dir);
 	iEikonEnv->InfoMsg(m);
-	}
-
-// Deletes the sent .psi files; returns how many.
-TInt CTermView::DeleteShots()
-	{
-	RFs& fs = iCoeEnv->FsSession();
-	TFileName dir, spec;
-	ShotDir(dir);
-	spec.Copy(dir);
-	spec.Append(_L("*.psi"));
-	CDir* list = NULL;
-	if (fs.GetDir(spec, KEntryAttNormal, ESortByName, list) != KErrNone || !list)
-		return 0;
-	TInt n = list->Count();
-	for (TInt i = 0; i < n; i++)
-		{
-		TFileName f(dir);
-		f.Append((*list)[i].iName);
-		fs.Delete(f);
-		}
-	delete list;
-	return n;
-	}
-
-// Bundles every .psi into one file and POSTs it to the update server.
-void CTermView::SendScreenshotsL()
-	{
-	if (iSshActive || iGatheringEntropy)
-		return;
-	RFs& fs = iCoeEnv->FsSession();
-	TFileName dir, spec;
-	ShotDir(dir);
-	spec.Copy(dir);
-	spec.Append(_L("*.psi"));
-	CDir* list = NULL;
-	if (fs.GetDir(spec, KEntryAttNormal, ESortByName, list) != KErrNone || !list || list->Count() == 0)
-		{
-		delete list;
-		iEikonEnv->InfoMsg(_L("No screenshots to send - Shift+Ctrl+P takes one"));
-		return;
-		}
-	CleanupStack::PushL(list);
-	iUpdateFile.Copy(dir);
-	iUpdateFile.Append(_L("send.tmp"));
-	RFile out;
-	User::LeaveIfError(out.Replace(fs, iUpdateFile, EFileWrite));
-	CleanupClosePushL(out);
-	HBufC8* buf = HBufC8::NewLC(4096);
-	TPtr8 bp(buf->Des());
-	for (TInt i = 0; i < list->Count(); i++)
-		{
-		const TEntry& e = (*list)[i];
-		TBuf8<300> hdr;
-		hdr.Append(_L8("PSIFILE1"));
-		PutU32(hdr, e.iName.Length());
-		hdr.Append(e.iName);
-		PutU32(hdr, e.iSize);
-		User::LeaveIfError(out.Write(hdr));
-		TFileName f(dir);
-		f.Append(e.iName);
-		RFile in;
-		User::LeaveIfError(in.Open(fs, f, EFileRead));
-		for (;;)
-			{
-			in.Read(bp);
-			if (bp.Length() == 0)
-				break;
-			out.Write(bp);
-			}
-		in.Close();
-		}
-	CleanupStack::PopAndDestroy(3);         // buf, out, list
-	LaunchSshL(3);
 	}
 
 void CTermView::LaunchSshL(TInt aMode)
@@ -3595,10 +3663,23 @@ void CTermView::LaunchSshL(TInt aMode)
 			PsiShared* old = (PsiShared*)iChunk.Base();
 			if (old->magic == PSI_SHARED_MAGIC && old->state != PSI_STATE_EXITED)
 				{
+				// (up to 5.5 s in this thread: say so, bottom left)
+				TRAP_IGNORE(iEikonEnv->BusyMsgL(_L("Stopping the old SSH program..."), EHLeftVBottom,
+					TTimeIntervalMicroSeconds32(0)));
 				old->quit = 1;
+				// a quiet psissh waits on its doorbell: ring it, or it would
+				// see quit only after its quiet slice (an old psissh's chunk
+				// is smaller and has no bell)
+				if (iChunk.Size() >= (TInt)sizeof(PsiShared) && old->bell_magic == PSI_BELL_MAGIC)
+					{
+					TPsiBellRinger ringer;
+					ringer.Ring(&old->eng_bell);
+					ringer.Close();
+					}
 				for (TInt w = 0; w < 50 && old->state != PSI_STATE_EXITED; w++)
 					User::After(100000);
 				User::After(500000);           // let it hang up and let go
+				iEikonEnv->BusyMsgCancel();
 				}
 			}
 		}
@@ -3607,14 +3688,21 @@ void CTermView::LaunchSshL(TInt aMode)
 		TBuf8<64> msg;
 		msg.Format(_L8("\r\n[SSH: could not set up shared memory (%d)]\r\n"), r);
 		LocalMessage(msg);
+		if (iReconnecting)
+			CancelReconnect(_L8("[Could not reconnect - use SSH to... to try again]\r\n"));
 		ApplySerialSettings();
 		return;
 		}
 	iChunkOpen = ETrue;
 	iShared = (PsiShared*)iChunk.Base();
 	Mem::FillZ(iShared, sizeof(PsiShared));
+	iQuitAsked = EFalse;
+	iKilled = EFalse;
+	if (iQuitTimer)
+		iQuitTimer->Cancel();
 	TmuxQueryReset();
 	iShared->magic = PSI_SHARED_MAGIC;
+	iShared->bell_magic = PSI_BELL_MAGIC;   // (0.81) we ring eng_bell for everything psissh waits for
 	iShared->rows = iRows;
 	iShared->cols = iCols;
 	iShared->baud_index = iSettings.iBaudIndex;
@@ -3668,19 +3756,6 @@ void CTermView::LaunchSshL(TInt aMode)
 	ps.Copy(iSettings.iPppStart);
 	ps.ZeroTerminate();
 	}
-	if (aMode == 3)
-		{
-		// send screenshots: POST the bundle to the update server
-		iShared->port = iSettings.iUpdPort > 0 ? iSettings.iUpdPort : 80;
-		host.Copy(iSettings.iUpdHost);
-		host.ZeroTerminate();
-		TPtr8 path((TUint8*)iShared->path, sizeof(iShared->path) - 1);
-		path.Copy(_L8("/upload"));
-		path.ZeroTerminate();
-		TPtr8 save((TUint8*)iShared->save_as, sizeof(iShared->save_as) - 1);
-		save.Copy(iUpdateFile);
-		save.ZeroTerminate();
-		}
 	if (aMode == 2)
 		{
 		// update: same link as SSH, to GitHub (HTTPS) or the local server
@@ -3757,6 +3832,11 @@ void CTermView::LaunchSshL(TInt aMode)
 		iChunk.Close();
 		iChunkOpen = EFalse;
 		iShared = NULL;
+		// a reconnect that could not start: say so and stop the retries,
+		// rather than stay half in "reconnecting" (the next failure to dial
+		// would then begin an unasked retry chain)
+		if (iReconnecting)
+			CancelReconnect(_L8("[Could not reconnect - use SSH to... to try again]\r\n"));
 		ApplySerialSettings();
 		return;
 		}
@@ -3767,9 +3847,14 @@ void CTermView::LaunchSshL(TInt aMode)
 	iWatcher->Watch(iSshProcess);
 	if (!iPump)
 		iPump = CPeriodic::NewL(CActive::EPriorityStandard);
-	// every system tick (1/64 s): the old 40 ms poll added up to 3 ticks
-	// to every key echo. An idle poll is a couple of compares.
-	iPump->Start(15625, 15625, TCallBack(PumpCallback, this));
+	// every system tick (1/64 s) while output flows: the old 40 ms poll
+	// added up to 3 ticks to every key echo. (0.81) Half a second with
+	// nothing, and it waits on the doorbell psissh rings (PumpQuiet).
+	iSshRinger.Close();                  // (a new psissh: a new thread)
+	iPumpQuiet = EFalse;
+	iPumpIdle = 0;
+	iPump->Cancel();
+	iPump->Start(KPumpTickUs, KPumpTickUs, TCallBack(PumpCallback, this));
 	iSshProcess.Resume();
 	}
 
@@ -3779,6 +3864,55 @@ TInt CTermView::PumpCallback(TAny* aSelf)
 	return 1;
 	}
 
+// (0.81) The pump's two speeds. Quick: every tick while output flows (and
+// half a second after). Quiet: the doorbell is armed - psissh rings it with
+// its next output - and the status tick keeps the heartbeat going (psissh
+// quits after 45 s without one) and looks anyway, in case a ring went astray.
+void CTermView::PumpFast()
+	{
+	iPumpIdle = 0;
+	if (!iPumpQuiet || !iPump)
+		return;
+	iPumpQuiet = EFalse;
+	iPump->Cancel();
+	iPump->Start(KPumpTickUs, KPumpTickUs, TCallBack(PumpCallback, this));
+	}
+
+void CTermView::PumpQuiet()
+	{
+	iPumpIdle = 0;
+	if (!iPump || !iShared || iPumpQuiet)
+		return;
+	if (!iBellWaiter)
+		iBellWaiter = new CPsiBellWaiter(TCallBack(BellCallback, this));   // (no memory: stays quick)
+	if (!iBellWaiter || iBellWaiter->Arm(&iShared->app_bell))
+		return;                          // (rung just now: stay quick)
+	iPumpQuiet = ETrue;
+	iPump->Cancel();
+	if (!iBellWaiter->IsActive())
+		iPump->Start(KPumpNoBellUs, KPumpNoBellUs, TCallBack(PumpCallback, this));
+	else if (!iTick || !iTick->IsActive())
+		iPump->Start(KPumpQuietUs, KPumpQuietUs, TCallBack(PumpCallback, this));
+	// else no timer at all: psissh's ring, and the status tick (which
+	// beats for the pump and looks at the ring too: Tick)
+	if (iShared->out_tail != iShared->out_head)
+		PumpFast();                      // (output came as the bell was armed)
+	}
+
+TInt CTermView::BellCallback(TAny* aSelf)
+	{
+	CTermView* self = (CTermView*)aSelf;
+	self->PumpFast();
+	self->PumpSsh();
+	return 0;
+	}
+
+void CTermView::RingSsh()
+	{
+	if (iSshActive && iShared)
+		iSshRinger.Ring(&iShared->eng_bell);
+	}
+
 // Move psissh.exe's terminal output into libvterm.
 void CTermView::PumpSsh()
 	{
@@ -3786,7 +3920,12 @@ void CTermView::PumpSsh()
 		return;
 	iShared->app_beat++;                 // (0.69) "still here": see psishared.h
 	if (iShared->out_tail == iShared->out_head)
+		{
+		if (!iPumpQuiet && ++iPumpIdle >= KPumpQuietAfter)
+			PumpQuiet();
 		return;
+		}
+	PumpFast();
 	// Feed everything waiting in one paint pass, so libvterm can merge a
 	// burst of scrolling into a single blit. Not while a job's output goes
 	// to the tool window: that window draws itself, and the terminal's gc
@@ -3831,7 +3970,60 @@ void CTermView::DisconnectSsh()
 	if (iReconnectWait)
 		CancelReconnect(_L8("\r\n[Reconnect cancelled]\r\n"));
 	if (iSshActive && iShared)
-		iShared->quit = 1;
+		AskQuit();
+	}
+
+// Asks psissh to stop (quit = 1) and arms the watchdog. psissh normally
+// hangs up and goes within a few seconds; one wedged in a wait nothing
+// completes (a lost receive signal, a stuck ESOCK call) never would, and
+// without this "SSH to", Connect and the Debug tools stayed "Not available
+// while SSH is connected" for good, the tool window could not close, and
+// the serial port or the PPP session stayed taken until PsiTerm was closed.
+// Asked a second time (End SSH or Stop again) it ends the program at once.
+const TInt KQuitWatchdog = 10 * 1000000;   // 10 s: more than a hang-up and a socket close take
+
+void CTermView::AskQuit()
+	{
+	if (!iSshActive || !iShared)
+		return;
+	if (iQuitAsked)
+		{
+		EndSshNow();
+		return;
+		}
+	iQuitAsked = ETrue;
+	iShared->quit = 1;
+	RingSsh();
+	if (!iQuitTimer)
+		iQuitTimer = CPeriodic::New(CActive::EPriorityStandard);
+	if (!iQuitTimer)
+		return;                              // (no memory for the timer: the old behaviour)
+	iQuitTimer->Cancel();
+	iQuitTimer->Start(KQuitWatchdog, KQuitWatchdog, TCallBack(QuitCallback, this));
+	}
+
+TInt CTermView::QuitCallback(TAny* aSelf)
+	{
+	CTermView* self = (CTermView*)aSelf;
+	if (self->iQuitTimer)
+		self->iQuitTimer->Cancel();
+	self->EndSshNow();
+	return 0;
+	}
+
+// Kills psissh. Its Logon then completes and SshProcessEnded does the rest:
+// the state, the toolbar, the tool window, NIFMAN's timers and the message.
+void CTermView::EndSshNow()
+	{
+	if (iQuitTimer)
+		iQuitTimer->Cancel();
+	if (!iSshActive)
+		return;
+	if (iSshProcess.ExitType() == EExitPending)
+		{
+		iKilled = ETrue;
+		iSshProcess.Kill(0);
+		}
 	}
 
 // ----- auto-reconnect ----------------------------------------------------------
@@ -3895,7 +4087,17 @@ void CTermView::ReconnectNowL()
 	iReconnectWait = EFalse;
 	iReconnecting = ETrue;
 	iSshPassword = iReconnectPw;
-	LaunchSshL();
+	// a launch that leaves (no memory for the chunk or the watcher) must not
+	// leave "reconnecting" set with no session and nothing said
+	TRAPD(err, LaunchSshL());
+	if (err != KErrNone)
+		{
+		TBuf8<80> m;
+		m.Format(_L8("\r\n[Could not reconnect (%d) - use SSH to... to try again]\r\n"), err);
+		CancelReconnect(m);
+		if (!iSshActive)
+			ApplySerialSettings();
+		}
 	}
 
 void CTermView::SshProcessEnded()
@@ -3903,12 +4105,21 @@ void CTermView::SshProcessEnded()
 	PumpSsh();
 	if (iPump)
 		iPump->Cancel();
+	if (iBellWaiter)
+		iBellWaiter->Cancel();           // (psissh has gone: nothing will ring it)
+	iSshRinger.Close();
+	iPumpQuiet = EFalse;
 	TInt reason = iSshProcess.ExitReason();
 	TExitType type = iSshProcess.ExitType();
 	TExitCategoryName category(iSshProcess.ExitCategory());
 	TInt stage = iShared ? iShared->state : -1;
 	TInt exitCode = iShared ? iShared->exit_code : -1;
 	TInt lost = iShared ? iShared->lost_link : 0;
+	TBool killed = iKilled;
+	iKilled = EFalse;
+	iQuitAsked = EFalse;
+	if (iQuitTimer)
+		iQuitTimer->Cancel();
 	iSshProcess.Close();
 	iShared = NULL;
 	if (iChunkOpen)
@@ -3925,8 +4136,8 @@ void CTermView::SshProcessEnded()
 	iLastRx = 0;
 	iRxTail.Zero();
 	TBuf8<160> msg;
-	if (type == EExitPanic)
-		PsiLinkTimersBack();             // (0.68) the crash skipped psissh's own clean-up
+	if (type == EExitPanic || killed)
+		PsiLinkTimersBack();             // (0.68) the crash (or the kill) skipped psissh's own clean-up
 	if (type == EExitPanic)
 		{
 		static const char* const KStage[] = { "starting", "dialling", "setting up encryption", "connected", "finished" };
@@ -3935,26 +4146,14 @@ void CTermView::SshProcessEnded()
 		const char* st = (stage >= 0 && stage <= 4) ? KStage[stage] : "unknown";
 		msg.Format(_L8("\r\n[SSH program crashed: %S %d, while %s]\r\n"), &cat, reason, st);
 		}
+	else if (killed)
+		msg.Copy(_L8("\r\n[SSH program did not stop and was ended]\r\n"));   // (the watchdog, or End SSH twice)
 	else if (iLaunchMode != 0)
 		msg.Zero();                      // the tool has said how it went
 	else
 		msg.Format(_L8("\r\n[SSH program finished]\r\n"));
 	LocalMessage(msg);
 	ApplySerialSettings();
-	if (iLaunchMode == 3)
-		{
-		iCoeEnv->FsSession().Delete(iUpdateFile);        // the bundle
-		if (type != EExitPanic && exitCode == 11)
-			{
-			TBuf8<64> m;
-			TInt sent = DeleteShots();
-			if (sent == 1)
-				m.Copy(_L8("[1 screenshot sent]\r\n"));
-			else
-				m.Format(_L8("[%d screenshots sent]\r\n"), sent);
-			LocalMessage(m);
-			}
-		}
 	if (iLaunchMode == 2 && type != EExitPanic && exitCode == 10)
 		{
 		LocalMessage(_L8("\r\nStarting the installer - PsiTerm will close.\r\n"));
@@ -4419,39 +4618,66 @@ TInt CSnippetList::FindKey(TInt aKey) const
 	}
 
 static void AddSnippetL(CArrayFixFlat<TSnippet>& aList, const TDesC& aName,
-	const TDesC& aText, TInt aEnter, TInt aKey)
+	const TDesC& aText, TInt aEnter, TInt aKey, const TDesC& aFolder = KNullDesC)
 	{
 	TSnippet s;
 	s.iName = aName;
 	s.iText = aText;
 	s.iEnter = aEnter;
 	s.iKey = aKey;
+	s.iFolder = aFolder;
 	aList.AppendL(s);
 	}
 
-// A few useful ones to start with; all can be edited or deleted
-void CSnippetList::AddDefaultsL()
+// Claude Code's keys and most-used commands, as a folder of snippets (0.86:
+// these used to be a fixed Keys > Claude Code menu). The three key ones are
+// escape sequences: \e is Esc, \e\e is Esc Esc, \e[Z is Shift+Tab (switch
+// mode). All can be edited, moved or deleted like any snippet.
+void CSnippetList::AddClaudeFolderL()
 	{
-	AddSnippetL(*iEntries, _L("Claude Code"), _L("claude"), 1, '1');
-	AddSnippetL(*iEntries, _L("Claude: continue"), _L("claude --continue"), 1, '2');
-	AddSnippetL(*iEntries, _L("tmux: attach"), _L("tmux new -A -s psion"), 1, '3');
-	AddSnippetL(*iEntries, _L("Git status"), _L("git status"), 1, 0);
-	AddSnippetL(*iEntries, _L("Disk space"), _L("df -h"), 1, 0);
+	_LIT(KClaudeFolder, "Claude Code");
+	AddSnippetL(*iEntries, _L("Interrupt"),   _L("\\e"),       0, 0, KClaudeFolder);
+	AddSnippetL(*iEntries, _L("Rewind"),      _L("\\e\\e"),    0, 0, KClaudeFolder);
+	AddSnippetL(*iEntries, _L("Switch mode"), _L("\\e[Z"),     0, 0, KClaudeFolder);
+	AddSnippetL(*iEntries, _L("/clear"),      _L("/clear"),    1, 0, KClaudeFolder);
+	AddSnippetL(*iEntries, _L("/compact"),    _L("/compact"),  1, 0, KClaudeFolder);
+	AddSnippetL(*iEntries, _L("/resume"),     _L("/resume"),   1, 0, KClaudeFolder);
+	AddSnippetL(*iEntries, _L("/help"),       _L("/help"),     1, 0, KClaudeFolder);
 	}
 
-// Snippets.dat: "PN" 1 count last, then per snippet:
+// A few useful ones to start with; all can be edited or deleted. Their keys
+// are letters from the command (cLaude, coNtinue, tmuX): never digits
+void CSnippetList::AddDefaultsL()
+	{
+	AddSnippetL(*iEntries, _L("Claude: run"), _L("claude"), 1, 'L');
+	AddSnippetL(*iEntries, _L("Claude: continue"), _L("claude --continue"), 1, 'N');
+	AddSnippetL(*iEntries, _L("tmux: attach"), _L("tmux new -A -s psion"), 1, 'X');
+	AddSnippetL(*iEntries, _L("Git status"), _L("git status"), 1, 0);
+	AddSnippetL(*iEntries, _L("Disk space"), _L("df -h"), 1, 0);
+	AddClaudeFolderL();
+	}
+
+// Snippets.dat: "PN" <ver> count last, then per snippet:
 //   name text (length-prefixed), enter (1 byte), key (1 byte)
+//   and, from version 2 (0.86), the folder name (length-prefixed; empty = top level)
+// A version-1 file has no folders: loading one migrates it to version 2 and adds
+// the default "Claude Code" folder once (so deleting that folder makes it stay
+// gone - a version-2 file is never re-seeded).
 void CSnippetList::Load()
 	{
 	iEntries->Reset();
 	iLast = 0;
+	iChanged = EFalse;
 	RFile file;
 	if (file.Open(iFs, KSnippetsFile, EFileRead) != KErrNone)
 		{
 		TRAP_IGNORE(AddDefaultsL());
+		iChanged = ETrue;                    // save the fresh defaults (as version 2)
+		if (iLast >= iEntries->Count())
+			iLast = 0;
 		return;
 		}
-	HBufC8* buf = HBufC8::New(KMaxSnippets * 160 + 16);
+	HBufC8* buf = HBufC8::New(KMaxSnippets * 200 + 16);
 	if (!buf)
 		{
 		file.Close();
@@ -4460,7 +4686,9 @@ void CSnippetList::Load()
 	TPtr8 data(buf->Des());
 	TInt r = file.Read(data);
 	file.Close();
-	if (r == KErrNone && data.Length() >= 5 && data[0] == 'P' && data[1] == 'N' && data[2] == 1)
+	TInt ver = (r == KErrNone && data.Length() >= 5 && data[0] == 'P' && data[1] == 'N')
+		? data[2] : 0;
+	if (ver == 1 || ver == 2)
 		{
 		TInt count = data[3];
 		iLast = data[4];
@@ -4472,11 +4700,21 @@ void CSnippetList::Load()
 				break;
 			s.iEnter = data[pos++] ? 1 : 0;
 			s.iKey = data[pos++];
+			s.iFolder.Zero();
+			if (ver >= 2 && !GetStr(data, pos, s.iFolder))
+				break;
 			if (SnippetKeyIndex(s.iKey) < 0)
-				s.iKey = 0;
+				s.iKey = 0;                  // (a digit from before 0.79, or a letter a menu took: none)
 			TRAPD(err, iEntries->AppendL(s));
 			if (err != KErrNone)
 				break;
+			}
+		if (ver == 1)
+			{
+			// one-time migration: everyone gets the Claude Code folder, then save as v2
+			if (!HasFolder(_L("Claude Code")))
+				TRAP_IGNORE(AddClaudeFolderL());
+			iChanged = ETrue;
 			}
 		}
 	delete buf;
@@ -4486,13 +4724,13 @@ void CSnippetList::Load()
 
 TInt CSnippetList::Save()
 	{
-	HBufC8* buf = HBufC8::New(KMaxSnippets * 160 + 16);
+	HBufC8* buf = HBufC8::New(KMaxSnippets * 200 + 16);
 	if (!buf)
 		return KErrNoMemory;
 	TPtr8 data(buf->Des());
 	data.Append('P');
 	data.Append('N');
-	data.Append(1);
+	data.Append(2);
 	data.Append((TUint8)iEntries->Count());
 	data.Append((TUint8)iLast);
 	for (TInt i = 0; i < iEntries->Count(); i++)
@@ -4502,17 +4740,47 @@ TInt CSnippetList::Save()
 		PutStr(data, s.iText);
 		data.Append((TUint8)(s.iEnter ? 1 : 0));
 		data.Append((TUint8)s.iKey);
+		PutStr(data, s.iFolder);
 		}
 	TInt r = SafeWrite(iFs, KSnippetsFile, data);
 	delete buf;
+	iChanged = EFalse;
 	return r;
 	}
 
-// Shortcut keys: Shift+Ctrl + 1..9, 0, then the letters the menus leave
-// free (H is EIKON's "Help on program" key, so it stays free too). A saved
-// snippet on a letter the menu has since taken loses its key when loaded
-// (0.71 took B for View > Show toolbar).
-static const char KSnippetKeys[] = "1234567890FGIJLNOQRWXYZ";
+// The distinct folder names, in first-appearance order (the top level is not a
+// folder, so empty names are skipped). At most KMaxSnipFolders are returned.
+void CSnippetList::FoldersL(CDesCArray& aOut) const
+	{
+	aOut.Reset();
+	for (TInt i = 0; i < iEntries->Count() && aOut.Count() < KMaxSnipFolders; i++)
+		{
+		const TDesC& f = (*iEntries)[i].iFolder;
+		if (f.Length() == 0)
+			continue;
+		TBool seen = EFalse;
+		for (TInt j = 0; j < aOut.Count() && !seen; j++)
+			if (aOut[j].CompareF(f) == 0)
+				seen = ETrue;
+		if (!seen)
+			aOut.AppendL(f);
+		}
+	}
+
+TBool CSnippetList::HasFolder(const TDesC& aName) const
+	{
+	for (TInt i = 0; i < iEntries->Count(); i++)
+		if ((*iEntries)[i].iFolder.CompareF(aName) == 0)
+			return ETrue;
+	return EFalse;
+	}
+
+// Shortcut keys: Shift+Ctrl + the letters the menus leave free (H is
+// EIKON's "Help on program" key, so it stays free too). Never digits: the
+// style guide's shortcuts are all Ctrl+letter or Shift+Ctrl+letter (0.79
+// dropped 1-9 and 0). A saved snippet on a key no longer here loses its key
+// when loaded (0.71 took B for View > Show toolbar; a digit loads as none).
+static const char KSnippetKeys[] = "FGIJLNOQRWXYZ";
 
 TInt SnippetKeyCount()
 	{
@@ -4565,7 +4833,7 @@ void CSnippetListDialog::PreLayoutDynInitL()
 	for (TInt i = 0; i < iList.Count(); i++)
 		{
 		const TSnippet& s = iList.At(i);
-		TBuf<40> line;
+		TBuf<64> line;
 		if (s.iKey)
 			{
 			line.Append((TChar)s.iKey);
@@ -4573,6 +4841,11 @@ void CSnippetListDialog::PreLayoutDynInitL()
 			}
 		else
 			line.Append(_L("    "));
+		if (s.iFolder.Length())            // show "Folder / Name" for a snippet in a folder
+			{
+			line.Append(s.iFolder);
+			line.Append(_L(" / "));
+			}
 		line.Append(s.iName);
 		names->AppendL(line);
 		}
@@ -4599,6 +4872,7 @@ void CSnippetEditDialog::PreLayoutDynInitL()
 	{
 	SetEdwinTextL(EPtDlgSnipName, &iEntry.iName);
 	SetEdwinTextL(EPtDlgSnipText, &iEntry.iText);
+	SetEdwinTextL(EPtDlgSnipFolder, &iEntry.iFolder);   // blank = top level
 	((CEikChoiceList*)Control(EPtDlgSnipEnter))->SetCurrentItem(iEntry.iEnter ? 1 : 0);
 	CDesCArrayFlat* keys = new(ELeave) CDesCArrayFlat(8);
 	CleanupStack::PushL(keys);
@@ -4640,6 +4914,9 @@ TBool CSnippetEditDialog::OkToExitL(TInt /*aButtonId*/)
 		TryChangeFocusToL(EPtDlgSnipKey);
 		return EFalse;
 		}
+	TBuf<24> folder;
+	GetEdwinText(folder, EPtDlgSnipFolder);
+	folder.Trim();
 	if (name.Length())
 		iEntry.iName = name;
 	else
@@ -4647,6 +4924,7 @@ TBool CSnippetEditDialog::OkToExitL(TInt /*aButtonId*/)
 	iEntry.iText = text;
 	iEntry.iEnter = ((CEikChoiceList*)Control(EPtDlgSnipEnter))->CurrentItem() == 1;
 	iEntry.iKey = key;
+	iEntry.iFolder = folder;
 	return ETrue;
 	}
 
@@ -4864,6 +5142,25 @@ void CAboutDialog::PreLayoutDynInitL()
 	// legend font is smaller than the bold line under it)
 	((CEikLabel*)Control(EPtDlgAbout1))->SetFont(iEikonEnv->TitleFont());
 	SetLabelL(EPtDlgAbout1, title);
+	// the (c) sign (0xa9 in the Psion's fonts, as PsiMail's About has it)
+	// rather than the resource's "(c)"; the lines keep their resource
+	// lengths, as these are shorter
+	TBuf<80> who(_L("SSH terminal for the Psion Series 5mx - "));
+	who.Append(TChar(0xa9));
+	who.Append(_L(" 2026 Dan Edge"));
+	SetLabelL(EPtDlgAbout2, who);
+	TBuf<80> credit(_L("Dropbear SSH "));
+	credit.Append(TChar(0xa9));
+	credit.Append(_L(" Matt Johnston, libvterm "));
+	credit.Append(TChar(0xa9));
+	credit.Append(_L(" Paul Evans - MIT"));
+	SetLabelL(EPtDlgAbout4, credit);
+	credit.Copy(_L("zlib "));
+	credit.Append(TChar(0xa9));
+	credit.Append(_L(" Gailly and Adler; Terminus font "));
+	credit.Append(TChar(0xa9));
+	credit.Append(_L(" Dimitar Zhekov - SIL OFL"));
+	SetLabelL(EPtDlgAbout7, credit);
 	SetLabelL(EPtDlgAboutStatus, iStatus);
 	}
 
@@ -4876,14 +5173,30 @@ void CConnDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPtDlgLink))->SetCurrentItem(iSettings.iNetMode ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgReconnect))->SetCurrentItem(iSettings.iAutoReconnect ? 1 : 0);
 	SetEdwinTextL(EPtDlgPppStart, &iSettings.iPppStart);
+	// Test is dimmed while SSH runs (see TestL); the dialog's other lines
+	// stay, as the settings apply when SSH ends
+	if (iView && iView->SshActive())
+		{
+		CEikCommandButtonBase* b = ButtonPanel()->ButtonById(EPtBidTest);
+		if (b)
+			b->SetDimmed(ETrue);
+		}
 	}
 
 // Test: tries the values shown (not yet saved). PsiTerm's own terminal
 // holds the port while SSH is not running: it lets go for the test and
-// opens it again with the saved settings. While SSH runs, its engine has
-// the port, and the test says the port is in use.
+// opens it again with the saved settings. Not while SSH runs: the test is
+// synchronous and runs in this thread for up to 20 s (90 s with a dial),
+// during which nothing bumps psissh's heartbeat, so after 45 s psissh
+// would decide PsiTerm had gone and end the live session (and on the modem
+// route the test could only say that the port is in use anyway).
 void CConnDialog::TestL()
 	{
+	if (iView && iView->SshActive())
+		{
+		iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
+		return;
+		}
 	TBuf<40> ppp;
 	GetEdwinText(ppp, EPtDlgPppStart);
 	ppp.TrimAll();
@@ -4929,15 +5242,25 @@ void CAppearanceDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPtDlgBlink))->SetCurrentItem(iSettings.iBlink ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgBell))->SetCurrentItem(iSettings.iBell ? 0 : 1);
 	((CEikChoiceList*)Control(EPtDlgStartScreen))->SetCurrentItem(iSettings.iStartScreen ? 1 : 0);
+	((CEikChoiceList*)Control(EPtDlgColourText))->SetCurrentItem((iSettings.iDisplay & KPtDisplayLightText) ? 1 : 0);
 	}
 
-TBool CAppearanceDialog::OkToExitL(TInt /*aButtonId*/)
+TBool CAppearanceDialog::OkToExitL(TInt aButtonId)
 	{
+	if (aButtonId == EPtBidGreys)
+		{
+		((CPsiTermAppUi*)iEikonEnv->AppUi())->ScreenGreysL();
+		return EFalse;                   // (the dialog stays open)
+		}
 	iSettings.iTheme = ((CEikChoiceList*)Control(EPtDlgTheme))->CurrentItem();
 	iSettings.iCursor = ((CEikChoiceList*)Control(EPtDlgCursor))->CurrentItem();
 	iSettings.iBlink = ((CEikChoiceList*)Control(EPtDlgBlink))->CurrentItem() == 1;
 	iSettings.iBell = ((CEikChoiceList*)Control(EPtDlgBell))->CurrentItem() == 1 ? 0 : 1;
 	iSettings.iStartScreen = ((CEikChoiceList*)Control(EPtDlgStartScreen))->CurrentItem() == 1;
+	if (((CEikChoiceList*)Control(EPtDlgColourText))->CurrentItem() == 1)
+		iSettings.iDisplay |= KPtDisplayLightText;
+	else
+		iSettings.iDisplay &= ~KPtDisplayLightText;
 	return ETrue;
 	}
 
@@ -5021,8 +5344,6 @@ TBool CToolDialog::OkToExitL(TInt /*aButtonId*/)
 
 void CUpdateDialog::PreLayoutDynInitL()
 	{
-	if (iNeedHost)
-		SetTitleL(_L("Send screenshots"));   // Debug > Send screenshots borrows the dialog
 	// choices: GitHub stable, GitHub testing, local server (iSource 0, 2, 1)
 	((CEikChoiceList*)Control(EPtDlgSource))->SetCurrentItem(iSource == 2 ? 1 : (iSource == 1 ? 2 : 0));
 	SetEdwinTextL(EPtDlgHost, &iHost);
@@ -5036,7 +5357,7 @@ TBool CUpdateDialog::OkToExitL(TInt /*aButtonId*/)
 	GetEdwinText(iHost, EPtDlgHost);
 	iHost.Trim();
 	iPort = NumberEditorValue(EPtDlgPort);
-	if (iHost.Length() == 0 && (iSource == 1 || iNeedHost))
+	if (iHost.Length() == 0 && iSource == 1)
 		{
 		CEikonEnv::Static()->InfoMsg(_L("No local server entered"));
 		TryChangeFocusToL(EPtDlgHost);
@@ -5085,6 +5406,8 @@ void CPsiTermAppUi::ConstructL()
 	iKeys->MigrateL();
 	iSnippets = CSnippetList::NewL(iCoeEnv->FsSession());
 	iSnippets->Load();
+	if (iSnippets->iChanged)            // fresh defaults, or a version-1 file migrated to v2
+		iSnippets->Save();
 	TRAPD(pics, ToolbarPicturesL());
 	(void)pics;                              // (no PsiTerm.mbm: words only)
 	if (iToolBar && !settings.iToolbar)
@@ -5095,11 +5418,60 @@ void CPsiTermAppUi::ConstructL()
 	iView->ConstructL(TermRect(settings.iToolbar), settings);
 	AddToStackL(iView);
 	iCoeEnv->RootWin().EnableOnEvents(EEventControlAlways);   // (0.68) switch-on events even when in the background
+	// docs/display.md: the grey calibration shared with PsiMail and PsiWeb,
+	// and the user's contrast and backlight put back if a program stopped
+	// in Reading mode without doing it
+	PsiGrey grey;
+	PsiGreyLoad(iCoeEnv->FsSession(), grey);
+	iView->SetGreys(grey);
+	TPsiReading::Recover(iCoeEnv->FsSession(), iCoeEnv->WsSession(), KUidPsiTerm);
+	iForeground = ETrue;
+	UpdateReading();
+	}
+
+// ----- Reading mode and the grey calibration (docs/display.md) ------------------
+
+// On while PsiTerm is in front with View > Reading mode ticked; off when
+// it goes to the background or the tick is taken off. aEnterOnly: a key
+// was pressed (it comes back on after a switch-on turned it off).
+void CPsiTermAppUi::UpdateReading(TBool aEnterOnly)
+	{
+	if (!iView)
+		return;
+	TBool want = iForeground && (iView->Settings().iDisplay & KPtDisplayReading) && !iGreysOpen;
+	if (want)
+		iReading.Enter(iCoeEnv->FsSession(), KUidPsiTerm);
+	else if (!aEnterOnly)
+		iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);
+	}
+
+// Preferences > Screen greys...: the shared greys screen (ssh/psigreyui.cpp)
+// on top of the Preferences dialog, with Reading mode off meanwhile (the
+// screen as the user set it). A saved choice applies to the terminal at once.
+void CPsiTermAppUi::ScreenGreysL()
+	{
+	if (iGreysOpen)
+		return;
+	iGreysOpen = ETrue;
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);
+	PsiGrey grey;
+	TInt r = 0;
+	TRAPD(err, r = PsiGreyScreenL(grey));
+	iGreysOpen = EFalse;
+	UpdateReading();
+	User::LeaveIfError(err);
+	if (r > 0)
+		{
+		iView->SetGreys(grey);
+		iEikonEnv->InfoMsg(_L("Greys saved - PsiMail and PsiWeb use them from the next picture or page"));
+		}
+	else if (r < 0)
+		iEikonEnv->InfoMsg(_L("Not saved - the internal disk is full or in use"));
 	}
 
 // ----- the toolbar ---------------------------------------------------------------
 // The standard EIKON toolbar on the right (psiterm.rss r_pt_toolbar): the
-// name, SSH to... / Disconnect, Snippets, Keys and Files (pop-ups), the clock.
+// name, SSH to... / End SSH, Snippets, Keys and Files (pop-ups), the clock.
 
 // a toolbar button's picture, from PsiTerm.mbm (made by tools/mkicons.py):
 // 24x20, in the middle of its side, the words beside it as the built-in
@@ -5140,14 +5512,15 @@ void CPsiTermAppUi::ToolbarPicturesL()
 	ButtonPictureL(EPtCmdTbFiles, EMbmToolFiles);
 	}
 
-// the first button: SSH to... when idle, Disconnect while a session is up
-// (as PsiMail's last button, and the built-in Email program's Open / Close
-// mailbox)
+// the first button: SSH to... when idle, End SSH while a session is up (as
+// PsiMail's last button, and the built-in Email program's Open / Close
+// mailbox). "End SSH" is the command's one name: the File menu and the help
+// say the same ("Disconnect" was too wide for the dense font anyway)
 void CPsiTermAppUi::SetConnectButton(TBool aBusy)
 	{
 	if (!iToolBar)
 		return;
-	TPtrC text(aBusy ? _L("End\nSSH") : _L("SSH to"));   // ("Disconnect" is too wide for the dense font)
+	TPtrC text(aBusy ? _L("End\nSSH") : _L("SSH to"));
 	TRAPD(err, ButtonPictureL(EPtCmdTbConnect, aBusy ? EMbmToolDisconnect : EMbmToolSsh, &text));
 	if (err != KErrNone)
 		{
@@ -5208,10 +5581,15 @@ void CPsiTermAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
 	(void)aDestination;                  // (the CONE default does nothing, and is private)
 	if (iView)
 		iView->LinkSwitchedOn();
+	// Reading mode is put back to the user's settings at switch-off/on; the
+	// next key in PsiTerm turns it on again (not the switch-on itself: an
+	// alarm may have woken the Psion with nobody reading)
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);
 	}
 
 CPsiTermAppUi::~CPsiTermAppUi()
 	{
+	iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);   // the user's contrast and backlight back
 	if (iView)
 		{
 		RemoveFromStack(iView);
@@ -5378,6 +5756,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iTmuxTabs = 1;
 	aSettings.iPppStart.Copy(_L("ATDT777"));   // WiRSa and similar: dial 777 = PPP
 	aSettings.iToolbar = 1;       // shown the first time, as the style guide expects
+	aSettings.iDisplay = 0;       // Reading mode off, coloured text dark (docs/display.md)
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
@@ -5464,6 +5843,8 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 												aSettings.iPppStart.Copy(data.Mid(pos + 9, plen));
 												if (pos + 9 + plen < data.Length())   // v13: toolbar
 													aSettings.iToolbar = data[pos + 9 + plen] ? 1 : 0;
+												if (pos + 10 + plen < data.Length())  // v14: display
+													aSettings.iDisplay = data[pos + 10 + plen] & (KPtDisplayReading | KPtDisplayLightText);
 												}
 											}
 										}
@@ -5520,20 +5901,45 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append((TUint8)tmp.Length());
 	data.Append(tmp);
 	data.Append((TUint8)(aSettings.iToolbar ? 1 : 0));   // v13 (older PsiTerms ignore it)
+	data.Append((TUint8)aSettings.iDisplay);              // v14: Reading mode, coloured text
 	SafeWrite(fs, KIniFile, data);
 	}
 
 // The Debug tools need the serial port: offer to end the SSH session first.
 // (Statement, then the question, as the style guide has confirmations.)
-// Returns ETrue if the tool can run now; if the user agrees to disconnect,
+// Returns ETrue if the tool can run now; if the user agrees to end SSH,
 // the command is run again by itself once the session has ended.
 TBool CPsiTermAppUi::ConfirmDisconnectL(TInt aCommand)
 	{
 	if (!iView->SshActive())
 		return ETrue;
-	if (iEikonEnv->QueryWinL(_L("SSH is connected"), _L("Disconnect, then continue?")))
+	if (iEikonEnv->QueryWinL(_L("SSH is connected"), _L("End SSH, then continue?")))
 		iView->RunAfterDisconnectL(aCommand);
 	return EFalse;
+	}
+
+// A backup (PsiWin) is starting: apparc says so with a system event, and
+// open files must be closed for it. The session log is the one file this
+// program keeps open in the user's folders, so it stops (and says so). The
+// rest goes to CONE as before (EIKON's own HandleSystemEventL, which closes
+// the program on EApaSystemEventShutdown, is private, so this is the hook).
+void CPsiTermAppUi::HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination)
+	{
+	// Reading mode follows PsiTerm in and out of the foreground (CCoeAppUi's
+	// HandleForegroundEventL is private on ER5: the focus events are seen here)
+	if (aEvent.Type() == EEventFocusGained || aEvent.Type() == EEventFocusLost)
+		{
+		iForeground = aEvent.Type() == EEventFocusGained;
+		UpdateReading();
+		if (iView)
+			iView->SetForeground(iForeground);   // (0.81) power: no drawing behind
+		}
+	else if (aEvent.Type() == EEventKey && !iReading.Active() && iForeground)
+		UpdateReading(ETrue);
+	if (aEvent.Type() == EEventUser && iView && PtLogging(*iView)
+		&& *(TApaSystemEvent*)aEvent.EventData() == EApaSystemEventBackupStarting)
+		TRAP_IGNORE(PtLogCommandL(*iView));   // (with the log on, the command stops it)
+	CEikAppUi::HandleWsEventL(aEvent, aDestination);
 	}
 
 // Connects to saved host aIndex (from the SSH to... list)
@@ -5674,13 +6080,35 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPtCmdLog, PtLogging(*iView) ? EEikMenuItemSymbolOn : 0);
 		return;
 		}
+	// The resources for the folder cascades, one per folder (0.86). An explicit
+	// table rather than ID arithmetic, so it does not matter how the resource
+	// compiler numbers them.
+	static const TInt KSnipFolderMenu[KMaxSnipFolders] =
+		{ R_PT_SNIP_FOLDER_0, R_PT_SNIP_FOLDER_1, R_PT_SNIP_FOLDER_2, R_PT_SNIP_FOLDER_3,
+		  R_PT_SNIP_FOLDER_4, R_PT_SNIP_FOLDER_5, R_PT_SNIP_FOLDER_6, R_PT_SNIP_FOLDER_7 };
 	if (aMenuId == R_PT_SNIPPETS_MENU || aMenuId == R_PT_SNIPPETS_POPUP)
 		{
-		// your snippets, each with its hotkey shown on the right (not on the
-		// toolbar's pop-up: it is for the pen)
-		for (TInt i = 0; i < iSnippets->Count() && i < KMaxSnippets; i++)
+		// Top-level snippets as direct items, then each folder as a cascade at
+		// the bottom (EIKON: cascades low). A pane holds 8 items incl. "Manage
+		// snippets...", so at most KMenuSnippets go here; the rest stay reachable
+		// from Manage snippets... or by their keys. Hotkeys show on the right of
+		// the menu, not the toolbar's pop-up (which is for the pen). The line
+		// under Manage snippets... only when there is something below it.
+		CDesCArrayFlat* folders = new(ELeave) CDesCArrayFlat(4);
+		CleanupStack::PushL(folders);
+		iSnippets->FoldersL(*folders);
+		TInt nFolders = folders->Count();
+		if (nFolders > KMenuSnippets)
+			nFolders = KMenuSnippets;
+		TInt rootSlots = KMenuSnippets - nFolders;      // folders always get a slot
+		if (iSnippets->Count() > 0)
+			aMenuPane->ItemData(EPtCmdSnippets).iFlags |= EEikMenuItemSeparatorAfter;
+		TInt shown = 0;
+		for (TInt i = 0; i < iSnippets->Count() && shown < rootSlots; i++)
 			{
 			const TSnippet& sn = iSnippets->At(i);
+			if (sn.iFolder.Length() != 0)
+				continue;                               // in a folder: shown in its cascade
 			CEikMenuPane::TItem::SData item;
 			item.iCommandId = EPtCmdSnippet0 + i;
 			item.iCascadeId = 0;
@@ -5693,30 +6121,74 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 				item.iExtraText.Append((TChar)sn.iKey);
 				}
 			aMenuPane->AddMenuItemL(item);
+			shown++;
 			}
+		for (TInt f = 0; f < nFolders; f++)
+			{
+			CEikMenuPane::TItem::SData item;
+			item.iCommandId = 0;
+			item.iCascadeId = KSnipFolderMenu[f];
+			item.iFlags = 0;
+			item.iText = (*folders)[f];
+			item.iExtraText.Zero();
+			aMenuPane->AddMenuItemL(item);
+			}
+		CleanupStack::PopAndDestroy();   // folders
 		return;
 		}
-	// tmux and Claude Code keys only mean something in an SSH session
+	// A folder's own cascade: list the snippets in that folder (0.86).
+	for (TInt fm = 0; fm < KMaxSnipFolders; fm++)
+		{
+		if (aMenuId != KSnipFolderMenu[fm])
+			continue;
+		CDesCArrayFlat* folders = new(ELeave) CDesCArrayFlat(4);
+		CleanupStack::PushL(folders);
+		iSnippets->FoldersL(*folders);
+		if (fm < folders->Count())
+			{
+			TBuf<24> fname = (*folders)[fm];
+			TInt shown = 0;
+			for (TInt i = 0; i < iSnippets->Count() && shown < 8; i++)
+				{
+				const TSnippet& sn = iSnippets->At(i);
+				if (sn.iFolder.CompareF(fname) != 0)
+					continue;
+				CEikMenuPane::TItem::SData item;
+				item.iCommandId = EPtCmdSnippet0 + i;
+				item.iCascadeId = 0;
+				item.iFlags = 0;
+				item.iText = sn.iName;
+				item.iExtraText.Zero();
+				if (sn.iKey)
+					{
+					item.iExtraText.Append(_L("Shift+Ctrl+"));
+					item.iExtraText.Append((TChar)sn.iKey);
+					}
+				aMenuPane->AddMenuItemL(item);
+				shown++;
+				}
+			}
+		CleanupStack::PopAndDestroy();   // folders
+		return;
+		}
+	// tmux keys only mean something in an SSH session
 	if (aMenuId == R_PT_TMUX_MENU || aMenuId == R_PT_TMUX_WIN_MENU
-		|| aMenuId == R_PT_TMUX_PANE_MENU || aMenuId == R_PT_CLAUDE_MENU)
+		|| aMenuId == R_PT_TMUX_PANE_MENU)
 		{
 		if (aMenuId == R_PT_TMUX_MENU)
 			aMenuPane->SetItemButtonState(EPtCmdTmuxTabs,
 				iView->Settings().iTmuxTabs ? EEikMenuItemSymbolOn : 0);
 		if (!iView->SshLoggedIn())
 			{
-			static const TInt KTmux[] = { EPtCmdTmuxCopy, EPtCmdTmuxDetach, EPtCmdTmuxMouse, EPtCmdTabsSetup };
+			static const TInt KTmux[] = { EPtCmdTmuxCopy, EPtCmdTmuxDetach, EPtCmdTmuxMouse };
 			static const TInt KWin[] = { EPtCmdTmuxNew, EPtCmdTmuxNext, EPtCmdTmuxPrev,
 				EPtCmdTmuxChoose, EPtCmdTmuxRename };
 			static const TInt KPane[] = { EPtCmdTmuxSplitH, EPtCmdTmuxSplitV, EPtCmdTmuxPane,
 				EPtCmdTmuxZoom };
-			static const TInt KClaude[] = { EPtCmdClaudeEsc, EPtCmdClaudeEscEsc, EPtCmdClaudeMode,
-				EPtCmdClaudeClear, EPtCmdClaudeCompact, EPtCmdClaudeResume, EPtCmdClaudeHelp };
 			const TInt* ids = KTmux;
-			TInt n = 4;
+			TInt n = 3;
 			if (aMenuId == R_PT_TMUX_WIN_MENU) { ids = KWin; n = 5; }
 			else if (aMenuId == R_PT_TMUX_PANE_MENU) { ids = KPane; n = 4; }
-			else if (aMenuId == R_PT_CLAUDE_MENU) { ids = KClaude; n = 7; }
 			for (TInt i = 0; i < n; i++)
 				aMenuPane->SetItemDimmed(ids[i], ETrue);
 			}
@@ -5749,6 +6221,7 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPtCmdBold, s.iBold ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPtCmdStatusLine, s.iStatus ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPtCmdToolbar, s.iToolbar ? EEikMenuItemSymbolOn : 0);
+		aMenuPane->SetItemButtonState(EPtCmdReading, (s.iDisplay & KPtDisplayReading) ? EEikMenuItemSymbolOn : 0);
 		}
 	}
 
@@ -5767,9 +6240,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			iView->SendSnippetText(iSnippets->At(i).iText, iSnippets->At(i).iEnter);
 		return;
 		}
-	if (((aCommand >= EPtCmdTmuxNew && aCommand <= EPtCmdTmuxDetach) || aCommand == EPtCmdTmuxMouse
-		|| aCommand == EPtCmdTabsSetup
-		|| (aCommand >= EPtCmdClaudeEsc && aCommand <= EPtCmdClaudeHelp))
+	if (((aCommand >= EPtCmdTmuxNew && aCommand <= EPtCmdTmuxDetach) || aCommand == EPtCmdTmuxMouse)
 		&& !iView->SshLoggedIn())
 		{
 		iEikonEnv->InfoMsg(_L("Not available - SSH is not connected"));
@@ -5785,9 +6256,19 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		SaveSettings(s);
 		ShowToolBarL(s.iToolbar);
 		break;
+	case EPtCmdReading:                       // View > Reading mode (tick box; docs/display.md)
+		s.iDisplay ^= KPtDisplayReading;
+		SaveSettings(s);
+		UpdateReading();
+		iEikonEnv->InfoMsg((s.iDisplay & KPtDisplayReading) ? _L("Reading mode on") : _L("Reading mode off"));
+		break;
 	case EPtCmdTbConnect:                     // the toolbar's first button
 		if (iView->SshActive() || iView->ReconnectWaiting())
-			iView->DisconnectSsh();
+			{
+			if (iView->SshQuitting())
+				iEikonEnv->InfoMsg(_L("Ending the SSH program now"));
+			iView->DisconnectSsh();           // (End SSH: as the File menu's)
+			}
 		else
 			SshToL();
 		break;
@@ -5797,11 +6278,18 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		ToolbarPopupL(aCommand);
 		break;
 	case EPtCmdSsh:     SshToL(); break;
-	case EPtCmdSshDisconnect:
+	case EPtCmdSshDisconnect:               // File > End SSH (Shift+Ctrl+D)
 		if (!iView->SshActive())
-			iEikonEnv->InfoMsg(_L("Nothing to disconnect"));
+			iEikonEnv->InfoMsg(_L("Nothing to end - SSH is not connected"));
 		else
+			{
+			// the first time asks psissh to stop; while it is still being
+			// asked (the watchdog ends it after 10 s) a second End SSH ends
+			// it at once
+			if (iView->SshQuitting())
+				iEikonEnv->InfoMsg(_L("Ending the SSH program now"));
 			iView->DisconnectSsh();
+			}
 		break;
 	case EPtCmdSpeedTest:
 		if (!ConfirmDisconnectL(aCommand))
@@ -5862,34 +6350,23 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			iView->SerialInfo();
 		break;
 	case EPtCmdUpdate:
-	case EPtCmdSendShots:
 		{
 		if (!ConfirmDisconnectL(aCommand))
 			break;
 		// Tools > Update PsiTerm asks where from every time, then fetches (as
-		// PsiMail and PsiWeb do). Sending screenshots (a developer feature)
-		// always goes to the local server, so it only asks when none is set.
-		if (aCommand == EPtCmdUpdate || s.iUpdHost.Length() == 0)
-			{
-			if (aCommand == EPtCmdSendShots)
-				iEikonEnv->InfoWinL(_L("Screenshots go to a local server"),
-					_L("Run server/psion-update.sh from the PsiTerm source on a computer, then enter its address"));
-			TInt source = s.iUpdSource;
-			TBuf<100> host(s.iUpdHost);
-			TInt port = s.iUpdPort > 0 ? s.iUpdPort : 8686;
-			CUpdateDialog* dlg = new(ELeave) CUpdateDialog(source, host, port, aCommand == EPtCmdSendShots);
-			if (!dlg->ExecuteLD(R_PT_UPDATE_DIALOG))
-				break;
-			s.iUpdSource = source;
-			s.iUpdHost = host;
-			s.iUpdPort = port;
-			SaveSettings(s);
-			}
-		iView->BeginDebugL(aCommand == EPtCmdUpdate ? _L("Update PsiTerm") : _L("Send screenshots"));
-		if (aCommand == EPtCmdUpdate)
-			iView->StartUpdateL();
-		else
-			iView->SendScreenshotsL();
+		// PsiMail and PsiWeb do)
+		TInt source = s.iUpdSource;
+		TBuf<100> host(s.iUpdHost);
+		TInt port = s.iUpdPort > 0 ? s.iUpdPort : 8686;
+		CUpdateDialog* dlg = new(ELeave) CUpdateDialog(source, host, port);
+		if (!dlg->ExecuteLD(R_PT_UPDATE_DIALOG))
+			break;
+		s.iUpdSource = source;
+		s.iUpdHost = host;
+		s.iUpdPort = port;
+		SaveSettings(s);
+		iView->BeginDebugL(_L("Update PsiTerm"));
+		iView->StartUpdateL();
 		iView->RunToolDialogL();
 		break;
 		}
@@ -5924,17 +6401,6 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			}
 		break;
 		}
-	// Claude Code
-	case EPtCmdClaudeEsc:   iView->SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE); break;
-	case EPtCmdClaudeEscEsc:
-		iView->SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE);
-		iView->SendKey(VTERM_KEY_ESCAPE, VTERM_MOD_NONE);
-		break;
-	case EPtCmdClaudeMode:  iView->SendKey(VTERM_KEY_TAB, VTERM_MOD_SHIFT); break;
-	case EPtCmdClaudeClear: iView->SendSnippetText(_L("/clear"), ETrue); break;
-	case EPtCmdClaudeCompact: iView->SendSnippetText(_L("/compact"), ETrue); break;
-	case EPtCmdClaudeResume: iView->SendSnippetText(_L("/resume"), ETrue); break;
-	case EPtCmdClaudeHelp:  iView->SendSnippetText(_L("/help"), ETrue); break;
 	// tmux: the prefix, then the command key
 	case EPtCmdTmuxNew:     SendTmux('c'); break;
 	case EPtCmdTmuxNext:    SendTmux('n'); break;
@@ -5947,14 +6413,6 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdTmuxCopy:    SendTmux('['); break;
 	case EPtCmdTmuxRename:  SendTmux(','); break;
 	case EPtCmdTmuxDetach:  SendTmux('d'); break;
-	case EPtCmdTabsSetup:
-		// at a shell prompt inside tmux: tmux sends its window list as the
-		// terminal title, and ~/.tmux.conf keeps that for new tmux servers
-		iView->SendString(_L8(" tmux set -g set-titles on \\; set -g set-titles-string "
-			"'PSITABS #{W:#I:#W#F }'; grep -q PSITABS ~/.tmux.conf 2>/dev/null || "
-			"printf '%s\\n' 'set -g set-titles on' \"set -g set-titles-string 'PSITABS "
-			"#{W:#I:#W#F }'\" >> ~/.tmux.conf; echo 'PsiTerm: tabs set up'\r"));
-		break;
 	case EPtCmdCheckTabs:
 		iView->CheckTabsL();
 		break;

@@ -37,6 +37,7 @@
 #include <string.h>
 #include "pm.h"
 #include "img/pmimg.h"
+#include "../../ssh/psigrey.h"
 
 #define PIC_TIME_MS 90000L
 #define PIC_CMD_MS 150000L
@@ -284,6 +285,26 @@ static int crashed_before(const char *img_path, const char *pmi_path, const char
 	return 1;
 }
 
+/* the grey calibration (ssh/psigrey.h), read again for each picture: the
+   file is a few hundred bytes, and so a change made in PsiTerm's Display
+   calibration applies to the next picture set out, with no restart.
+   Pictures already set out keep the greys they were made with (their .img
+   is gone by then). */
+static void pic_greys(PmImgOpts *o)
+{
+	static PsiGrey g;
+	static unsigned char lv[16];
+	static char buf[512];
+	FILE *f = fopen(PSIGREY_FILE, "rb");
+	int n = 0;
+	if (f) { n = (int)fread(buf, 1, sizeof(buf) - 1, f); fclose(f); }
+	if (n > 0) psigrey_parse(&g, buf, n);
+	else psigrey_defaults(&g);
+	psigrey_levels(&g, lv);
+	o->levels = lv;
+	o->ordered = !g.dither;
+}
+
 static int decode_part2(const char *img_path, const char *pmi_path, const char *label, long budget_left, char *note, int notemax)
 {
 	PmImgOpts o;
@@ -297,6 +318,7 @@ static int decode_part2(const char *img_path, const char *pmi_path, const char *
 	o.max_full_bytes = 640L * 1024L;
 	o.abort = pic_abort;
 	o.abort_ctx = &a;
+	pic_greys(&o);
 	a.start = pm_ms();
 	a.label = label;
 	a.shown = 0;

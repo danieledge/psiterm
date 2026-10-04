@@ -96,6 +96,15 @@ int pwn_is_open(const char *host, int port, int tls)
 	return 1;
 }
 
+/* the modem has said NO CARRIER on the open connection: the next read
+   says "closed" (Links' select must see it as readable, or it waits for a
+   time-out with the page already in: PsiWeb 0.63 kept "Checking the
+   modem..." up for 25 s and more after every page over a modem) */
+int pwn_dead(void)
+{
+	return g_open && g_dead;
+}
+
 int pwn_write(const void *buf, int len)
 {
 	used();

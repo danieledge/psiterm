@@ -68,7 +68,7 @@ $(O)/web/%.o: fb/%.c fb/pwback.h
 $(O)/web/fetch_psi.o: engine/fetch_psi.c engine/pwnet.h fb/pwback.h
 	@mkdir -p $(dir $@)
 	$(TCC) -c $(TFLAGS) $(NSFLAGS) -I$(TOP)/ssh/zlib $< -o $@
-$(O)/web/pwnet.o: engine/pwnet.c engine/pwnet.h psiweb.h
+$(O)/web/pwnet.o: engine/pwnet.c engine/pwnet.h psiweb.h ../ssh/psishared.h
 	@mkdir -p $(dir $@)
 	$(TCC) -c $(TFLAGS) $(NETDEFS) $< -o $@
 $(O)/pwres.c: mkres.py res/welcome.html
@@ -84,10 +84,10 @@ ifeq ($(TARGET),host)
 $(OUT): $(ALL_OBJS)
 	gcc -o $@ $^ -lz -lm
 else
-$(O)/web/pwepoc.o: engine/pwepoc.cpp psiweb.h fb/pwback.h
+$(O)/web/pwepoc.o: engine/pwepoc.cpp psiweb.h fb/pwback.h ../ssh/psishared.h
 	@mkdir -p $(dir $@)
 	$(TCC) -c $(CXXFLAGS) $< -o $@
-$(O)/web/psiglue.o: $(TOP)/ssh/psiglue.cpp $(TOP)/ssh/psishared.h
+$(O)/web/psiglue.o: $(TOP)/ssh/psiglue.cpp $(TOP)/ssh/psishared.h $(TOP)/ssh/psibell.h
 	@mkdir -p $(dir $@)
 	$(TCC) -c $(CXXFLAGS) '-DPSI_SHARED_NAME="PsiWebShared"' $< -o $@
 $(O)/web/%.o: compat/%.c
@@ -96,7 +96,7 @@ $(O)/web/%.o: compat/%.c
 $(O)/web/tls13.o: $(TOP)/ssh/tls13.c tls/includes.h
 	@mkdir -p $(dir $@)
 	$(TCC) -c $(LTCFLAGS) -I$(TOP)/ssh/db/src $< -o $@
-$(O)/web/pwupdate.o: engine/pwupdate.c engine/pwnet.h psiweb.h psiweb_cmds.h tls/includes.h
+$(O)/web/pwupdate.o: engine/pwupdate.c engine/pwnet.h psiweb.h psiweb_cmds.h tls/includes.h ../ssh/psishared.h
 	@mkdir -p $(dir $@)
 	$(TCC) -c $(LTCFLAGS) -I$(TOP)/ssh $< -o $@
 $(O)/emu/pwupdate_test.o: engine/pwupdate.c engine/pwnet.h psiweb.h psiweb_cmds.h tls/includes.h

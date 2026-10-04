@@ -431,7 +431,8 @@ void CPmView::MyCardFileL(TDes& aPath)
 	fs.MkDirAll(aPath);
 	aPath.Append(file);
 	aPath.Append(_L(".vcf"));
-	TBuf8<600> v;
+	HBufC8* vb = HBufC8::NewLC(600);         // (on the heap: 600 bytes is a lot of an app thread's stack)
+	TPtr8 v = vb->Des();
 	v.Append(_L8("BEGIN:VCARD\r\nVERSION:3.0\r\nPRODID:-//PsiMail//Psion Series 5mx//EN\r\nN:"));
 	TInt sp = name.LocateReverse(' ');
 	AppendUtf8(v, sp > 0 ? name.Mid(sp + 1) : TPtrC(name));
@@ -446,6 +447,7 @@ void CPmView::MyCardFileL(TDes& aPath)
 	User::LeaveIfError(f.Replace(fs, aPath, EFileWrite));
 	TInt r = f.Write(v);
 	f.Close();
+	CleanupStack::PopAndDestroy();           // vb
 	User::LeaveIfError(r);
 	}
 

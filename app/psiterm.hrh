@@ -69,20 +69,12 @@ enum TPsiTermCommands
 	EPtCmdUpdate,
 	EPtCmdCharInfo,
 	EPtCmdScreenshot,
-	EPtCmdSendShots,
 	EPtCmdUpdateServer,      // (0.70: no longer on a menu - Update PsiTerm... asks where from)
 	EPtCmdBold,
 	EPtCmdConnSettings,
 
-	// 0.35: snippets, Claude Code keys, tmux, appearance
+	// 0.35: snippets, tmux, appearance (0.86: Claude Code keys are now snippets)
 	EPtCmdSnippets,           // Snippets > Manage snippets...
-	EPtCmdClaudeEsc,
-	EPtCmdClaudeEscEsc,
-	EPtCmdClaudeMode,
-	EPtCmdClaudeClear,
-	EPtCmdClaudeCompact,
-	EPtCmdClaudeResume,
-	EPtCmdClaudeHelp,
 	EPtCmdTmuxNew,
 	EPtCmdTmuxNext,
 	EPtCmdTmuxPrev,
@@ -97,7 +89,6 @@ enum TPsiTermCommands
 	EPtCmdTmuxMouse,
 	EPtCmdTmuxTabs,
 	EPtCmdCheckTabs,
-	EPtCmdTabsSetup,
 	EPtCmdTmuxPrefixB,
 	EPtCmdTmuxPrefixA,
 	EPtCmdAppearance,         // Tools > Preferences...
@@ -111,7 +102,7 @@ enum TPsiTermCommands
 	EPtCmdStatusLine,
 
 	// the toolbar: View > Show toolbar (Shift+Ctrl+B), its first button (SSH
-	// to..., or Disconnect while a session is up) and its two pop-up buttons
+	// to..., or End SSH while a session is up) and its two pop-up buttons
 	EPtCmdToolbar,
 	EPtCmdTbConnect,
 	EPtCmdTbSnippets,
@@ -125,6 +116,9 @@ enum TPsiTermCommands
 	// 0.75: the toolbar's Files button (pops up Send file / Get file / Log
 	// to file; it replaced Zoom - the sidebar has zoom icons)
 	EPtCmdTbFiles,
+
+	// display work (docs/display.md): View > Reading mode (tick box)
+	EPtCmdReading,
 
 	EPtCmdSnippet0 = 0x1400,  // ... EPtCmdSnippet0 + KMaxSnippets - 1: send snippet N
 	EPtCmdHost0 = 0x1500      // ... + KMaxHosts - 1: connect to saved host N (welcome screen)
@@ -163,6 +157,7 @@ enum TPsiTermDialogControls
 	EPtDlgSnipText,
 	EPtDlgSnipEnter,
 	EPtDlgSnipKey,
+	EPtDlgSnipFolder,
 	EPtDlgTheme,
 	EPtDlgCursor,
 	EPtDlgBlink,
@@ -179,7 +174,8 @@ enum TPsiTermDialogControls
 	EPtDlgRemoteList,
 	EPtDlgLogFile,           // Log to file
 	EPtDlgLogText,
-	EPtDlgLogExisting
+	EPtDlgLogExisting,
+	EPtDlgColourText         // Preferences > Coloured text (docs/display.md)
 	};
 
 enum TPsiTermDialogButtons
@@ -199,4 +195,11 @@ enum TPtLinkTest
 	{
 	EPtBidTest = 0x7400,
 	EPtDlgTest1, EPtDlgTest2, EPtDlgTest3, EPtDlgTest4, EPtDlgTest5
+	};
+
+// Preferences > Screen greys... (0.84): the button, the same id in all
+// three apps (ssh/psigreyui.cpp)
+enum TPtGreyButton
+	{
+	EPtBidGreys = 0x7480
 	};
