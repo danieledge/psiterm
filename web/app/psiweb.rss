@@ -241,7 +241,7 @@ RESOURCE DLG_BUTTONS r_pw_prefs_buttons
 	{
 	buttons=
 		{
-		DLG_BUTTON { id=EPwBidGreys; button=CMBUT { txt="Screen greys..."; }; hotkey='G'; },
+		DLG_BUTTON { id=EPwBidGreys; button=CMBUT { txt="Screen greys..."; }; hotkey='G'; flags=0; },
 		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
 		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="OK"; }; hotkey=EEikBidOk; flags=0; }
 		};

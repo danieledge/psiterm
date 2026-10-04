@@ -716,7 +716,7 @@ RESOURCE DLG_BUTTONS r_pm_prefs_buttons
 	{
 	buttons=
 		{
-		DLG_BUTTON { id=EPmBidGreys; button=CMBUT { txt="Screen greys..."; }; hotkey='G'; },
+		DLG_BUTTON { id=EPmBidGreys; button=CMBUT { txt="Screen greys..."; }; hotkey='G'; flags=0; },
 		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
 		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="OK"; }; hotkey=EEikBidOk; flags=0; }
 		};
@@ -929,7 +929,8 @@ RESOURCE ARRAY r_pm_cal_pages
 	items=
 		{
 		PAGE { text="Server"; id=EPmPageCalServer; lines=r_pm_cal_server_lines; },
-		PAGE { text="Agenda"; id=EPmPageCalAgenda; lines=r_pm_cal_agenda_lines; }
+		PAGE { text="Agenda"; id=EPmPageCalAgenda; lines=r_pm_cal_agenda_lines; },
+		PAGE { text="Dates"; id=EPmPageCalDates; lines=r_pm_cal_dates_lines; }
 		};
 	}
 
@@ -958,14 +959,23 @@ RESOURCE ARRAY r_pm_cal_agenda_lines
 			control=EDWIN { width=20; maxlength=120; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Time zone"; id=EPmDlgCalZone;
 			control=CHOICELIST { array_id=r_pm_zones; }; },
-		DLG_LINE { type=EEikCtNumberEditor; prompt="Days back"; id=EPmDlgCalBack;
-			control=NUMBER_EDITOR { min=0; max=365; }; },
-		DLG_LINE { type=EEikCtNumberEditor; prompt="Days ahead"; id=EPmDlgCalAhead;
-			control=NUMBER_EDITOR { min=7; max=730; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Alarms"; id=EPmDlgCalAlarms;
 			control=CHOICELIST { array_id=r_pm_cal_alarm_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Existing Psion entries"; id=EPmDlgCalExisting;
 			control=CHOICELIST { array_id=r_pm_cal_existing_array; }; }
+		};
+	}
+
+// (0.83) the dates synced: a page of their own, so the dialog fits the
+// 240-pixel screen (with six lines on Agenda its title was off the top)
+RESOURCE ARRAY r_pm_cal_dates_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Days back"; id=EPmDlgCalBack;
+			control=NUMBER_EDITOR { min=0; max=365; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Days ahead"; id=EPmDlgCalAhead;
+			control=NUMBER_EDITOR { min=7; max=730; }; }
 		};
 	}
 

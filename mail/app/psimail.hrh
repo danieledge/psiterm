@@ -191,6 +191,7 @@ enum TPmPages
 	EPmPageOptions,
 	EPmPageCalServer,
 	EPmPageCalAgenda,
+	EPmPageCalDates,
 	EPmPagePrefsGeneral,     // Preferences (0.74: two pages)
 	EPmPagePrefsNewMail,
 	EPmPagePrefsScreen

@@ -27,7 +27,7 @@ const img = createBlankImage(16*1024*1024);
 const w = (p: string, d: Uint8Array) => { const r = writeFileAtPath(img, p, d); if (!r.ok) throw new Error(p + ': ' + r.reason); };
 const t = (s: string) => new Uint8Array(Buffer.from(s, 'latin1'));
 const f = (p: string) => new Uint8Array(readFileSync(p));
-w('PAD.BIN', new Uint8Array(3000));   // (shifts the layout: the harness's CF emulation can wedge on some)
+w('PAD.BIN', new Uint8Array(Number(process.env.EMU_PAD || 9000)));   // (shifts the layout: the harness's CF emulation can wedge on some)
 w('SYSTEM/LIBS/ESTLIB.DLL', f(HERE + 'ESTLIB.DLL'));   // the EPOC C library (from the SDK's redistributable stdlib.sis)
 if (app === 'psimail') {
 	const P = pkg(REPO + 'build/mail-pkg/');
