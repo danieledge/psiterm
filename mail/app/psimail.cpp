@@ -79,7 +79,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.83");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.84");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TInt KTickQuiet = 2000000; // (0.81) ...or every 2 s when nothing is going on: the doorbell brings news
 const TInt KCalmTicks = 4;       // quick ticks with nothing going on before the slow pace (1 s)
@@ -420,6 +420,7 @@ void CPmView::CopySettingsToShared()
 	CopyToC(s->net.ppp_start, sizeof(s->net.ppp_start), ppp);
 	s->offline = iSettings->iOffline;
 	s->prefetch = PrefetchCount(*iSettings);
+	s->web_pic_proxy = (iSettings->iSpare[0] & KPmWebProxyBit) ? 1 : 0;
 	CopyToC(s->net.version, sizeof(s->net.version), KVersion);
 	Mem::Copy(s->acct, iSettings->iAccounts, sizeof(s->acct));
 	Mem::Copy(&s->cal, &iCal->iCal, sizeof(s->cal));
@@ -3135,6 +3136,7 @@ void CPmPrefsDialog::PreLayoutDynInitL()
 	SetChoiceListCurrentItem(EPmDlgStore, iSettings.iStore ? 1 : 0);
 	SetChoiceListCurrentItem(EPmDlgPictures, (iSettings.iSpare[0] & 3) <= 2 ? (iSettings.iSpare[0] & 3) : 0);
 	SetChoiceListCurrentItem(EPmDlgWebPictures, ((iSettings.iSpare[0] >> 8) & 3) <= 2 ? ((iSettings.iSpare[0] >> 8) & 3) : 0);
+	SetChoiceListCurrentItem(EPmDlgWebProxy, (iSettings.iSpare[0] & 0x4) ? 1 : 0);
 	SetChoiceListCurrentItem(EPmDlgEmailButton, (iSettings.iView & KPmViewEmailButton) ? 0 : 1);
 	SetChoiceListCurrentItem(EPmDlgReading, (iSettings.iView & KPmViewReading) ? 1 : 0);
 	NewMailInitL();                           // the New mail page (pmauto.cpp)
@@ -3158,9 +3160,11 @@ TBool CPmPrefsDialog::OkToExitL(TInt aButtonId)
 	TInt ahead = NumberEditorValue(EPmDlgPrefetch);
 	iSettings.iPrefetch = ahead > 0 ? ahead : -1;
 	iSettings.iStore = ChoiceListCurrentItem(EPmDlgStore);
-	// pictures: 0 shown, 1 only attached files, 2 none; bits 8-9 web pictures: 0 ask, 1 always, 2 never
-	iSettings.iSpare[0] = (iSettings.iSpare[0] & ~0x303) | ChoiceListCurrentItem(EPmDlgPictures) |
-		(ChoiceListCurrentItem(EPmDlgWebPictures) << 8);
+	// pictures: 0 shown, 1 only attached files, 2 none; bits 8-9 web pictures: 0 ask, 1 always, 2 never;
+	// bit 2 (0x4): web pictures via the "psiproxy" proxy
+	iSettings.iSpare[0] = (iSettings.iSpare[0] & ~0x307) | ChoiceListCurrentItem(EPmDlgPictures) |
+		(ChoiceListCurrentItem(EPmDlgWebPictures) << 8) |
+		(ChoiceListCurrentItem(EPmDlgWebProxy) ? 0x4 : 0);
 	if (ChoiceListCurrentItem(EPmDlgEmailButton) == 0)
 		iSettings.iView |= KPmViewEmailButton;
 	else

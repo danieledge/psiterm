@@ -171,7 +171,8 @@ enum TPmDialogControls
 	EPmDlgCheckConnect,      // If not connected
 	EPmDlgAutoSend,          // Send waiting mail when connected
 	EPmDlgWebPictures,       // Preferences: Web pictures (0.75: Ask / Always / Never)
-	EPmDlgDetailed           // Show detailed progress (0.75)
+	EPmDlgDetailed,          // Show detailed progress (0.75)
+	EPmDlgWebProxy           // Preferences: Web pictures via proxy (0.84: No / Yes)
 	};
 
 enum TPmButtons

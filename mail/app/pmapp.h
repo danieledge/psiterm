@@ -73,6 +73,10 @@ const TInt KPmViewDetailedProgress = 0x80000;
 // a message is open in front (ssh/psidisp.h)
 const TInt KPmViewReading = 0x100000;
 
+// TPmSettings::iSpare[0] bit 2 (0.84): web pictures fetched through the
+// "psiproxy" HTTP proxy (pmwebpic.cpp, engine/webpics.c)
+const TInt KPmWebProxyBit = 0x4;
+
 // app-wide settings (accounts are PmAccount, as the engine uses them)
 struct TPmSettings
 	{
@@ -95,6 +99,7 @@ struct TPmSettings
 	TInt iSpare[2];        // (TPmSettings is saved whole: keep its size)
 	                       // iSpare[0]: pictures in messages - 0 shown, 1 only attached files, 2 none (pmnative.cpp);
 	                       //   bits 8-9 (0x300, 0.75): pictures from the web - 0 ask, 1 always, 2 never (pmwebpic.cpp)
+	                       //   bit 2 (0x4, 0.84): web pictures fetched via the "psiproxy" HTTP proxy (pmwebpic.cpp)
 	                       // iSpare[1]: where PsiMail was when closed (CPmView::WhereToken)
 	PmAccount iAccounts[PM_MAX_ACCOUNTS];
 	};
@@ -574,6 +579,7 @@ public:
 	void PicturesDoneL(const PmCmd& aCmd);   // a PICTURES / WEBPICS command ended: frames still waiting say so
 	TInt WebPicturesPref() const;            // 0 ask, 1 always, 2 never
 	TBool WebPicturesOn() const;             // this message's web pictures are shown (asked for, or Always)
+	TBool WebPicturesViaProxy() const;       // fetch them through the "psiproxy" HTTP proxy (iSpare[0] bit 2)
 	TInt WebPictureCount() const { return iWebCount; }   // in the message shown (UpdateReaderL counts them)
 	TBool CanShowWebPictures() const;        // Message > Web > Show web pictures
 	void ShowWebPicturesL();                 // ... and the reader's line

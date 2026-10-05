@@ -33,6 +33,12 @@
 #define WEB_TIME_MS   (240 * 1000L)
 #define WEB_URL_MAX   400
 
+/* the system-wide proxy: the Mac tray app and the Atom modem intercept this
+   magic name and do the upstream TLS and the 16-grey GIF transcoding for us.
+   Could later be made configurable and shared through PsiLink.ini. */
+#define KWebProxyHost "psiproxy"
+#define KWebProxyPort 8080
+
 typedef struct { char url[WEB_URL_MAX]; int w, h; } WebPic;
 
 unsigned long web_hash(const char *s)
@@ -147,10 +153,11 @@ static int g_port = -1, g_tls, g_conn = -1;
    or CANCELLED / OFFLINE (the line: stop) */
 static int get(const char *url0, const char *path, long max, long *got, char *why, int whymax)
 {
-	static char line[600], req[800];
+	static char line[600], req[1024];
 	static unsigned char buf[2048];
 	char url[WEB_URL_MAX];
 	int hops;
+	int proxy = pm_shared()->web_pic_proxy ? 1 : 0;
 	*got = 0;
 	pm_copy(url, url0, sizeof(url));
 	for (hops = 0; hops < 4; hops++) {
@@ -161,24 +168,49 @@ static int get(const char *url0, const char *path, long max, long *got, char *wh
 		FILE *f;
 		loc[0] = 0;
 		if (parse_url(url, &u) != 0) { snprintf(why, whymax, "not a web address"); return PM_RES_FAILED; }
+		/* where we actually connect: the proxy, or the origin.  With the proxy
+		   on, the hop is always plain HTTP (the proxy does the upstream TLS). */
+		{
+		const char *chost = proxy ? KWebProxyHost : u.host;
+		int cport = proxy ? KWebProxyPort : u.port;
+		int ctls  = proxy ? 0 : u.tls;
 		for (attempt = 0; attempt < 2; attempt++) {
 			int reused = g_conn >= 0 && pmn_is_open() && pmn_conn_id() == g_conn &&
-				g_port == u.port && g_tls == u.tls && !strcmp(g_host, u.host);
+				g_port == cport && g_tls == ctls && !strcmp(g_host, chost);
 			if (!reused) {
 				if (pm_shared()->offline) { snprintf(why, whymax, "Working offline"); return PM_RES_OFFLINE; }
 				pm_progress("Connecting to %s...", u.host);
-				if (pmn_connect(u.host, u.port, u.tls, why, whymax) != 0) {
+				if (pmn_connect(chost, cport, ctls, why, whymax) != 0) {
 					g_conn = -1;
 					if (pm_cancelled()) return PM_RES_CANCELLED;
 					if (tlsv_problem()[0]) snprintf(why, whymax, "%s: %s", u.host, tlsv_problem());
-					pm_log("web picture: could not connect to %s:%d: %s", u.host, u.port, why);
+					pm_log("web picture: could not connect to %s:%d: %s", chost, cport, why);
 					return PM_RES_FAILED;
 				}
 				g_conn = pmn_conn_id();
-				pm_copy(g_host, u.host, sizeof(g_host));
-				g_port = u.port;
-				g_tls = u.tls;
+				pm_copy(g_host, chost, sizeof(g_host));
+				g_port = cport;
+				g_tls = ctls;
 			}
+			if (proxy) {
+				/* an absolute-URL request, always http:// so the proxy does the
+				   upstream TLS; the origin stays in the Host header.  The port
+				   goes in the URL only when it is not the origin scheme's default
+				   (80 for http, 443 for https). */
+				int def = u.tls ? 443 : 80;
+				if (u.port == def)
+					snprintf(req, sizeof(req), "GET http://%s%s HTTP/1.1\r\nHost: %s\r\n"
+						"User-Agent: PsiMail (Psion Series 5mx)\r\n"
+						"Accept: image/jpeg, image/png, image/gif\r\n"
+						"Proxy-Connection: keep-alive\r\nConnection: keep-alive\r\n\r\n",
+						u.host, u.path, u.host);
+				else
+					snprintf(req, sizeof(req), "GET http://%s:%d%s HTTP/1.1\r\nHost: %s\r\n"
+						"User-Agent: PsiMail (Psion Series 5mx)\r\n"
+						"Accept: image/jpeg, image/png, image/gif\r\n"
+						"Proxy-Connection: keep-alive\r\nConnection: keep-alive\r\n\r\n",
+						u.host, u.port, u.path, u.host);
+			} else
 			snprintf(req, sizeof(req), "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: PsiMail (Psion Series 5mx)\r\n"
 				"Accept: image/jpeg, image/png, image/gif\r\nConnection: keep-alive\r\n\r\n", u.path, u.host);
 			if (pmn_write(req, (int)strlen(req)) != 0) {
@@ -219,6 +251,7 @@ static int get(const char *url0, const char *path, long max, long *got, char *wh
 				}
 			}
 			if (status) break;
+		}
 		}
 		if (!status) { snprintf(why, whymax, "the connection to %s kept dropping", u.host); return PM_RES_FAILED; }
 		/* a redirect: no body worth reading (a short one is skipped below) */

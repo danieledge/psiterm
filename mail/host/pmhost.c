@@ -165,6 +165,7 @@ int main(int argc, char **argv)
 	g_sh.net.net_mode = atoi(env("PM_NETMODE", "1"));   /* 0: the modem-mode code paths (NO CARRIER, piece size) */
 	g_sh.net.rtscts = atoi(env("PM_RTSCTS", "0"));
 	g_sh.prefetch = atoi(env("PM_PREFETCH", "0"));
+	g_sh.web_pic_proxy = atoi(env("PM_WEBPIC_PROXY", "0"));   /* tests: route web pictures via "psiproxy" */
 	snprintf(g_sh.store_dir, sizeof(g_sh.store_dir), "%s%s", store, store[strlen(store) - 1] == '/' ? "" : "/");
 	snprintf(g_sh.attach_dir, sizeof(g_sh.attach_dir), "%sattachments/", g_sh.store_dir);
 	pm_mkdir(g_sh.store_dir);

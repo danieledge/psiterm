@@ -3,7 +3,7 @@
 ; pmbutton.exe: the Email icon below the screen opens PsiMail (a preference);
 ; PsiMail starts it whenever PsiMail opens with that preference on.
 &EN
-#{"PsiMail"},(0x01000A7C),0,83,0
+#{"PsiMail"},(0x01000A7C),0,84,0
 "psimail.app"-"!:\System\Apps\PsiMail\PsiMail.app"
 "psimail.rsc"-"!:\System\Apps\PsiMail\PsiMail.rsc"
 "psimail.mbm"-"!:\System\Apps\PsiMail\PsiMail.mbm"

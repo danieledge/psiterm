@@ -17,12 +17,16 @@
 // than one site PsiMail says how many calls it will take first.
 //
 // The setting is TPmSettings::iSpare[0] bits 8-9 (TPmSettings keeps its size).
+// Bit 2 (0x4) routes web pictures through the system proxy "psiproxy" (the
+// Mac tray app or the Atom modem intercept the name), so the proxy does the
+// upstream TLS and the 16-grey GIF transcoding - see engine/webpics.c.
 
 #include "pmapp.h"
 #include "pmpict.h"
 
 const TInt KPmWebShift = 8;
 const TInt KPmWebMask = 0x300;
+// KPmWebProxyBit (iSpare[0] bit 2: fetch via "psiproxy") is in pmapp.h
 
 // ----- the picture entries ------------------------------------------------------
 
@@ -79,6 +83,11 @@ TBool CPmView::WebPicturesOn() const
 	if (PicturesPref() != 0 || WebPicturesPref() == 2)
 		return EFalse;
 	return WebPicturesPref() == 1 || (iWebUid && iWebUid == iMsgUid);
+	}
+
+TBool CPmView::WebPicturesViaProxy() const
+	{
+	return (iSettings->iSpare[0] & KPmWebProxyBit) != 0;
 	}
 
 // "600x400" (either may be 0): ETrue if there was one

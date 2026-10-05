@@ -809,6 +809,8 @@ RESOURCE ARRAY r_pm_prefs_screen_lines
 			control=CHOICELIST { array_id=r_pm_pictures_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Web pictures"; id=EPmDlgWebPictures;
 			control=CHOICELIST { array_id=r_pm_web_pictures_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Web pictures via proxy"; id=EPmDlgWebProxy;
+			control=CHOICELIST { array_id=r_pm_web_proxy_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Reading mode"; id=EPmDlgReading;
 			control=CHOICELIST { array_id=r_pm_reading_array; }; }
 		};
@@ -837,6 +839,14 @@ RESOURCE ARRAY r_pm_web_pictures_array
 	items=
 		{
 		LBUF { txt="Ask"; }, LBUF { txt="Always"; }, LBUF { txt="Never"; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_web_proxy_array
+	{
+	items=
+		{
+		LBUF { txt="No"; }, LBUF { txt="Yes"; }
 		};
 	}
 

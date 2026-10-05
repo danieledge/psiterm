@@ -159,6 +159,7 @@ typedef struct
 	char attach_dir[96];            /* where attachments are saved */
 	int offline;                    /* 1 = never dial: queue changes */
 	int prefetch;                   /* after a sync, download the text of the newest N (0 = off) */
+	int web_pic_proxy;              /* 1 = fetch web pictures via the "psiproxy" HTTP proxy (webpics.c) */
 	PmAccount acct[PM_MAX_ACCOUNTS];
 	volatile unsigned int acct_seq; /* app bumps after changing acct[] */
 	PmCalendar cal;
