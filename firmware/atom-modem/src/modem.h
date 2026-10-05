@@ -28,6 +28,7 @@
 #include "schema.h"
 #include "uplink.h"
 #include "proxy.h"
+#include "ppp.h"
 
 namespace am {
 
@@ -181,6 +182,7 @@ public:
 	uint32_t ToServer() const { return iToServer; }
 	bool ProxyCall() const { return iProxyCall; }
 	bool ExecCall() const { return iExecCall; }
+	bool PppCall() const { return iPppCall; }
 	const Proxy& WebProxy() const { return iProxy; }
 	const Uplink& Link() const { return iUplink; }
 	size_t RingSize() const { return iRing.Size(); }
@@ -263,6 +265,8 @@ private:
 	int iLed;                           // the LED state last shown
 	Proxy iProxy;                       // the web proxy (a psiproxy call)
 	bool iProxyCall;
+	PppLink iPpp;                       // PPP-over-serial (a numeric dial, AT$PPP=1)
+	bool iPppCall;                      // the current call is a PPP link
 	bool iExecCall;                     // a psiexec call (a text channel to the helper)
 	bool iExecOneShot;                  // ... from AT$EXEC=: ends with OK, not NO CARRIER
 	bool iTlsCall;                      // the call is TLS-terminated here

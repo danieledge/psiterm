@@ -206,7 +206,7 @@ Modem::Modem(Hal& aHal, uint8_t* aRing, size_t aRingSize)
 	: iHal(aHal), iLineLen(0), iOnline(false), iConnected(false), iClosing(false), iWifiWasUp(false),
 	  iLastSerialMs(0), iPluses(0), iLastPlusMs(0), iToPsion(0), iToServer(0), iLastDataMs(0),
 	  iPendingBaud(0), iTrialFrom(0), iTrialStartMs(0), iTrialArmed(false), iTrialGen(0), iLed(-1), iProxy(aHal),
-	  iProxyCall(false), iExecCall(false), iExecOneShot(false), iTlsCall(false), iConfigMode(false),
+	  iProxyCall(false), iPppCall(false), iExecCall(false), iExecOneShot(false), iTlsCall(false), iConfigMode(false),
 	  iConfigUntilMs(0), iLastTickMs(0), iWifiDownMs(0), iWifiRetryMs(0), iProbeDueMs(0), iLastWifiState(-1),
 	  iLastActive(-1), iUpLen(0)
 	{
@@ -279,8 +279,17 @@ void Modem::Loop()
 		}
 	EscapeTick(iHal.Millis());
 	FlushUp();
-	PumpServer(now);
-	PumpPsion(now);
+	if (iPppCall)
+		{
+		iPpp.Poll(iHal);                     // PPP runs on the lwIP thread; notice a drop
+		if (iPpp.Dropped())
+			Hangup(true);                    // the Psion closed the link (or an error)
+		}
+	else
+		{
+		PumpServer(now);
+		PumpPsion(now);
+		}
 	if (iPendingBaud && iHal.SerialWritable() > 0)
 		{
 		iHal.SerialBaud(iPendingBaud);          // (the HAL lets the OK go out first)
@@ -446,7 +455,9 @@ void Modem::FlushUp()
 		iUpLen = 0;                          // nowhere to go
 		return;
 		}
-	size_t n = iProxyCall ? iProxy.FromPsion(iUpBuf, iUpLen) : iHal.TcpWrite(iUpBuf, iUpLen);
+	size_t n = iPppCall ? iPpp.Input(iHal, iUpBuf, iUpLen)
+	         : iProxyCall ? iProxy.FromPsion(iUpBuf, iUpLen)
+	         : iHal.TcpWrite(iUpBuf, iUpLen);
 	iToServer += n;
 	if (n)
 		iLastDataMs = iHal.Millis();
@@ -993,12 +1004,43 @@ Modem::TResult Modem::Dial(const char* aArgs)
 		}
 	else
 		{
-		bool digits = true;
+		// a "phone number" (digits and the usual dial punctuation, e.g.
+		// ATD777 or ATDT*99#): no host to resolve. With AT$PPP=1 this brings
+		// up PPP so the Psion's own "Psion Internet" stack shares our link.
+		bool digits = target[0] != 0;
 		for (const char* q = target; *q; q++)
-			if ((*q < '0' || *q > '9') && *q != ',' && *q != '-')
+			if ((*q < '0' || *q > '9') && *q != ',' && *q != '-' && *q != '*' && *q != '#')
 				digits = false;
 		if (digits)
-			return RNoCarrier;               // a phone number (e.g. 777 for PPP): no PPP here
+			{
+			if (!iS2.ppp)
+				return RNoCarrier;           // PPP off: a phone number goes nowhere
+			if (!iUplink.Up())
+				return RNoCarrier;
+			if (iConnected || iClosing)
+				Hangup(false);
+			if (!iS2.flow)
+				iHal.Log("ppp: RTS/CTS (AT$FC=1) and a higher baud are strongly recommended");
+			iHal.Led(ELedConnecting);
+			iLed = ELedConnecting;
+			if (!iPpp.Start(iHal))
+				return RNoCarrier;
+			iPppCall = true;
+			iProxyCall = false;
+			iExecCall = false;
+			iExecOneShot = false;
+			iTlsCall = false;
+			iConnected = true;
+			iClosing = false;
+			iOnline = true;
+			iRing.Clear();
+			iUpLen = 0;
+			iPluses = 0;
+			iLastSerialMs = iHal.Millis();
+			Result(RConnect);
+			UpdateDcd();
+			return RNone;
+			}
 		}
 	// "psiexec": the text channel to the helper on the LAN
 	if (StartsNoCase(target, "psiexec") && target[7] == 0)
@@ -1148,11 +1190,14 @@ Modem::TResult Modem::DialExec(const char* aCommand)
 
 void Modem::EndCall()
 	{
-	if (iProxyCall)
+	if (iPppCall)
+		iPpp.Stop(iHal);                     // (tears the PPP link down, NAT off)
+	else if (iProxyCall)
 		iProxy.Stop();                       // (closes its server connection)
 	else
 		iHal.TcpClose();
 	iProxyCall = false;
+	iPppCall = false;
 	iExecCall = false;
 	iTlsCall = false;
 	iConnected = false;

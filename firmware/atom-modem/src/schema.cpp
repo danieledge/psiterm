@@ -22,6 +22,7 @@ static const SchemaEntry kSchema[] =
 	{ "UP", STEnum, F2(uplink), 0, 2, kUplinkNames, SAUplink, SGUplink, "Uplink", "AUTO: USB when a network device is up, else WiFi. WIFI or USB: that one only" },
 	{ "USB", STBool, F2(usbHost), 0, 1, 0, SAUsb, SGUplink, "USB-C port is a host", "1: a phone or USB Ethernet device on the USB-C (at the next restart). 0: a device, for programming" },
 	{ "CHK", STStr, F2(chkHost), 0, 39, 0, SANone, SGUplink, "Internet check", "host:port the modem connects to now and then, to tell a WiFi it has joined from one with the Internet behind it. Empty: no check" },
+	{ "PPP", STBool, F2(ppp), 0, 1, 0, SANone, SGUplink, "PPP dial-up", "1: a numeric dial (ATD777) brings up PPP and shares the modem's connection (NAT). The Psion uses its \"Psion Internet\" route with a static IP 192.168.7.2, gateway/DNS 192.168.7.1" },
 	// serial
 	{ "SB", STBaud, F1(baud), 300, 921600, 0, SABaud, SGSerial, "Baud", "The serial speed. Changes after the OK; falls back in 15 s if nothing answers" },
 	{ "FC", STBool, F2(flow), 0, 1, 0, SAPins, SGSerial, "RTS/CTS flow control", "1: hardware flow control on the RTS and CTS pins (needs a four-wire transceiver). 0: pacing only" },

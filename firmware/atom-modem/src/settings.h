@@ -85,7 +85,9 @@ struct Settings2
 	char execHost[64];         // host:port of psiexecd
 	char execToken[33];
 	char chkHost[40];          // host:port the Internet check connects to; empty = no check
-	uint8_t spare[256 - 4 - 2 - 2 - 4 - 5 - 1 - 3 - 1 - 2 - 2 - 1 - 1 - 16 - 33 - 33 - 64 - 33 - 40];
+	uint8_t ppp;               // 1: a numeric dial (ATD777) brings up PPP (the Psion's
+	                           // "Psion Internet" route shares the modem's link, NAT'd)
+	uint8_t spare[256 - 4 - 2 - 2 - 4 - 5 - 1 - 3 - 1 - 2 - 2 - 1 - 1 - 16 - 33 - 33 - 64 - 33 - 40 - 1];
 	};
 
 static const uint32_t kMagic2 = 0x41544d32;  // 'ATM2'

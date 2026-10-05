@@ -86,6 +86,7 @@ void FactoryDefaults2(Settings2& aS)
 	aS.imgMaxKB = 64;
 	aS.exec = 0;
 	aS.logLevel = 1;
+	aS.ppp = 0;                // PPP dial-up off until it is set up (AT$PPP=1)
 	static const uint16_t kPorts[] = { 443, 465, 993, 995 };
 	for (size_t i = 0; i < sizeof(kPorts) / sizeof(kPorts[0]); i++)
 		aS.tlsPorts[i] = kPorts[i];

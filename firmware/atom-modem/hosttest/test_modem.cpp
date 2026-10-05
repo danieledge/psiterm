@@ -1027,10 +1027,50 @@ static void TestReachability()
 	CHECK(r.hal.Logged("WiFi: joined, Internet not confirmed"));
 	}
 
+// PPP dial dispatch (the lwIP link itself is verified on hardware; here the
+// host stub only flips the mode, so we check a numeric dial routes to PPP,
+// data goes into PPP not a TCP server, escape keeps the link up, ATH ends it,
+// *99# triggers it too, and an uplink-down or PPP-off dial gives NO CARRIER)
+static void TestPpp()
+	{
+	Rig r;
+	// off by default: a numeric dial goes nowhere
+	r.TypeRun("ATD777\r");
+	CHECK(Has(r.Got(), "NO CARRIER") && !r.modem->PppCall());
+	// turn PPP on
+	r.TypeRun("AT$PPP=1\r");
+	CHECK(Has(r.Got(), "OK") && r.modem->Config2().ppp == 1);
+	// a numeric dial now brings PPP up
+	r.TypeRun("ATD777\r");
+	CHECK(Has(r.Got(), "CONNECT") && r.modem->PppCall() && r.modem->Online() && r.hal.dcd);
+	// Psion data goes into the PPP link, not to any TCP server
+	r.TypeRun("pppdata", 1000);
+	CHECK(r.hal.toServer.empty() && !r.hal.tcpOpen);
+	// +++ escapes to command mode; the PPP link stays up (ATO/ATH can follow)
+	r.TypeRun("+++", 900);
+	CHECK(Has(r.Got(), "\r\nOK\r\n") && !r.modem->Online() && r.modem->PppCall());
+	// ATH tears the link down
+	r.TypeRun("ATH\r");
+	CHECK(Has(r.Got(), "OK") && !r.modem->PppCall() && !r.modem->Connected());
+	// a *99# dial string triggers PPP too
+	r.TypeRun("ATDT*99#\r");
+	CHECK(Has(r.Got(), "CONNECT") && r.modem->PppCall());
+	r.Run(1000);                    // guard-time quiet before the escape
+	r.TypeRun("+++", 900); r.Got();
+	r.TypeRun("ATH\r"); r.Got();
+	CHECK(!r.modem->PppCall());     // torn down before the next dial
+	// uplink down: NO CARRIER even with PPP on
+	r.hal.wifi = false;
+	r.Run(300);
+	r.TypeRun("ATD777\r");
+	CHECK(Has(r.Got(), "NO CARRIER") && !r.modem->PppCall());
+	}
+
 int main()
 	{
 	printf("basics\n");   TestBasics();
 	printf("dial\n");     TestDial();
+	printf("ppp\n");      TestPpp();
 	printf("data\n");     TestData();
 	printf("escape\n");   TestEscape();
 	printf("carrier\n");  TestCarrier();
