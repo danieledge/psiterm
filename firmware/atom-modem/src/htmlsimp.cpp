@@ -139,6 +139,37 @@ bool Droppable(const char* aName)
 	return !OneOf(aName, kKeepEmpty);
 	}
 
+// reader mode: a class or id that names page furniture. The word must
+// start a token of the value ("main-nav", "navigation", "site_footer"),
+// so "unavailable" is not navigation
+bool Furniture(const char* aV, size_t aLen)
+	{
+	static const char* const kWords[] = { "nav", "menu", "sidebar", "footer", "cookie", "consent", "promo",
+		"share", "social", "related", "comments", "breadcrumb", "banner", "advert", "sponsor", "newsletter", 0 };
+	size_t i = 0;
+	while (i < aLen)
+		{
+		// the start of a token
+		for (const char* const* w = kWords; *w; w++)
+			{
+			size_t l = strlen(*w);
+			if (i + l > aLen)
+				continue;
+			size_t k = 0;
+			while (k < l && ((aV[i + k] >= 'A' && aV[i + k] <= 'Z') ? aV[i + k] + 32 : aV[i + k]) == (*w)[k])
+				k++;
+			if (k == l)
+				return true;
+			}
+		// to the next token
+		while (i < aLen && aV[i] != ' ' && aV[i] != '-' && aV[i] != '_' && aV[i] != ':' && aV[i] != '.')
+			i++;
+		while (i < aLen && (aV[i] == ' ' || aV[i] == '-' || aV[i] == '_' || aV[i] == ':' || aV[i] == '.'))
+			i++;
+		}
+	return false;
+	}
+
 bool IsSpace(uint8_t aC) { return aC == ' ' || aC == '\n' || aC == '\r' || aC == '\t' || aC == '\f'; }
 bool IsAlpha(uint8_t aC) { return (aC >= 'a' && aC <= 'z') || (aC >= 'A' && aC <= 'Z'); }
 uint8_t Lower(uint8_t aC) { return (aC >= 'A' && aC <= 'Z') ? aC + 32 : aC; }
@@ -177,6 +208,14 @@ void HtmlSimplifier::Begin(HtmlSink* aOut, int aMode, const char* aBase)
 	iRawKeep = false;
 	iPendLen = 0;
 	iPendN = 0;
+	iFurniture = iMainTag = false;
+	iMainDepth = iMainOther = 0;
+	iDone = false;
+	iLinkDepth = 0;
+	iCapLen = 0;
+	iCapturing = false;
+	iCapDepth = iCapOther = 0;
+	iCapLinkChars = iCapOtherChars = iCapLinks = 0;
 	if (aBase && aOut)
 		{
 		Emit("<base href=\"");
@@ -193,9 +232,33 @@ void HtmlSimplifier::Write(const char* aS, size_t aLen)
 	{
 	if (!aLen || !iOut)
 		return;
+	if (iCapturing)
+		{
+		// a list being judged: held back
+		if (iCapLen + aLen <= sizeof(iCap))
+			{
+			memcpy(iCap + iCapLen, aS, aLen);
+			iCapLen += aLen;
+			return;
+			}
+		CaptureEnd(true);                    // too big to judge: it is kept
+		}
 	iOut->Put(aS, aLen);
 	iOutCount += aLen;
 	iStarted = true;
+	}
+
+// the list held back is sent (aKeep), or dropped as a menu
+void HtmlSimplifier::CaptureEnd(bool aKeep)
+	{
+	iCapturing = false;
+	if (aKeep && iCapLen && iOut)
+		{
+		iOut->Put(iCap, iCapLen);
+		iOutCount += iCapLen;
+		iStarted = true;
+		}
+	iCapLen = 0;
 	}
 
 void HtmlSimplifier::FlushPending()
@@ -271,6 +334,10 @@ void HtmlSimplifier::FlushSpace()
 void HtmlSimplifier::EmitText(const char* aS, size_t aLen)
 	{
 	FlushSpace();
+	if (iCapturing)
+		{
+		if (iLinkDepth) iCapLinkChars += (uint32_t)aLen; else iCapOtherChars += (uint32_t)aLen;
+		}
 	Emit(aS, aLen);
 	}
 
@@ -292,7 +359,9 @@ void HtmlSimplifier::TextChar(uint8_t aC)
 void HtmlSimplifier::Feed(const uint8_t* aData, size_t aLen)
 	{
 	iIn += aLen;
-	for (size_t i = 0; i < aLen; i++)
+	if (iDone)
+		return;                              // (reader mode: past </main>)
+	for (size_t i = 0; i < aLen && !iDone; i++)
 		{
 		// an element dropped for too long (its end never came, or the page
 		// is not nested as it says): what follows is kept after all
@@ -305,11 +374,13 @@ void HtmlSimplifier::Feed(const uint8_t* aData, size_t aLen)
 void HtmlSimplifier::End()
 	{
 	// an unfinished tag or comment at the end is dropped; pending white space too
-	if (iState == SLt)
+	if (iState == SLt && !iDone)
 		EmitText("&lt;", 4);
 	iState = SText;
 	iPendLen = 0;                            // empty open tags at the very end
 	iPendN = 0;
+	if (iCapturing)
+		CaptureEnd(true);                    // (a list never closed: kept)
 	}
 
 void HtmlSimplifier::StartTag(bool aEnd)
@@ -320,6 +391,7 @@ void HtmlSimplifier::StartTag(bool aEnd)
 	iNameLong = false;
 	iTagLen = 0;
 	iHidden = iHaveSrc = iMetaUseful = false;
+	iFurniture = iMainTag = false;
 	iImgW = iImgH = -1;
 	iAltLen = 0;
 	iAttrLen = 0;
@@ -570,6 +642,19 @@ void HtmlSimplifier::AttrDone()
 		iHidden = true;
 		return;
 		}
+	if (iMode == EReader)
+		{
+		if (strcmp(a, "role") == 0)
+			{
+			if (StartsNoCase(iVal, iValLen, "navigation") || StartsNoCase(iVal, iValLen, "banner")
+				|| StartsNoCase(iVal, iValLen, "contentinfo") || StartsNoCase(iVal, iValLen, "complementary"))
+				iFurniture = true;
+			else if (StartsNoCase(iVal, iValLen, "main"))
+				iMainTag = true;
+			}
+		else if ((strcmp(a, "class") == 0 || strcmp(a, "id") == 0) && Furniture(iVal, iValLen))
+			iFurniture = true;
+		}
 	if (strcmp(a, "style") == 0)
 		{
 		// style="display:none" (any spacing or case)
@@ -677,7 +762,10 @@ void HtmlSimplifier::TagDone()
 	const TTagInfo& t = Lookup(iNameLong ? "" : iName);
 	int action = t.iAction;
 	if (action == ADivLite)
-		action = iMode == ETextOnly ? (int)ASkip : (int)ADiv;
+		action = iMode >= ETextOnly ? (int)ASkip : (int)ADiv;
+	bool reader = iMode == EReader && !iNameLong;
+	if (reader && strcmp(iName, "header") == 0)
+		action = ASkip;                          // (the site's masthead and menus)
 
 	// inside an element that is being dropped: only follow its nesting
 	if (iSkipDepth)
@@ -736,6 +824,8 @@ void HtmlSimplifier::TagDone()
 
 	if (iEnd)
 		{
+		if (reader && strcmp(iName, "a") == 0 && iLinkDepth > 0)
+			iLinkDepth--;
 		if (action == AKeep && !t.iVoid)
 			{
 			if (strcmp(iName, "pre") == 0 || strcmp(iName, "listing") == 0 || strcmp(iName, "xmp") == 0)
@@ -746,12 +836,65 @@ void HtmlSimplifier::TagDone()
 			}
 		else if (action == ADiv)
 			CloseTag("div");
+		if (reader)
+			{
+			// the end of a list being judged: a menu (nearly all links) goes
+			if (iCapturing && (strcmp(iName, "ul") == 0 || strcmp(iName, "ol") == 0) && --iCapDepth <= 0)
+				{
+				bool menu = iCapLinks >= 3 && iCapLinkChars * 5 >= (iCapLinkChars + iCapOtherChars) * 4;
+				CaptureEnd(!menu);
+				}
+			// the end of <main>: nothing more of the page is wanted
+			if (iMainDepth && strcmp(iName, iMainName) == 0 && --iMainDepth == 0)
+				{
+				if (iCapturing)
+					CaptureEnd(true);
+				iDone = true;
+				}
+			}
 		return;
 		}
 
 	// an open tag
 	if (iHidden && !t.iVoid && action != ARawDrop && action != ARawKeep && !iSelfClose && !iNameLong)
 		action = ASkip;
+	if (reader)
+		{
+		if (iFurniture && !t.iVoid && action != ARawDrop && action != ARawKeep && !iSelfClose)
+			action = ASkip;
+		else if (action != ASkip)
+			{
+			if (strcmp(iName, "a") == 0)
+				{
+				iLinkDepth++;
+				if (iCapturing)
+					iCapLinks++;
+				}
+			// <main> or role="main": counted by its name, so its end is known
+			if (iMainDepth && strcmp(iName, iMainName) == 0 && !iSelfClose && !t.iVoid)
+				iMainDepth++;
+			else if (!iMainDepth && (strcmp(iName, "main") == 0 || iMainTag) && !iSelfClose && !t.iVoid)
+				{
+				strcpy(iMainName, iName);
+				iMainDepth = 1;
+				}
+			// a list: held back until its end says whether it is a menu
+			if ((strcmp(iName, "ul") == 0 || strcmp(iName, "ol") == 0) && !iSelfClose)
+				{
+				if (iCapturing)
+					iCapDepth++;
+				else if (!iPendN || iPendLen + 64 < sizeof(iPend))
+					{
+					if (iPendLen)
+						FlushPending();          // (what is open goes out as it is)
+					iCapturing = true;
+					iCapLen = 0;
+					iCapDepth = 1;
+					iCapLinkChars = iCapOtherChars = iCapLinks = 0;
+					}
+				}
+			}
+		}
 	switch (action)
 		{
 	case ARawDrop:
@@ -793,7 +936,7 @@ void HtmlSimplifier::TagDone()
 		{
 		if (iImgW >= 0 && iImgH >= 0 && iImgW <= 2 && iImgH <= 2)
 			return;                              // a tracking pixel
-		if (iMode == ETextOnly || !iHaveSrc)
+		if (iMode >= ETextOnly || !iHaveSrc)
 			{
 			// the alt text in its place
 			if (iAltLen)

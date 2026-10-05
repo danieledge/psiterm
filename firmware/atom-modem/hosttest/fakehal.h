@@ -36,8 +36,20 @@ public:
 	size_t maxTcpRead = 0;                     // biggest single read
 	bool haveSaved = false;
 	am::Settings saved;
+	bool haveSaved2 = false;
+	am::Settings2 saved2;
+	size_t saved2Len = 0;                      // (a shorter record stands for an older firmware's)
 	bool dcd = false;
 	int led = -1;
+	int usb = am::EUsbNone;                    // what the USB host reports
+	std::string usbDetail;
+	int internet = -1;                         // the Internet check's result (the test sets it)
+	int probes = 0;                            // ProbeInternet calls
+	std::string probeHost; int probePort = 0;
+	int pinsApplied = 0;                       // ApplyPins calls
+	am::Settings2 pins;                        // ... and the record it was given
+	int webApplied = 0, uplinkApplied = 0;
+	bool reset = false;                        // FactoryReset was called
 	// the web proxy's server side
 	int upConnects = 0;
 	bool upTls = false;
@@ -103,7 +115,7 @@ public:
 		}
 	void Idle() override { Advance(1000); }
 	std::vector<std::string> logs;             // the proxy's status lines
-	void Log(const char* aLine) override { logs.push_back(aLine); }
+	void Log(const char* aLine) override { logs.push_back(aLine); Record(aLine); }
 	bool Logged(const char* aPart) const
 		{
 		for (const std::string& l : logs) if (l.find(aPart) != std::string::npos) return true;
@@ -137,6 +149,21 @@ public:
 	void WifiInfo(char* o, size_t m) override { snprintf(o, m, "\"%s\" IP 192.168.1.50 RSSI -60", wifiSsid.c_str()); }
 	bool LoadSettings(am::Settings& s) override { if (!haveSaved) return false; s = saved; return true; }
 	bool SaveSettings(const am::Settings& s) override { saved = s; haveSaved = true; return true; }
+	bool LoadSettings2(am::Settings2& s, size_t& len) override
+		{
+		if (!haveSaved2) { len = 0; return false; }
+		len = saved2Len ? saved2Len : sizeof(s);
+		memcpy(&s, &saved2, len);
+		return true;
+		}
+	bool SaveSettings2(const am::Settings2& s) override { saved2 = s; haveSaved2 = true; saved2Len = sizeof(s); return true; }
+	void FactoryReset() override { reset = true; haveSaved = haveSaved2 = false; }
+	int UsbState(char* d, size_t m) override { snprintf(d, m, "%s", usbDetail.c_str()); return usb; }
+	void ProbeInternet(const char* h, uint16_t p) override { probes++; probeHost = h; probePort = p; }
+	int Internet() override { return internet; }
+	void ApplyPins(const am::Settings&, const am::Settings2& s2) override { pinsApplied++; pins = s2; }
+	void ApplyWeb(const am::Settings2&) override { webApplied++; }
+	void ApplyUplink(const am::Settings2&) override { uplinkApplied++; }
 	void Dcd(bool on) override { dcd = on; }
 	void Led(am::LedState s) override { led = s; }
 

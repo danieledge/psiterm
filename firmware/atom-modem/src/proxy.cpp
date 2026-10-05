@@ -10,7 +10,14 @@
 // the Atom runs is tested
 #if defined(ARDUINO) || defined(AM_TINFL)
 #define AM_USE_TINFL 1
+#if defined(ARDUINO)
+#include <esp_idf_version.h>
+#endif
+#if defined(ARDUINO) && ESP_IDF_VERSION_MAJOR >= 5
+#include <miniz.h>                           // (the ROM's tinfl, as the IDF 5 headers call it)
+#else
 #include <rom/miniz.h>
+#endif
 #else
 #include <zlib.h>
 #endif
@@ -188,9 +195,9 @@ static bool Append(char* aBuf, size_t& aLen, size_t aMax, const char* aName, con
 // ===== the proxy ===========================================================
 
 Proxy::Proxy(Hal& aHal)
-	: iHal(aHal), iOut(0), iMode(EOn), iState(SClosed), iRequests(0), iFetched(0), iSent(0),
+	: iHal(aHal), iOut(0), iMode(EOn), iState(SClosed), iRequests(0), iFetched(0), iSent(0), iPictures(0),
 	  iReqLen(0), iReqUsed(0), iStartMs(0), iFetched0(0), iSent0(0), iUpOpen(false), iChunkLen(0),
-	  iUpgradeNext(0)
+	  iUpgradeNext(0), iImgWidth(0), iImgMax(0), iImgMode(false), iImgBuf(0), iImgLen(0), iImgCap(0), iImgMs(0)
 	{
 	iStatus = 0;
 	memset(iUpgrades, 0, sizeof(iUpgrades));
@@ -199,10 +206,12 @@ Proxy::Proxy(Hal& aHal)
 	iMethod[0] = 0;
 	}
 
-void Proxy::Start(int aMode, bool aZip)
+void Proxy::Start(int aMode, bool aZip, int aImgWidth, int aImgMaxKB)
 	{
 	iMode = aMode;
 	iZip = aZip;
+	iImgWidth = aImgWidth;
+	iImgMax = (size_t)(aImgMaxKB > 0 ? aImgMaxKB : 64) * 1024;
 	iGzOut = false;
 	iWireSink.iP = this;
 	iState = SIdle;
@@ -213,6 +222,7 @@ void Proxy::Start(int aMode, bool aZip)
 	iOverflow = false;
 	iInfPendLen = 0;
 	iInfBad = false;
+	PictureFree();
 	}
 
 void Proxy::Stop()
@@ -220,6 +230,7 @@ void Proxy::Stop()
 	CloseUp();
 	iInf.End();
 	iGzw.End();
+	PictureFree();
 	iState = SClosed;
 	iReqLen = 0;
 	}
@@ -358,16 +369,16 @@ void Proxy::StatusPage()
 	char mem[96];
 	iStatus = 200;
 	iHal.MemInfo(mem, sizeof(mem));
-	static const char* const kModes[] = { "off", "simplified pages", "text only", "unchanged pages (TLS only)" };
+	static const char* const kModes[] = { "off", "simplified pages", "text only", "unchanged pages (TLS only)", "reader" };
 	unsigned pct = iFetched ? (unsigned)((uint64_t)iSent * 100 / iFetched) : 0;
 	int bl = snprintf(iScratch, sizeof(iScratch),
 		"<html><head><title>Atom modem web proxy</title></head><body>"
 		"<h2>Atom modem %s: web proxy</h2>"
-		"<p>Mode: %s (AT$PX=%d)</p>"
-		"<p>Requests: %lu<br>From servers: %lu bytes<br>To the Psion: %lu bytes (%u%%)</p>"
+		"<p>Mode: %s (AT$PX=%d)%s</p>"
+		"<p>Requests: %lu<br>From servers: %lu bytes<br>To the Psion: %lu bytes (%u%%)<br>Pictures converted: %lu</p>"
 		"<p>%s</p></body></html>",
-		kVersion, kModes[iMode & 3], iMode, (unsigned long)iRequests, (unsigned long)iFetched,
-		(unsigned long)iSent, pct, mem);
+		kVersion, kModes[iMode >= 0 && iMode <= 4 ? iMode : 0], iMode, iImgWidth ? ", pictures to 16 greys" : "",
+		(unsigned long)iRequests, (unsigned long)iFetched, (unsigned long)iSent, pct, (unsigned long)iPictures, mem);
 	if (bl < 0 || bl >= (int)sizeof(iScratch))
 		bl = (int)strlen(iScratch);
 	char head[200];
@@ -872,7 +883,19 @@ bool Proxy::HeadDone()
 	iBodyDone = !iHasBody || (!iChunked && iLength == 0);
 	if (!iHasBody && !iChunked && iLength > 0)
 		iUpClose = true;                     // (a HEAD answer's length is not a body)
-	// the head for the Psion, sent in pieces
+	iLineLen = 0;                            // (counts chunk trailer lines from here)
+	iState = SBody;
+	// a picture to convert: the head waits until it is known whether it can be
+	if (PictureStart())
+		return true;
+	SendHead();
+	return true;
+	}
+
+// the head for the Psion, sent in pieces (for a picture: the original's,
+// when it is passed through after all)
+void Proxy::SendHead()
+	{
 	char line[200];
 	int n = snprintf(line, sizeof(line), "HTTP/1.1 %d %s\r\n", iStatus, iReason[0] ? iReason : "OK");
 	RawOut(line, (size_t)n);
@@ -907,11 +930,127 @@ bool Proxy::HeadDone()
 	RawOut(line, (size_t)n);
 	iChunkLen = 0;
 	if (iTransform)
-		iSimp.Begin(this, iMode == EText ? HtmlSimplifier::ETextOnly : HtmlSimplifier::EKeepPictures,
-			iRedirected ? iUrl : 0);
-	iLineLen = 0;                            // (counts chunk trailer lines from here)
-	iState = SBody;
+		iSimp.Begin(this, iMode == EText ? HtmlSimplifier::ETextOnly : iMode == EReader ? HtmlSimplifier::EReader
+			: HtmlSimplifier::EKeepPictures, iRedirected ? iUrl : 0);
+	}
+
+// ----- pictures ----------------------------------------------------------------
+
+// a picture that can be converted? Then its bytes are gathered (true)
+bool Proxy::PictureStart()
+	{
+	iImgMode = false;
+	if (!iImgWidth || !iHasBody || iStatus != 200 || iEncoding != 0 || !EqNoCase(iMethod, "GET"))
+		return false;
+	const char* type = SkipSpace(iType);
+	if (!(StartsNoCase(type, "image/jpeg") || StartsNoCase(type, "image/png") || StartsNoCase(type, "image/gif")))
+		return false;
+	if (iLength >= 0 && (size_t)iLength > iImgMax)
+		return false;                        // too big to hold: passed through
+	size_t cap = iLength > 0 ? (size_t)iLength : iImgMax;
+	PictureFree();
+	iImgBuf = (uint8_t*)malloc(cap);
+	if (!iImgBuf)
+		{
+		iHal.Log("picture: no memory to convert it; passed through");
+		return false;
+		}
+	iImgCap = cap;
+	iImgLen = 0;
+	iImgMode = true;
+	iImgMs = iHal.Millis();
 	return true;
+	}
+
+void Proxy::PictureFree()
+	{
+	if (iImgBuf)
+		free(iImgBuf);
+	iImgBuf = 0;
+	iImgLen = iImgCap = 0;
+	iImgMode = false;
+	iImg.Reset();
+	}
+
+void Proxy::PictureBytes(const uint8_t* aP, size_t aLen)
+	{
+	if (iImgLen + aLen > iImgCap)
+		{
+		PicturePass();                       // bigger than it said, or than allowed: as it is
+		Wire((const char*)aP, aLen);
+		return;
+		}
+	memcpy(iImgBuf + iImgLen, aP, aLen);
+	iImgLen += aLen;
+	}
+
+// the picture is passed through after all: the original head, then what
+// was gathered (the rest follows as it comes)
+void Proxy::PicturePass()
+	{
+	iImgMode = false;
+	iOutChunked = iLength < 0;
+	SendHead();
+	if (iImgLen)
+		Wire((const char*)iImgBuf, iImgLen);
+	free(iImgBuf);
+	iImgBuf = 0;
+	iImgLen = iImgCap = 0;
+	}
+
+// the whole picture is here: decoded, or passed through
+void Proxy::PictureDone()
+	{
+	char why[64];
+	bool ok = iImg.Decode(iImgBuf, iImgLen, iImgWidth, why, sizeof(why));
+	char m[200];
+	if (!ok)
+		{
+		snprintf(m, sizeof(m), "picture %.60s: not converted (%s), %lu bytes passed through", iUrl, why,
+			(unsigned long)iImgLen);
+		iHal.Log(m);
+		PicturePass();
+		FinishBody();
+		return;
+		}
+	free(iImgBuf);
+	iImgBuf = 0;
+	iImgCap = 0;
+	// its head: a GIF, chunked, with the server's caching headers
+	iOutChunked = true;
+	int n = snprintf(iScratch, sizeof(iScratch), "HTTP/1.1 200 OK\r\nContent-Type: image/gif\r\n");
+	RawOut(iScratch, (size_t)n);
+	RawOut(iFwd, iFwdLen);
+	n = snprintf(iScratch, sizeof(iScratch), "Transfer-Encoding: chunked\r\nConnection: %s\r\n\r\n",
+		iPsionClose ? "close" : "keep-alive");
+	RawOut(iScratch, (size_t)n);
+	iChunkLen = 0;
+	iPictures++;
+	// the server's connection: kept if the body ended cleanly, as for any response
+	bool clean = !iUpClose && (iChunked ? iChunkState == CDone : (iLength >= 0 && iLeft <= 0)) && iInPos >= iInLen;
+	if (!clean)
+		CloseUp();
+	iState = SPicture;
+	}
+
+// rows of the GIF while the ring has room; then the end of the response
+void Proxy::PictureOut()
+	{
+	while (iOut->Free() >= kSlack)
+		{
+		if (!iImg.Write(this, 8))
+			continue;
+		FlushChunk();
+		RawOut("0\r\n\r\n", 5);
+		char m[200];
+		snprintf(m, sizeof(m), "picture %.60s: %dx%d -> %dx%d gif, %lu -> %lu bytes, %lu ms", iUrl,
+			iImg.SourceWidth(), iImg.SourceHeight(), iImg.Width(), iImg.Height(), (unsigned long)iImgLen,
+			(unsigned long)iImg.Written(), (unsigned long)(iHal.Millis() - iImgMs));
+		iHal.Log(m);
+		PictureFree();
+		NextRequest();
+		return;
+		}
 	}
 
 // reads the response head; true once it is complete (iState then SBody,
@@ -1118,7 +1257,9 @@ size_t Proxy::BodySpan(const uint8_t*& aP)
 
 void Proxy::Deliver(const uint8_t* aP, size_t aLen)
 	{
-	if (iTransform)
+	if (iImgMode)
+		PictureBytes(aP, aLen);
+	else if (iTransform)
 		iSimp.Feed(aP, aLen);
 	else
 		Put((const char*)aP, aLen);
@@ -1260,6 +1401,16 @@ void Proxy::Body()
 
 void Proxy::FinishResponse()
 	{
+	if (iImgMode)
+		{
+		PictureDone();                       // (ends the response itself, now or row by row)
+		return;
+		}
+	FinishBody();
+	}
+
+void Proxy::FinishBody()
+	{
 	if (iTransform)
 		iSimp.End();
 	if (iGzOut)
@@ -1315,6 +1466,11 @@ bool Proxy::Pump(Ring& aOut)
 			break;
 		case SBody:
 			Body();
+			if (iState != SPicture)
+				return iState != SClosed || aOut.Count() > 0;
+			break;
+		case SPicture:
+			PictureOut();
 			return iState != SClosed || aOut.Count() > 0;
 			}
 		}

@@ -1,6 +1,9 @@
 .pio/
 hosttest/test_modem
+hosttest/test_usbnet
 hosttest/test_proxy
 hosttest/hostmodem
 hosttest/test_proxy_tinfl
 hosttest/tinfl.o
+hosttest/*.o
+hosttest/pictures/

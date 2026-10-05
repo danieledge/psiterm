@@ -18,6 +18,7 @@ static int gChecks = 0, gFails = 0;
 static bool Has(const std::string& s, const char* p) { return s.find(p) != std::string::npos; }
 
 static_assert(sizeof(am::Settings) == 140, "the NVS record must keep its size");
+static_assert(sizeof(am::Settings2) == 256, "the 2.0 NVS record must keep its size");
 
 // ===== the simplifier on its own ===============================================
 
@@ -627,8 +628,11 @@ static void TestProxySettings()
 	CHECK(Has(r.Got(), "1 (on: simplified pages)"));
 	r.TypeRun("ATI\r");
 	CHECK(Has(r.Got(), "Web proxy: ATDT psiproxy:8080"));
-	r.TypeRun("AT$PX=4\r");
+	r.TypeRun("AT$PX=5\r");
 	CHECK(Has(r.Got(), "ERROR"));
+	r.TypeRun("AT$PX=4\r"); r.TypeRun("AT$PX?\r");
+	CHECK(Has(r.Got(), "4 (on: reader)"));
+	r.TypeRun("AT$PX=1\r"); r.Got();
 	// off: psiproxy is just a name to dial
 	r.TypeRun("AT$PX=0\r"); r.Got();
 	r.TypeRun("ATDT psiproxy:8080\r", 100);
@@ -985,6 +989,265 @@ static void TestSimplifierRegressions()
 #include <unistd.h>
 static void Hung(int) { printf("FAIL: a test hung (more than 120 s)\n"); fflush(stdout); _exit(1); }
 
+// ===== 2.0: reader mode and pictures ===========================================
+
+static void TestReader()
+	{
+	const int R = am::HtmlSimplifier::EReader;
+	std::string page =
+		"<html><head><title>News</title></head><body>"
+		"<header><a href=\"/\">Logo</a><ul><li><a href=\"/a\">Home</a></li><li><a href=\"/b\">Sport</a></li></ul></header>"
+		"<div role=\"navigation\"><a href=\"/x\">Section one</a> <a href=\"/y\">Section two</a></div>"
+		"<div class=\"site-sidebar\"><p>Sidebar promo text</p></div>"
+		"<div id=\"cookie-banner\"><p>We use cookies</p></div>"
+		"<main><h1>The headline</h1><p>The story, with <a href=\"/more\">a link</a> in it.</p>"
+		"<ul><li><a href=\"/1\">One</a></li><li><a href=\"/2\">Two</a></li><li><a href=\"/3\">Three</a></li><li><a href=\"/4\">Four</a></li></ul>"
+		"<ul><li>First point about the story</li><li>Second point, see <a href=\"/ref\">the reference</a></li><li>Third point</li></ul>"
+		"<ol><li>Step one of the recipe</li><li>Step two</li></ol>"
+		"<img src=\"pic.jpg\" alt=\"A picture\">"
+		"<div class=\"unavailable-notice\">Still shown</div>"
+		"</main>"
+		"<aside><p>Related stories</p></aside>"
+		"<div class=\"comments\"><p>Comment text</p></div>"
+		"<footer><p>Footer text</p></footer>"
+		"<p>Trailing text after main</p>"
+		"</body></html>";
+	std::string out = Simplify(page, R);
+	std::string why;
+	CHECK(WellFormed(out, why));
+	if (!why.empty()) printf("   reader: %s\n", why.c_str());
+	CHECK(Has(out, "<title>News</title>"));
+	CHECK(Has(out, "The headline") && Has(out, "The story, with <a href=\"/more\">a link</a> in it."));
+	CHECK(!Has(out, "Logo") && !Has(out, "Sport") && !Has(out, "Section one"));
+	CHECK(!Has(out, "Sidebar promo") && !Has(out, "cookies"));
+	CHECK(!Has(out, "href=\"/1\"") && !Has(out, "Three"));              // the menu (all links)
+	CHECK(Has(out, "First point") && Has(out, "the reference") && Has(out, "Third point"));   // a real list
+	CHECK(Has(out, "Step two"));
+	CHECK(Has(out, "[A picture]") && !Has(out, "<img"));
+	CHECK(Has(out, "Still shown"));                                       // "unavailable" is not "nav"
+	CHECK(!Has(out, "Related") && !Has(out, "Comment text") && !Has(out, "Footer text") && !Has(out, "Trailing text"));
+	// the same output whatever the pieces
+	CHECK(Simplify(page, R, 1) == out && Simplify(page, R, 7) == out && Simplify(page, R, 300) == out);
+	// mode 2 keeps what reader drops (apart from nav, aside and footer)
+	std::string lite = Simplify(page, am::HtmlSimplifier::ETextOnly);
+	CHECK(Has(lite, "Logo") && Has(lite, "Section one") && Has(lite, "Trailing text") && !Has(lite, "Footer text"));
+	// role="main" on a div: its end is found through the nesting of divs
+	std::string p2 = "<body><div class=\"menu\"><a href=\"/\">M</a></div><div role=\"main\"><div><p>Inner</p></div><p>Outer</p></div><p>After</p></body>";
+	std::string o2 = Simplify(p2, R);
+	CHECK(Has(o2, "Inner") && Has(o2, "Outer") && !Has(o2, "After") && !Has(o2, ">M<"));
+	// no main at all: the page is kept, furniture dropped
+	std::string p3 = "<body><div class=\"nav-bar\">N</div><p>Body text</p><div class=\"share-tools\">S</div></body>";
+	std::string o3 = Simplify(p3, R);
+	CHECK(Has(o3, "Body text") && !Has(o3, ">N<") && !Has(o3, ">S<"));
+	// a list that is too big to judge is kept
+	std::string big = "<body><ul>";
+	for (int i = 0; i < 200; i++) big += "<li><a href=\"/l" + std::to_string(i) + "\">Link number " + std::to_string(i) + "</a></li>";
+	big += "</ul><p>End</p></body>";
+	std::string ob = Simplify(big, R);
+	CHECK(Has(ob, "Link number 150") && Has(ob, "End"));
+	// a list never closed is kept
+	CHECK(Has(Simplify("<body><ul><li><a href=\"/a\">A</a></li><li><a href=\"/b\">B</a></li><li><a href=\"/c\">C</a>", R), "href=\"/c\""));
+	// garbage
+	std::string g;
+	for (int i = 0; i < 5000; i++) g += (char)("<>/\"= abcmainulrole"[i * 7 % 20]);
+	Simplify(g, R);
+	CHECK(true);
+	}
+
+static std::string File(const std::string& aPath)
+	{
+	FILE* f = fopen(aPath.c_str(), "rb");
+	if (!f) return "";
+	std::string s;
+	char b[4096];
+	size_t n;
+	while ((n = fread(b, 1, sizeof(b), f)) > 0) s.append(b, n);
+	fclose(f);
+	return s;
+	}
+
+// a GIF's size, mean brightness and number of greys, through Pillow (-1: no Pillow)
+static bool GifStats(const std::string& aGif, int& w, int& h, int& mean, int& greys)
+	{
+	FILE* f = fopen("/tmp/atom-test-picture.gif", "wb");
+	if (!f) return false;
+	fwrite(aGif.data(), 1, aGif.size(), f);
+	fclose(f);
+	FILE* p = popen("python3 -c \"import sys\nfrom PIL import Image\nim=Image.open('/tmp/atom-test-picture.gif').convert('L')\n"
+		"d=list(im.getdata())\nprint(im.width, im.height, sum(d)//len(d), len(set(d)))\" 2>/dev/null", "r");
+	if (!p) return false;
+	char line[100] = "";
+	bool ok = fgets(line, sizeof(line), p) != 0;
+	pclose(p);
+	return ok && sscanf(line, "%d %d %d %d", &w, &h, &mean, &greys) == 4;
+	}
+
+static void TestPictures()
+	{
+	std::string jpg = File("pictures/photo.jpg"), prog = File("pictures/photo_prog.jpg"), png = File("pictures/photo.png");
+	std::string gif = File("pictures/photo.gif"), small = File("pictures/small.gif"), big = File("pictures/big.gif");
+	std::string meanText = File("pictures/mean.txt");
+	if (jpg.empty() || png.empty() || gif.empty() || small.empty() || big.empty() || meanText.empty())
+		{
+		printf("   (no pictures/ folder: run make pictures; pictures skipped)\n");
+		return;
+		}
+	int mean0 = atoi(meanText.c_str());
+	printf("   photo.jpg %zu, photo.png %zu, photo.gif %zu, small.gif %zu bytes; mean %d\n", jpg.size(), png.size(),
+		gif.size(), small.size(), mean0);
+	Rig r;
+	r.hal.responder = [&](const std::string& q, bool& close) {
+		if (Has(q, "GET /photo.jpg ")) return Reply(200, "image/jpeg", jpg, "Cache-Control: max-age=60\r\n");
+		if (Has(q, "GET /photo_prog.jpg ")) return Reply(200, "image/jpeg", prog);
+		if (Has(q, "GET /photo.png ")) return Reply(200, "image/png", png);
+		if (Has(q, "GET /photo.gif ")) return Reply(200, "image/gif", gif);
+		if (Has(q, "GET /big.gif ")) return Reply(200, "image/gif", big);
+		if (Has(q, "GET /small.gif ")) return Reply(200, "image/gif", small);
+		if (Has(q, "GET /chunked.jpg "))
+			return std::string("HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nTransfer-Encoding: chunked\r\n\r\n") + Chunked(jpg, 1000);
+		if (Has(q, "GET /bogus.jpg ")) return Reply(200, "image/jpeg", std::string(3000, 'x'));
+		if (Has(q, "GET /page ")) return Reply(200, "text/html", "<p>a page</p>");
+		if (Has(q, "GET /close.jpg ")) { close = true; return std::string("HTTP/1.0 200 OK\r\nContent-Type: image/jpeg\r\n\r\n") + jpg; }
+		return Reply(404, "text/html", "<p>no</p>");
+	};
+	r.TypeRun("AT$PR=0\r"); r.TypeRun("AT$PI=1\r"); r.TypeRun("AT$PW=200\r"); r.TypeRun("AT$PM=96\r");
+	r.Dial();
+	auto fetch = [&](const char* path, uint32_t ms = 6000) {
+		r.TypeRun(std::string("GET http://pics.example.com") + path + " HTTP/1.1\r\nHost: pics.example.com\r\n\r\n", ms);
+		std::vector<Resp> v = Responses(r.Got());
+		return v.empty() ? Resp() : v.back();
+	};
+	// a JPEG: a GIF at most 200 wide, 16 greys, about as bright as the original
+	Resp x = fetch("/photo.jpg");
+	CHECK(x.status == 200 && x.complete && x.h["content-type"] == "image/gif" && x.body.compare(0, 6, "GIF89a") == 0);
+	CHECK(x.h["cache-control"] == "max-age=60" && x.h["transfer-encoding"] == "chunked");
+	int w = 0, h = 0, mean = 0, greys = 0;
+	bool stats = GifStats(x.body, w, h, mean, greys);
+	if (!stats)
+		printf("   (no Pillow: the GIFs are not decoded back)\n");
+	else
+		{
+		printf("   photo.jpg -> %zu-byte gif %dx%d, mean %d, %d greys\n", x.body.size(), w, h, mean, greys);
+		CHECK(w == 200 && h == 125 && greys <= 16 && greys >= 8 && abs(mean - mean0) <= 24);
+		}
+	CHECK(x.body.size() < jpg.size());
+	CHECK(r.modem->WebProxy().Pictures() == 1);
+	CHECK(r.hal.Logged("800x500 -> 200x125 gif"));
+	// progressive, PNG and GIF sources (whole-number shrinks: 384/2 for the GIF)
+	// (a progressive JPEG keeps its coefficients until the last scan, within
+	// 96 KB: a photo this size is decoded at 1/8 from the DC terms alone)
+	struct { const char* path; int w, h; } more[] = { { "/photo_prog.jpg", 100, 63 }, { "/photo.png", 200, 125 }, { "/photo.gif", 192, 120 }, { 0, 0, 0 } };
+	for (int i = 0; more[i].path; i++)
+		{
+		x = fetch(more[i].path, 8000);
+		CHECK(x.status == 200 && x.complete && x.h["content-type"] == "image/gif");
+		if (stats && GifStats(x.body, w, h, mean, greys))
+			{
+			printf("   %s -> %dx%d, mean %d, %d greys\n", more[i].path, w, h, mean, greys);
+			CHECK(w == more[i].w && h == more[i].h && greys <= 16 && abs(mean - mean0) <= 24);
+			}
+		}
+	// a photo-sized GIF needs more memory than the Atom has for it: passed through
+	x = fetch("/big.gif", 8000);
+	CHECK(x.status == 200 && x.complete && x.h["content-type"] == "image/gif" && x.body == big);
+	CHECK(r.hal.Logged("not converted (too big)"));
+	// a small GIF is converted too (cheaper for Links), at its own size
+	x = fetch("/small.gif");
+	CHECK(x.status == 200 && x.h["content-type"] == "image/gif" && x.body.compare(0, 6, "GIF89a") == 0);
+	CHECK((unsigned char)x.body[6] == 80 && (unsigned char)x.body[8] == 50);
+	// chunked from the server (no length): still converted
+	x = fetch("/chunked.jpg");
+	CHECK(x.status == 200 && x.complete && x.h["content-type"] == "image/gif");
+	// a body that runs to the close
+	x = fetch("/close.jpg");
+	CHECK(x.status == 200 && x.complete && x.h["content-type"] == "image/gif");
+	// not a picture after all: passed through as it came
+	x = fetch("/bogus.jpg");
+	CHECK(x.status == 200 && x.complete && x.h["content-type"] == "image/jpeg" && x.body == std::string(3000, 'x'));
+	CHECK(r.hal.Logged("not converted"));
+	// a page in between is a page
+	x = fetch("/page");
+	CHECK(x.status == 200 && Has(x.body, "a page"));
+	// too big for the limit: passed through, with its length (the picture
+	// settings, like AT$PX, are taken at the dial: hang up and dial again)
+	r.Run(1100); r.TypeRun("+++", 1100); r.Got();
+	r.TypeRun("AT$PM=16\r"); r.TypeRun("ATH\r", 100); r.Got();
+	r.Dial();
+	x = fetch("/photo.jpg", 8000);
+	CHECK(x.status == 200 && x.complete && x.h["content-type"] == "image/jpeg" && x.body == jpg && x.h["content-length"] == std::to_string(jpg.size()));
+	// chunked and over the limit: passed through once the limit is hit
+	x = fetch("/chunked.jpg", 8000);
+	CHECK(x.status == 200 && x.complete && x.h["content-type"] == "image/jpeg" && x.body == jpg);
+	// pictures off: passed through
+	r.Run(1100); r.TypeRun("+++", 1100); r.Got();
+	r.TypeRun("AT$PM=96\r"); r.TypeRun("AT$PI=0\r");
+	r.TypeRun("ATH\r", 100); r.Got();
+	r.Dial();
+	x = fetch("/photo.jpg", 8000);
+	CHECK(x.status == 200 && x.h["content-type"] == "image/jpeg" && x.body == jpg);
+	// a small ring: the GIF goes out as room comes, nothing lost
+	{
+	Rig s(20 * 1024);
+	s.hal.responder = r.hal.responder;
+	s.TypeRun("AT$PI=1\r"); s.TypeRun("AT$PW=320\r");
+	s.Dial();
+	s.TypeRun("GET http://pics.example.com/photo.png HTTP/1.1\r\nHost: pics.example.com\r\n\r\n", 30000);
+	std::vector<Resp> v = Responses(s.Got());
+	CHECK(!v.empty() && v.back().status == 200 && v.back().complete && v.back().h["content-type"] == "image/gif");
+	if (!v.empty() && stats && GifStats(v.back().body, w, h, mean, greys))
+		CHECK(w <= 320 && w >= 160 && greys <= 16);           // (whole-number shrinks: 800/3)
+	}
+	// the GIF writer on its own: a known picture round-trips exactly
+	{
+	StrSink sink;
+	am::GifWriter g;
+	const int W = 37, H = 11;
+	CHECK(g.Begin(&sink, W, H));
+	uint8_t row[(W + 1) / 2];
+	for (int y = 0; y < H; y++)
+		{
+		for (int xx = 0; xx < W; xx++)
+			{
+			uint8_t v = (uint8_t)((xx * 3 + y * 5 + (xx * y) % 7) & 15);
+			if (xx & 1) row[xx >> 1] = (uint8_t)((row[xx >> 1] & 0x0f) | (v << 4)); else row[xx >> 1] = v;
+			}
+		g.Row(row);
+		}
+	g.End();
+	CHECK(sink.s.compare(0, 6, "GIF89a") == 0 && sink.s.back() == 0x3b);
+	if (stats && GifStats(sink.s, w, h, mean, greys))
+		{
+		CHECK(w == W && h == H && greys == 16);
+		// every pixel back as it went
+		FILE* p = popen("python3 -c \"from PIL import Image\nim=Image.open('/tmp/atom-test-picture.gif').convert('L')\n"
+			"d=list(im.getdata())\nprint(' '.join(str(v//17) for v in d))\" 2>/dev/null", "r");
+		std::string got;
+		char b[4096];
+		while (p && fgets(b, sizeof(b), p)) got += b;
+		if (p) pclose(p);
+		std::string want;
+		for (int y = 0; y < H; y++)
+			for (int xx = 0; xx < W; xx++)
+				want += std::to_string((xx * 3 + y * 5 + (xx * y) % 7) & 15) + " ";
+		CHECK(got.compare(0, want.size() - 1, want, 0, want.size() - 1) == 0);
+		}
+	// a long run of one grey and a dictionary that fills: still valid
+	StrSink sink2;
+	am::GifWriter g2;
+	CHECK(g2.Begin(&sink2, 640, 240));
+	uint8_t row2[320];
+	for (int y = 0; y < 240; y++)
+		{
+		for (int i = 0; i < 320; i++) row2[i] = (uint8_t)(y < 120 ? 0x77 : ((i * 13 + y * 7) & 0xff));
+		g2.Row(row2);
+		}
+	g2.End();
+	if (stats && GifStats(sink2.s, w, h, mean, greys))
+		CHECK(w == 640 && h == 240);
+	printf("   640x240 half flat, half noise: %zu bytes\n", sink2.s.size());
+	}
+	}
+
 int main()
 	{
 	signal(SIGALRM, Hung);
@@ -999,6 +1262,9 @@ int main()
 	printf("gzip\n");        TestProxyGzip();
 	printf("real page\n");   TestProxyRealPage();
 	printf("regressions\n"); TestProxyRegressions();
+	alarm(300);
+	printf("reader\n");      TestReader();
+	printf("pictures\n");    TestPictures();
 	printf("%d checks, %d failed\n", gChecks, gFails);
 	return gFails ? 1 : 0;
 	}

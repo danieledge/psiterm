@@ -10,7 +10,8 @@
 //     Psion gets small, plain HTML that Links lays out quickly;
 //   - packs that HTML with gzip (gzip.h) when PsiWeb accepts it (Links
 //     does), so it takes a third of the time on the serial line;
-//   - passes pictures and other files through unchanged;
+//   - with AT$PI=1, turns pictures into small 16-grey GIFs (imgconv.h);
+//   - passes other files through unchanged;
 //   - keeps the call up between requests (keep-alive), so PsiWeb dials once
 //     for any number of pages and sites.
 // Its output goes into the modem's ring, which is paced to the Psion as
@@ -23,6 +24,7 @@
 
 #include "htmlsimp.h"
 #include "gzip.h"
+#include "imgconv.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -54,12 +56,14 @@ private:
 class Proxy : public HtmlSink
 	{
 public:
-	enum TMode { EOff = 0, EOn = 1, EText = 2, ERaw = 3 };   // AT$PX
+	enum TMode { EOff = 0, EOn = 1, EText = 2, ERaw = 3, EReader = 4 };   // AT$PX
 	static const char* const kName;      // "psiproxy"
 
 	explicit Proxy(Hal& aHal);
-	// the Psion has dialled psiproxy; aZip: gzip the simplified HTML (AT$PZ)
-	void Start(int aMode, bool aZip);
+	// the Psion has dialled psiproxy; aZip: gzip the simplified HTML (AT$PZ);
+	// aImgWidth: pictures to 16 greys at most this wide (0: unchanged), if
+	// the file is at most aImgMaxKB
+	void Start(int aMode, bool aZip, int aImgWidth = 0, int aImgMaxKB = 64);
 	void Stop();                         // the call has ended: close upstream
 	size_t FromPsion(const uint8_t* aData, size_t aLen);   // bytes taken
 	// moves things on; output goes into aOut. False once the call should
@@ -72,12 +76,13 @@ public:
 	uint32_t Requests() const { return iRequests; }
 	uint32_t Fetched() const { return iFetched; }      // body bytes from servers
 	uint32_t Sent() const { return iSent; }            // bytes to the Psion
+	uint32_t Pictures() const { return iPictures; }    // pictures converted
 
-	void Put(const char* aData, size_t aLen) override; // (HtmlSink: simplified HTML)
+	void Put(const char* aData, size_t aLen) override; // (HtmlSink: simplified HTML, or a GIF)
 	void Wire(const char* aData, size_t aLen);          // body bytes as they go on the line
 
 private:
-	enum TState { SIdle, SConnect, SHead, SBody, SClosed };
+	enum TState { SIdle, SConnect, SHead, SBody, SPicture, SClosed };
 	enum TChunk { CSize, CExt, CSizeLf, CData, CDataCr, CDataLf, CTrailer, CDone };
 	bool TakeRequest();
 	void NextRequest();
@@ -90,22 +95,31 @@ private:
 	bool Send(const char* aData, size_t aLen);
 	void HeadLine(char* aLine);
 	bool HeadDone();
+	void SendHead();
 	void Body();
 	size_t BodySpan(const uint8_t*& aP);
 	void Deliver(const uint8_t* aP, size_t aLen);
 	void FinishResponse();
+	void FinishBody();
 	void RawOut(const char* aData, size_t aLen);
 	void FlushChunk();
 	void ErrorPage(int aCode, const char* aWhat, const char* aDetail);
 	void StatusPage();
 	void CloseUp();
 	bool GzipHeader(const uint8_t*& aP, size_t& aN, size_t& aUsed);
+	// pictures
+	bool PictureStart();
+	void PictureBytes(const uint8_t* aP, size_t aLen);
+	void PicturePass();
+	void PictureDone();
+	void PictureOut();
+	void PictureFree();
 
 	Hal& iHal;
 	Ring* iOut;
 	int iMode;
 	TState iState;
-	uint32_t iRequests, iFetched, iSent;
+	uint32_t iRequests, iFetched, iSent, iPictures;
 	// the request from the Psion
 	char iReq[4096];
 	size_t iReqLen;
@@ -189,6 +203,15 @@ private:
 	// with https:// at once next time, which saves a round trip)
 	char iUpgrades[8][48];
 	int iUpgradeNext;
+	// pictures (AT$PI): the file is gathered whole, then decoded and sent
+	// as a GIF while the ring has room
+	int iImgWidth;                       // 0: off
+	size_t iImgMax;                      // bytes
+	bool iImgMode;                       // this response is a picture being gathered
+	uint8_t* iImgBuf;
+	size_t iImgLen, iImgCap;
+	ImageConverter iImg;
+	uint32_t iImgMs;
 	};
 
 } // namespace am

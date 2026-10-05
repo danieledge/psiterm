@@ -6,60 +6,6 @@
 
 namespace am {
 
-// ===== settings ============================================================
-
-void AutoPacing(uint32_t aBaud, uint32_t& aRate, uint16_t& aBurst, uint16_t& aGap)
-	{
-	// The Psion 5mx's UART (CL-PS7111) has a 16-byte receive FIFO and the
-	// apps give the serial driver a 16 KB buffer (SetReceiveBufferLength).
-	// Bursts of 16 bytes can never overrun the FIFO even if its interrupt
-	// is held off for a whole burst; the average rate is held well below
-	// the line rate so the gaps between bursts let the driver catch up,
-	// and a 16 KB buffer lasts 3-4 s if the app stops reading for a while
-	// (a page being laid out, a flash write). See README "Pacing".
-	// From 230400 up the same holds at the same share of the line rate;
-	// a 16-byte burst then leaves the driver 0.69 ms (230400) or 0.35 ms
-	// (460800) to answer the FIFO interrupt, which only the kernel driver
-	// that sets those speeds can promise.
-	aGap = 0;
-	aBurst = 16;
-	if (aBaud >= 921600)      aRate = 44000;  // 48 % of 92160 bytes/s
-	else if (aBaud >= 460800) aRate = 22000;  // 48 % of 46080
-	else if (aBaud >= 230400) aRate = 11000;  // 48 % of 23040
-	else if (aBaud >= 115200) aRate = 5500;   // 48 % of 11520
-	else if (aBaud >= 57600)  aRate = 4000;   // 69 % of 5760
-	else if (aBaud >= 38400)  aRate = 3000;   // 78 % of 3840
-	else                      aRate = 0;      // slow enough as it is
-	}
-
-void FactoryDefaults(Settings& aS)
-	{
-	memset(&aS, 0, sizeof(aS));
-	aS.magic = kMagic;
-	aS.baud = 115200;
-	aS.echo = 1;
-	aS.verbose = 1;
-	aS.quiet = 0;
-	aS.dcdMode = 1;
-	aS.s2 = '+';
-	aS.s12 = 40;                 // 0.8 s: PsiTerm/PsiMail/PsiWeb wait 1.1 s each side
-	aS.paceAuto = 1;
-	AutoPacing(aS.baud, aS.paceRate, aS.paceBurst, aS.paceGap);
-	aS.swapPins = 0;
-	aS.dcdPin = -1;
-	aS.proxy = 0;                // the web proxy on (when psiproxy is dialled)
-	}
-
-int ProxyMode(const Settings& aS)
-	{
-	return aS.proxy == 0 ? (int)Proxy::EOn : aS.proxy == 1 ? (int)Proxy::EOff : (int)aS.proxy;
-	}
-
-void SetProxyMode(Settings& aS, int aMode)
-	{
-	aS.proxy = aMode == Proxy::EOn ? 0 : aMode == Proxy::EOff ? 1 : (uint8_t)aMode;
-	}
-
 // ===== the platform's defaults ==============================================
 
 bool Hal::UpConnect(const char* aHost, uint16_t aPort, bool aTls, char* aWhy, size_t aWhyMax)
@@ -81,6 +27,37 @@ void Hal::MemInfo(char* aOut, size_t aMax)
 	{
 	if (aMax)
 		aOut[0] = 0;
+	}
+
+// ===== the log ring ==========================================================
+
+void LogRing::Add(const char* aLine)
+	{
+	size_t n = strlen(aLine);
+	if (n > kSize / 4)
+		n = kSize / 4;
+	for (size_t i = 0; i <= n; i++)
+		{
+		char c = i < n ? aLine[i] : '\n';
+		iBuf[(iHead + iCount) % kSize] = c;
+		if (iCount < kSize)
+			iCount++;
+		else
+			iHead = (iHead + 1) % kSize;
+		}
+	}
+
+size_t LogRing::Read(size_t aFrom, char* aOut, size_t aMax) const
+	{
+	size_t n = 0;
+	while (aFrom + n < iCount && n + 1 < aMax)
+		{
+		aOut[n] = iBuf[(iHead + aFrom + n) % kSize];
+		n++;
+		}
+	if (aMax)
+		aOut[n] = 0;
+	return n;
 	}
 
 // ===== ring ================================================================
@@ -225,38 +202,51 @@ static void Value(const char* aP, char* aOut, size_t aMax)
 	aOut[n] = 0;
 	}
 
-static bool ValidBaud(long aB)
-	{
-	static const long kBauds[] = { 300, 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600 };
-	for (size_t i = 0; i < sizeof(kBauds) / sizeof(kBauds[0]); i++)
-		if (kBauds[i] == aB)
-			return true;
-	return false;
-	}
-
 Modem::Modem(Hal& aHal, uint8_t* aRing, size_t aRingSize)
 	: iHal(aHal), iLineLen(0), iOnline(false), iConnected(false), iClosing(false), iWifiWasUp(false),
 	  iLastSerialMs(0), iPluses(0), iLastPlusMs(0), iToPsion(0), iToServer(0), iLastDataMs(0),
-	  iPendingBaud(0), iTrialFrom(0), iTrialStartMs(0), iTrialArmed(false), iTrialGen(0), iLed(-1), iProxy(aHal), iProxyCall(false), iUpLen(0)
+	  iPendingBaud(0), iTrialFrom(0), iTrialStartMs(0), iTrialArmed(false), iTrialGen(0), iLed(-1), iProxy(aHal),
+	  iProxyCall(false), iExecCall(false), iExecOneShot(false), iTlsCall(false), iConfigMode(false),
+	  iConfigUntilMs(0), iLastTickMs(0), iWifiDownMs(0), iWifiRetryMs(0), iProbeDueMs(0), iLastWifiState(-1),
+	  iLastActive(-1), iUpLen(0)
 	{
 	iRing.Init(aRing, aRingSize);
 	iLast[0] = 0;
 	FactoryDefaults(iS);
+	FactoryDefaults2(iS2);
 	}
 
-void Modem::Begin()
+void Modem::LoadAll()
 	{
 	Settings s;
 	if (iHal.LoadSettings(s) && s.magic == kMagic)
 		iS = s;
 	else
 		FactoryDefaults(iS);
-	iHal.ApplyPins(iS);
+	Settings2 s2;
+	size_t len = 0;
+	memset(&s2, 0, sizeof(s2));
+	if (iHal.LoadSettings2(s2, len) && AcceptSettings2(s2, len))
+		iS2 = s2;
+	else
+		FactoryDefaults2(iS2);
+	}
+
+void Modem::Begin()
+	{
+	LoadAll();
+	iHal.ApplyPins(iS, iS2);
 	iHal.SerialBaud(iS.baud);
 	ApplyPacing();
+	iHal.TlsVerify(iS2.tlsVerify != 0);
+	iUplink.Configure(iS2.uplink);
+	iHal.ApplyUplink(iS2);
 	if (iS.ssid[0])
 		iHal.WifiBegin(iS.ssid, iS.pass);
+	iHal.ApplyWeb(iS2);
 	iLastSerialMs = iHal.Millis();
+	char d[48];
+	iUplink.Tick(iHal.Millis(), iHal.WifiUp(), iHal.UsbState(d, sizeof(d)));
 	UpdateDcd();
 	UpdateLed(iHal.Millis());
 	}
@@ -264,7 +254,7 @@ void Modem::Begin()
 void Modem::ApplyPacing()
 	{
 	if (iS.paceAuto)
-		AutoPacing(iS.baud, iS.paceRate, iS.paceBurst, iS.paceGap);
+		AutoPacing(iS.baud, iS2.flow != 0, iS.paceRate, iS.paceBurst, iS.paceGap);
 	iPacer.Configure(iS.paceRate, iS.paceBurst, iS.paceGap);
 	}
 
@@ -302,8 +292,82 @@ void Modem::Loop()
 			}
 		}
 	BaudTrialTick(iHal.Millis());
+	NetTick(now);                            // (every pass: a WiFi drop must end a call at once)
+	if (now - iLastTickMs >= 100 || iLastTickMs == 0)
+		{
+		iLastTickMs = now;
+		if (iConfigMode && (int32_t)(now - iConfigUntilMs) >= 0)
+			ConfigMode(false);
+		}
 	UpdateDcd();
 	UpdateLed(now);
+	}
+
+// The network's facts into the uplink manager; the WiFi joined again when
+// it stays down; the Internet check now and then; the changes logged
+void Modem::NetTick(uint32_t aNow)
+	{
+	bool assoc = iHal.WifiUp();
+	char d[48];
+	iUplink.Tick(aNow, assoc, iHal.UsbState(d, sizeof(d)), assoc ? iHal.Internet() : -1);
+	// joining again: the core's own reconnect usually does it, but a hotspot
+	// that went away and came back can leave the station stuck
+	if (iS.ssid[0] && !assoc)
+		{
+		if (!iWifiDownMs)
+			iWifiDownMs = aNow ? aNow : 1;
+		else if (aNow - iWifiDownMs >= kWifiRetryAfterMs && aNow - iWifiRetryMs >= kWifiRetryEveryMs)
+			{
+			iWifiRetryMs = aNow;
+			char m[96];
+			snprintf(m, sizeof(m), "WiFi: not joined for %lu s: joining \"%s\" again", (unsigned long)((aNow - iWifiDownMs) / 1000), iS.ssid);
+			iHal.Log(m);
+			iHal.WifiBegin(iS.ssid, iS.pass);
+			}
+		}
+	else
+		{
+		iWifiDownMs = 0;
+		iWifiRetryMs = aNow - kWifiRetryEveryMs;   // (the first retry after a drop is prompt)
+		}
+	// what changed (before the check below, which it may bring forward)
+	int ws = iUplink.WifiState();
+	if (ws != iLastWifiState)
+		{
+		if (ws == EWifiAssociated && iLastWifiState != EWifiInternet)
+			iProbeDueMs = aNow;              // just joined (or back): check soon
+		else if (ws == EWifiInternet)
+			iProbeDueMs = aNow + kProbeAgainMs;   // confirmed: not again for a while
+		iLastWifiState = ws;
+		char m[96];
+		snprintf(m, sizeof(m), "WiFi: %s", Uplink::WifiStateName(ws));
+		iHal.Log(m);
+		}
+	int act = iUplink.Active();
+	if (act != iLastActive)
+		{
+		iLastActive = act;
+		iHal.Log(act == EActiveUsb ? "Uplink: USB" : act == EActiveWifi ? "Uplink: WiFi" : "Uplink: none");
+		}
+	// the Internet check: not during a call (the line is busy, and a failed
+	// connect would say nothing new), soon while unconfirmed, rarely once passed
+	if (assoc && !iConnected && !iClosing && iS2.chkHost[0] && (int32_t)(aNow - iProbeDueMs) >= 0)
+		{
+		char host[40];
+		strncpy(host, iS2.chkHost, sizeof(host) - 1);
+		host[sizeof(host) - 1] = 0;
+		char* colon = strrchr(host, ':');
+		long port = 53;
+		if (colon)
+			{
+			*colon = 0;
+			const char* q = colon + 1;
+			port = Number(q, 53);
+			}
+		if (host[0] && port > 0 && port <= 65535)
+			iHal.ProbeInternet(host, (uint16_t)port);
+		iProbeDueMs = aNow + (iUplink.WifiState() == EWifiInternet ? kProbeAgainMs : kProbeSoonMs);
+		}
 	}
 
 // ----- from the Psion -------------------------------------------------------
@@ -500,6 +564,129 @@ void Modem::BaudTrialTick(uint32_t aNow)
 	iHal.Log(m);
 	}
 
+// what has to follow a setting's change (AT$ or the web page)
+void Modem::Apply(TSchemaApply aWhat, uint32_t aOldBaud)
+	{
+	switch (aWhat)
+		{
+	case SAWifi:
+		if (iS.ssid[0] && iS.pass[0])
+			iHal.WifiBegin(iS.ssid, iS.pass);  // join once both are known
+		break;
+	case SABaud:
+		if (iS.baud != aOldBaud)
+			{
+			ApplyPacing();
+			iPendingBaud = iS.baud;          // after the OK, at the old speed
+			StartBaudTrial(aOldBaud);        // and back to it if nothing works at the new one
+			}
+		break;
+	case SAPaceManual:
+		iS.paceAuto = 0;
+		ApplyPacing();
+		break;
+	case SAPacing:
+		ApplyPacing();
+		break;
+	case SAPins:
+		iHal.ApplyPins(iS, iS2);
+		ApplyPacing();                       // (flow control changes the auto rate)
+		break;
+	case SADcd:
+		iHal.ApplyPins(iS, iS2);
+		UpdateDcd();
+		break;
+	case SAWeb:
+		iHal.ApplyWeb(iS2);
+		break;
+	case SAUplink:
+		iUplink.Configure(iS2.uplink);
+		iHal.ApplyUplink(iS2);
+		break;
+	case SAUsb:
+		iHal.ApplyUplink(iS2);
+		break;
+	default:
+		break;
+		}
+	iHal.TlsVerify(iS2.tlsVerify != 0);
+	}
+
+bool Modem::WebSet(const SchemaEntry& aE, const char* aValue)
+	{
+	am::Config c = { iS, iS2 };
+	uint32_t oldBaud = iS.baud;
+	if (!SchemaSet(c, aE, aValue))
+		return false;
+	Apply(aE.apply, oldBaud);
+	return true;
+	}
+
+void Modem::WebGet(const SchemaEntry& aE, char* aOut, size_t aMax) const
+	{
+	am::Config c = { const_cast<Settings&>(iS), const_cast<Settings2&>(iS2) };
+	SchemaGet(c, aE, aOut, aMax);
+	}
+
+bool Modem::Save()
+	{
+	if (!iHal.SaveSettings(iS))
+		return false;
+	if (!iHal.SaveSettings2(iS2))
+		return false;
+	iTrialFrom = 0;                          // a saved speed is confirmed
+	return true;
+	}
+
+void Modem::Factory(bool aKeepWifi)
+	{
+	Settings f;
+	FactoryDefaults(f);
+	if (aKeepWifi)
+		{
+		memcpy(f.ssid, iS.ssid, sizeof(f.ssid));
+		memcpy(f.pass, iS.pass, sizeof(f.pass));
+		}
+	uint32_t oldBaud = iS.baud;
+	iS = f;
+	FactoryDefaults2(iS2);
+	iHal.ApplyPins(iS, iS2);
+	ApplyPacing();
+	iHal.TlsVerify(true);
+	iUplink.Configure(iS2.uplink);
+	if (iS.baud != oldBaud)
+		iPendingBaud = iS.baud;
+	}
+
+void Modem::SeedNetwork(const char* aSsid, const char* aPass)
+	{
+	if (!aSsid || !aSsid[0] || iS.ssid[0])
+		return;
+	strncpy(iS.ssid, aSsid, sizeof(iS.ssid) - 1);
+	iS.ssid[sizeof(iS.ssid) - 1] = 0;
+	strncpy(iS.pass, aPass ? aPass : "", sizeof(iS.pass) - 1);
+	iS.pass[sizeof(iS.pass) - 1] = 0;
+	char m[96];
+	snprintf(m, sizeof(m), "First start: the network \"%s\" was preset in this build; saved", iS.ssid);
+	iHal.Log(m);
+	Save();
+	iHal.WifiBegin(iS.ssid, iS.pass);
+	iHal.ApplyWeb(iS2);                      // (a network is set: no portal)
+	}
+
+void Modem::ConfigMode(bool aOn)
+	{
+	iConfigMode = aOn;
+	if (aOn)
+		{
+		iConfigUntilMs = iHal.Millis() + 10 * 60 * 1000;
+		iHal.Log("Config mode: the access point is up for 10 minutes");
+		}
+	else
+		iHal.Log("Config mode over");
+	iHal.ApplyWeb(iS2);
+	}
+
 Modem::TResult Modem::RunCommands(const char* aCmd)
 	{
 	const char* p = aCmd;
@@ -524,14 +711,12 @@ Modem::TResult Modem::RunCommands(const char* aCmd)
 		case 'Z':
 			{
 			Number(p, 0);
-			Settings s;
 			uint32_t oldBaud = iS.baud;
-			if (iHal.LoadSettings(s) && s.magic == kMagic)
-				iS = s;
-			else
-				FactoryDefaults(iS);
-			iHal.ApplyPins(iS);
+			LoadAll();
+			iHal.ApplyPins(iS, iS2);
 			ApplyPacing();
+			iHal.TlsVerify(iS2.tlsVerify != 0);
+			iUplink.Configure(iS2.uplink);
 			if (iS.baud != oldBaud)
 				iPendingBaud = iS.baud;
 			return ROk;
@@ -586,43 +771,18 @@ Modem::TResult Modem::RunCommands(const char* aCmd)
 			switch (c2)
 				{
 			case 'F':
-				{
-				// factory settings, but keep the WiFi network (AT$SSID/AT$PASS)
-				Settings f;
-				FactoryDefaults(f);
-				memcpy(f.ssid, iS.ssid, sizeof(f.ssid));
-				memcpy(f.pass, iS.pass, sizeof(f.pass));
-				uint32_t oldBaud = iS.baud;
-				iS = f;
-				iHal.ApplyPins(iS);
-				ApplyPacing();
-				if (iS.baud != oldBaud)
-					iPendingBaud = iS.baud;
+				Factory(true);               // factory settings, but keep the WiFi network
 				break;
-				}
 			case 'W':
-				if (!iHal.SaveSettings(iS))
+				if (!Save())
 					return RError;
 				break;
 			case 'C': iS.dcdMode = v ? 1 : 0; break;
 			case 'V':
-				{
-				char m[96];
-				snprintf(m, sizeof(m), "E%d V%d Q%d &C%d S2=%d S12=%d baud %lu swap %d dcd pin %d",
-					iS.echo, iS.verbose, iS.quiet, iS.dcdMode, iS.s2, iS.s12,
-					(unsigned long)iS.baud, iS.swapPins, iS.dcdPin);
-				SayLine(m);
-				snprintf(m, sizeof(m), "pacing %s%lu bytes/s, burst %u, gap %u ms",
-					iS.paceAuto ? "auto " : "", (unsigned long)iS.paceRate, iS.paceBurst, iS.paceGap);
-				SayLine(m);
-				snprintf(m, sizeof(m), "SSID \"%s\"", iS.ssid);
-				SayLine(m);
-				snprintf(m, sizeof(m), "web proxy (psiproxy) $PX=%d $PZ=%d", ProxyMode(iS), iS.proxyNoZip ? 0 : 1);
-				SayLine(m);
+				ShowSettings();
 				break;
-				}
 			case 'D': case 'K': case 'S': case 'B': case 'N': case 'Q': case 'R': case 'Y':
-				break;                       // accepted (no DTR, no RTS/CTS on this board)
+				break;                       // accepted (no DTR on this board; RTS/CTS is AT$FC)
 			default:
 				return RError;
 				}
@@ -685,9 +845,7 @@ Modem::TResult Modem::RunCommands(const char* aCmd)
 			{
 			uint32_t old = iS.baud;
 			iS.baud = (uint32_t)v;
-			ApplyPacing();
-			iPendingBaud = iS.baud;
-			StartBaudTrial(old);
+			Apply(SABaud, old);
 			}
 			break;
 		case 'L': case 'M': case 'X': case 'N': case 'P': case 'T': case 'Y':
@@ -699,139 +857,106 @@ Modem::TResult Modem::RunCommands(const char* aCmd)
 		}
 	}
 
-// AT$...: the WiFi and Psion settings (WiFi232 style). Each takes the rest
-// of the line. AT&W saves them.
+// AT$...: the settings (WiFi232 style), from the schema, plus a few
+// commands of their own. Each takes the rest of the line. AT&W saves them.
 Modem::TResult Modem::SetCommand(const char* aCmd, const char*& aP, bool& aHandled)
 	{
-	static const char* const kNames[] = { "SSID", "PASS", "SB", "PR", "PB", "PG", "SWAP", "DCD", "PACE", "PX", "PZ", 0 };
-	int which = -1;
-	size_t len = 0;
-	for (int i = 0; kNames[i]; i++)
-		{
-		size_t l = strlen(kNames[i]);
-		if (StartsNoCase(aCmd, kNames[i]) && (aCmd[l] == '=' || aCmd[l] == '?' || aCmd[l] == 0) && l > len)
-			{
-			which = i;
-			len = l;
-			}
-		}
 	aP = aCmd + strlen(aCmd);                // these commands end the line
-	if (which < 0)
-		return RError;
-	aHandled = true;
-	const char* rest = aCmd + len;
+	// the name: letters and digits up to '=', '?' or the end
+	char name[16];
+	size_t nl = 0;
+	const char* rest = aCmd;
+	while (*rest && *rest != '=' && *rest != '?' && *rest != ' ' && nl < sizeof(name) - 1)
+		name[nl++] = (char)Upper((unsigned char)*rest++);
+	name[nl] = 0;
+	while (*rest == ' ') rest++;
 	bool query = *rest != '=';
-	if (*rest == '=')
+	if (*rest == '=' || *rest == '?')
 		rest++;
-	char m[100];
-	char val[70];
+	char m[160];
+	char val[100];
 	Value(rest, val, sizeof(val));
-	const char* q = val;
-	long v = Number(q, -99999);
-	bool num = v != -99999 && *q == 0;
-	switch (which)
+	// ----- commands that are not settings -----
+	if (strcmp(name, "PACE") == 0)
 		{
-	case 0:                                  // SSID
-		if (query) { snprintf(m, sizeof(m), "%s", iS.ssid); SayLine(m); return ROk; }
-		strncpy(iS.ssid, val, sizeof(iS.ssid) - 1);
-		iS.ssid[sizeof(iS.ssid) - 1] = 0;
-		return ROk;
-	case 1:                                  // PASS (never shown)
-		if (query) { SayLine(iS.pass[0] ? "(set)" : "(none)"); return ROk; }
-		strncpy(iS.pass, val, sizeof(iS.pass) - 1);
-		iS.pass[sizeof(iS.pass) - 1] = 0;
-		if (iS.ssid[0])
-			iHal.WifiBegin(iS.ssid, iS.pass);  // join once both are known
-		return ROk;
-	case 2:                                  // SB: serial baud
-		if (query) { snprintf(m, sizeof(m), "%lu", (unsigned long)iS.baud); SayLine(m); return ROk; }
-		if (!num || !ValidBaud(v))
-			return RError;
-		{
-		uint32_t old = iS.baud;
-		iS.baud = (uint32_t)v;
-		ApplyPacing();
-		iPendingBaud = iS.baud;              // after the OK, at the old speed
-		StartBaudTrial(old);                 // and back to it if nothing works at the new one
-		return ROk;
-		}
-	case 3:                                  // PR: pacing rate, bytes/s; AUTO; 0 = off
-		if (query)
-			{
-			snprintf(m, sizeof(m), "%s%lu", iS.paceAuto ? "AUTO " : "", (unsigned long)iS.paceRate);
-			SayLine(m);
-			return ROk;
-			}
-		if (StartsNoCase(val, "AUTO"))
-			iS.paceAuto = 1;
-		else if (num && v >= 0 && v <= 200000)
-			{
-			iS.paceAuto = 0;
-			iS.paceRate = (uint32_t)v;
-			}
-		else
-			return RError;
-		ApplyPacing();
-		return ROk;
-	case 4:                                  // PB: burst bytes
-	case 5:                                  // PG: gap ms
-		if (query)
-			{
-			snprintf(m, sizeof(m), "%u", which == 4 ? iS.paceBurst : iS.paceGap);
-			SayLine(m);
-			return ROk;
-			}
-		if (!num || v < (which == 4 ? 1 : 0) || v > 4096)
-			return RError;
-		iS.paceAuto = 0;
-		if (which == 4) iS.paceBurst = (uint16_t)v; else iS.paceGap = (uint16_t)v;
-		ApplyPacing();
-		return ROk;
-	case 6:                                  // SWAP: RX and TX the other way round
-		if (query) { SayLine(iS.swapPins ? "1" : "0"); return ROk; }
-		if (!num || v < 0 || v > 1)
-			return RError;
-		iS.swapPins = (uint8_t)v;
-		iHal.ApplyPins(iS);
-		return ROk;
-	case 7:                                  // DCD: the GPIO for an emulated DCD
-		if (query) { snprintf(m, sizeof(m), "%d", iS.dcdPin); SayLine(m); return ROk; }
-		if (!num || v < -1 || v > 39)
-			return RError;
-		iS.dcdPin = (int8_t)v;
-		iHal.ApplyPins(iS);
-		UpdateDcd();
-		return ROk;
-	case 8:                                  // PACE?: the whole pacing
+		aHandled = true;
 		if (iS.paceRate)
-			snprintf(m, sizeof(m), "%s%lu bytes/s, burst %u, gap %u ms, buffer %lu",
+			snprintf(m, sizeof(m), "%s%lu bytes/s, burst %u, gap %u ms, buffer %lu%s",
 				iS.paceAuto ? "auto: " : "", (unsigned long)iS.paceRate, iS.paceBurst, iS.paceGap,
-				(unsigned long)iRing.Size());
+				(unsigned long)iRing.Size(), iS2.flow ? ", RTS/CTS" : "");
 		else
-			snprintf(m, sizeof(m), "off, buffer %lu", (unsigned long)iRing.Size());
+			snprintf(m, sizeof(m), "off, buffer %lu%s", (unsigned long)iRing.Size(), iS2.flow ? ", RTS/CTS" : "");
 		SayLine(m);
 		return ROk;
-	case 9:                                  // PX: the web proxy for PsiWeb
-		if (query)
-			{
-			static const char* const kModes[] = { "off", "on: simplified pages", "on: text only",
-				"on: pages unchanged (TLS only)" };
-			snprintf(m, sizeof(m), "%d (%s)", ProxyMode(iS), kModes[ProxyMode(iS) & 3]);
-			SayLine(m);
-			return ROk;
-			}
-		if (!num || v < 0 || v > 3)
-			return RError;
-		SetProxyMode(iS, (int)v);
-		return ROk;
-	case 10:                                 // PZ: gzip the proxy's pages on the line
-		if (query) { SayLine(iS.proxyNoZip ? "0" : "1"); return ROk; }
-		if (!num || v < 0 || v > 1)
-			return RError;
-		iS.proxyNoZip = v ? 0 : 1;
+		}
+	if (strcmp(name, "HELP") == 0)
+		{
+		aHandled = true;
+		Help();
 		return ROk;
 		}
-	return RError;
+	if (strcmp(name, "LOG") == 0)
+		{
+		aHandled = true;
+		ShowLog();
+		return ROk;
+		}
+	if (strcmp(name, "AP") == 0)
+		{
+		aHandled = true;
+		char w[96];
+		iHal.ApInfo(w, sizeof(w));
+		SayLine(w[0] ? w : "no access point");
+		return ROk;
+		}
+	if (strcmp(name, "RESET") == 0)
+		{
+		aHandled = true;
+		if (query || !StartsNoCase(val, "YES"))
+			return RError;
+		Factory(false);
+		Result(ROk);
+		iHal.FactoryReset();                 // (clears NVS and restarts, on the board)
+		return RNone;
+		}
+	if (strcmp(name, "EXEC") == 0)
+		{
+		aHandled = true;
+		if (query || !val[0])
+			return RError;
+		return DialExec(val);
+		}
+	if (strcmp(name, "UP") == 0 && query)
+		{
+		aHandled = true;
+		iUplink.Describe(m, sizeof(m));
+		SayLine(m);
+		return ROk;
+		}
+	// ----- the settings -----
+	const SchemaEntry* e = SchemaFind(name);
+	if (!e)
+		return RError;
+	aHandled = true;
+	am::Config c = { iS, iS2 };
+	if (query)
+		{
+		if (e->type == STProxyMode)
+			{
+			static const char* const kModes[] = { "off", "on: simplified pages", "on: text only",
+				"on: pages unchanged (TLS only)", "on: reader" };
+			snprintf(m, sizeof(m), "%d (%s)", ProxyMode(iS), kModes[ProxyMode(iS) % 5]);
+			}
+		else
+			SchemaGet(c, *e, m, sizeof(m));
+		SayLine(m);
+		return ROk;
+		}
+	uint32_t oldBaud = iS.baud;
+	if (!SchemaSet(c, *e, val))
+		return RError;
+	Apply(e->apply, oldBaud);
+	return ROk;
 	}
 
 // ATDT host:port (also ATDThost:port, ATD, ATDP, quotes): opens TCP
@@ -847,6 +972,15 @@ Modem::TResult Modem::Dial(const char* aArgs)
 	Value(p, target, sizeof(target));
 	if (!target[0])
 		return RError;
+	// "tls:host:port": the modem does the TLS for this call
+	bool tls = false;
+	if (StartsNoCase(target, "tls:"))
+		{
+		tls = true;
+		memmove(target, target + 4, strlen(target + 4) + 1);
+		if (!target[0])
+			return RError;
+		}
 	char* colon = strrchr(target, ':');
 	long port = 23;
 	if (colon)
@@ -866,20 +1000,44 @@ Modem::TResult Modem::Dial(const char* aArgs)
 		if (digits)
 			return RNoCarrier;               // a phone number (e.g. 777 for PPP): no PPP here
 		}
-	if (!iHal.WifiUp())
+	// "psiexec": the text channel to the helper on the LAN
+	if (StartsNoCase(target, "psiexec") && target[7] == 0)
+		return DialExec(0);
+	if (!iUplink.Up())
 		return RNoCarrier;
 	if (iConnected || iClosing)
 		Hangup(false);
 	// "psiproxy" (any port): the modem is PsiWeb's web proxy itself
 	bool proxy = ProxyMode(iS) != Proxy::EOff && StartsNoCase(target, Proxy::kName)
 		&& target[strlen(Proxy::kName)] == 0;
+	if (!tls && iS2.tls && TlsPort(iS2, (uint16_t)port))
+		tls = true;
 	iHal.Led(ELedConnecting);
 	iLed = ELedConnecting;
 	if (proxy)
-		iProxy.Start(ProxyMode(iS), !iS.proxyNoZip);
+		iProxy.Start(ProxyMode(iS), !iS.proxyNoZip, iS2.img ? iS2.imgWidth : 0, iS2.imgMaxKB);
+	else if (tls)
+		{
+		char why[96];
+		why[0] = 0;
+		iHal.TlsVerify(iS2.tlsVerify != 0);
+		if (!iHal.UpConnect(target, (uint16_t)port, true, why, sizeof(why)))
+			{
+			char m[320];
+			snprintf(m, sizeof(m), "tls %s:%ld: %s", target, port, why[0] ? why : "failed");
+			iHal.Log(m);
+			return RNoCarrier;
+			}
+		}
 	else if (!iHal.TcpConnect(target, (uint16_t)port))
+		{
+		iProbeDueMs = iHal.Millis();         // (a failed connect: is the Internet there at all?)
 		return RNoCarrier;
+		}
 	iProxyCall = proxy;
+	iExecCall = false;
+	iExecOneShot = false;
+	iTlsCall = tls && !proxy;
 	iConnected = true;
 	iClosing = false;
 	iOnline = true;
@@ -893,14 +1051,117 @@ Modem::TResult Modem::Dial(const char* aArgs)
 	return RNone;
 	}
 
-void Modem::Hangup(bool aSayNoCarrier)
+// The handshake with psiexecd: "PSIEXEC/1 <token> one|channel\r\n", then
+// "OK\r\n" (or "ERR ...\r\n" and the helper closes). "one" (AT$EXEC=): one
+// command line follows, the helper runs it, sends its output and closes.
+// "channel" (ATDT psiexec): a line at a time for as long as the call lasts
+bool Modem::ExecHandshake(const char* aCommand)
+	{
+	char line[128];
+	int n = snprintf(line, sizeof(line), "PSIEXEC/1 %s %s\r\n", iS2.execToken, aCommand ? "one" : "channel");
+	if (n <= 0 || n >= (int)sizeof(line))
+		return false;
+	if (iHal.TcpWrite((const uint8_t*)line, (size_t)n) != (size_t)n)
+		return false;
+	// the answer: a line within 5 s
+	uint32_t start = iHal.Millis();
+	size_t got = 0;
+	for (;;)
+		{
+		uint8_t c;
+		if (iHal.TcpAvailable() && iHal.TcpRead(&c, 1) == 1)
+			{
+			if (c == '\n')
+				break;
+			if (c != '\r' && got < sizeof(line) - 1)
+				line[got++] = (char)c;
+			continue;
+			}
+		if (!iHal.TcpOpen() || iHal.Millis() - start > 5000)
+			{
+			iHal.Log("psiexec: no answer from the helper");
+			return false;
+			}
+		iHal.Idle();
+		}
+	line[got] = 0;
+	if (strncmp(line, "OK", 2) != 0)
+		{
+		char m[160];
+		snprintf(m, sizeof(m), "psiexec: the helper refused: %.100s", line);
+		iHal.Log(m);
+		return false;
+		}
+	if (aCommand)
+		{
+		size_t len = strlen(aCommand);
+		if (iHal.TcpWrite((const uint8_t*)aCommand, len) != len || iHal.TcpWrite((const uint8_t*)"\n", 1) != 1)
+			return false;
+		}
+	return true;
+	}
+
+// ATDT psiexec, or AT$EXEC=command: a call to the helper
+Modem::TResult Modem::DialExec(const char* aCommand)
+	{
+	if (!iS2.exec || !iS2.execHost[0])
+		return aCommand ? RError : RNoCarrier;
+	if (!iUplink.Up())
+		return aCommand ? RError : RNoCarrier;
+	char host[64];
+	strncpy(host, iS2.execHost, sizeof(host) - 1);
+	host[sizeof(host) - 1] = 0;
+	char* colon = strrchr(host, ':');
+	if (!colon)
+		return aCommand ? RError : RNoCarrier;
+	*colon = 0;
+	const char* q = colon + 1;
+	long port = Number(q, -1);
+	if (port <= 0 || port > 65535 || *q || !host[0])
+		return aCommand ? RError : RNoCarrier;
+	if (iConnected || iClosing)
+		Hangup(false);
+	iHal.Led(ELedConnecting);
+	iLed = ELedConnecting;
+	if (!iHal.TcpConnect(host, (uint16_t)port) || !ExecHandshake(aCommand))
+		{
+		iHal.TcpClose();
+		return aCommand ? RError : RNoCarrier;
+		}
+	iProxyCall = false;
+	iExecCall = true;
+	iExecOneShot = aCommand != 0;
+	iTlsCall = false;
+	iConnected = true;
+	iClosing = false;
+	iOnline = true;
+	iRing.Clear();
+	iUpLen = 0;
+	iPluses = 0;
+	ApplyPacing();
+	iLastSerialMs = iHal.Millis();
+	if (!aCommand)
+		Result(RConnect);                    // (a one-shot prints the output, then OK)
+	UpdateDcd();
+	return RNone;
+	}
+
+void Modem::EndCall()
 	{
 	if (iProxyCall)
 		iProxy.Stop();                       // (closes its server connection)
 	else
 		iHal.TcpClose();
 	iProxyCall = false;
+	iExecCall = false;
+	iTlsCall = false;
 	iConnected = false;
+	}
+
+void Modem::Hangup(bool aSayNoCarrier)
+	{
+	EndCall();
+	iExecOneShot = false;
 	iClosing = false;
 	iOnline = false;
 	iRing.Clear();
@@ -913,34 +1174,131 @@ void Modem::Hangup(bool aSayNoCarrier)
 
 void Modem::Info()
 	{
-	char m[120];
+	char m[160];
 	snprintf(m, sizeof(m), "Atom modem %s (Psion-tuned)", kVersion);
 	SayLine(m);
-	char w[90];
+	char w[96];
 	if (iHal.WifiUp())
 		{
 		iHal.WifiInfo(w, sizeof(w));
-		snprintf(m, sizeof(m), "WiFi: %s", w);
+		snprintf(m, sizeof(m), "WiFi: %s; %s", w, Uplink::WifiStateName(iUplink.WifiState()));
 		}
 	else
-		snprintf(m, sizeof(m), "WiFi: not connected%s%s%s", iS.ssid[0] ? " (\"" : "", iS.ssid, iS.ssid[0] ? "\")" : "");
+		snprintf(m, sizeof(m), "WiFi: not connected%s%s%s (%s)", iS.ssid[0] ? " (\"" : "", iS.ssid, iS.ssid[0] ? "\")" : "",
+			Uplink::WifiStateName(iUplink.WifiState()));
+	SayLine(m);
+	iUplink.Describe(w, sizeof(w));
+	snprintf(m, sizeof(m), "Uplink %s", w);
+	SayLine(m);
+	char d[48];
+	int us = iHal.UsbState(d, sizeof(d));
+	snprintf(m, sizeof(m), "USB-C: %s%s%s%s", iS2.usbHost ? "host" : "device", iS2.usbHost ? ", " : "",
+		iS2.usbHost ? Uplink::UsbStateName(us) : "", d[0] ? d : "");
 	SayLine(m);
 	if (iS.paceRate)
-		snprintf(m, sizeof(m), "Serial %lu baud, no flow control, pacing %lu bytes/s in %u-byte bursts",
-			(unsigned long)iS.baud, (unsigned long)iS.paceRate, iS.paceBurst);
+		snprintf(m, sizeof(m), "Serial %lu baud, %s, pacing %lu bytes/s in %u-byte bursts",
+			(unsigned long)iS.baud, iS2.flow ? "RTS/CTS" : "no flow control", (unsigned long)iS.paceRate, iS.paceBurst);
 	else
-		snprintf(m, sizeof(m), "Serial %lu baud, no flow control, no pacing", (unsigned long)iS.baud);
+		snprintf(m, sizeof(m), "Serial %lu baud, %s, no pacing", (unsigned long)iS.baud, iS2.flow ? "RTS/CTS" : "no flow control");
 	SayLine(m);
 	if (ProxyMode(iS) == Proxy::EOff)
 		snprintf(m, sizeof(m), "Web proxy: off (AT$PX=1 turns it on)");
 	else
-		snprintf(m, sizeof(m), "Web proxy: ATDT %s:8080, %s; %lu requests", Proxy::kName,
+		snprintf(m, sizeof(m), "Web proxy: ATDT %s:8080, %s%s; %lu requests", Proxy::kName,
 			ProxyMode(iS) == Proxy::EText ? "text only" : ProxyMode(iS) == Proxy::ERaw ? "pages unchanged"
-				: "simplified pages", (unsigned long)iProxy.Requests());
+				: ProxyMode(iS) == Proxy::EReader ? "reader" : "simplified pages",
+			iS2.img ? ", pictures to 16 greys" : "", (unsigned long)iProxy.Requests());
 	SayLine(m);
+	char ports[48];
+	TlsPortsText(iS2, ports, sizeof(ports));
+	snprintf(m, sizeof(m), "TLS termination: %s (ports %s%s); remote compute: %s", iS2.tls ? "on" : "off", ports,
+		iS2.tlsVerify ? "" : ", certificates NOT checked", iS2.exec ? "on" : "off");
+	SayLine(m);
+	iHal.WebInfo(w, sizeof(w));
+	iHal.ApInfo(d, sizeof(d));
+	if (w[0] || d[0])
+		{
+		snprintf(m, sizeof(m), "Web pages: %s%s%s", w, w[0] && d[0] ? "; " : "", d);
+		SayLine(m);
+		}
 	iHal.MemInfo(w, sizeof(w));
 	if (w[0])
 		SayLine(w);
+	}
+
+// AT&V: every setting (secrets as set/none)
+void Modem::ShowSettings()
+	{
+	char m[160];
+	snprintf(m, sizeof(m), "E%d V%d Q%d &C%d S2=%d S12=%d", iS.echo, iS.verbose, iS.quiet, iS.dcdMode, iS.s2, iS.s12);
+	SayLine(m);
+	am::Config c = { iS, iS2 };
+	for (int i = 0; i < SchemaCount(); i++)
+		{
+		const SchemaEntry& e = SchemaAt(i);
+		char v[100];
+		SchemaGet(c, e, v, sizeof(v));
+		snprintf(m, sizeof(m), "$%s=%s", e.name, v);
+		SayLine(m);
+		}
+	}
+
+// AT$HELP: the settings with their ranges
+void Modem::Help()
+	{
+	char m[200];
+	am::Config c = { iS, iS2 };
+	for (int i = 0; i < SchemaCount(); i++)
+		{
+		const SchemaEntry& e = SchemaAt(i);
+		char v[100];
+		SchemaGet(c, e, v, sizeof(v));
+		switch (e.type)
+			{
+		case STEnum:
+			{
+			char names[64];
+			size_t n = 0;
+			names[0] = 0;
+			for (int j = 0; e.names[j] && n < sizeof(names) - 8; j++)
+				n += (size_t)snprintf(names + n, sizeof(names) - n, "%s%s", j ? "|" : "", e.names[j]);
+			snprintf(m, sizeof(m), "$%s=%s (%s): %s", e.name, names, v, e.help);
+			break;
+			}
+		case STInt: case STPace:
+			snprintf(m, sizeof(m), "$%s=%ld..%ld (%s): %s", e.name, (long)e.min, (long)e.max, v, e.help);
+			break;
+		case STBool: case STBoolInv:
+			snprintf(m, sizeof(m), "$%s=0|1 (%s): %s", e.name, v, e.help);
+			break;
+		default:
+			snprintf(m, sizeof(m), "$%s=... (%s): %s", e.name, v, e.help);
+			break;
+			}
+		SayLine(m);
+		}
+	SayLine("$PACE? $AP? $UP? $LOG? $HELP; $EXEC=command; $RESET=YES");
+	}
+
+// AT$LOG?: the log ring, oldest first
+void Modem::ShowLog()
+	{
+	const LogRing& log = iHal.LogLines();
+	char buf[128];
+	size_t from = 0, n;
+	Say("\r\n");
+	while ((n = log.Read(from, buf, sizeof(buf))) > 0)
+		{
+		// the ring's '\n' become CR LF on the line
+		for (size_t i = 0; i < n; i++)
+			{
+			if (buf[i] == '\n')
+				Say("\r\n");
+			else
+				Send((const uint8_t*)&buf[i], 1);
+			}
+		from += n;
+		}
 	}
 
 // ----- to the Psion -----------------------------------------------------------
@@ -1003,8 +1361,8 @@ void Modem::PumpServer(uint32_t aNow)
 	if (iConnected && iProxyCall)
 		{
 		// the web proxy: it fills the ring itself, and ends the call when the
-		// Psion asked it to (or the WiFi goes)
-		if (!iProxy.Pump(iRing) || !iHal.WifiUp())
+		// Psion asked it to (or the uplink goes)
+		if (!iProxy.Pump(iRing) || !iUplink.Up())
 			{
 			iProxy.Stop();
 			iProxyCall = false;
@@ -1016,7 +1374,7 @@ void Modem::PumpServer(uint32_t aNow)
 		{
 		// read only what the ring can hold: when it is full the socket is
 		// left alone, its window closes, and the server waits (TCP flow
-		// control standing in for the RTS/CTS this board does not have)
+		// control standing in for the RTS/CTS a three-wire board lacks)
 		for (int i = 0; i < 8; i++)
 			{
 			size_t room = iRing.Free();
@@ -1031,24 +1389,28 @@ void Modem::PumpServer(uint32_t aNow)
 				break;
 			iRing.Put(iTcpBuf, n);
 			}
-		if ((!iHal.TcpOpen() && iHal.TcpAvailable() == 0) || !iHal.WifiUp())
+		if ((!iHal.TcpOpen() && iHal.TcpAvailable() == 0) || !iUplink.Up())
 			{
-			// the server closed, or the WiFi went: say NO CARRIER once what
+			// the server closed, or the uplink went: say NO CARRIER once what
 			// has arrived has been delivered
 			iHal.TcpClose();
 			iConnected = false;
+			iExecCall = false;
+			iTlsCall = false;
 			iClosing = true;
 			}
 		}
 	if (iClosing && (iRing.Count() == 0 || !iOnline))
 		{
+		bool oneShot = iExecOneShot;
+		iExecOneShot = false;
 		iClosing = false;
 		iOnline = false;
 		iRing.Clear();
 		iPluses = 0;
 		iUpLen = 0;
 		UpdateDcd();
-		Result(RNoCarrier);
+		Result(oneShot ? ROk : RNoCarrier);
 		}
 	(void)aNow;
 	}
@@ -1086,10 +1448,12 @@ void Modem::UpdateDcd()
 
 void Modem::UpdateLed(uint32_t aNow)
 	{
-	bool up = iHal.WifiUp();
+	bool up = iUplink.Up();
 	int s;
 	if (iConnected || iClosing)
 		s = (aNow - iLastDataMs < 60) ? ELedData : ELedConnected;
+	else if (iConfigMode)
+		s = ELedConfig;
 	else
 		s = up ? ELedWifi : ELedNoWifi;
 	if (s != iLed)
