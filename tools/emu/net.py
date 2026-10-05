@@ -440,7 +440,7 @@ def test_kern(ctx):
     out = kern_serial(ctx, 'kern', log)
     # (hostmodem logs what it sends: ATI's first line, ten times at each speed)
     try:
-        n = open(log, 'rb').read().count(b'Atom modem 1.1')
+        n = open(log, 'rb').read().count(b'Atom modem ')
     except OSError:
         n = 0
     return n >= 20, out

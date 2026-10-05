@@ -255,7 +255,7 @@ public:
 		}
 	void Idle() override { usleep(1000); }
 	void MemInfo(char* o, size_t m) override { snprintf(o, m, "Memory: (a PC)"); }
-	void Log(const char* l) override { fprintf(stderr, "\n[%s]\n", l); }
+	void Log(const char* l) override { fprintf(stderr, "\n[%s]\n", l); Record(l); }
 	void Fill()
 		{
 		if (tcp < 0 || tcpEof || peek.size() >= 4096) return;

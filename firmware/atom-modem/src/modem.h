@@ -1,65 +1,35 @@
-// modem.h - the Psion-tuned WiFi modem: Hayes commands, +++ escape, and
+// modem.h - the Psion-tuned WiFi/USB modem: Hayes commands, +++ escape, and
 // paced output towards the Psion. Plain C++ with no Arduino calls, so the
-// same code runs on the M5Stack Atom (main.cpp) and in the host tests
+// same code runs on the Atom (board/, main.cpp) and in the host tests
 // (hosttest/). MIT licence (see LICENSE at the top of the repository).
 //
-// The board (Atom + Atomic RS232 Base) has only TX, RX and GND: no RTS/CTS,
-// so the Psion cannot stop us when its receive buffer fills. Instead:
-//   - everything from the server goes into a big ring buffer here (64-128 KB);
+// A three-wire board (the Atomic RS232 Base) has only TX, RX and GND: no
+// RTS/CTS, so the Psion cannot stop us when its receive buffer fills.
+// Instead:
+//   - everything from the server goes into a big ring buffer here (32-128 KB);
 //   - the ring is emptied towards the Psion at a paced rate below the line
 //     rate, in small bursts with gaps (a token bucket);
 //   - when the ring is full we stop reading the TCP socket, so TCP's own
 //     flow control holds the server back.
-// That gives end-to-end flow control without a single handshake wire.
+// With a four-wire transceiver (AT$FC=1) the UART's own RTS/CTS does the
+// stopping and the pacing is relaxed.
 //
 // Dialling "psiproxy" (ATDT psiproxy:8080) opens no TCP connection: the
 // modem is then a web proxy for PsiWeb itself (proxy.h), doing the TLS and
-// simplifying pages. AT$PX turns it off or chooses how much it simplifies.
+// simplifying pages. "psiexec" is a text channel to a helper on the LAN
+// (AT$XE). "tls:host:port", or a port in AT$TLSP with AT$TLS=1, makes the
+// modem do the TLS and give the Psion the plain protocol.
 #ifndef ATOM_MODEM_H
 #define ATOM_MODEM_H
 
 #include <stdint.h>
 #include <stddef.h>
+#include "settings.h"
+#include "schema.h"
+#include "uplink.h"
 #include "proxy.h"
 
 namespace am {
-
-static const char* const kVersion = "1.1";
-
-// ----- settings (saved whole in NVS by AT&W) -------------------------------
-struct Settings
-	{
-	uint32_t magic;            // kMagic: a valid record
-	uint32_t baud;             // the serial line to the Psion
-	char ssid[33];
-	char pass[65];
-	uint8_t echo;              // E1: echo commands back (as the WiRSa does)
-	uint8_t verbose;           // V1: words ("OK"), V0: digits ("0")
-	uint8_t quiet;             // Q1: no result codes at all
-	uint8_t dcdMode;           // &C: 0 DCD always on, 1 DCD follows the connection
-	uint8_t s2;                // escape character, '+'
-	uint8_t s12;               // escape guard time, 1/50 s (40 = 0.8 s)
-	uint8_t paceAuto;          // 1: pacing chosen from the baud rate
-	uint8_t swapPins;          // 1: RX and TX swapped (a different cable or base)
-	uint32_t paceRate;         // bytes/s towards the Psion; 0 = no pacing
-	uint16_t paceBurst;        // bytes per burst (the token bucket's depth)
-	uint16_t paceGap;          // extra quiet time after each burst, ms
-	int8_t dcdPin;             // GPIO driving an emulated DCD, -1 = none
-	uint8_t proxy;             // the web proxy (AT$PX), stored so that 0 (a record saved
-	                           // by 1.0) means on: 0 on, 1 off, 2 text only, 3 unchanged
-	uint8_t proxyNoZip;        // 1: AT$PZ=0, the proxy does not gzip pages for the Psion
-	uint8_t spare[13];
-	};
-
-// AT$PX's value (Proxy::TMode) from the stored byte, and back
-int ProxyMode(const Settings& aS);
-void SetProxyMode(Settings& aS, int aMode);
-
-static const uint32_t kMagic = 0x41544d31;   // 'ATM1'
-
-void FactoryDefaults(Settings& aS);
-// The pacing that suits a Psion 5mx at this line rate (see README)
-void AutoPacing(uint32_t aBaud, uint32_t& aRate, uint16_t& aBurst, uint16_t& aGap);
 
 // ----- the ring buffer (server -> Psion) -----------------------------------
 class Ring
@@ -103,12 +73,32 @@ private:
 	int iStarted;
 	};
 
+// ----- the status log, kept in RAM ------------------------------------------
+// The USB console is not there in USB host mode (the port is the phone's),
+// so the last few KB of status lines are kept here: AT$LOG? and the web
+// page /log show them
+class LogRing
+	{
+public:
+	LogRing() : iHead(0), iCount(0) { iBuf[0] = 0; }
+	void Add(const char* aLine);
+	// the oldest aMax-1 bytes from aFrom (0 = the start); returns how many
+	size_t Read(size_t aFrom, char* aOut, size_t aMax) const;
+	size_t Count() const { return iCount; }
+	void Clear() { iHead = iCount = 0; }
+	static const size_t kSize = 4096;
+private:
+	char iBuf[kSize];
+	size_t iHead, iCount;
+	};
+
 // ----- the platform: serial line, TCP, WiFi, NVS, LED ----------------------
-enum LedState { ELedNoWifi, ELedWifi, ELedConnected, ELedData, ELedConnecting };
+enum LedState { ELedNoWifi, ELedWifi, ELedConnected, ELedData, ELedConnecting, ELedConfig };
 
 class Hal
 	{
 public:
+	Hal() : iTlsVerify(true) {}
 	virtual ~Hal() {}
 	virtual uint32_t Millis() = 0;
 	virtual uint32_t Micros() = 0;
@@ -124,27 +114,54 @@ public:
 	virtual size_t TcpRead(uint8_t* aBuf, size_t aMax) = 0;
 	virtual size_t TcpWrite(const uint8_t* aData, size_t aLen) = 0;
 	virtual void TcpClose() = 0;
-	// the web proxy's own connection to a server, over TLS if aTls (with
-	// the certificate checked). It is then used through TcpOpen..TcpClose
-	// above: during a psiproxy call there is no other TCP connection.
-	// aWhy: a few words on why it failed. The default does plain TCP only.
+	// a connection to a server, over TLS if aTls (with the certificate
+	// checked unless TlsVerify(false)). It is then used through
+	// TcpOpen..TcpClose above. Used by the web proxy and by TLS-terminated
+	// dials. aWhy: a few words on why it failed. The default does plain
+	// TCP only.
 	virtual bool UpConnect(const char* aHost, uint16_t aPort, bool aTls, char* aWhy, size_t aWhyMax);
+	void TlsVerify(bool aOn) { iTlsVerify = aOn; }
+	bool TlsVerify() const { return iTlsVerify; }
 	virtual void Idle() {}                              // a moment's wait in a busy loop
 	virtual void MemInfo(char* aOut, size_t aMax);      // "heap free 120 KB, ..." for ATI
-	virtual void Log(const char* aLine) { (void)aLine; } // a status line (the USB console)
+	// a status line: kept in the log ring, and shown on the USB console
+	// when there is one. Platforms that override it call Record() too
+	virtual void Log(const char* aLine) { Record(aLine); }
+	void Record(const char* aLine) { iLog.Add(aLine); }
+	const LogRing& LogLines() const { return iLog; }
 	// WiFi
 	virtual bool WifiUp() = 0;
 	virtual void WifiBegin(const char* aSsid, const char* aPass) = 0;
 	virtual void WifiEnd() = 0;
 	virtual void WifiInfo(char* aOut, size_t aMax) = 0; // "SSID x, IP a.b.c.d, RSSI -60"
 	virtual int WifiScan(char aNames[][33], int aMax) { (void)aNames; (void)aMax; return 0; }
+	// the Internet check: a TCP connect to aHost:aPort, run by the board in
+	// the background (never in the modem's loop); Internet() is the last
+	// result, -1 unknown, 0 failed, 1 passed
+	virtual void ProbeInternet(const char* aHost, uint16_t aPort) { (void)aHost; (void)aPort; }
+	virtual int Internet() { return -1; }
+	// the USB host (ESP32-S3): a TUsbState, and a few words (the device, its address)
+	virtual int UsbState(char* aDetail, size_t aMax) { if (aMax) aDetail[0] = 0; return EUsbNone; }
 	// settings
 	virtual bool LoadSettings(Settings& aS) = 0;
 	virtual bool SaveSettings(const Settings& aS) = 0;
+	// the 2.0 record: aLength is how many bytes were stored (an older record is shorter)
+	virtual bool LoadSettings2(Settings2& aS, size_t& aLength) { (void)aS; aLength = 0; return false; }
+	virtual bool SaveSettings2(const Settings2& aS) { (void)aS; return true; }
+	virtual void FactoryReset() {}                      // clears NVS and restarts (the board)
+	virtual void Restart() {}
 	// optional extras
 	virtual void Dcd(bool aOn) { (void)aOn; }
 	virtual void Led(LedState aState) { (void)aState; }
-	virtual void ApplyPins(const Settings& aS) { (void)aS; }
+	// the UART's pins and flow control, the DCD pin
+	virtual void ApplyPins(const Settings& aS, const Settings2& aS2) { (void)aS; (void)aS2; }
+	virtual void ApplyWeb(const Settings2& aS2) { (void)aS2; }   // the pages and the access point
+	virtual void ApplyUplink(const Settings2& aS2) { (void)aS2; } // (the USB host at the next restart)
+	virtual void ApInfo(char* aOut, size_t aMax) { if (aMax) aOut[0] = 0; }   // "AtomModem-1a2b up, 192.168.4.1"
+	virtual void WebInfo(char* aOut, size_t aMax) { if (aMax) aOut[0] = 0; }  // "http://192.168.1.50/"
+private:
+	LogRing iLog;
+	bool iTlsVerify;
 	};
 
 // ----- the modem ----------------------------------------------------------
@@ -154,15 +171,32 @@ public:
 	Modem(Hal& aHal, uint8_t* aRing, size_t aRingSize);
 	void Begin();                       // load settings, start WiFi
 	void Loop();                        // call as often as possible
-	// for the tests and the status LED
+	// for the tests, the status LED and the web pages
 	bool Online() const { return iOnline; }
 	bool Connected() const { return iConnected; }
 	const Settings& Config() const { return iS; }
+	const Settings2& Config2() const { return iS2; }
 	size_t Buffered() const { return iRing.Count(); }
 	uint32_t ToPsion() const { return iToPsion; }
 	uint32_t ToServer() const { return iToServer; }
 	bool ProxyCall() const { return iProxyCall; }
+	bool ExecCall() const { return iExecCall; }
 	const Proxy& WebProxy() const { return iProxy; }
+	const Uplink& Link() const { return iUplink; }
+	size_t RingSize() const { return iRing.Size(); }
+	// the web pages: a setting by schema entry (applied as AT$ would), save, factory settings
+	bool WebSet(const SchemaEntry& aE, const char* aValue);
+	void WebGet(const SchemaEntry& aE, char* aOut, size_t aMax) const;
+	bool Save();
+	void Factory(bool aKeepWifi);
+	// first boot with no network saved: a network preset at build time
+	// (main.cpp's AM_DEFAULT_SSID/PASS) is taken, saved and joined. Does
+	// nothing once a network is saved, or when aSsid is empty
+	void SeedNetwork(const char* aSsid, const char* aPass);
+	// "config mode": the access point for a while (the button)
+	void ConfigMode(bool aOn);
+	bool InConfigMode() const { return iConfigMode; }
+	void LogLine(const char* aLine) { iHal.Log(aLine); }
 
 private:
 	enum TResult { ROk = 0, RConnect = 1, RRing = 2, RNoCarrier = 3, RError = 4, RNone = -1 };
@@ -174,13 +208,20 @@ private:
 	void RunCommandLine();
 	TResult RunCommands(const char* aCmd);
 	TResult Dial(const char* aArgs);
+	TResult DialExec(const char* aCommand);
+	bool ExecHandshake(const char* aCommand);
 	TResult SetCommand(const char* aCmd, const char*& aP, bool& aHandled);
+	void Apply(TSchemaApply aWhat, uint32_t aOldBaud);
 	void Info();
+	void ShowSettings();
+	void Help();
+	void ShowLog();
 	void Result(TResult aR);
 	void Say(const char* aText);
 	void SayLine(const char* aText);
 	void Send(const uint8_t* aData, size_t aLen);       // to the Psion, unpaced (command mode)
 	void Hangup(bool aSayNoCarrier);
+	void EndCall();
 	void FlushUp();
 	void PumpServer(uint32_t aNow);
 	void PumpPsion(uint32_t aNow);
@@ -190,12 +231,15 @@ private:
 	void BaudTrialTick(uint32_t aNow);
 	void UpdateDcd();
 	void UpdateLed(uint32_t aNow);
+	void LoadAll();
 	uint32_t GuardMs() const { return (uint32_t)iS.s12 * 20; }
 
 	Hal& iHal;
 	Ring iRing;
 	Settings iS;
+	Settings2 iS2;
 	Pacer iPacer;
+	Uplink iUplink;
 	char iLine[256];
 	size_t iLineLen;
 	char iLast[256];                    // for A/
@@ -219,6 +263,23 @@ private:
 	int iLed;                           // the LED state last shown
 	Proxy iProxy;                       // the web proxy (a psiproxy call)
 	bool iProxyCall;
+	bool iExecCall;                     // a psiexec call (a text channel to the helper)
+	bool iExecOneShot;                  // ... from AT$EXEC=: ends with OK, not NO CARRIER
+	bool iTlsCall;                      // the call is TLS-terminated here
+	bool iConfigMode;
+	uint32_t iConfigUntilMs;
+	uint32_t iLastTickMs;
+	// the WiFi: joining again when it stays down, and the Internet check
+	static const uint32_t kWifiRetryAfterMs = 20000;   // down this long: join again
+	static const uint32_t kWifiRetryEveryMs = 30000;   // ... and every so often after that
+	static const uint32_t kProbeSoonMs = 15000;        // the check, while not confirmed
+	static const uint32_t kProbeAgainMs = 120000;      // ... and once it has passed
+	uint32_t iWifiDownMs;               // 0: not down
+	uint32_t iWifiRetryMs;
+	uint32_t iProbeDueMs;
+	int iLastWifiState;
+	int iLastActive;
+	void NetTick(uint32_t aNow);
 	uint8_t iTcpBuf[1460];
 	uint8_t iUpBuf[256];                // Psion -> server, batched
 	size_t iUpLen;

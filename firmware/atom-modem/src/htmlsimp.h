@@ -31,8 +31,15 @@ public:
 	enum TMode
 		{
 		EKeepPictures = 1,       // simplified, pictures kept (<img src alt>)
-		ETextOnly = 2            // also: pictures become their alt text; nav, aside
+		ETextOnly = 2,           // also: pictures become their alt text; nav, aside
 		                         // and footer go (the "lite" reading)
+		EReader = 3              // also: header goes; elements with a navigation,
+		                         // banner, complementary or contentinfo role, or a
+		                         // class or id that names page furniture (nav, menu,
+		                         // sidebar, cookie, promo, share, social, related,
+		                         // comments...) go with their contents; nothing after
+		                         // </main> (or role="main") is sent; and a list whose
+		                         // items are nearly all links (a menu) goes
 		};
 	HtmlSimplifier() : iOut(0) { Begin(0, EKeepPictures, 0); }
 	// aBase: if not null, a <base href> to put first (the page was reached
@@ -118,6 +125,22 @@ private:
 	size_t iPendLen;
 	uint16_t iPendAt[32];
 	int iPendN;
+	// reader mode
+	bool iFurniture;                     // this tag: a role, class or id that marks page furniture
+	bool iMainTag;                       // this tag: role="main"
+	char iMainName[16];                  // the element that is <main> (or role="main")
+	int iMainDepth;                      // inside it: its nesting
+	int iMainOther;                      // ... other elements open inside it
+	bool iDone;                          // past </main>: nothing more is sent
+	int iLinkDepth;                      // inside <a>
+	// a list being held back until it is known whether it is a menu
+	char iCap[3072];
+	size_t iCapLen;
+	bool iCapturing;
+	int iCapDepth;                       // the list's nesting (ul/ol inside it)
+	int iCapOther;
+	uint32_t iCapLinkChars, iCapOtherChars, iCapLinks;
+	void CaptureEnd(bool aKeep);
 	};
 
 } // namespace am

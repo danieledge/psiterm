@@ -1,19 +1,47 @@
-# Atom modem: a Psion-tuned WiFi modem
+# Atom modem: a Psion-tuned WiFi and USB modem
 
-Firmware for an **M5Stack Atom** (Lite or Matrix, ESP32) on an **Atomic RS232
-Base**. It turns that pair into a Hayes-style WiFi modem for a Psion Series 5/5mx
-running PsiTerm, PsiMail or PsiWeb. It talks to the apps exactly as a WiRSa
-does (`ATDT host:port`, `CONNECT`, `+++`, `ATH`, `NO CARRIER`). It adds the one
-thing a three-wire link lacks: **output pacing**, so the Psion is not
-overrun even though there is no RTS/CTS.
+Firmware for an **M5Stack AtomS3 Lite** (ESP32-S3) or a plain **Atom** (Lite
+or Matrix, ESP32), wired to a Psion Series 5/5mx through an RS-232
+transceiver. It turns the Atom into a Hayes-style modem for PsiTerm, PsiMail
+and PsiWeb. It talks to the apps exactly as a WiRSa does (`ATDT host:port`,
+`CONNECT`, `+++`, `ATH`, `NO CARRIER`), paces its output so a three-wire
+link never overruns the Psion, and does RTS/CTS in hardware when the wiring
+has it.
 
-It can also be **PsiWeb's web proxy**. Dial `psiproxy` instead of a server
-and the Atom fetches pages itself, does the TLS for `https://`, simplifies
-the HTML as it streams and gzips it for the line. The 36 MHz Psion then does
-no TLS and lays out a fraction of the page. See
+Version 2.0 adds: the internet from an **iPhone through its Personal
+Hotspot** (the Atom joins it as a WiFi network; this is the supported path,
+with an Internet check, rejoining and diagnostics); **web pages** for every
+setting, and the same settings over the serial line (`AT$...`); **TLS
+termination**, so PsiMail speaks plain IMAP to the Atom; **pictures**
+scaled and dithered to 16 greys on the Atom; a **reader** mode for the web
+proxy; and **remote compute** through a helper on your PC. Everything 1.x
+did is unchanged. USB tethering (a phone on the AtomS3 Lite's USB-C) is
+**experimental and unsupported** in this release: see
+[`docs/USB-TETHERING.md`](docs/USB-TETHERING.md). The documents:
+[`docs/HARDWARE.md`](docs/HARDWARE.md) (wiring and safety),
+[`docs/UPGRADE.md`](docs/UPGRADE.md) (the engineering record and the full
+reference), [`docs/VALIDATION.md`](docs/VALIDATION.md) (what has been
+verified, and the Psion test plan), [`docs/TEST-REPORT.md`](docs/TEST-REPORT.md).
+
+It is also **PsiWeb's web proxy**. Dial `psiproxy` instead of a server and
+the Atom fetches pages itself, does the TLS for `https://`, simplifies the
+HTML as it streams and gzips it for the line. The 36 MHz Psion then does no
+TLS and lays out a fraction of the page. See
 [The web proxy for PsiWeb](#the-web-proxy-for-psiweb).
 
 MIT licence, as the rest of the repository (see `LICENSE` at the top).
+
+## Safety first
+
+**The Psion's serial port is true RS-232, bipolar, up to ±12 V. The
+ESP32-S3's pins are 3.3 V and not RS-232 tolerant. Every wire between them
+must go through an RS-232 transceiver: the Atomic RS232 Base, which this
+project uses. The ATOMIC Proto Kit converts nothing and must never carry a
+Psion signal. Connecting a Psion straight to the AtomS3 Lite, to the Proto
+Kit, or to a DE-9 breakout wired to the Atom's pins, destroys the Atom and
+can damage the Psion.** Read [`docs/HARDWARE.md`](docs/HARDWARE.md) before
+wiring anything; do not power a Psion connection until its checklist has
+been gone through. The Psion's own cable is never cut or altered.
 
 ## Contents
 
@@ -38,7 +66,9 @@ bursts and passes each burst on at the full line rate. The Psion's serial
 driver has a 16-byte UART FIFO, and our apps give it a 16 KB receive buffer.
 At 115200 it can overrun when a burst arrives while the Psion is busy, for
 example laying out a page or writing to flash. A WiRSa without working RTS/CTS
-has the same problem.
+has the same problem. (With a four-wire transceiver and `AT$FC=1`, the UART's
+own RTS/CTS stops the modem instead, and the pacing is relaxed to 80 % of the
+line rate.)
 
 This firmware handles it at the other end:
 
@@ -60,8 +90,22 @@ that a 16 KB receive buffer covers 3 to 4 seconds of the app not reading. See
 
 ## Wiring to the Psion cable
 
-The Psion's serial cable ends in a 9-pin D socket (the end that plugs into a
-PC). Wire it to the base's screw terminal like this:
+**The primary build is the Atomic RS232 Base** (its transceiver; three
+wires) → a **female DE-9 breakout wired T → pin 2, R → pin 3, G → pin 5**,
+which is the WiRSa's DE-9 pin for pin → **the same null-modem cable that
+works with the WiRSa** → the Psion's own cable, unmodified. No crossover in
+the adapter (the null-modem cable is the crossover), no gender changer, no
+swap needed. [`docs/HARDWARE.md`](docs/HARDWARE.md) has the sources, the
+power rules and the pre-test checklist. The Base has no RTS/CTS wires, so
+flow control is the firmware's pacing; a four-wire transceiver (for
+`AT$FC=1`) is a separate, untested future option described there.
+
+On the **AtomS3 Lite** the firmware's pins are G5 (RX), G6 (TX), G7 (RTS) and
+G8 (CTS); on the plain **Atom** G22 (RX), G19 (TX), G23 (RTS) and G33 (CTS).
+`AT$PINS=` changes them.
+
+The wiring (unchanged since 1.x; `AT$SWAP=1` exists only for a breakout
+wired the other way round):
 
 | Atomic RS232 Base | Psion cable (DB9) | |
 |---|---|---|
@@ -102,62 +146,45 @@ this firmware follows it (see the reference below).
 
 ## Flashing
 
-You need a USB-C cable. The Atom shows up as a USB serial port (CH9102 or FTDI).
-
-### PlatformIO (recommended)
+You need a USB-C cable. The AtomS3 Lite is programmed through the ESP32-S3's
+own USB; the plain Atom shows up as a USB serial port (CH9102 or FTDI).
 
 ```sh
 pip install platformio
 cd firmware/atom-modem
-pio run -t upload           # build and flash
-pio device monitor          # optional: the USB status console, 115200 baud
+pio run -e atoms3-lite -t upload     # the AtomS3 Lite (ESP32-S3)
+pio run -e m5stack-atom -t upload    # the plain Atom Lite / Matrix (ESP32)
+pio device monitor                   # optional: the USB status console, 115200 baud
 ```
 
-`platformio.ini` pins `espressif32@6.9.0` (Arduino core 2.0.17) and board
-`m5stack-atom`.
+`platformio.ini` pins the cores: pioarduino `platform-espressif32` 53.03.13
+(Arduino-ESP32 3.1.3, ESP-IDF 5.3) for the S3, `espressif32@6.9.0` (Arduino
+2.0.17) for the plain Atom. No other libraries are used. The Arduino IDE
+no longer builds 2.0 on its own (the picture converter compiles PsiMail's
+decoders from `../../mail/engine/img`).
 
-### Arduino IDE / arduino-cli
+**An AtomS3 Lite in USB host mode** (`AT$USB=1`) cannot be programmed until
+the port is a device again: either `AT$USB=0`, `AT&W`, `ATZ`, or hold the
+button while pressing reset until the LED turns green (the download mode),
+then upload. See `docs/UPGRADE.md`, section 10.
 
-This folder is also a sketch (`atom-modem.ino`, with the code in `src/`).
-Install the **esp32** boards package (2.0.x), choose the board
-**M5Stack-ATOM**, and upload. With arduino-cli:
-
-```sh
-arduino-cli compile --fqbn esp32:esp32:m5stack-atom firmware/atom-modem
-arduino-cli upload  --fqbn esp32:esp32:m5stack-atom -p /dev/ttyUSB0 firmware/atom-modem
-```
-
-### esptool (a ready-built image)
-
-A build leaves three images: the bootloader, the partition table and the
-firmware. With PlatformIO they are in `.pio/build/m5stack-atom/`. Arduino's
-`boot_app0.bin` is in the esp32 package under `tools/partitions/`. Flash them
-at their addresses:
-
-```sh
-esptool.py --chip esp32 --port /dev/ttyUSB0 --baud 921600 write_flash -z \
-  0x1000 bootloader.bin 0x8000 partitions.bin 0xe000 boot_app0.bin 0x10000 firmware.bin
-```
-
-Or merge them into one image that starts at address 0:
-
-```sh
-esptool.py --chip esp32 merge_bin -o atom-modem.bin \
-  0x1000 bootloader.bin 0x8000 partitions.bin 0xe000 boot_app0.bin 0x10000 firmware.bin
-esptool.py --chip esp32 --port /dev/ttyUSB0 write_flash 0x0 atom-modem.bin
-```
-
-### M5Burner
-
-M5Burner can burn a firmware file you supply, through its custom or local
-firmware option (the name depends on the version). Give it the merged image
-above, which starts at address 0.
+For a ready-built image, `esptool.py` and M5Burner work as before: the
+images are in `.pio/build/<env>/` (for the S3, the bootloader goes at
+`0x0`, not `0x1000`).
 
 ## First set-up (WiFi)
 
-Connect the Psion and open PsiTerm (its terminal talks straight to the
-modem). Alternatively, use any terminal program at 115200 baud, 8N1, no flow
-control. Then type:
+**With a phone:** power the Atom. With no WiFi network saved it starts an
+access point `AtomModem-xxxx`; its password is shown on the USB console
+(and by `AT$LOG?`; `AT$APPASS=` sets one of your own). Join it and any web
+page opens the modem's pages: enter
+your network (or your phone's hotspot) and its password, *Join and save*.
+Afterwards the pages are at the modem's address on your network, with the
+web password you set (user `atom`). A short press of the button brings the
+access point back for ten minutes at any time.
+
+**From the Psion:** open PsiTerm (its terminal talks straight to the modem),
+or use any terminal program at 115200 baud, 8N1, no flow control. Then type:
 
 ```
 AT$SSID=My network
@@ -168,8 +195,9 @@ ATI
 
 `AT$PASS` joins the network once both are set. `AT&W` saves them in flash, so
 the modem rejoins by itself at every power-up. `ATI` shows the modem's name,
-the network, its IP address and the pacing. The Zimodem form
-`ATW"My network,my password"` works too.
+the network, its IP address, the uplink, the USB port, the serial set-up and
+what is on. The Zimodem form `ATW"My network,my password"` works too, and
+`AT$HELP` lists every setting.
 
 ## Settings for PsiTerm, PsiMail and PsiWeb
 
@@ -183,8 +211,13 @@ In each app, go to **Tools > Connection settings**:
 | Psion Internet: first send | not used (this firmware has no PPP) |
 
 Then press **Test** (Ctrl+T). It should say *"The modem answered OK at 115200
-baud"* and *"Modem: Atom modem 1.1 (Psion-tuned)"*. If you changed the
-modem's speed with `AT$SB`, set the same baud rate in the apps.
+baud"* and *"Modem: Atom modem 2.0 (Psion-tuned)"*. If you changed the
+modem's speed with `AT$SB`, set the same baud rate in the apps. With a
+four-wire transceiver and `AT$FC=1`, choose *Flow control: RTS/CTS*.
+
+For TLS termination (`AT$TLS=1`), set the PsiMail account's TLS to **none**,
+keeping port 993 (IMAP) and 465 (SMTP): the modem does the TLS. Only for
+your own modem on your own network; see `docs/UPGRADE.md`, section 9.
 
 For the web proxy, also set PsiWeb's **Tools > Preferences**: *Use a proxy*
 **Yes**, *Proxy host* **psiproxy**, *Proxy port* **8080**.
@@ -300,11 +333,24 @@ dropped, which took BBC from 71 KB to 57 KB.
 | `1` | on: simplified pages (the default) |
 | `2` | on: text only. Pictures become their alt text, and `nav`, `aside` and `footer` are dropped |
 | `3` | on: pages unchanged. The proxy does only the TLS, and passes on the Psion's own gzip |
+| `4` | on: reader. As 2, and the page's furniture goes: headers, navigation, sidebars, cookie banners, menus (lists that are all links), everything after `</main>` |
 | `0` | off. `psiproxy` is then an ordinary name to dial |
 
 `AT$PZ=0` stops the proxy gzipping pages (`AT$PZ=1`, the default, gzips them
 when PsiWeb accepts gzip, which it always does). Save either setting with
 `AT&W`.
+
+### Pictures (2.0)
+
+`AT$PI=1` makes the proxy convert pictures: a JPEG, PNG or GIF of at most
+`AT$PM` KB (64) is decoded on the Atom with PsiMail's own decoders, shrunk
+to at most `AT$PW` pixels wide (300), dithered to the 16 greys and sent as a
+small 4-bit GIF, which Links decodes in a fraction of the time a JPEG takes.
+Bigger files, and pictures the decoder refuses (a photo-sized GIF, an
+interlaced PNG over its limit, an arithmetic JPEG), pass through unchanged;
+a big progressive JPEG comes out at 1/8 of its size, the most its
+coefficient memory allows. The settings are taken at the dial, like
+`AT$PX`.
 
 ### Security
 
@@ -395,8 +441,29 @@ reached the Psion, or at once if the WiFi drops.
 | `AT$PACE?` | The pacing in force, and the buffer size |
 | `AT$SWAP=0/1` | Swaps the Atom's RX and TX pins (see [Wiring](#wiring-to-the-psion-cable)) |
 | `AT$DCD=`n | The GPIO for an emulated DCD; `-1` (the default) for none |
-| `AT$PX=`n / `AT$PX?` | The web proxy: `1` on (simplified pages, the default), `2` text only, `3` pages unchanged (TLS only), `0` off. See [The web proxy](#the-web-proxy-for-psiweb) |
+| `AT$PX=`n / `AT$PX?` | The web proxy: `1` on (simplified pages, the default), `2` text only, `3` pages unchanged (TLS only), `4` reader, `0` off. See [The web proxy](#the-web-proxy-for-psiweb) |
 | `AT$PZ=0/1` / `AT$PZ?` | Whether the web proxy gzips pages on the line (`1`, the default) |
+
+### New in 2.0
+
+The full reference is in [`docs/UPGRADE.md`, section 6](docs/UPGRADE.md#6-at-command-reference).
+`AT$HELP` prints it from the modem itself. In short:
+
+| Command | Does |
+|---|---|
+| `AT$UP=AUTO/WIFI/USB`, `AT$UP?` | The uplink: a USB network device when it has an address, else WiFi; or one of them only. `AT$UP?` also says whether the WiFi is down, joined, joined with the Internet confirmed, or lost and rejoining |
+| `AT$CHK=host:port` | The Internet check: a TCP connect (default `1.1.1.1:53`) soon after joining, every 15 s until it passes, every 2 min after; empty turns it off |
+| `AT$USB=0/1` | The USB-C port: device (programming), or host (a phone or adapter), from the next restart |
+| `AT$FC=0/1`, `AT$FCSWAP=0/1`, `AT$PINS=tx,rx,rts,cts,dcd` | RTS/CTS in the UART hardware; the pins |
+| `AT$WEB=0/1/2`, `AT$WEBPASS=`, `AT$APPASS=`, `AT$AP?` | The web pages, their password, the access point |
+| `AT$TLS=0/1`, `AT$TLSP=443,465,993,995`, `AT$TLSV=0/1`, `ATDT tls:host:port` | TLS termination |
+| `AT$PI=0/1`, `AT$PW=n`, `AT$PM=n` | Pictures to 16 greys through the proxy |
+| `AT$XE=0/1`, `AT$XH=host:port`, `AT$XK=token`, `AT$EXEC=cmd`, `ATDT psiexec` | Remote compute through `tools/psiexecd.py` |
+| `AT$LOG?`, `AT$LOGL=0/1/2` | The log kept in RAM (the USB console is gone in host mode) |
+| `AT$RESET=YES` | Factory reset, the WiFi too; restarts |
+
+Secrets (`$PASS`, `$APPASS`, `$WEBPASS`, `$XK`) are never printed: `?` says
+*(set)* or *(none)*.
 
 **A new speed falls back if nothing answers at it.** After `AT$SB` or `ATB`
 changes the speed, the modem waits for a valid command line (a plain `AT` is
@@ -473,13 +540,17 @@ for it.
 | green | WiFi up, no connection |
 | blue | connected |
 | white flash | data moving |
+| purple | the access point is up (config mode, or no network saved) |
 
 **Factory reset:** hold the button while plugging the Atom in. The LED
 flashes white; after 3 seconds every setting, including the WiFi network,
-returns to the factory settings.
+returns to the factory settings. `AT$RESET=YES` and the web page's
+*Factory reset* do the same. **A short press** while running turns config
+mode on or off: the access point and the web pages for ten minutes.
 
 The USB port prints status messages at 115200 baud (WiFi joined, IP address).
-It does not take AT commands.
+It does not take AT commands. On an AtomS3 Lite in USB host mode the console
+is gone; `AT$LOG?` and the web page `/log` show the same lines.
 
 ## Optional: an emulated DCD
 
@@ -501,12 +572,19 @@ DCD on all the time.
 - `pio run` builds the firmware. `arduino-cli compile --fqbn
   esp32:esp32:m5stack-atom .` builds it the Arduino way, with no warnings
   at `--warnings all`.
-- `make -C hosttest test` runs the unit tests on a PC (it needs zlib).
+- `make -C hosttest test` runs the unit tests on a PC (it needs zlib, and
+  python3 with Pillow for the pictures).
   - `test_modem`: the AT parser, `+++` with guard times (too soon, too slow,
     four pluses, data straight after), `NO CARRIER` on close and on a WiFi
     drop, and pacing under bursts. The pacing tests check the rate, the
     largest burst, buffer back-pressure with a small ring, and that every
-    byte arrives in order.
+    byte arrives in order. 2.0 adds the settings records (sizes, `AT&W`,
+    `ATZ`, a 1.x record, a shorter record), a walk of the schema (every
+    setting answers `?` and takes `=`; bad values are `ERROR`), each new
+    `AT$` command, TLS termination reaching the HAL as TLS, psiexec and
+    `AT$EXEC` against a fake helper, the uplink manager and config mode.
+  - `test_usbnet`: the CDC-NCM transfer blocks and Apple's two-byte frames
+    (round trips, truncated and absurd blocks).
   - `test_proxy`: the simplifier (what goes and what stays, the same output
     whatever pieces the page comes in, garbage, unclosed tags) and the proxy
     through the whole modem. This covers keep-alive, `https://`, redirects
@@ -520,7 +598,14 @@ DCD on all the time.
     grows fourfold in the simplifier with a small ring, window-wide
     back-references in gzip and deflate, Content-Length with chunked, a
     response head over 16 KB, requests that arrive faster than the proxy
-    can take them, and a hidden element with no end tag.
+    can take them, and a hidden element with no end tag. 2.0 adds reader
+    mode (what goes and what stays, the same output in any pieces,
+    `role="main"`, a page with no main, a list too big to judge) and
+    pictures (`mkpictures.py` draws a JPEG, a progressive JPEG, a PNG and
+    GIFs with Pillow; each comes back as a GIF of the expected size with
+    at most 16 greys and the original's brightness, decoded with Pillow;
+    oversize, undecodable and switched-off cases pass through; a small
+    ring; the GIF writer round-trips a known picture exactly).
   - `test_proxy_tinfl`: the same proxy tests with the inflater the Atom uses
     (tinfl from miniz 1.15, as in the ESP32 ROM; `hosttest/tinfl/`, public
     domain) in place of zlib, so its 32 KB wrapping window is tested too.
@@ -564,4 +649,11 @@ button. `src/cabundle.h` holds the root certificates, made by
   [web proxy](#the-web-proxy-for-psiweb) does).
 - Incoming connections (`ATA`, listening). Telnet option negotiation: the
   connection is a raw TCP stream, as SSH and TLS need.
-- RTS/CTS, DTR and DSR: the base has no wires for them.
+- DTR and DSR. RTS/CTS needs a four-wire transceiver (`AT$FC=1`); the RS232
+  Base has no wires for it.
+- **An iPhone's USB tethering end to end**: the phone enumerates on the
+  AtomS3 Lite, but its network interface only comes up for a host that has
+  paired with it ("Trust This Computer"), which this firmware does not do.
+  Use the iPhone's WiFi hotspot. See `docs/UPGRADE.md`, section 12.
+- RNDIS (older Android tethering); NCM and ECM are what is implemented.
+- The USB host code has not yet run on hardware: see `docs/UPGRADE.md`.
