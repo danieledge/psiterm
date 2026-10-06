@@ -16,6 +16,11 @@
 #include "board/hal_esp.h"
 #include "board/webui.h"
 #include "usbnet/usbhost.h"
+#include "button.h"
+#include "board/pppproxy.h"
+#if defined(AM_HAS_LCD)
+#include "board/screen.h"
+#endif
 
 // The web proxy's TLS handshake (mbedTLS) and the picture decoder run
 // inside loop(): its 8 KB default stack is too tight for them
@@ -37,6 +42,8 @@ static AtomHal gHal;
 static am::WebUi gWeb;
 static am::UsbNet gUsb;
 static am::Modem* gModem = 0;
+static am::Button gButton;
+static am::PppProxy gPppProxy;
 
 // The ring towards the Psion: as big as the heap allows after WiFi, leaving
 // room for the web proxy: the modem object with the proxy (about 25 KB), a
@@ -97,43 +104,80 @@ static uint8_t* AllocRing(size_t& aSize)
 	return 0;                                 // (not reached)
 	}
 
-// Hold the button while plugging in (3 s, the LED flashes white): every
-// setting, the WiFi network too, back to the factory ones. (The USB port is
-// then a device again, so the board can be programmed.)
+// Hold the button while plugging in (3 s, the LED flashes white; the LCD
+// counts "3..2..1"): every setting, the WiFi network too, back to the
+// factory ones. (The USB port is then a device again, so the board can be
+// programmed.)
 static void FactoryResetIfHeld()
 	{
 	pinMode(kPinButton, INPUT_PULLUP);
-	if (digitalRead(kPinButton) != LOW)
+	delay(5);                                 // (the pull-up settles)
+	am::Button boot;
+	boot.Feed(digitalRead(kPinButton), millis());
+	if (!boot.Down())
 		return;
-	uint32_t start = millis();
-	while (digitalRead(kPinButton) == LOW)
+	int shown = -1;
+	for (;;)
 		{
-		uint8_t v = ((millis() / 150) & 1) ? 32 : 0;
+		uint32_t now = millis();
+		boot.Feed(digitalRead(kPinButton), now);
+		if (!boot.Down())
+			return;                           // let go in time: nothing happens
+		uint32_t held = boot.HeldMs(now);
+		uint8_t v = ((now / 150) & 1) ? 32 : 0;
 		LedWrite(v, v, v);
-		if (millis() - start > 3000)
+		int secs = held >= 3000 ? 0 : 3 - (int)(held / 1000);
+		if (secs != shown && secs > 0)
+			{
+			shown = secs;
+#if defined(AM_HAS_LCD)
+			static const char* const kCount[] = { "", "3..2..1", "3..2..", "3.." };
+			am::gScreen.Message("Hold for reset", kCount[secs]);
+#endif
+			}
+		if (held >= 3000)
 			{
 			AtomHal::NvsClear();
 			Serial.println("Factory reset");
 			LedWrite(32, 32, 32);
-			delay(1000);
+#if defined(AM_HAS_LCD)
+			am::gScreen.Message("Factory reset", "Let go of the", "button");
+#endif
+			while (digitalRead(kPinButton) == LOW)   // (so loop() does not see it as a hold)
+				delay(10);
+			delay(300);
 			return;
 			}
 		delay(10);
 		}
 	}
 
-// a short press of the button while running: config mode (the access
-// point and the pages for ten minutes)
+// the button while running, through the debounced click/hold machine.
+// The LCD boards (the AtomS3R, where the button is the screen): a click is
+// the next page (or just wakes a dimmed backlight), a hold is config mode
+// (the access point and the pages for ten minutes). The AtomS3 Lite and the
+// Atom: a click is config mode, as before
 static void ButtonTick()
 	{
-	static bool was = false;
-	static uint32_t downMs = 0;
-	bool down = digitalRead(kPinButton) == LOW;
-	if (down && !was)
-		downMs = millis();
-	if (!down && was && millis() - downMs > 30 && millis() - downMs < 2000)
+	uint32_t now = millis();
+	am::Button::TEvent ev = gButton.Feed(digitalRead(kPinButton), now);
+	if (ev == am::Button::ENone)
+		return;
+#if defined(AM_HAS_LCD)
+	if (ev == am::Button::EClick)
+		{
+		if (!am::gScreen.Wake(now))           // (a dimmed screen: the click only wakes it)
+			am::gScreen.NextPage(now);
+		}
+	else
+		{
+		am::gScreen.Wake(now);
 		gModem->ConfigMode(!gModem->InConfigMode());
-	was = down;
+		}
+#else
+	if (ev == am::Button::EClick)
+		gModem->ConfigMode(!gModem->InConfigMode());
+#endif
 	}
 
 void setup()
@@ -141,6 +185,9 @@ void setup()
 	Serial.begin(115200);                     // USB: status messages only
 #if ARDUINO_USB_CDC_ON_BOOT
 	Serial.setTxTimeoutMs(0);                 // (never wait for a PC that is not there: host mode)
+#endif
+#if defined(AM_HAS_LCD)
+	am::gScreen.Begin();                      // (M5Unified first: the reset countdown is shown on it)
 #endif
 	FactoryResetIfHeld();
 	WiFi.mode(WIFI_STA);                      // (WiFi takes its memory before the ring does)
@@ -177,7 +224,11 @@ void loop()
 	static bool wasUp = false;
 	gModem->Loop();
 	gWeb.Loop();
+	gPppProxy.Loop(*gModem, gHal);            // (the proxy for PsiWeb over PPP: only while a PPP call is up)
 	ButtonTick();
+#if defined(AM_HAS_LCD)
+	am::gScreen.Tick(*gModem, gHal, millis());   // (after the pages, never inside Modem::Loop())
+#endif
 	bool up = WiFi.status() == WL_CONNECTED;
 	if (up != wasUp)
 		{

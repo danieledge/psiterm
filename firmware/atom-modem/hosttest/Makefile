@@ -16,8 +16,8 @@ CC ?= gcc
 CXXFLAGS ?= -O1 -g -Wall -Wextra -Wno-unused-parameter -std=c++17
 IMG = ../../../mail/engine/img
 SRC = ../src/modem.cpp ../src/settings.cpp ../src/schema.cpp ../src/uplink.cpp ../src/proxy.cpp \
-      ../src/htmlsimp.cpp ../src/gzip.cpp ../src/imgconv.cpp ../src/ppp.cpp ../src/usbnet/ncm.cpp ../src/usbnet/ipheth.cpp
-HDR = ../src/modem.h ../src/settings.h ../src/schema.h ../src/uplink.h ../src/proxy.h ../src/htmlsimp.h \
+      ../src/htmlsimp.cpp ../src/gzip.cpp ../src/imgconv.cpp ../src/ppp.cpp ../src/status.cpp ../src/button.cpp ../src/usbnet/ncm.cpp ../src/usbnet/ipheth.cpp
+HDR = ../src/modem.h ../src/status.h ../src/button.h ../src/ppp.h ../src/settings.h ../src/schema.h ../src/uplink.h ../src/proxy.h ../src/htmlsimp.h \
       ../src/gzip.h ../src/imgconv.h ../src/usbnet/ncm.h ../src/usbnet/ipheth.h
 IMGSRC = $(IMG)/pmimg.c $(IMG)/pmjpeg.c $(IMG)/pmjprog.c $(IMG)/pmpng.c $(IMG)/pmgif.c $(IMG)/picojpeg.c
 IMGOBJ = pmimg.o pmjpeg.o pmjprog.o pmpng.o pmgif.o picojpeg.o

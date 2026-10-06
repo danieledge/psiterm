@@ -208,7 +208,7 @@ In each app, go to **Tools > Connection settings**:
 | Baud rate | **115200**. Use 57600 if the Test button or the session log reports receive errors |
 | Flow control | **None** |
 | … connects via | **Modem (ATDT host:port)** |
-| Psion Internet: first send | not used (this firmware has no PPP) |
+| Psion Internet: first send | **Use Psion Internet** only for [PPP](#ppp-the-psions-own-internet) (`ATD777`, AtomS3 boards); otherwise not used |
 
 Then press **Test** (Ctrl+T). It should say *"The modem answered OK at 115200
 baud"* and *"Modem: Atom modem 2.0 (Psion-tuned)"*. If you changed the
@@ -403,7 +403,7 @@ last until power-off; **`AT&W` saves them**.
 | `AT` | `OK` |
 | `ATDT host:port` | Opens a TCP connection and answers `CONNECT <baud>`; `NO CARRIER` if it cannot. `ATDThost:port`, `ATD host:port`, `ATDP…` and `ATDT"host:port"` also work. With no port, 23 is used |
 | `ATDT psiproxy:8080` | The modem's own [web proxy](#the-web-proxy-for-psiweb) (any port): `CONNECT`, then HTTP proxy requests are answered by the modem |
-| `ATDT777` (digits only) | `NO CARRIER`: phone numbers mean PPP, which this firmware does not do |
+| `ATDT777` (digits only) | A phone number means [PPP](#ppp-the-psions-own-internet): `CONNECT`, then the serial line is a PPP link (on by default; `AT$PPP=0` turns it off, and then it is `NO CARRIER`). `NO CARRIER` on a board without PPP (the plain Atom) |
 | `+++` | Quiet for the guard time, `+++`, then quiet again: back to command mode with the connection still up (`OK`). The pluses are not passed to the server |
 | `ATO` | Back to the connection (`CONNECT`), or `NO CARRIER` if it has gone |
 | `ATH`, `ATH0` | Hangs up |
@@ -531,7 +531,51 @@ Pacing cannot make up for an app that stops reading altogether for longer
 than the buffer lasts. Only RTS/CTS can do that, and this board has no wires
 for it.
 
+## PPP: the Psion's own Internet
+
+On the AtomS3 boards a numeric dial (`ATD777`, `ATDT*99#`) brings up a PPP
+link on the serial line, and the modem shares its WiFi (or USB) connection
+with the Psion by NAT, so the Psion's own "Psion Internet" route works. It
+is on by default (`AT$PPP=0` turns it off; `AT&F` keeps the setting, with
+the other link settings: RTS/CTS, the pins). The default applies only to a
+fresh board: one that already has saved settings keeps `ppp=0`, so on an
+updated board run `AT$PPP=1` then `AT&W`. In the Psion's Internet
+settings use a **static address** (the modem cannot hand one out):
+
+| Psion Internet setting | Value |
+|---|---|
+| IP address | 192.168.7.2 |
+| Gateway | 192.168.7.1 |
+| DNS | the one logged at the dial (`AT$LOG?`: "ppp: starting - set the Psion to IP ..., DNS ..."), or **1.1.1.1** |
+
+Nothing on the modem answers DNS itself, so the Psion needs a real DNS
+server. RTS/CTS (`AT$FC=1`) and a higher baud rate are strongly
+recommended: PPP frames are paced at the same rate as everything else.
+After `+++` nothing is sent until `ATO`.
+
+**PsiWeb over PPP:** while a PPP link is up the modem also serves its web
+proxy on **192.168.7.1, port 8080** (PPP side only). In PsiWeb's connection
+settings use *Proxy host* 192.168.7.1 and *Proxy port* 8080 and the
+"Psion Internet" route, instead of dialling `psiproxy`.
+
+## Status screen (AtomS3R)
+
+The AtomS3R's 128x128 screen shows four pages; the bar on top is the LED's
+colour (see below). **Click** the screen (it is the button) for the next
+page; a click on a dimmed screen only wakes it. The backlight dims after a
+minute.
+
+| Page | Shows |
+|---|---|
+| 1 Status | WiFi name, IP, RSSI; the call (none, tcp host:port, proxy, PPP, exec); bytes to the Psion and to the server; baud and flow control; the last log line |
+| 2 Modes | TCP, the proxy (`PX`, zip, pictures), PPP, TLS, the uplink; the last dial and its result |
+| 3 Setup | the access point's name **and password** while it is up, its address, the LAN address of the pages, version, board, memory |
+| 4 Log | the last log lines |
+
 ## Status LED and button
+
+The AtomS3R has no LED: its screen's top bar shows these colours. The
+AtomS3 Lite and Atom have the WS2812.
 
 | LED | Means |
 |---|---|
@@ -543,10 +587,13 @@ for it.
 | purple | the access point is up (config mode, or no network saved) |
 
 **Factory reset:** hold the button while plugging the Atom in. The LED
-flashes white; after 3 seconds every setting, including the WiFi network,
-returns to the factory settings. `AT$RESET=YES` and the web page's
-*Factory reset* do the same. **A short press** while running turns config
-mode on or off: the access point and the web pages for ten minutes.
+flashes white (on the AtomS3R the screen counts "Hold for reset 3..2..1");
+after 3 seconds every setting, including the WiFi network, returns to the
+factory settings. `AT$RESET=YES` and the web page's *Factory reset* do the
+same (`AT&F` keeps the WiFi network and the link settings). While running:
+on the AtomS3 Lite and Atom **a click** turns config mode on or off (the
+access point and the web pages for ten minutes); on the AtomS3R a click is
+the next screen page and **holding it for 2 seconds** is config mode.
 
 The USB port prints status messages at 115200 baud (WiFi joined, IP address).
 It does not take AT commands. On an AtomS3 Lite in USB host mode the console
@@ -644,9 +691,9 @@ button. `src/cabundle.h` holds the root certificates, made by
 
 ## Not supported
 
-- **PPP** (the apps' "Psion Internet" route with `ATDT777`). Use the modem
-  route; the apps do their own TCP and TLS over it (or, for PsiWeb, the
-  [web proxy](#the-web-proxy-for-psiweb) does).
+- **PPP on the plain Atom** (Arduino-ESP32 2.0.17's lwIP has no PPP or NAT):
+  `ATD777` gives `NO CARRIER` there. The AtomS3 boards have it, see
+  [PPP](#ppp-the-psions-own-internet).
 - Incoming connections (`ATA`, listening). Telnet option negotiation: the
   connection is a raw TCP stream, as SSH and TLS need.
 - DTR and DSR. RTS/CTS needs a four-wire transceiver (`AT$FC=1`); the RS232

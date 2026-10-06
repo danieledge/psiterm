@@ -257,6 +257,9 @@ Two records in the NVS namespace `atommodem`:
   gives the factory values for everything in it. New fields are appended;
   the size never changes.
 
+The `ppp=1` default applies only to fresh NVS. A board that already has
+saved settings keeps `ppp=0`: on an updated board run `AT$PPP=1` then `AT&W`.
+
 | Field | Default | AT | Notes |
 |---|---|---|---|
 | uplink | AUTO | `$UP` | AUTO prefers USB when a network device is present and up, else WiFi |
@@ -561,7 +564,7 @@ channel is plain TCP on your LAN; it is not for use over the Internet.
 | Environment | Board | Platform | USB host |
 |---|---|---|---|
 | `atoms3-lite` | `m5stack-atoms3` (AtomS3 Lite) | pioarduino `platform-espressif32` 53.03.13 (Arduino-ESP32 3.1.3 on ESP-IDF 5.3), pinned by its release URL | yes |
-| `atoms3r` | `m5stack-atoms3` with `memory_type = qio_opi` (AtomS3R: the same SoC and header, plus 8 MB octal PSRAM; no WS2812, so no status light; the LCD is not used). Not yet tried on hardware | as `atoms3-lite` | yes |
+| `atoms3r` | `m5stack-atoms3` with `memory_type = qio_opi` (AtomS3R: the same SoC, header and Atomic RS232 Base wiring as the Lite, plus 8 MB octal PSRAM; no WS2812, so the status is the 128x128 LCD, through M5Unified, built with `-DAM_HAS_LCD=1`). Not yet tried on hardware | as `atoms3-lite` | yes |
 | `m5stack-atom` | `m5stack-atom` (the plain Atom, as 1.x) | `espressif32@6.9.0` (Arduino-ESP32 2.0.17) | compiled out |
 
 On the AtomS3R the core's malloc puts blocks of 4 KB and more in PSRAM, so
@@ -594,10 +597,22 @@ line only, with the password **from the environment** (the project's
 in the resulting `.bin`:
 
 ```sh
-. ~/.secrets && [ -n "$WIFI_IOT_PASSWORD" ] && \
-PLATFORMIO_BUILD_FLAGS="-DAM_DEFAULT_SSID=\\\"Edge-IoT-24\\\" -DAM_DEFAULT_PASS=\\\"$WIFI_IOT_PASSWORD\\\"" \
-pio run -e atoms3-lite                    # or -e atoms3r
+. ~/.secrets && [ -n "$WIFI_IOT_SSID" ] && [ -n "$WIFI_IOT_PASSWORD" ] && \
+PLATFORMIO_BUILD_FLAGS="-DAM_DEFAULT_SSID=\\\"$WIFI_IOT_SSID\\\" -DAM_DEFAULT_PASS=\\\"$WIFI_IOT_PASSWORD\\\"" \
+pio run -e atoms3r -t upload              # or -e atoms3-lite
 ```
+
+(`WIFI_IOT_SSID` and `WIFI_IOT_PASSWORD` come from Vaultwarden through
+`sync-secrets`. A name or password with spaces, quotes or a backslash does not
+survive this quoting.) The preset is taken **only when no network is saved**:
+on a board that already holds settings, erase them first (`pio run -t erase`,
+the factory-reset hold at power-on, or `AT$RESET=YES`), or set the network with
+`AT$SSID`/`AT$PASS`. Without a network the modem starts its access point
+instead; its **password is shown on the AtomS3R's Setup page** (the third
+screen page), and logged (`AT$LOG?`). Check the preset reached the build with the
+`strings` line below, using a dummy value if you like. The `.bin` holds the
+password: do not share or commit it; build again without the variables for a
+clean image.
 
 The three backslashes matter. PlatformIO splits the flags with `shlex`
 before it sees them, which strips plain `"..."` quotes; the value then
@@ -606,7 +621,7 @@ message **prints pieces of the password**. Written as `\\\"`, the shell
 passes a literal `\"` (the `platformio.ini` idiom for a string define),
 which `shlex` keeps as a quote character and PlatformIO re-escapes for the
 compiler. Check the result with `strings .pio/build/<env>/firmware.bin |
-grep -c Edge-IoT-24` (never grep for the password).
+grep -c "$WIFI_IOT_SSID"` (never grep for the password).
 
 Never put the password in `platformio.ini`, a header, a script or a log; a
 `.bin` built this way is itself a credential and must not be committed or

@@ -29,6 +29,7 @@ public:
 	void WebInfo(char* aOut, size_t aMax) const;
 	bool ApUp() const { return iApUp; }
 	const char* ApName() const { return iApName; }
+	const char* ApPass() const { return iApPass; }    // the access point's password (saved, or made at random)
 
 private:
 	bool Allowed();                            // the password, or the access point

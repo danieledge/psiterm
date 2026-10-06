@@ -37,6 +37,9 @@ public:
 	size_t TcpWrite(const uint8_t* aData, size_t aLen) override { return iCur->write(aData, aLen); }
 	void TcpClose() override { iCur->stop(); }
 	void Idle() override { delay(1); }
+	uint32_t UplinkDns() override { return (uint32_t)WiFi.dnsIP(); }   // (0.0.0.0 = none: PPP falls back)
+	const char* BoardName() override;
+	void ApPass(char* aOut, size_t aMax) override;
 	void MemInfo(char* aOut, size_t aMax) override;
 	void Log(const char* aLine) override;
 	bool WifiUp() override { return WiFi.status() == WL_CONNECTED; }
@@ -54,7 +57,7 @@ public:
 	void FactoryReset() override;
 	void Restart() override;
 	void Dcd(bool aOn) override;
-	void Led(am::LedState aState) override;
+	void Led(am::LedState aState) override;               // (also the status screen's bar: one source)
 	void ApplyPins(const am::Settings& aS, const am::Settings2& aS2) override;
 	void ApplyWeb(const am::Settings2& aS2) override;
 	void ApplyUplink(const am::Settings2& aS2) override;

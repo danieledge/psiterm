@@ -2,6 +2,9 @@
 #include "hal_esp.h"
 #include "boards.h"
 #include "webui.h"
+#if defined(AM_HAS_LCD)
+#include "screen.h"
+#endif
 #include "../usbnet/usbhost.h"
 #include "../cabundle.h"
 #include <Preferences.h>
@@ -376,6 +379,9 @@ void AtomHal::Restart()
 
 void AtomHal::Led(am::LedState aState)
 	{
+#if defined(AM_HAS_LCD)
+	am::gScreen.SetBar(aState);               // the LCD's bar: the same state as the LED's
+#endif
 	switch (aState)
 		{
 	case am::ELedNoWifi:     LedWrite(24, 0, 0); break;    // red
@@ -391,6 +397,16 @@ void AtomHal::ApplyWeb(const am::Settings2& aS2)
 	{
 	if (iWeb)
 		iWeb->Apply(aS2);
+	}
+
+const char* AtomHal::BoardName() { return kBoardName; }
+
+void AtomHal::ApPass(char* aOut, size_t aMax)
+	{
+	if (aMax)
+		aOut[0] = 0;
+	if (iWeb && iWeb->ApUp())
+		snprintf(aOut, aMax, "%s", iWeb->ApPass());
 	}
 
 void AtomHal::ApInfo(char* aOut, size_t aMax)

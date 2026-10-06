@@ -87,6 +87,9 @@ public:
 	size_t Read(size_t aFrom, char* aOut, size_t aMax) const;
 	size_t Count() const { return iCount; }
 	void Clear() { iHead = iCount = 0; }
+	// the aFromEnd'th line from the end (0 = the last), up to aMax-1 bytes,
+	// without its newline; false if there are not that many lines
+	bool Line(size_t aFromEnd, char* aOut, size_t aMax) const;
 	static const size_t kSize = 4096;
 private:
 	char iBuf[kSize];
@@ -123,6 +126,11 @@ public:
 	virtual bool UpConnect(const char* aHost, uint16_t aPort, bool aTls, char* aWhy, size_t aWhyMax);
 	void TlsVerify(bool aOn) { iTlsVerify = aOn; }
 	bool TlsVerify() const { return iTlsVerify; }
+	// the uplink's DNS server as an lwIP ip4_addr (bytes a,b,c,d in memory
+	// order: see Ip4()), 0 = not known. PPP hands it to the Psion
+	virtual uint32_t UplinkDns() { return 0; }
+	virtual const char* BoardName() { return "host"; }
+	virtual void ApPass(char* aOut, size_t aMax) { if (aMax) aOut[0] = 0; }   // the access point's password, while it is up
 	virtual void Idle() {}                              // a moment's wait in a busy loop
 	virtual void MemInfo(char* aOut, size_t aMax);      // "heap free 120 KB, ..." for ATI
 	// a status line: kept in the log ring, and shown on the USB console
@@ -183,6 +191,11 @@ public:
 	bool ProxyCall() const { return iProxyCall; }
 	bool ExecCall() const { return iExecCall; }
 	bool PppCall() const { return iPppCall; }
+	const PppLink& Ppp() const { return iPpp; }
+	bool Closing() const { return iClosing; }
+	int LedNow() const { return iLed; }             // the LED state last shown (the status screen's bar too)
+	const char* LastDial() const { return iLastDial; }          // the last number or host dialled, "" = none yet
+	const char* LastDialResult() const { return iLastDialResult; }   // "CONNECT", "NO CARRIER" or "ERROR"
 	const Proxy& WebProxy() const { return iProxy; }
 	const Uplink& Link() const { return iUplink; }
 	size_t RingSize() const { return iRing.Size(); }
@@ -190,7 +203,7 @@ public:
 	bool WebSet(const SchemaEntry& aE, const char* aValue);
 	void WebGet(const SchemaEntry& aE, char* aOut, size_t aMax) const;
 	bool Save();
-	void Factory(bool aKeepWifi);
+	void Factory(bool aKeepWifi = false);
 	// first boot with no network saved: a network preset at build time
 	// (main.cpp's AM_DEFAULT_SSID/PASS) is taken, saved and joined. Does
 	// nothing once a network is saved, or when aSsid is empty
@@ -210,6 +223,7 @@ private:
 	void RunCommandLine();
 	TResult RunCommands(const char* aCmd);
 	TResult Dial(const char* aArgs);
+	TResult DialTo(const char* aArgs);
 	TResult DialExec(const char* aCommand);
 	bool ExecHandshake(const char* aCommand);
 	TResult SetCommand(const char* aCmd, const char*& aP, bool& aHandled);
@@ -263,6 +277,8 @@ private:
 	bool iTrialArmed;                   // it has (the clock is running)
 	uint32_t iTrialGen;                 // counts speed changes (see ConfirmBaud)
 	int iLed;                           // the LED state last shown
+	char iLastDial[48];                 // what was dialled last (for the status screen)
+	char iLastDialResult[12];
 	Proxy iProxy;                       // the web proxy (a psiproxy call)
 	bool iProxyCall;
 	PppLink iPpp;                       // PPP-over-serial (a numeric dial, AT$PPP=1)

@@ -47,6 +47,35 @@ void LogRing::Add(const char* aLine)
 		}
 	}
 
+bool LogRing::Line(size_t aFromEnd, char* aOut, size_t aMax) const
+	{
+	if (!aMax)
+		return false;
+	aOut[0] = 0;
+	// every line ends in '\n': walk back over aFromEnd of them
+	size_t end = iCount;                      // one past the newline that ends the wanted line
+	for (size_t skip = 0; skip <= aFromEnd; skip++)
+		{
+		if (end == 0)
+			return false;
+		size_t stop = end - 1;                // the newline itself
+		size_t start = stop;
+		while (start > 0 && iBuf[(iHead + start - 1) % kSize] != '\n')
+			start--;
+		if (skip == aFromEnd)
+			{
+			size_t n = stop - start;
+			if (n >= aMax) n = aMax - 1;
+			for (size_t i = 0; i < n; i++)
+				aOut[i] = iBuf[(iHead + start + i) % kSize];
+			aOut[n] = 0;
+			return true;
+			}
+		end = start;
+		}
+	return false;
+	}
+
 size_t LogRing::Read(size_t aFrom, char* aOut, size_t aMax) const
 	{
 	size_t n = 0;
@@ -212,6 +241,8 @@ Modem::Modem(Hal& aHal, uint8_t* aRing, size_t aRingSize)
 	{
 	iRing.Init(aRing, aRingSize);
 	iLast[0] = 0;
+	iLastDial[0] = 0;
+	iLastDialResult[0] = 0;
 	FactoryDefaults(iS);
 	FactoryDefaults2(iS2);
 	}
@@ -284,6 +315,15 @@ void Modem::Loop()
 		iPpp.Poll(iHal);                     // PPP runs on the lwIP thread; notice a drop
 		if (iPpp.Dropped())
 			Hangup(true);                    // the Psion closed the link (or an error)
+		else if (iOnline)                    // (after +++ nothing goes out; ATO resumes)
+			{
+			size_t n = iPpp.Drain(iHal, iPacer);   // PPP frames to the Psion, paced like PumpPsion
+			if (n)
+				{
+				iToPsion += (uint32_t)n;
+				iLastDataMs = now;
+				}
+			}
 		}
 	else
 		{
@@ -649,18 +689,30 @@ bool Modem::Save()
 	return true;
 	}
 
+// Factory settings. aKeepWifi (AT&F): the network is kept, and so is the
+// link hardware (flow control, pins, PPP), which belongs to the cable and
+// the Psion, not to the "settings": losing it on AT&F would silently turn
+// RTS/CTS off. AT$RESET=YES and the web reset clear everything
 void Modem::Factory(bool aKeepWifi)
 	{
 	Settings f;
 	FactoryDefaults(f);
+	Settings2 f2;
+	FactoryDefaults2(f2);
 	if (aKeepWifi)
 		{
 		memcpy(f.ssid, iS.ssid, sizeof(f.ssid));
 		memcpy(f.pass, iS.pass, sizeof(f.pass));
+		f.swapPins = iS.swapPins;
+		f.dcdPin = iS.dcdPin;
+		f2.flow = iS2.flow;
+		f2.flowSwap = iS2.flowSwap;
+		memcpy(f2.pins, iS2.pins, sizeof(f2.pins));
+		f2.ppp = iS2.ppp;
 		}
 	uint32_t oldBaud = iS.baud;
 	iS = f;
-	FactoryDefaults2(iS2);
+	iS2 = f2;
 	iHal.ApplyPins(iS, iS2);
 	ApplyPacing();
 	iHal.TlsVerify(true);
@@ -970,8 +1022,21 @@ Modem::TResult Modem::SetCommand(const char* aCmd, const char*& aP, bool& aHandl
 	return ROk;
 	}
 
-// ATDT host:port (also ATDThost:port, ATD, ATDP, quotes): opens TCP
+// ATDT host:port (also ATDThost:port, ATD, ATDP, quotes): opens TCP.
+// Dial() notes what was dialled and how it went, for the status screen
 Modem::TResult Modem::Dial(const char* aArgs)
+	{
+	const char* p = aArgs;
+	if (Upper(*p) == 'T' || Upper(*p) == 'P')
+		p++;
+	Value(p, iLastDial, sizeof(iLastDial));
+	TResult r = DialTo(aArgs);
+	if (r == RError)
+		strcpy(iLastDialResult, "ERROR");
+	return r;                                // (CONNECT and NO CARRIER are noted in Result())
+	}
+
+Modem::TResult Modem::DialTo(const char* aArgs)
 	{
 	// T or P straight after the D is tone/pulse ("ATDT host"); after a space
 	// it is the host's first letter ("ATD telnet.example.org")
@@ -1036,6 +1101,7 @@ Modem::TResult Modem::Dial(const char* aArgs)
 			iRing.Clear();
 			iUpLen = 0;
 			iPluses = 0;
+			ApplyPacing();                   // a fresh token bucket for the PPP frames
 			iLastSerialMs = iHal.Millis();
 			Result(RConnect);
 			UpdateDcd();
@@ -1146,6 +1212,7 @@ bool Modem::ExecHandshake(const char* aCommand)
 // ATDT psiexec, or AT$EXEC=command: a call to the helper
 Modem::TResult Modem::DialExec(const char* aCommand)
 	{
+	snprintf(iLastDial, sizeof(iLastDial), "psiexec%s%s", aCommand ? ": " : "", aCommand ? aCommand : "");
 	if (!iS2.exec || !iS2.execHost[0])
 		return aCommand ? RError : RNoCarrier;
 	if (!iUplink.Up())
@@ -1374,6 +1441,10 @@ void Modem::SayLine(const char* aText)
 
 void Modem::Result(TResult aR)
 	{
+	if (aR == RConnect)
+		strcpy(iLastDialResult, "CONNECT");
+	else if (aR == RNoCarrier)
+		strcpy(iLastDialResult, "NO CARRIER");
 	if (iS.quiet || aR == RNone)
 		return;
 	if (!iS.verbose)

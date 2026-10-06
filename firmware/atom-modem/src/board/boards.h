@@ -19,13 +19,14 @@ static const int kPinButton = 41;
 static const bool kUsbHostPossible = true;
 #elif defined(AM_BOARD_ATOMS3R)
 // M5Stack AtomS3R (ESP32-S3-PICO-1-N8R8: 8 MB flash, 8 MB octal PSRAM). The
-// same bottom header as the AtomS3 Lite (G5 G6 G7 G8 G38 G39), so the
-// Atomic RS232 Base and the Proto Kit wiring are the same. There is no
-// WS2812: its light is an LP5562 driver on the internal I2C bus (SCL G0,
-// SDA G45, shared with the BMI270), which this firmware does not drive,
-// so the status LED is a no-op here. The 128x128 LCD (GC9107, SPI) is not
-// used. The pins here are from M5Unified's board table; not yet confirmed
-// on hardware.
+// same bottom header as the AtomS3 Lite (G5 G6 G7 G8 G38 G39), so it shares
+// the Lite's Atomic RS232 Base and Proto Kit wiring. There is no WS2812: its
+// light is an LP5562 driver on the internal I2C bus (SCL G0, SDA G45, shared
+// with the BMI270), which this firmware does not drive, so the status LED is
+// a no-op here. The status is shown on the 128x128 LCD (GC9107, SPI) through
+// M5Unified instead (board/screen.cpp, built with AM_HAS_LCD), whose bar
+// takes the LED's colours; the LCD is also the button (G41). The pins here
+// are from M5Unified's board table; not yet confirmed on hardware.
 static const char* const kBoardName = "AtomS3R";
 static const int kPinRx = 5;              // from the transceiver's receiver (the Psion's TXD)
 static const int kPinTx = 6;              // to the transceiver's driver (the Psion's RXD)

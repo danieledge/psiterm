@@ -166,6 +166,13 @@ public:
 	void ApplyUplink(const am::Settings2&) override { uplinkApplied++; }
 	void Dcd(bool on) override { dcd = on; }
 	void Led(am::LedState s) override { led = s; }
+	uint32_t dns = 0;                          // the uplink's DNS (an lwIP ip4_addr; 0 = none)
+	std::string apInfo, apPassword, webInfo;   // the access point's lines, for the status screen
+	uint32_t UplinkDns() override { return dns; }
+	const char* BoardName() override { return "FakeBoard"; }
+	void ApPass(char* o, size_t m) override { snprintf(o, m, "%s", apPassword.c_str()); }
+	void ApInfo(char* o, size_t m) override { snprintf(o, m, "%s", apInfo.c_str()); }
+	void WebInfo(char* o, size_t m) override { snprintf(o, m, "%s", webInfo.c_str()); }
 
 	// the UART puts bytes on the wire at baud/10 bytes a second
 	void Drain()

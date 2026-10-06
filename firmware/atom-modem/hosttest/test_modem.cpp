@@ -3,6 +3,8 @@
 //   make -C hosttest test
 // MIT licence (see LICENSE at the top of the repository).
 #include "fakehal.h"
+#include "../src/status.h"
+#include "../src/button.h"
 #include <stdlib.h>
 #include <algorithm>
 
@@ -114,7 +116,8 @@ static void TestDial()
 	CHECK(r.hal.tcpHost == "telnet.example.org" && r.hal.tcpPort == 23);
 	r.Run(1100); r.TypeRun("+++", 1100); r.TypeRun("ATH\r", 100); r.Got();
 
-	r.TypeRun("ATDT777\r");                                      // a phone number (PPP): not here
+	r.TypeRun("AT$PPP=0\r"); r.Got();
+	r.TypeRun("ATDT777\r");                                      // a phone number, PPP off: goes nowhere
 	CHECK(Has(r.Got(), "NO CARRIER") && !r.modem->Connected());
 	r.TypeRun("ATDT host:99999\r");
 	CHECK(Has(r.Got(), "ERROR"));
@@ -565,9 +568,10 @@ static void TestSettings2()
 	CHECK(s2.flow == 0);
 	r.TypeRun("ATZ\r");
 	CHECK(s2.flow == 1 && s2.tls == 1 && s2.imgWidth == 240);
-	// AT&F: factory for both, the WiFi kept
+	// AT&F: factory for both, the WiFi kept (and the link hardware: see TestFactoryKeepsLink)
 	r.TypeRun("AT$SSID=Home\r"); r.TypeRun("AT&F\r");
-	CHECK(s2.flow == 0 && s2.tls == 0 && strcmp(r.modem->Config().ssid, "Home") == 0);
+	CHECK(s2.flow == 1 && s2.tls == 0 && strcmp(r.modem->Config().ssid, "Home") == 0);
+	r.TypeRun("AT$FC=0\r");
 	// a 1.x modem (no cfg2 at all) comes up with the defaults
 	{
 	Rig r1;
@@ -1034,10 +1038,14 @@ static void TestReachability()
 static void TestPpp()
 	{
 	Rig r;
-	// off by default: a numeric dial goes nowhere
+	// on by default (the Psion's "Psion Internet" is its default first send)
+	CHECK(r.modem->Config2().ppp == 1);
+	// turned off, a numeric dial goes nowhere
+	r.TypeRun("AT$PPP=0\r");
+	CHECK(Has(r.Got(), "OK") && r.modem->Config2().ppp == 0);
 	r.TypeRun("ATD777\r");
 	CHECK(Has(r.Got(), "NO CARRIER") && !r.modem->PppCall());
-	// turn PPP on
+	// and on again
 	r.TypeRun("AT$PPP=1\r");
 	CHECK(Has(r.Got(), "OK") && r.modem->Config2().ppp == 1);
 	// a numeric dial now brings PPP up
@@ -1066,6 +1074,348 @@ static void TestPpp()
 	CHECK(Has(r.Got(), "NO CARRIER") && !r.modem->PppCall());
 	}
 
+// ----- the button: debounce, click, hold, boot-hold -----------------------------
+struct BtnRig
+	{
+	am::Button b;
+	uint32_t t = 1000;
+	int clicks = 0, holds = 0;
+	void Step(int aLevel, uint32_t aMs)          // aLevel held for aMs, looked at every 5 ms
+		{
+		for (uint32_t i = 0; i < aMs; i += 5)
+			{
+			am::Button::TEvent e = b.Feed(aLevel, t);
+			if (e == am::Button::EClick) clicks++;
+			if (e == am::Button::EHold) holds++;
+			t += 5;
+			}
+		}
+	};
+
+static void TestButton()
+	{
+	{ BtnRig r;  r.Step(1, 100);  r.Step(0, 200);  r.Step(1, 100);       // a click
+	  CHECK(r.clicks == 1 && r.holds == 0); }
+	{ BtnRig r;  r.Step(1, 100);  r.Step(0, am::Button::kClickMaxMs - 10);  r.Step(1, 100);   // just under the click limit: still a click
+	  CHECK(r.clicks == 1 && r.holds == 0); }
+	{ BtnRig r;  r.Step(1, 100);  r.Step(0, 1000); r.Step(1, 100);       // 1 s: neither on the LCD board (limit 700), a click without it (limit 1900)
+	  CHECK(r.holds == 0 && r.clicks == (am::Button::kClickMaxMs >= 1000 ? 1 : 0)); }
+	{ BtnRig r;  r.Step(1, 100);  r.Step(0, am::Button::kClickMaxMs + 50); r.Step(1, 100);   // just over the click limit: neither
+	  CHECK(r.clicks == 0 && r.holds == 0); }
+	{ BtnRig r;  r.Step(1, 100);  r.Step(0, 3000); r.Step(1, 100);       // a hold: once, and its release is not a click
+	  CHECK(r.clicks == 0 && r.holds == 1); }
+	{ BtnRig r;  r.Step(1, 100);  r.Step(0, 1990);                        // not yet
+	  CHECK(r.holds == 0);
+	  r.Step(0, 30);
+	  CHECK(r.holds == 1); }
+	{ BtnRig r;  r.Step(1, 100);  r.Step(0, 10);  r.Step(1, 100);        // a 10 ms glitch is not a press
+	  CHECK(r.clicks == 0 && r.holds == 0); }
+	{ BtnRig r;  r.Step(1, 100);  r.Step(0, 25);  r.Step(1, 100);        // 25 ms: seen, but too short for a click
+	  CHECK(r.clicks == 0 && r.holds == 0); }
+	{ BtnRig r;  r.Step(1, 100);                                          // contact bounce on press and release: one click
+	  for (int i = 0; i < 4; i++) { r.Step(0, 5); r.Step(1, 5); }
+	  r.Step(0, 250);
+	  for (int i = 0; i < 4; i++) { r.Step(1, 5); r.Step(0, 5); }
+	  r.Step(1, 100);
+	  CHECK(r.clicks == 1 && r.holds == 0); }
+	{ BtnRig r;  r.Step(1, 100);  r.Step(0, 200);  r.Step(1, 50);        // two clicks
+	  r.Step(0, 200);  r.Step(1, 100);
+	  CHECK(r.clicks == 2); }
+	{ BtnRig r;                                                           // held at power-on: counted from the first look
+	  uint32_t start = r.t;
+	  r.Step(0, 10);
+	  CHECK(r.b.Down() && r.b.HeldMs(r.t) < 100);
+	  r.Step(0, 3000);
+	  CHECK(r.b.HeldMs(r.t) >= 3000 && r.t - start >= 3000);
+	  r.Step(1, 50);
+	  CHECK(!r.b.Down() && r.b.HeldMs(r.t) == 0); }
+	}
+
+// ----- the status screen's text -------------------------------------------------
+static bool OnPage(const am::ScreenPage& p, const char* aText)
+	{
+	for (int i = 0; i < am::kScreenRows; i++)
+		if (strstr(p.line[i], aText))
+			return true;
+	return false;
+	}
+
+static void TestStatusModel()
+	{
+	am::ScreenPage p;
+	Rig r;
+	r.TypeRun("ATE0\r"); r.Got();
+	// no WiFi, none set: the bar is red and the page says how to set it up
+	r.hal.wifi = false;
+	r.Run(300);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
+	CHECK(p.bar == am::ELedNoWifi && OnPage(p, "STATUS") && OnPage(p, "1/4") && OnPage(p, "No WiFi network set"));
+	CHECK(OnPage(p, "Call: none"));
+	for (int i = 0; i < am::kScreenRows; i++)
+		CHECK(strlen(p.line[i]) <= (size_t)am::kScreenCols);
+	// a network saved, not joined
+	r.TypeRun("AT$SSID=Home\r"); r.Got();
+	r.Run(300);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
+	CHECK(OnPage(p, "WiFi Home") && OnPage(p, "Not connected") && p.bar == am::ELedNoWifi);
+	// joined
+	r.hal.wifi = true; r.hal.wifiSsid = "Home";
+	r.Run(300);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
+	CHECK(p.bar == am::ELedWifi && OnPage(p, "WiFi Home") && OnPage(p, "IP   192.168.1.50") && OnPage(p, "RSSI -60 dBm"));
+	CHECK(OnPage(p, "115200 baud, FC off") && OnPage(p, "To Psion  0"));
+	// a TCP call
+	r.TypeRun("ATDT example.com:22\r", 100); r.Run(300);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
+	CHECK(p.bar == am::ELedConnected && OnPage(p, "Call: tcp") && OnPage(p, "example.com:22"));
+	r.Feed("0123456789abcdef"); r.Run(200);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
+	CHECK(OnPage(p, "To Psion  16"));
+	// the modes page, mid call: the last dial
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageModes, p);
+	CHECK(OnPage(p, "MODES") && OnPage(p, "TCP: ready") && OnPage(p, "PPP: on") && OnPage(p, "TLS: off")
+		&& OnPage(p, "Uplink AUTO->WIFI") && OnPage(p, "example.com:22") && OnPage(p, "CONNECT") && OnPage(p, "Proxy PX=1 zip"));
+	// the server closes: NO CARRIER, and the bar and the call are back
+	r.hal.tcpOpen = false; r.Run(300);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
+	CHECK(p.bar == am::ELedWifi && OnPage(p, "Call: none"));
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageModes, p);
+	CHECK(OnPage(p, "NO CARRIER") && OnPage(p, "example.com:22"));
+	// a call that is refused: the result is there too
+	r.hal.tcpOk = false;
+	r.TypeRun("ATDT nowhere.example:22\r", 100); r.Run(300);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageModes, p);
+	CHECK(OnPage(p, "nowhere.example:22") && OnPage(p, "NO CARRIER"));
+	r.hal.tcpOk = true;
+	// the proxy
+	r.TypeRun("ATDT psiproxy\r", 100); r.Run(300);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
+	CHECK(OnPage(p, "Call: proxy 0 req") && p.bar == am::ELedConnected);
+	r.Run(1100); r.TypeRun("+++", 1100);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
+	CHECK(OnPage(p, "command mode"));
+	r.TypeRun("ATH\r", 100); r.Got();
+	// PPP
+	r.TypeRun("ATD777\r", 100); r.Run(300);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
+	CHECK(OnPage(p, "Call: PPP up") && p.bar == am::ELedConnected);
+	r.Run(1100); r.TypeRun("+++", 1100); r.TypeRun("ATH\r", 100); r.Got();
+	// psiexec
+	r.TypeRun("AT$XE=1\r"); r.TypeRun("AT$XH=pc:7777\r"); r.TypeRun("AT$XK=t0k\r"); r.Got();
+	r.Feed("OK\r\n");
+	r.TypeRun("ATDT psiexec\r", 100); r.Run(300);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
+	CHECK(OnPage(p, "Call: exec"));
+	r.hal.tcpOpen = false; r.Run(300); r.Got();
+	// config mode: purple
+	r.modem->ConfigMode(true); r.Run(300);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
+	CHECK(p.bar == am::ELedConfig);
+	r.modem->ConfigMode(false); r.Run(300);
+	// the setup page: the access point with its password
+	r.hal.apInfo = "AP \"AtomModem-1a2b\" up at http://192.168.4.1/";
+	r.hal.apPassword = "psion-12345678";
+	r.hal.webInfo = "http://192.168.1.50/";
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageSetup, p);
+	CHECK(OnPage(p, "SETUP") && OnPage(p, "AtomModem-1a2b") && OnPage(p, "psion-12345678") && OnPage(p, "http://192.168.4.1/")
+		&& OnPage(p, "http://192.168.1.50/") && OnPage(p, "Atom modem 2.0") && OnPage(p, "FakeBoard") && OnPage(p, "Heap"));
+	r.hal.apInfo.clear(); r.hal.apPassword.clear();
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageSetup, p);
+	CHECK(OnPage(p, "AP: off") && !OnPage(p, "psion-1234"));
+	// the log page: the newest line at the bottom, wrapped at 21
+	r.hal.Log("a log line that is longer than twenty-one columns for sure");
+	r.hal.Log("last line");
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageLog, p);
+	CHECK(OnPage(p, "LOG") && strcmp(p.line[am::kScreenRows - 1], "last line") == 0 && OnPage(p, "a log line that is") && OnPage(p, "twenty-one columns") && OnPage(p, "for sure"));
+	for (int i = 0; i < am::kScreenRows; i++)
+		CHECK(strlen(p.line[i]) <= (size_t)am::kScreenCols);
+	// the pages wrap round
+	am::StatusModel::Fill(*r.modem, r.hal, 4, p);
+	CHECK(OnPage(p, "1/4"));
+	// the byte counts
+	char c[12];
+	am::StatusModel::Count(999, c, sizeof(c)); CHECK(strcmp(c, "999") == 0);
+	am::StatusModel::Count(12345, c, sizeof(c)); CHECK(strcmp(c, "12K") == 0);
+	am::StatusModel::Count(3400000, c, sizeof(c)); CHECK(strcmp(c, "3.4M") == 0);
+	}
+
+// ----- PPP output: whole frames, in order, paced, held when offline -----------
+static std::string Frame(int aSeed, size_t aLen)
+	{
+	std::string f;
+	for (size_t i = 0; i < aLen; i++)
+		f += (char)(0x7e ^ (aSeed * 31 + (int)i * 7));
+	return f;
+	}
+
+// lwIP flushes a frame in ~1.5 KB chunks, the last ending in the 0x7e flag
+// (Frame() bytes are never 0x7e except by construction below: the tail byte)
+static std::string PppFrame(int aSeed, size_t aLen)
+	{
+	std::string f = Frame(aSeed, aLen);
+	for (size_t i = 0; i < f.size(); i++)
+		if ((uint8_t)f[i] == 0x7e)
+			f[i] = 0x55;
+	f[f.size() - 1] = 0x7e;
+	return f;
+	}
+static void PushChunks(am::PppLink& aPpp, const std::string& aF, size_t aChunk = 600)
+	{
+	for (size_t o = 0; o < aF.size(); o += aChunk)
+		aPpp.QueueOut((const uint8_t*)aF.data() + o, aF.size() - o < aChunk ? aF.size() - o : aChunk);
+	}
+
+static am::PppLink& PppOf(Rig& r) { return const_cast<am::PppLink&>(r.modem->Ppp()); }
+
+static void TestPppDrain()
+	{
+	Rig r;
+	r.TypeRun("ATE0\r"); r.Got();
+	r.TypeRun("ATD777\r", 100);
+	CHECK(Has(r.Got(), "CONNECT") && r.modem->PppCall());
+	am::PppLink& ppp = PppOf(r);
+	// a 1500-byte frame through the 128-byte FIFO arrives whole
+	std::string f1 = PppFrame(1, 1500), f2 = PppFrame(2, 1500);
+	PushChunks(ppp, f1);
+	r.Run(800);
+	CHECK(r.Got() == f1);
+	CHECK(ppp.QueuedBytes() == 0 && ppp.DroppedFrames() == 0 && r.modem->ToPsion() >= 1500);
+	// two frames: in order, nothing between
+	PushChunks(ppp, f1);
+	PushChunks(ppp, f2);
+	r.Run(1500);
+	CHECK(r.Got() == f1 + f2);
+	// paced: no faster than the pacer's rate (5500 bytes/s at 115200 without RTS/CTS)
+	PushChunks(ppp, f1);
+	uint64_t t0 = r.hal.nowUs;
+	size_t before = r.hal.wire.size();
+	r.Run(100);
+	size_t in100 = r.hal.wire.size() - before;
+	CHECK(in100 > 0 && in100 <= 5500 / 10 + 40);
+	r.Run(800); r.Got();
+	(void)t0;
+	// +++: command mode. Nothing leaks while offline
+	r.Run(1100); r.TypeRun("+++", 1100);
+	CHECK(Has(r.Got(), "OK") && !r.modem->Online() && r.modem->PppCall());
+	PushChunks(ppp, f2);
+	r.Run(1000);
+	CHECK(r.Got().empty() && ppp.QueuedBytes() == f2.size());
+	// ATO: the link resumes, and the held frame goes out whole
+	r.TypeRun("ATO\r", 50);
+	std::string g;
+	r.Run(800);
+	g = r.Got();
+	CHECK(g.size() >= f2.size() && g.substr(g.size() - f2.size()) == f2);
+	CHECK(ppp.QueuedBytes() == 0);
+	// a full queue drops whole frames, and counts them
+	r.Run(1100); r.TypeRun("+++", 1100); r.Got();
+	for (int i = 0; i < 20; i++)
+		PushChunks(ppp, f1);
+	size_t fit = am::kPppOutQueue / f1.size();
+	CHECK(ppp.QueuedBytes() == fit * f1.size());
+	CHECK(ppp.DroppedFrames() == 20 - fit);
+	// ... and what was kept is whole frames
+	r.TypeRun("ATO\r", 50);
+	r.Run(4000);
+	g = r.Got();
+	size_t at = g.find(f1);
+	CHECK(at != std::string::npos);
+	CHECK(g.size() - at == fit * f1.size());
+	for (size_t i = 0; at != std::string::npos && i < fit; i++)
+		CHECK(g.compare(at + i * f1.size(), f1.size(), f1) == 0);
+	// a drop in the middle of a multi-chunk frame discards the whole frame:
+	// no partial frame reaches the Psion, and it is counted once
+	r.TypeRun("ATO\r", 50); r.Run(800); r.Got();
+	r.Run(1100); r.TypeRun("+++", 1100); r.Got();
+	{
+	size_t room = am::kPppOutQueue / f1.size();
+	for (size_t i = 0; i < room; i++)
+		PushChunks(ppp, f1);                         // fill the queue to the last whole frame
+	size_t queued = ppp.QueuedBytes();
+	uint32_t drops = ppp.DroppedFrames();
+	std::string big = PppFrame(3, 3000);             // 5 chunks of 600; none fits now
+	std::string small = PppFrame(4, 400);           // more than the 288 bytes left
+	// the first chunk of `big` may fit while later ones do not: whatever happens, no partial
+	PushChunks(ppp, big);
+	CHECK(ppp.DroppedFrames() == drops + 1);         // once, not per chunk
+	CHECK(ppp.QueuedBytes() == queued);              // nothing of it queued
+	// the next frame starts clean after the flag: it is dropped on its own merit (queue still full)
+	PushChunks(ppp, small, 40);
+	CHECK(ppp.DroppedFrames() == drops + 2);
+	r.TypeRun("ATO\r", 50);
+	r.Run(4000);
+	g = r.Got();
+	{
+	std::string want;
+	for (size_t i = 0; i < room; i++)
+		want += f1;
+	size_t w0 = g.find(f1);                          // (after the CONNECT text from ATO)
+	CHECK(w0 != std::string::npos && g.substr(w0) == want);                                // only the whole frames queued before: no partial
+	}
+	// room again: a later frame fits and arrives whole, in order
+	PushChunks(ppp, f2);
+	r.Run(1500);
+	CHECK(r.Got() == f2 && ppp.DroppedFrames() == drops + 2);
+	// a frame whose tail chunk is dropped while the head was fine: drop-mode ends at the flag
+	r.Run(1100); r.TypeRun("+++", 1100); r.Got();
+	for (size_t i = 0; i < room; i++)
+		PushChunks(ppp, f1);
+	drops = ppp.DroppedFrames();
+	std::string head = big.substr(0, 1200), tail = big.substr(1200);
+	ppp.QueueOut((const uint8_t*)head.data(), 600);  // gathered, not yet queued
+	ppp.QueueOut((const uint8_t*)head.data() + 600, 600);
+	ppp.QueueOut((const uint8_t*)tail.data(), tail.size());   // flag: the queue is full -> whole frame dropped
+	CHECK(ppp.DroppedFrames() == drops + 1 && ppp.QueuedBytes() == room * f1.size());
+	r.TypeRun("ATO\r", 50);
+	r.Run(4000); r.Got();
+	}
+	// hang-up empties the queue
+	r.Run(1100); r.TypeRun("+++", 1100); r.TypeRun("ATH\r", 100); r.Got();
+	CHECK(ppp.QueuedBytes() == 0 && !r.modem->PppCall());
+	}
+
+// ----- AT&F keeps the link hardware; AT$RESET=YES clears everything -------------
+static void TestFactoryKeepsLink()
+	{
+	Rig r;
+	r.TypeRun("ATE0\r"); r.Got();
+	const am::Settings2& s2 = r.modem->Config2();
+	r.TypeRun("AT$FC=1\r"); r.TypeRun("AT$FCSWAP=1\r"); r.TypeRun("AT$PPP=0\r");
+	r.TypeRun("AT$PINS=6,5,7,8,-1\r"); r.TypeRun("AT$SWAP=1\r"); r.TypeRun("AT$TLS=1\r"); r.TypeRun("AT$SSID=Home\r");
+	r.TypeRun("AT$PX=2\r");
+	CHECK(s2.flow == 1 && s2.flowSwap == 1 && s2.ppp == 0 && s2.pins[0] == 6 && s2.pins[3] == 8);
+	r.Got();
+	r.TypeRun("AT&F\r");
+	CHECK(Has(r.Got(), "OK"));
+	CHECK(s2.flow == 1 && s2.flowSwap == 1 && s2.ppp == 0 && s2.pins[0] == 6 && s2.pins[1] == 5 && s2.pins[3] == 8 && s2.pins[4] == -1);
+	CHECK(r.modem->Config().swapPins == 1 && strcmp(r.modem->Config().ssid, "Home") == 0);
+	CHECK(s2.tls == 0 && r.modem->Config().proxy == 0);          // the rest is factory
+	CHECK(r.hal.pins.flow == 1 && r.hal.pins.pins[0] == 6);      // and the board was told
+	r.TypeRun("AT$RESET=YES\r");
+	CHECK(r.hal.reset);
+	CHECK(s2.flow == 0 && s2.flowSwap == 0 && s2.ppp == 1 && s2.pins[0] == -1 && s2.pins[3] == -1);
+	CHECK(r.modem->Config().swapPins == 0 && r.modem->Config().ssid[0] == 0);
+	// the factory default: PPP on, so ATD777 is PPP
+	Rig r2;
+	r2.TypeRun("ATD777\r", 100);
+	CHECK(Has(r2.Got(), "CONNECT") && r2.modem->PppCall());
+	}
+
+// ----- the DNS the Psion is given ------------------------------------------------
+static void TestPppDns()
+	{
+	{ Rig r;                                                      // no uplink DNS: 1.1.1.1
+	  r.TypeRun("ATD777\r", 100);
+	  CHECK(r.modem->PppCall() && r.modem->Ppp().Dns() == am::Ip4(1, 1, 1, 1));
+	  CHECK(r.hal.Logged("DNS 1.1.1.1") && r.hal.Logged("IP 192.168.7.2") && r.hal.Logged("gateway 192.168.7.1")); }
+	{ Rig r;                                                      // the uplink's
+	  r.hal.dns = am::Ip4(192, 168, 1, 1);
+	  r.TypeRun("ATD777\r", 100);
+	  CHECK(r.modem->PppCall() && r.modem->Ppp().Dns() == am::Ip4(192, 168, 1, 1));
+	  CHECK(r.hal.Logged("DNS 192.168.1.1") && !r.hal.Logged("DNS 1.1.1.1")); }
+	CHECK(am::Ip4(1, 2, 3, 4) == 0x04030201);                      // (lwIP's byte order on a little-endian CPU)
+	}
+
 int main()
 	{
 	printf("basics\n");   TestBasics();
@@ -1086,6 +1436,11 @@ int main()
 	printf("uplink\n");   TestUplink();
 	printf("reachability\n"); TestReachability();
 	printf("preset network\n"); TestSeedNetwork();
+	printf("button\n");   TestButton();
+	printf("status screen\n"); TestStatusModel();
+	printf("ppp drain\n"); TestPppDrain();
+	printf("factory keeps link\n"); TestFactoryKeepsLink();
+	printf("ppp dns\n");  TestPppDns();
 	printf("%d checks, %d failed\n", gChecks, gFails);
 	return gFails ? 1 : 0;
 	}

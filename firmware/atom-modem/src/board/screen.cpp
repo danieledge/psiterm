@@ -1,0 +1,159 @@
+// screen.cpp - see screen.h. MIT licence (see LICENSE at the top of the repository).
+#if defined(AM_HAS_LCD)
+
+#include "screen.h"
+#include <Arduino.h>
+#include <M5Unified.h>
+#include <string.h>
+
+namespace am {
+
+Screen gScreen;
+
+Screen::Screen()
+	: iPage(0), iReady(false), iDimmed(false), iForce(true), iLastDrawMs(0), iLastActiveMs(0), iBar(ELedNoWifi),
+	  iShownBar(ELedNoWifi), iShownPage(-1)
+	{
+	memset(iShown, 0, sizeof(iShown));
+	}
+
+static uint16_t BarColour(LedState aState, uint16_t& aText)
+	{
+	aText = TFT_WHITE;
+	switch (aState)
+		{
+	case ELedNoWifi:     return M5.Display.color565(190, 0, 0);          // red
+	case ELedConnecting: aText = TFT_BLACK; return M5.Display.color565(230, 160, 0);   // amber
+	case ELedWifi:       aText = TFT_BLACK; return M5.Display.color565(0, 180, 0);     // green
+	case ELedConnected:  return M5.Display.color565(0, 0, 220);          // blue
+	case ELedData:       aText = TFT_BLACK; return M5.Display.color565(235, 235, 255); // white flash
+	case ELedConfig:     return M5.Display.color565(150, 0, 170);        // purple: the access point is up
+		}
+	return TFT_DARKGREY;
+	}
+
+void Screen::Begin()
+	{
+	auto cfg = M5.config();
+	cfg.serial_baudrate = 0;                    // (main.cpp opens the USB console itself)
+	cfg.internal_imu = false;
+	cfg.internal_rtc = false;
+	cfg.clear_display = true;
+	M5.begin(cfg);
+	M5.Display.setBrightness(64);
+	M5.Display.setRotation(0);
+	M5.Display.setFont(&fonts::Font0);          // 6x8: 21 columns by 16 rows on 128x128
+	M5.Display.setTextSize(1);
+	M5.Display.setTextWrap(false);
+	M5.Display.fillScreen(TFT_BLACK);
+	iReady = true;
+	iDimmed = false;
+	iForce = true;
+	iLastActiveMs = millis();
+	}
+
+void Screen::Backlight(bool aOn)
+	{
+	if (!iReady)
+		return;
+	iDimmed = !aOn;
+	M5.Display.setBrightness(aOn ? 64 : 0);
+	}
+
+void Screen::Message(const char* aLine1, const char* aLine2, const char* aLine3)
+	{
+	if (!iReady)
+		return;
+	Backlight(true);
+	M5.Display.fillScreen(TFT_BLACK);
+	M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
+	M5.Display.drawString(aLine1, 2, 40);
+	M5.Display.drawString(aLine2, 2, 56);
+	M5.Display.drawString(aLine3, 2, 72);
+	iForce = true;
+	iShownPage = -1;                            // the next Tick draws the whole page
+	}
+
+void Screen::SetBar(LedState aState)
+	{
+	if (aState == iBar)
+		return;
+	// a status change is worth waking the screen for; the data flash is not
+	if (iReady && aState != ELedData && iBar != ELedData)
+		{
+		iLastActiveMs = millis();
+		if (iDimmed)
+			Backlight(true);
+		}
+	iBar = aState;
+	iForce = true;
+	}
+
+bool Screen::Wake(uint32_t aNowMs)
+	{
+	iLastActiveMs = aNowMs;
+	if (!iDimmed)
+		return false;
+	Backlight(true);
+	iForce = true;
+	return true;
+	}
+
+void Screen::NextPage(uint32_t aNowMs)
+	{
+	iLastActiveMs = aNowMs;
+	iPage = (iPage + 1) % StatusModel::Pages();
+	iForce = true;
+	}
+
+void Screen::Draw(const ScreenPage& aPage, bool aAll)
+	{
+	M5.Display.startWrite();
+	for (int r = 0; r < kScreenRows; r++)
+		{
+		bool title = r == 0;
+		if (!aAll && !(title && iBar != iShownBar) && strcmp(iShown[r], aPage.line[r]) == 0)
+			continue;
+		uint16_t fg = TFT_WHITE, bg = TFT_BLACK;
+		if (title)
+			bg = BarColour(iBar, fg);
+		char row[kScreenCols + 1];
+		memset(row, ' ', kScreenCols);
+		row[kScreenCols] = 0;
+		size_t n = strlen(aPage.line[r]);
+		memcpy(row, aPage.line[r], n < (size_t)kScreenCols ? n : (size_t)kScreenCols);
+		M5.Display.setTextColor(fg, bg);
+		if (title)
+			M5.Display.fillRect(0, 0, 128, 8, bg);
+		M5.Display.drawString(row, 0, r * 8);
+		memcpy(iShown[r], aPage.line[r], sizeof(iShown[r]));
+		}
+	M5.Display.endWrite();
+	iShownBar = iBar;
+	}
+
+void Screen::Tick(const Modem& aModem, Hal& aHal, uint32_t aNowMs)
+	{
+	if (!iReady)
+		return;
+	if (!iDimmed && aNowMs - iLastActiveMs >= kDimAfterMs)
+		Backlight(false);
+	if (!iForce && aNowMs - iLastDrawMs < kRedrawMs)
+		return;
+	iLastDrawMs = aNowMs;
+	if (iDimmed && !iForce)
+		return;                                 // (nothing to see: no work to do)
+	iForce = false;
+	static ScreenPage page;                     // (static: off the 20 KB loop stack)
+	StatusModel::Fill(aModem, aHal, iPage, page);
+	bool all = iShownPage != iPage;
+	if (all)
+		M5.Display.fillScreen(TFT_BLACK);
+	iShownPage = iPage;
+	iBar = page.bar;                            // the modem's own LED state: one source
+	Draw(page, all);
+	}
+
+} // namespace am
+
+#endif
