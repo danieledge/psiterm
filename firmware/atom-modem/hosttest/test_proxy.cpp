@@ -1120,7 +1120,8 @@ static void TestPictures()
 	// a JPEG: a GIF at most 200 wide, 16 greys, about as bright as the original
 	Resp x = fetch("/photo.jpg");
 	CHECK(x.status == 200 && x.complete && x.h["content-type"] == "image/gif" && x.body.compare(0, 6, "GIF89a") == 0);
-	CHECK(x.h["cache-control"] == "max-age=60" && x.h["transfer-encoding"] == "chunked");
+	// the GIF goes with a Content-Length, not chunked: PsiWeb's Links fetch mishandles a chunked image body
+	CHECK(x.h["cache-control"] == "max-age=60" && x.h["content-length"] == std::to_string(x.body.size()) && x.h["transfer-encoding"].empty());
 	int w = 0, h = 0, mean = 0, greys = 0;
 	bool stats = GifStats(x.body, w, h, mean, greys);
 	if (!stats)

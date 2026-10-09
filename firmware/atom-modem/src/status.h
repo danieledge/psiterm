@@ -14,13 +14,31 @@ namespace am {
 
 static const int kScreenCols = 21;
 static const int kScreenRows = 16;
+static const int kHeroRows = 6;
 
 enum TScreenPage { EPageStatus = 0, EPageModes, EPageSetup, EPageLog, EPageCount };
+
+// one fact on the Status "hero": a short grey label and a white value
+struct HeroRow
+	{
+	char label[8];
+	char value[kScreenCols + 1];
+	};
 
 struct ScreenPage
 	{
 	char line[kScreenRows][kScreenCols + 1];   // row 0 is the title (drawn on the bar)
 	LedState bar;                              // the bar's colour: the LED state
+	// The Status page also comes as a "dashboard" hero: a state word on a
+	// coloured band (with Wi-Fi signal bars), then label/value rows and a
+	// footer. The LCD (board/screen.cpp) draws it; the other pages keep the
+	// dense 21x16 text in line[] above. The host tests read both, so this
+	// layer stays portable.
+	char state[14];                            // "OFFLINE", "ONLINE", "ON A CALL"...
+	HeroRow hero[kHeroRows];                   // key facts under the band
+	int heroRows;
+	int signal;                                // Wi-Fi bars 0..4, or -1 (no Wi-Fi)
+	char foot[kScreenCols + 1];                // the footer line (baud, flow control)
 	};
 
 class StatusModel

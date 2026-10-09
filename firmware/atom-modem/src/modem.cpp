@@ -314,7 +314,10 @@ void Modem::Loop()
 		{
 		iPpp.Poll(iHal);                     // PPP runs on the lwIP thread; notice a drop
 		if (iPpp.Dropped())
+			{
+			iHal.Log("ppp: link dropped by the Psion (or lost) - hanging up");
 			Hangup(true);                    // the Psion closed the link (or an error)
+			}
 		else if (iOnline)                    // (after +++ nothing goes out; ATO resumes)
 			{
 			size_t n = iPpp.Drain(iHal, iPacer);   // PPP frames to the Psion, paced like PumpPsion
@@ -752,6 +755,20 @@ void Modem::ConfigMode(bool aOn)
 
 Modem::TResult Modem::RunCommands(const char* aCmd)
 	{
+	// log the AT line as it comes in (command mode only, so browsing - which
+	// stays in PPP data mode - never spams this). Makes a dial, a hang-up or a
+	// stray init string visible on the console when a connect misbehaves.
+	if (aCmd[0])
+		{
+		char m[80];
+		size_t j = 0;
+		const char* pre = "cmd: ";
+		while (*pre) m[j++] = *pre++;
+		for (const char* q = aCmd; *q && j < sizeof(m) - 1; q++)
+			m[j++] = (*q >= 32 && *q < 127) ? *q : '.';
+		m[j] = 0;
+		iHal.Log(m);
+		}
 	const char* p = aCmd;
 	for (;;)
 		{
@@ -1079,11 +1096,20 @@ Modem::TResult Modem::DialTo(const char* aArgs)
 		if (digits)
 			{
 			if (!iS2.ppp)
+				{
+				iHal.Log("ppp: dial ignored - PPP is off (AT$PPP=1 to enable)");
 				return RNoCarrier;           // PPP off: a phone number goes nowhere
+				}
 			if (!iUplink.Up())
+				{
+				iHal.Log("ppp: dial failed - no uplink (WiFi/USB down)");
 				return RNoCarrier;
+				}
 			if (iConnected || iClosing)
+				{
+				iHal.Log("ppp: a call was still up at dial - hanging it up first");
 				Hangup(false);
+				}
 			if (!iS2.flow)
 				iHal.Log("ppp: RTS/CTS (AT$FC=1) and a higher baud are strongly recommended");
 			iHal.Led(ELedConnecting);
@@ -1103,6 +1129,7 @@ Modem::TResult Modem::DialTo(const char* aArgs)
 			iPluses = 0;
 			ApplyPacing();                   // a fresh token bucket for the PPP frames
 			iLastSerialMs = iHal.Millis();
+			iHal.Log("ppp: CONNECT - PPP starting for the Psion");
 			Result(RConnect);
 			UpdateDcd();
 			return RNone;

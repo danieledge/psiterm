@@ -4,6 +4,7 @@
 #include "boards.h"
 #include <WiFi.h>
 #include <esp_system.h>
+#include <Update.h>
 
 namespace am {
 
@@ -19,7 +20,8 @@ static const char kCss[] PROGMEM =
 	".warn{background:#fff3cd;border:1px solid #e0c060;padding:8px 10px;margin:8px 0}</style>";
 
 WebUi::WebUi()
-	: iModem(0), iHal(0), iServer(80), iApUp(false), iStarted(false), iDnsUp(false), iLastScanMs(0)
+	: iModem(0), iHal(0), iServer(80), iApUp(false), iStarted(false), iDnsUp(false), iLastScanMs(0),
+	  iOtaAllowed(false), iOtaBegun(false)
 	{
 	iApName[0] = 0;
 	iApPass[0] = 0;
@@ -40,6 +42,54 @@ void WebUi::Begin(Modem& aModem, AtomHal& aHal)
 	iServer.on("/api/settings", HTTP_GET, [this]() { ApiSettings(); });
 	iServer.on("/set", HTTP_POST, [this]() { Post(); });
 	iServer.on("/api/settings", HTTP_POST, [this]() { Post(); });
+	// over-the-air firmware: a multipart upload of firmware.bin, written to the
+	// spare app slot; the modem restarts on it. Behind the same web password.
+	iServer.on("/ota", HTTP_POST,
+		[this]()                                        // after the body: the result
+			{
+			if (!iOtaAllowed)
+				{
+				iServer.requestAuthentication(BASIC_AUTH, "Atom modem");
+				return;
+				}
+			bool ok = iOtaBegun && !Update.hasError();
+			iServer.sendHeader("Connection", "close");
+			iServer.send(ok ? 200 : 500, "text/plain",
+				ok ? "OK - the modem is restarting on the new firmware\n"
+				   : "Update failed - the modem keeps the current firmware\n");
+			if (ok)
+				{
+				delay(400);
+				ESP.restart();
+				}
+			},
+		[this]()                                        // the body, in chunks
+			{
+			HTTPUpload& up = iServer.upload();
+			if (up.status == UPLOAD_FILE_START)
+				{
+				iOtaAllowed = OtaAuth();
+				iOtaBegun = false;
+				if (iOtaAllowed && Update.begin(UPDATE_SIZE_UNKNOWN))
+					iOtaBegun = true;
+				}
+			else if (up.status == UPLOAD_FILE_WRITE)
+				{
+				if (iOtaBegun && Update.write(up.buf, up.currentSize) != up.currentSize)
+					iOtaBegun = false;              // a short write: it has failed
+				}
+			else if (up.status == UPLOAD_FILE_END)
+				{
+				if (iOtaBegun && !Update.end(true))
+					iOtaBegun = false;
+				}
+			else if (up.status == UPLOAD_FILE_ABORTED)
+				{
+				if (iOtaBegun)
+					Update.abort();
+				iOtaBegun = false;
+				}
+			});
 	iServer.onNotFound([this]() { NotFound(); });
 	}
 
@@ -151,6 +201,17 @@ bool WebUi::Allowed()
 		return false;
 		}
 	return true;
+	}
+
+// the same rule as Allowed(), but it sends nothing: the upload handler runs
+// while the body streams in, so it cannot write a response here.
+bool WebUi::OtaAuth()
+	{
+	if (FromAp())
+		return true;
+	if (!iS2.webPass[0])
+		return false;
+	return iServer.authenticate("atom", iS2.webPass);
 	}
 
 // ----- pieces of pages ---------------------------------------------------------------------------
@@ -406,6 +467,11 @@ void WebUi::PageSystem()
 	Send("<h2>Save</h2><form method=\"post\" action=\"/set\"><input type=\"hidden\" name=\"back\" value=\"/system\">"
 		"<input type=\"hidden\" name=\"save\" value=\"1\"><button class=\"go\">Save settings to flash</button></form>");
 	Send("<h2>Restart</h2><form method=\"post\" action=\"/set\"><input type=\"hidden\" name=\"restart\" value=\"1\"><button>Restart the modem</button></form>");
+	Send("<h2>Firmware update</h2><p>Upload a new <code>firmware.bin</code>: the modem writes it to the spare slot and "
+		"restarts on it. A web password must be set (<code>AT$WEBPASS</code>). If a bad build will not boot, recover over USB.</p>"
+		"<form method=\"post\" action=\"/ota\" enctype=\"multipart/form-data\"><input type=\"file\" name=\"firmware\" accept=\".bin\">"
+		"<button class=\"go\" onclick=\"return confirm('Flash this firmware?')\">Upload &amp; flash</button></form>"
+		"<p><small>Or from a computer: <code>curl -u atom:PASSWORD -F firmware=@firmware.bin http://IP/ota</code></small></p>");
 	Send("<h2>Factory reset</h2><p>Every setting, the WiFi network and passwords included, back to the factory ones. The modem restarts.</p>"
 		"<form method=\"post\" action=\"/set\"><input type=\"hidden\" name=\"reset\" value=\"YES\"><button onclick=\"return confirm('Factory reset?')\">Factory reset</button></form>");
 	Send("<h2>About</h2><p>Atom modem "); Send(kVersion); Send(" on the "); Send(kBoardName);

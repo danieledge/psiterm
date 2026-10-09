@@ -50,6 +50,7 @@ private:
 	void StopAp();
 	void Field(const SchemaEntry& aE);
 	bool FromAp();
+	bool OtaAuth();                            // auth for a firmware upload (no response sent)
 
 	Modem* iModem;
 	AtomHal* iHal;
@@ -62,6 +63,8 @@ private:
 	char iApPass[33];
 	Settings2 iS2;
 	uint32_t iLastScanMs;
+	bool iOtaAllowed;                          // the current upload passed auth
+	bool iOtaBegun;                            // Update.begin() succeeded for it
 	};
 
 } // namespace am

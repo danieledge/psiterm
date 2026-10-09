@@ -27,6 +27,7 @@
 #include "imgconv.h"
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 namespace am {
 
@@ -195,6 +196,14 @@ private:
 		Proxy* iP;
 		void Put(const char* aData, size_t aLen) override { iP->Wire(aData, aLen); }
 		} iWireSink;
+	struct GifBuf : public HtmlSink      // gathers the whole GIF, so it goes with a Content-Length
+		{
+		GifBuf(uint8_t* aB, size_t aCap) : iB(aB), iLen(0), iCap(aCap) {}
+		void Put(const char* aData, size_t aLen) override
+			{ if (iLen + aLen <= iCap) { memcpy(iB + iLen, aData, aLen); iLen += aLen; } }
+		uint8_t* iB;
+		size_t iLen, iCap;
+		};
 	char iChunk[1024];
 	size_t iChunkLen;
 	char iScratch[1100];                 // (big temporaries off the stack: the
@@ -212,6 +221,8 @@ private:
 	size_t iImgLen, iImgCap;
 	ImageConverter iImg;
 	uint32_t iImgMs;
+	uint8_t* iGifBuf;                    // the whole GIF, buffered so it goes with a Content-Length
+	size_t iGifLen, iGifPos;             // (PsiWeb's Links fetch mishandles a chunked image body)
 	};
 
 } // namespace am

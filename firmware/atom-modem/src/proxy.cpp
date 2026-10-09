@@ -197,7 +197,8 @@ static bool Append(char* aBuf, size_t& aLen, size_t aMax, const char* aName, con
 Proxy::Proxy(Hal& aHal)
 	: iHal(aHal), iOut(0), iMode(EOn), iState(SClosed), iRequests(0), iFetched(0), iSent(0), iPictures(0),
 	  iReqLen(0), iReqUsed(0), iStartMs(0), iFetched0(0), iSent0(0), iUpOpen(false), iChunkLen(0),
-	  iUpgradeNext(0), iImgWidth(0), iImgMax(0), iImgMode(false), iImgBuf(0), iImgLen(0), iImgCap(0), iImgMs(0)
+	  iUpgradeNext(0), iImgWidth(0), iImgMax(0), iImgMode(false), iImgBuf(0), iImgLen(0), iImgCap(0), iImgMs(0),
+	  iGifBuf(0), iGifLen(0), iGifPos(0)
 	{
 	iStatus = 0;
 	memset(iUpgrades, 0, sizeof(iUpgrades));
@@ -969,6 +970,10 @@ void Proxy::PictureFree()
 	iImgBuf = 0;
 	iImgLen = iImgCap = 0;
 	iImgMode = false;
+	if (iGifBuf)
+		free(iGifBuf);
+	iGifBuf = 0;
+	iGifLen = iGifPos = 0;
 	iImg.Reset();
 	}
 
@@ -1013,16 +1018,38 @@ void Proxy::PictureDone()
 		FinishBody();
 		return;
 		}
-	free(iImgBuf);
+	free(iImgBuf);                       // the source; the decoder keeps its own copy
 	iImgBuf = 0;
 	iImgCap = 0;
-	// its head: a GIF, chunked, with the server's caching headers
-	iOutChunked = true;
+	// Gather the whole GIF so it goes to the Psion with a Content-Length, not
+	// chunked: PsiWeb's Links fetch mishandles a chunked image body (text, sent
+	// with a length, is fine, and so is the Linux proxy, which never chunks).
+	// gcap is a safe upper bound for the LZW of a 16-grey image (well under
+	// 1.25*pixels + headers), so Write cannot overflow it; with no memory for
+	// it (a big picture), fall back to the old chunked stream.
+	size_t gcap = (size_t)iImg.Width() * iImg.Height() * 5 / 4 + 2048;
+	uint8_t* g = (uint8_t*)malloc(gcap);
+	bool buffered = false;
+	if (g)
+		{
+		GifBuf sink(g, gcap);
+		while (!iImg.Write(&sink, 64))   // Write returns true when the whole GIF is out
+			;
+		iGifBuf = g;
+		iGifLen = sink.iLen;
+		iGifPos = 0;
+		buffered = true;
+		}
+	iOutChunked = !buffered;
 	int n = snprintf(iScratch, sizeof(iScratch), "HTTP/1.1 200 OK\r\nContent-Type: image/gif\r\n");
 	RawOut(iScratch, (size_t)n);
 	RawOut(iFwd, iFwdLen);
-	n = snprintf(iScratch, sizeof(iScratch), "Transfer-Encoding: chunked\r\nConnection: %s\r\n\r\n",
-		iPsionClose ? "close" : "keep-alive");
+	if (buffered)
+		n = snprintf(iScratch, sizeof(iScratch), "Content-Length: %lu\r\nConnection: %s\r\n\r\n",
+			(unsigned long)iGifLen, iPsionClose ? "close" : "keep-alive");
+	else
+		n = snprintf(iScratch, sizeof(iScratch), "Transfer-Encoding: chunked\r\nConnection: %s\r\n\r\n",
+			iPsionClose ? "close" : "keep-alive");
 	RawOut(iScratch, (size_t)n);
 	iChunkLen = 0;
 	iPictures++;
@@ -1036,7 +1063,29 @@ void Proxy::PictureDone()
 // rows of the GIF while the ring has room; then the end of the response
 void Proxy::PictureOut()
 	{
-	while (iOut->Free() >= kSlack)
+	if (iGifBuf)                         // Content-Length: stream the gathered GIF, paced to the ring
+		{
+		while (iGifPos < iGifLen)
+			{
+			size_t room = iOut->Free();
+			if (room <= kSlack)
+				return;
+			size_t n = iGifLen - iGifPos;
+			if (n > room - kSlack)
+				n = room - kSlack;
+			RawOut((const char*)(iGifBuf + iGifPos), n);
+			iGifPos += n;
+			}
+		char m[200];
+		snprintf(m, sizeof(m), "picture %.60s: %dx%d -> %dx%d gif, %lu -> %lu bytes, %lu ms", iUrl,
+			iImg.SourceWidth(), iImg.SourceHeight(), iImg.Width(), iImg.Height(), (unsigned long)iImgLen,
+			(unsigned long)iGifLen, (unsigned long)(iHal.Millis() - iImgMs));
+		iHal.Log(m);
+		PictureFree();
+		NextRequest();
+		return;
+		}
+	while (iOut->Free() >= kSlack)       // chunked fallback (no memory to gather the GIF)
 		{
 		if (!iImg.Write(this, 8))
 			continue;

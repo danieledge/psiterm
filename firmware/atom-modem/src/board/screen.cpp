@@ -12,9 +12,12 @@ Screen gScreen;
 
 Screen::Screen()
 	: iPage(0), iReady(false), iDimmed(false), iForce(true), iLastDrawMs(0), iLastActiveMs(0), iBar(ELedNoWifi),
-	  iShownBar(ELedNoWifi), iShownPage(-1)
+	  iShownBar(ELedNoWifi), iShownPage(-1), iShownHeroRows(-1), iShownSignal(-2)
 	{
 	memset(iShown, 0, sizeof(iShown));
+	memset(iShownState, 0, sizeof(iShownState));
+	memset(iShownHero, 0, sizeof(iShownHero));
+	memset(iShownFoot, 0, sizeof(iShownFoot));
 	}
 
 static uint16_t BarColour(LedState aState, uint16_t& aText)
@@ -132,6 +135,66 @@ void Screen::Draw(const ScreenPage& aPage, bool aAll)
 	iShownBar = iBar;
 	}
 
+// four Wi-Fi signal bars at (aX,aBase) rising to the right, aLevel of them lit
+static void DrawSignal(int aX, int aBase, int aLevel, uint16_t aOn, uint16_t aOff)
+	{
+	for (int i = 0; i < 4; i++)
+		{
+		int bw = 4, gap = 2, bh = 5 + i * 4;
+		int x = aX + i * (bw + gap);
+		int y = aBase - bh;
+		uint16_t c = i < aLevel ? aOn : aOff;
+		if (i < aLevel)
+			M5.Display.fillRect(x, y, bw, bh, c);
+		else
+			M5.Display.drawRect(x, y, bw, bh, c);
+		}
+	}
+
+// the Status page as a dashboard: a state word on a colour band with Wi-Fi
+// signal bars, then grey label / white value rows, and a footer. Legible
+// across a desk; the dense 21x16 pages (Modes/Setup/Log) stay for detail.
+void Screen::DrawStatus(const ScreenPage& aPage, LedState aBar)
+	{
+	const uint16_t kBody  = TFT_BLACK;
+	const uint16_t kLabel = M5.Display.color565(150, 150, 150);
+	const uint16_t kValue = TFT_WHITE;
+	const int kBand = 34;
+	uint16_t bfg;
+	uint16_t bbg = BarColour(aBar, bfg);        // the band colour and its text
+	M5.Display.startWrite();
+	// the state band
+	M5.Display.fillRect(0, 0, 128, kBand, bbg);
+	M5.Display.setTextColor(bfg, bbg);
+	M5.Display.setTextSize(2);                   // 12x16
+	M5.Display.drawString(aPage.state, 5, (kBand - 16) / 2);
+	if (aPage.signal >= 0)
+		DrawSignal(96, kBand - 8, aPage.signal, bfg, bfg);
+	// the body
+	M5.Display.fillRect(0, kBand, 128, 128 - kBand, kBody);
+	M5.Display.setTextSize(1);                   // 6x8
+	int y = kBand + 8;
+	for (int r = 0; r < aPage.heroRows && y <= 104; r++, y += 16)
+		{
+		if (aPage.hero[r].label[0])
+			{
+			M5.Display.setTextColor(kLabel, kBody);
+			M5.Display.drawString(aPage.hero[r].label, 5, y);
+			}
+		M5.Display.setTextColor(kValue, kBody);
+		M5.Display.drawString(aPage.hero[r].value, 46, y);   // value column
+		}
+	// the footer
+	if (aPage.foot[0])
+		{
+		M5.Display.drawFastHLine(5, 116, 118, kLabel);
+		M5.Display.setTextColor(kLabel, kBody);
+		M5.Display.drawString(aPage.foot, 5, 119);
+		}
+	M5.Display.endWrite();
+	M5.Display.setTextSize(1);
+	}
+
 void Screen::Tick(const Modem& aModem, Hal& aHal, uint32_t aNowMs)
 	{
 	if (!iReady)
@@ -146,11 +209,39 @@ void Screen::Tick(const Modem& aModem, Hal& aHal, uint32_t aNowMs)
 	iForce = false;
 	static ScreenPage page;                     // (static: off the 20 KB loop stack)
 	StatusModel::Fill(aModem, aHal, iPage, page);
+	iBar = page.bar;                            // the modem's own LED state: one source
+	if (iPage == EPageStatus)
+		{
+		// a data flash keeps the "on a call" colour, so the hero doesn't flash
+		LedState cbar = iBar == ELedData ? ELedConnected : iBar;
+		bool changed = iShownPage != iPage || cbar != iShownBar
+			|| strcmp(iShownState, page.state) != 0 || iShownHeroRows != page.heroRows
+			|| iShownSignal != page.signal || strcmp(iShownFoot, page.foot) != 0;
+		for (int r = 0; !changed && r < page.heroRows; r++)
+			if (strcmp(iShownHero[r].label, page.hero[r].label) != 0
+				|| strcmp(iShownHero[r].value, page.hero[r].value) != 0)
+				changed = true;
+		if (changed)
+			{
+			DrawStatus(page, cbar);
+			iShownPage = iPage;
+			iShownBar = cbar;
+			iShownSignal = page.signal;
+			strncpy(iShownState, page.state, sizeof(iShownState) - 1);
+			iShownState[sizeof(iShownState) - 1] = 0;
+			strncpy(iShownFoot, page.foot, sizeof(iShownFoot) - 1);
+			iShownFoot[sizeof(iShownFoot) - 1] = 0;
+			iShownHeroRows = page.heroRows;
+			for (int r = 0; r < page.heroRows; r++)
+				iShownHero[r] = page.hero[r];
+			memset(iShown, 0, sizeof(iShown));  // a later text page redraws in full
+			}
+		return;
+		}
 	bool all = iShownPage != iPage;
 	if (all)
 		M5.Display.fillScreen(TFT_BLACK);
 	iShownPage = iPage;
-	iBar = page.bar;                            // the modem's own LED state: one source
 	Draw(page, all);
 	}
 

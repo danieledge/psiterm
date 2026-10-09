@@ -558,7 +558,7 @@ static void TestSettings2()
 	Rig r;
 	const am::Settings2& s2 = r.modem->Config2();
 	CHECK(s2.magic == am::kMagic2 && s2.uplink == am::EUplinkAuto && s2.flow == 0 && s2.web == am::EWebOn);
-	CHECK(s2.tls == 0 && s2.tlsVerify == 1 && s2.img == 0 && s2.imgWidth == 300 && s2.exec == 0);
+	CHECK(s2.tls == 0 && s2.tlsVerify == 1 && s2.img == 1 && s2.imgWidth == 300 && s2.exec == 0);
 	CHECK(s2.tlsPorts[0] == 443 && s2.tlsPorts[3] == 995 && s2.tlsPorts[4] == 0);
 	CHECK(s2.pins[0] == -1 && s2.pins[4] == -1 && s2.webPass[0] == 0 && s2.execToken[0] == 0);
 	// AT&W saves both records; ATZ brings them back
@@ -1132,6 +1132,17 @@ static void TestButton()
 	}
 
 // ----- the status screen's text -------------------------------------------------
+static bool OnHero(const am::ScreenPage& p, const char* aText)
+	{
+	for (int i = 0; i < am::kHeroRows; i++)
+		{
+		char joined[48];
+		snprintf(joined, sizeof(joined), "%s %s", p.hero[i].label, p.hero[i].value);
+		if (strstr(joined, aText) || strstr(p.hero[i].value, aText))
+			return true;
+		}
+	return false;
+	}
 static bool OnPage(const am::ScreenPage& p, const char* aText)
 	{
 	for (int i = 0; i < am::kScreenRows; i++)
@@ -1151,6 +1162,8 @@ static void TestStatusModel()
 	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
 	CHECK(p.bar == am::ELedNoWifi && OnPage(p, "STATUS") && OnPage(p, "1/4") && OnPage(p, "No WiFi network set"));
 	CHECK(OnPage(p, "Call: none"));
+	// the big hero view carries the same state, word for word
+	CHECK(strcmp(p.state, "OFFLINE") == 0 && OnHero(p, "Not set") && OnHero(p, "Hold button"));
 	for (int i = 0; i < am::kScreenRows; i++)
 		CHECK(strlen(p.line[i]) <= (size_t)am::kScreenCols);
 	// a network saved, not joined
@@ -1164,13 +1177,16 @@ static void TestStatusModel()
 	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
 	CHECK(p.bar == am::ELedWifi && OnPage(p, "WiFi Home") && OnPage(p, "IP   192.168.1.50") && OnPage(p, "RSSI -60 dBm"));
 	CHECK(OnPage(p, "115200 baud, FC off") && OnPage(p, "To Psion  0"));
+	CHECK(strcmp(p.state, "ONLINE") == 0 && OnHero(p, "Home") && OnHero(p, "IP 192.168.1.50") && OnHero(p, "Ready to dial") && p.signal == 3);
 	// a TCP call
 	r.TypeRun("ATDT example.com:22\r", 100); r.Run(300);
 	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
 	CHECK(p.bar == am::ELedConnected && OnPage(p, "Call: tcp") && OnPage(p, "example.com:22"));
+	CHECK(strcmp(p.state, "CONNECTED") == 0 && OnHero(p, "example.com:22"));
 	r.Feed("0123456789abcdef"); r.Run(200);
 	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
 	CHECK(OnPage(p, "To Psion  16"));
+	CHECK(OnHero(p, "P 16"));
 	// the modes page, mid call: the last dial
 	am::StatusModel::Fill(*r.modem, r.hal, am::EPageModes, p);
 	CHECK(OnPage(p, "MODES") && OnPage(p, "TCP: ready") && OnPage(p, "PPP: on") && OnPage(p, "TLS: off")

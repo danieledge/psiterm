@@ -97,6 +97,95 @@ void SplitWifi(const char* aInfo, char* aSsid, size_t aSsidMax, char* aIp, size_
 
 const char* const kUplinkNames[] = { "AUTO", "WIFI", "USB" };
 
+// the one-word state for the big hero view, from the LED colour
+const char* StateWord(LedState aBar)
+	{
+	switch (aBar)
+		{
+	case ELedNoWifi:     return "OFFLINE";
+	case ELedConnecting: return "CONNECTING";
+	case ELedWifi:       return "ONLINE";
+	case ELedConnected:  return "CONNECTED";
+	case ELedData:       return "CONNECTED";   // a data flash is still a connection
+	case ELedConfig:     return "SETUP";
+		}
+	return "";
+	}
+
+void HeroPut(ScreenPage& p, const char* aLabel, const char* aValue)
+	{
+	if (p.heroRows >= kHeroRows)
+		return;
+	HeroRow& r = p.hero[p.heroRows++];
+	Builder::Clean(r.label, aLabel, sizeof(r.label) - 1);
+	Builder::Clean(r.value, aValue, kScreenCols);
+	}
+
+// RSSI (dBm, 0 = unknown) to 0..4 signal bars
+int Bars(int aRssi)
+	{
+	if (aRssi == 0)   return 2;   // joined but no reading: a middling guess
+	if (aRssi >= -55) return 4;
+	if (aRssi >= -65) return 3;
+	if (aRssi >= -73) return 2;
+	if (aRssi >= -82) return 1;
+	return 0;
+	}
+
+// the dashboard hero: a state word, Wi-Fi signal, label/value rows and a
+// footer, which board/screen.cpp draws. Fed the same state as the dense text,
+// so the two never disagree.
+void FillHero(const Modem& m, Hal& h, ScreenPage& p)
+	{
+	p.heroRows = 0;
+	p.signal = -1;
+	Builder::Clean(p.state, StateWord(p.bar), sizeof(p.state) - 1);
+	char b[64];
+	if (h.WifiUp())
+		{
+		char info[96], ssid[40], ip[24];
+		int rssi;
+		info[0] = 0;
+		h.WifiInfo(info, sizeof(info));
+		SplitWifi(info, ssid, sizeof(ssid), ip, sizeof(ip), rssi);
+		p.signal = Bars(rssi);
+		HeroPut(p, "Net", ssid[0] ? ssid : "joined");
+		HeroPut(p, "IP", ip);
+		}
+	else if (m.Config().ssid[0])
+		{
+		HeroPut(p, "Net", m.Config().ssid);
+		HeroPut(p, "", "Not connected");
+		}
+	else
+		{
+		HeroPut(p, "Net", "Not set");
+		HeroPut(p, "", "Hold button: setup");
+		}
+	// the call
+	if (!m.Connected() && !m.Closing())
+		HeroPut(p, "Call", h.WifiUp() ? "Ready to dial" : "No uplink");
+	else if (m.PppCall())
+		{ snprintf(b, sizeof(b), "PPP %s, Psion on", m.Ppp().Up() ? "up" : "LCP"); HeroPut(p, "Call", b); }
+	else if (m.ProxyCall())
+		{ snprintf(b, sizeof(b), "Proxy %u req", (unsigned)m.WebProxy().Requests()); HeroPut(p, "Call", b); }
+	else if (m.ExecCall())
+		HeroPut(p, "Call", "Command");
+	else
+		HeroPut(p, "Call", m.LastDial());
+	// traffic, while a call is up
+	if (m.Connected() || m.Closing())
+		{
+		char n1[12], n2[12];
+		StatusModel::Count(m.ToPsion(), n1, sizeof(n1));
+		StatusModel::Count(m.ToServer(), n2, sizeof(n2));
+		snprintf(b, sizeof(b), "P %s  S %s", n1, n2);
+		HeroPut(p, "Data", b);
+		}
+	snprintf(b, sizeof(b), "%lu baud   FC %s", (unsigned long)m.Config().baud, m.Config2().flow ? "on" : "off");
+	Builder::Clean(p.foot, b, kScreenCols);
+	}
+
 void PageStatus(const Modem& m, Hal& h, Builder& b)
 	{
 	b.Put("STATUS");
@@ -155,6 +244,7 @@ void PageStatus(const Modem& m, Hal& h, Builder& b)
 	h.LogLines().Line(0, last, sizeof(last));
 	b.Blank();
 	b.Wrap(last, 3);
+	FillHero(m, h, b.p);
 	}
 
 void PageModes(const Modem& m, Hal&, Builder& b)

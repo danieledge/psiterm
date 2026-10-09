@@ -37,6 +37,7 @@ public:
 
 private:
 	void Draw(const ScreenPage& aPage, bool aAll);
+	void DrawStatus(const ScreenPage& aPage, LedState aBar);   // the big hero view
 	void Backlight(bool aOn);
 
 	int iPage;
@@ -49,6 +50,12 @@ private:
 	LedState iShownBar;
 	int iShownPage;
 	char iShown[kScreenRows][kScreenCols + 1];
+	// what the hero (Status) view last showed, so it redraws only on a change
+	char iShownState[14];
+	HeroRow iShownHero[kHeroRows];
+	int iShownHeroRows;
+	int iShownSignal;
+	char iShownFoot[kScreenCols + 1];
 	};
 
 extern Screen gScreen;

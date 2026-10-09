@@ -81,7 +81,7 @@ void FactoryDefaults2(Settings2& aS)
 	aS.web = EWebOn;
 	aS.tls = 0;
 	aS.tlsVerify = 1;
-	aS.img = 0;
+	aS.img = 1;                // the Atom's point: pictures scaled and dithered to 16 greys by default (else full-size JPEGs flood the slow link)
 	aS.imgWidth = 300;
 	aS.imgMaxKB = 64;
 	aS.exec = 0;
