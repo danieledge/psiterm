@@ -67,6 +67,7 @@ core
 core.[0-9]*
 # local headers, logs, environment and PsiProxy's own config
 *_local.h
+*_local.*
 *.log
 *.log.old
 !experimental/kernel/results/*.log
@@ -75,6 +76,11 @@ core.[0-9]*
 !.env.example
 proxy/psiproxy.env
 proxy/*.secret
+# WireGuard client configs and keys: they stay on your machine and the device
+wg*.conf
+*wireguard*.conf
+*.wg
+wg-*.txt
 
 # Claude Code's local notes
 CLAUDE.local.md

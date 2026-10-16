@@ -60,7 +60,7 @@ for e in "$@"; do
 	else A+=(--press-key "$1" "$2" "${3:-8}"); fi
 done
 POST=$((last - 35 + ${EMU_SECS:-5}))
-timeout 1800 "$EMU/harness/run" "$ROM" --device 5mx --boot-seconds 35 --card-path "$CARD" \
+timeout ${EMU_TIMEOUT:-1800} "$EMU/harness/run" "$ROM" --device 5mx --boot-seconds 35 --card-path "$CARD" \
 	--post-attach-seconds "$POST" $([ "${EMU_LOGS:-0}" = 1 ] || echo --quiet-logs) --screenshot "$OUT/end.pgm" ${EMU_SAVE_CARD:+--save-card "$EMU_SAVE_CARD"} $([ "${EMU_MIC:-0}" = 1 ] && echo --feed-mic-silence) \
 	"${A[@]}" --screenshot-every 1 "$OUT/s" > "$OUT/log" 2>&1 || true
 grep -iE "panic|KERN-|WSERV|USER [0-9]" "$OUT/log" | head -3 || true

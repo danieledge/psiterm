@@ -31,6 +31,11 @@ build fetches NetSurf and its libraries at fixed commits and needs a few more
 PC packages: see [web/README.md](../web/README.md#building). PsiMail's tests
 are described in [mail/test/README.md](../mail/test/README.md).
 
+## The Atom modem firmware
+
+`firmware/atom-modem` builds with PlatformIO or the Arduino IDE, and has host
+unit tests: see [its README](../firmware/atom-modem/README.md#building-and-testing).
+
 ## Layout
 
 | Path | What |
@@ -45,6 +50,7 @@ are described in [mail/test/README.md](../mail/test/README.md).
 | `libvterm/` | terminal emulation |
 | `mail/` | PsiMail - IMAP/SMTP over TLS and CalDAV: see [mail/README.md](../mail/README.md) |
 | `web/` | PsiWeb - the NetSurf browser: see [web/README.md](../web/README.md) |
+| `firmware/atom-modem/` | Psion-tuned Wi-Fi modem firmware for the M5Stack Atom |
 | `pkg/` | installer definition, font and icon files |
 | `server/` | optional local update/debug server (plain HTTP) |
 | `tools/` | font and icon converters, screenshot renderer, release signing, test harnesses |

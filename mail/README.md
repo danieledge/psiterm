@@ -230,8 +230,8 @@ save the upload time).
 Tools > Connection settings chooses how PsiMail reaches the Internet; the
 settings are shared with PsiTerm and PsiWeb.
 
-* **Modem**: a serial Wi-Fi modem (such as a WiRSa or a WiFi232) on the
-  Psion's serial port.
+* **Modem**: a serial Wi-Fi modem (such as a WiRSa, a WiFi232 or the
+  [Atom modem](../firmware/atom-modem/README.md)) on the Psion's serial port.
   PsiMail dials the server with `ATDT host:port`. Set the baud rate to the
   modem's; 115200 with RTS/CTS flow control is fastest if the cable carries
   those lines. The line is only taken while PsiMail needs it, and File >
@@ -267,7 +267,7 @@ settings are shared with PsiTerm and PsiWeb.
   these apps (port 8081 by default); the main
   [README](../README.md#the-proxy-optional) says how to set it up.
 * **Modem provides TLS** (Link page) is only for a modem whose firmware does
-  the TLS itself; leave it at No for a WiRSa or a WiFi232.
+  the TLS itself (the Atom modem's); leave it at No for a WiRSa or a WiFi232.
   If it is Yes and the modem does not, PsiMail notices on the first IMAP or
   SMTP connection (no plain greeting within 12 seconds), does the TLS itself
   on that same connection, and says so in `psimail.log`.

@@ -44,7 +44,7 @@ The toolbar (Open, Back, Home, Pictures - pressed in while the page's pictures s
 
 **Files PsiWeb cannot show** (a PDF, a ZIP, a Word file): PsiWeb says what the file is and how big, and asks "Save it to a file?". Yes opens the standard Save as dialog (Documents on the Memory disk if there is one). The bottom left then shows how much has come, "Saved" says when it is done, and Esc stops it. A file bigger than 4 MB is not saved, and a part file is never left behind.
 
-**Tools > Connection settings**: modem (`ATDT host:port`, as PsiTerm) or the Psion's own TCP/IP (dial-up), baud rate and flow control. These are the same settings as PsiTerm and PsiMail use. **Test** (Ctrl+T) tries them before OK. The serial port can be used by one program at a time, so disconnect PsiTerm or PsiMail first (and the Remote link must be off).
+**Tools > Connection settings**: modem (`ATDT host:port`, as PsiTerm) or the Psion's own TCP/IP (dial-up), baud rate and flow control. These are the same settings as PsiTerm and PsiMail use. **Test** (Ctrl+T) tries them before OK. The serial port can be used by one program at a time, so disconnect PsiTerm or PsiMail first (and the Remote link must be off). The [Atom modem firmware](../firmware/atom-modem/README.md) is a Wi-Fi modem tuned for the Psion.
 
 **Tools > Preferences**: the home page and pictures.
 

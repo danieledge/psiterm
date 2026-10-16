@@ -213,7 +213,7 @@ def test_at(ctx):
     # PsiTerm's terminal is up at ~45 s and holds COMM::0 when SSH isn't running
     s = Script(52).type('ati\r').wait(1).type('at\r')
     out = emulate('at', card, ctx.sock, s)
-    ok = grep(modem, 'Atom modem') and grep(modem, '-> 6 bytes') and grep(os.path.join(out, 'log'), 'serial-rx UART2')
+    ok = grep(modem, 'PsiConnect 2') and grep(modem, '-> 6 bytes') and grep(os.path.join(out, 'log'), 'serial-rx UART2')
     return ok, out
 
 
@@ -447,7 +447,7 @@ def test_kern(ctx):
     out = kern_serial(ctx, 'kern', log)
     # (hostmodem logs what it sends: ATI's first line, ten times at each speed)
     try:
-        n = open(log, 'rb').read().count(b'Atom modem ')
+        n = open(log, 'rb').read().count(b'PsiConnect 2.')
     except OSError:
         n = 0
     return n >= 20, out
