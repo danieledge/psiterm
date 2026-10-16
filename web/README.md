@@ -140,6 +140,11 @@ The first build fetches Links 2.30, libjpeg 9f and libpng 1.6.43 at pinned check
 
 `PSIWEB_ENGINE=netsurf web/build.sh` still builds the 0.61 NetSurf engine (`web/Makefile`, `web/engine/fetch_psi.c`, `web/fb`, `web/patches`, `web/emu`). The app works with either engine. NetSurf rendered CSS, but needed 15 to 25 MB for a page like BBC's, against the 10 MB heap. `links/PORTING.md` says how to remove it once Links is proved on the device.
 
+## Support
+
+If PsiWeb gets your Psion back on the web and you'd like to say thanks,
+you can [buy me a coffee](https://buymeacoffee.com/danedge).
+
 ## Licence
 
 Links is GPL v2, as NetSurf is, so `psiweb.exe` as a whole is **GPL v2**; `PsiWeb.sis` carries the licence text. libjpeg and libpng have their own permissive licences. PsiWeb's own code and the PsiTerm parts are MIT.
