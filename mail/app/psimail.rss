@@ -377,10 +377,19 @@ RESOURCE MENU_PANE r_pm_tools_menu
 		MENU_ITEM { command=EPmCmdConnSettings; txt="Connection settings..."; },
 		MENU_ITEM { command=EPmCmdCalSettings; txt="Calendar settings..."; },
 		MENU_ITEM { command=EPmCmdAccountsMenu; cascade=r_pm_accounts_menu; txt="Accounts"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPmCmdRestart; txt="Restart mail engine"; },
+		MENU_ITEM { command=EPmCmdTroubleMenu; cascade=r_pm_trouble_menu; txt="Troubleshooting"; },
 		MENU_ITEM { command=EPmCmdUpdate; txt="Update PsiMail..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPmCmdHelp; txt="Help on PsiMail"; },
 		MENU_ITEM { command=EPmCmdAbout; txt="About PsiMail"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pm_trouble_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPmCmdRestart; txt="Restart mail engine"; },
+		MENU_ITEM { command=EPmCmdSendLog; txt="Send log to server"; }
 		};
 	}
 
@@ -619,6 +628,13 @@ RESOURCE ARRAY r_pm_security_array
 	items={ LBUF { txt="None"; }, LBUF { txt="TLS (SSL)"; }, LBUF { txt="STARTTLS"; } };
 	}
 
+// Connection settings > Network: the Psion Internet connection after use
+// (shared, PsiLink.ini v4; the same words in all four programs)
+RESOURCE ARRAY r_pm_keepup_array
+	{
+	items={ LBUF { txt="Stays connected"; }, LBUF { txt="Disconnects when idle"; } };
+	}
+
 RESOURCE ARRAY r_pm_yesno_array
 	{
 	items={ LBUF { txt="No"; }, LBUF { txt="Yes"; } };
@@ -809,6 +825,8 @@ RESOURCE ARRAY r_pm_prefs_screen_lines
 			control=CHOICELIST { array_id=r_pm_pictures_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Web pictures"; id=EPmDlgWebPictures;
 			control=CHOICELIST { array_id=r_pm_web_pictures_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Web pictures via proxy"; id=EPmDlgWebProxy;
+			control=CHOICELIST { array_id=r_pm_web_proxy_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Reading mode"; id=EPmDlgReading;
 			control=CHOICELIST { array_id=r_pm_reading_array; }; }
 		};
@@ -837,6 +855,14 @@ RESOURCE ARRAY r_pm_web_pictures_array
 	items=
 		{
 		LBUF { txt="Ask"; }, LBUF { txt="Always"; }, LBUF { txt="Never"; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_web_proxy_array
+	{
+	items=
+		{
+		LBUF { txt="No"; }, LBUF { txt="Yes"; }
 		};
 	}
 
@@ -872,12 +898,40 @@ RESOURCE DIALOG r_pm_conn_dialog
 	title="Connection settings";
 	flags=EEikDialogFlagWait;
 	buttons=r_pm_conn_buttons;
+	pages=r_pm_conn_pages;
+	}
+
+RESOURCE ARRAY r_pm_conn_pages
+	{
+	items=
+		{
+		PAGE { text="Link"; id=EPmPageLink; lines=r_pm_conn_link_lines; },
+		PAGE { text="Network"; id=EPmPageProxy; lines=r_pm_conn_proxy_lines; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_conn_link_lines
+	{
 	items=
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Baud rate"; id=EPmDlgBaud; control=CHOICELIST { array_id=r_pm_baud_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Flow control"; id=EPmDlgFlow; control=CHOICELIST { array_id=r_pm_flow_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Mail connects via"; id=EPmDlgLink; control=CHOICELIST { array_id=r_pm_link_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Modem provides TLS"; id=EPmDlgModemTls; control=CHOICELIST { array_id=r_pm_yesno_array; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Psion Internet: first send"; id=EPmDlgPppStart; control=EDWIN { width=14; maxlength=40; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pm_conn_proxy_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="After use, Psion Internet"; id=EPmDlgKeepUp; control=CHOICELIST { array_id=r_pm_keepup_array; }; },
+		DLG_LINE { type=EEikCtLabel; control=LABEL { standard_font=EEikLabelFontAnnotation;
+			txt="Disconnect with Ctrl+U - the modem route always hangs up after use"; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Use proxy"; id=EPmDlgUseProxy; control=CHOICELIST { array_id=r_pm_yesno_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Proxy host"; id=EPmDlgProxyHost; control=EDWIN { width=22; maxlength=60; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Proxy port"; id=EPmDlgProxyPort; control=NUMBER_EDITOR { min=1; max=65535; }; }
 		};
 	}
 

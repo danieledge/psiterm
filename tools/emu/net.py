@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """tools/emu/net.py - end-to-end network tests in the 5mx emulator.
 
-    python3 tools/emu/net.py [at|web|mail|ssh|proxy|all ...] [--keep]
+    python3 tools/emu/net.py [at|web|mail|ssh|proxy|browse|update|all ...] [--keep]
 
 For each test it starts a host modem (firmware/atom-modem's hostmodem) on a
 unix socket, the local server the app should reach, builds a card with the
@@ -20,6 +20,7 @@ build/emu/net/<test>/ (end.png is the last frame).
         site (EMU_PROXY_URL, default news.ycombinator.com: http:// that
         moves to https://, so the modem does the TLS). Needs the Internet;
         not part of "all".
+  (and any local tests in tools/emu/local/, see LOCAL below)
 
 Every server listens on 127.0.0.1 only, and every process it starts is
 stopped at the end (it never kills anything it did not start). The sshd
@@ -282,7 +283,7 @@ def mail_script():
     return s
 
 
-def ssh_setup(ctx):
+def ssh_setup(ctx, sftp_root=None):
     d = os.path.join(WORK, 'sshd')
     os.makedirs(d, exist_ok=True)
     for f in ('host_ed25519', 'host_ed25519.pub', 'id_ed25519', 'id_ed25519.pub'):
@@ -295,9 +296,15 @@ def ssh_setup(ctx):
     os.chmod(os.path.join(d, 'authorized_keys'), 0o600)
     shell = os.path.join(d, 'shell.sh')
     with open(shell, 'w') as f:
+        # (SFTP - Get file / Send file - is the subsystem request, which the
+        # forced command sees as SSH_ORIGINAL_COMMAND: OpenSSH's sftp-server,
+        # starting in the test's folder)
         f.write('#!/bin/sh\n# the only thing the test sshd runs\ncd "%s"\n'
+                'case "$SSH_ORIGINAL_COMMAND" in internal-sftp*|sftp|*sftp-server*)\n'
+                '  exec /usr/lib/openssh/sftp-server -d "%s" -e -l INFO 2>>"%s/sftp.log";; esac\n'
                 'echo "psiemu sshd: logged in as $(id -un)"\n'
-                'exec env -i HOME="%s" PATH=/usr/bin:/bin TERM="${TERM:-vt100}" PS1="psiemu$ " /bin/sh -i\n' % (d, d))
+                'exec env -i HOME="%s" PATH=/usr/bin:/bin TERM="${TERM:-vt100}" PS1="psiemu$ " /bin/sh -i\n'
+                % (d, sftp_root or d, WORK, d))
     os.chmod(shell, 0o700)
     port = free_port()
     cfg = os.path.join(d, 'sshd_config')
@@ -440,7 +447,7 @@ def test_kern(ctx):
     out = kern_serial(ctx, 'kern', log)
     # (hostmodem logs what it sends: ATI's first line, ten times at each speed)
     try:
-        n = open(log, 'rb').read().count(b'Atom modem 1.1')
+        n = open(log, 'rb').read().count(b'Atom modem ')
     except OSError:
         n = 0
     return n >= 20, out
@@ -458,9 +465,113 @@ def test_kernwirsafast(ctx):
     return grep(log, 'AT$SB=230400 -> switching') and grep(log, 'AT$SB=115200 -> switching'), out
 
 
-TESTS = {'at': test_at, 'web': test_web, 'mail': test_mail, 'ssh': test_ssh, 'proxy': test_proxy,
+# PsiTerm's Get file (0.91: the file view, which lists folders in place).
+# A folder tree for SFTP (sftp-server starts in it): the file view opens at
+# once with "Opening folder..."; a folder is opened, made a favourite, Up
+# goes back (highlighting it), a big folder is stopped with Esc while it is
+# listed and then opened, the Location pane's keys go to a favourite, a tap
+# on one goes there, Del removes one, Close goes back to the terminal; then
+# Get file again (the folder used last) gets a file, and Send file sends one
+# (the session log) into a folder. The screenshots (one a second) show the
+# view never leaving the screen while listing.
+def browse_tree():
+    root = os.path.join(WORK, 'bt')
+    shutil.rmtree(root, ignore_errors=True)
+    for sub in ('alpha/deep', 'beta', 'big', 'gamma'):
+        os.makedirs(os.path.join(root, sub))
+    with open(os.path.join(root, 'hello.txt'), 'w') as f:
+        f.write('Hello from the test server\n')
+    with open(os.path.join(root, 'notes.md'), 'w') as f:
+        f.write('# notes\n' * 200)
+    with open(os.path.join(root, 'alpha', 'a.txt'), 'w') as f:
+        f.write('a\n')
+    os.symlink('alpha', os.path.join(root, 'alink'))     # a link: Open looks at it first (STAT)
+    for i in range(400):        # a folder that takes several seconds to list
+        with open(os.path.join(root, 'big', 'file-with-a-longish-name-%03d.dat' % i), 'w') as f:
+            f.write('x' * i)
+    return root
+
+
+def test_browse(ctx):
+    root = browse_tree()
+    if os.path.exists(os.path.join(WORK, 'sftp.log')):
+        os.remove(os.path.join(WORK, 'sftp.log'))
+    r = ssh_setup(ctx, sftp_root=root)
+    if not r:
+        return False, 'sshd did not start (see %s/sshd.log)' % WORK
+    d, port, log = r
+    card = os.path.join(WORK, 'browse.img')
+    make_card('psiterm', card, 'EMU_PKG_TERM', [('PSIKEY', os.path.join(d, 'id_ed25519'))])
+    ctx.modem('browse', redirect='127.0.0.1:%d' % port)
+    s = ssh_script(getpass.getuser())
+    s.wait(4)
+    t0 = s.t
+    # File > Files > Get file (the menu opens on Tools, used last)
+    s.key(MENU, gap=1.2)
+    for _ in range(6):
+        s.key(LEFT, gap=0.6)
+    for _ in range(5):
+        s.key(DOWN, gap=0.5)
+    s.key(RIGHT, gap=1).key(DOWN, gap=0.6).key(ENTER, gap=12)
+    s.ctrl('f', gap=3)                       # the tree's top a favourite
+    s.key(ENTER, gap=6)                      # open alpha (highlighted first)
+    s.ctrl('f', gap=3)                       # alpha a favourite too
+    s.key(MENU, gap=1.5).key(RIGHT, gap=1).key(RIGHT, gap=2)   # the file view's menus: Favourites
+    s.key(ESC, gap=1.5)                      # (one Esc closes the menus)
+    s.tap(75, 73, gap=6)                     # one tap on the first favourite (the tree's top)
+    s.key(ENTER, gap=6)                      # alpha again
+    s.key(DEL, gap=6)                        # Backspace: up, alpha highlighted
+    s.key(DOWN, gap=0.6).key(DOWN, gap=0.6)  # big
+    s.key(ENTER, gap=1.5).key(ESC, gap=6)    # stopped while it is listed
+    s.key(ENTER, gap=25)                     # big, all of it
+    s.key(LEFT, gap=1.5).key(DOWN, gap=1.5)  # the pane: the second favourite (alpha)
+    s.key(ENTER, gap=6)
+    s.key(LEFT, gap=1.5).key(DEL, gap=3)     # Del removes alpha from the favourites
+    s.key(RIGHT, gap=1.5)
+    s.ctrl('g', gap=2)                       # Go to folder...: ~, the home folder (the tree)
+    for _ in range(12):
+        s.key(DEL, gap=0.15)
+    s.type('~').key(ENTER, gap=6)
+    s.ctrl('t', gap=3).ctrl('t', gap=3)      # Show toolbar off and on: the view takes the room
+    s.ctrl('e', gap=4)                       # Close: the terminal again
+    # Get file again, from the toolbar's Files button this time: the folder
+    # used last (the tree's top); the file hello.txt
+    s.tap(650, 165, gap=1.5).key(DOWN, gap=0.6).key(ENTER, gap=10)
+    s.type('a', gap=1).key(ENTER, gap=6)    # "alink" (after alpha): a link to a folder, opened
+    s.key(DEL, gap=6)                        # up again
+    s.type('h', gap=1).key(ENTER, gap=4)    # the Save as dialog
+    s.key(ENTER, gap=8)                      # Save: the progress window, then the terminal
+    # Send file: a Psion file to send first (the Open file dialog offers
+    # one in C:\Documents; Files > Log to file makes sure there is one)
+    s.tap(650, 165, gap=1.5).key(DOWN, gap=0.5).key(DOWN, gap=0.5).key(ENTER, gap=2).key(ENTER, gap=3)
+    s.tap(650, 165, gap=1.5).key(ENTER, gap=3)   # Files > Send file...: the Open file dialog
+    s.key(ENTER, gap=8)                      # (the file it offers): the file view, for where it goes
+    s.key(DOWN, gap=0.6).key(ENTER, gap=5)   # into beta
+    s.ctrl('s', gap=10)                      # Send here (Ctrl+S): sent, the terminal again
+    print('browse: Get file from %.0f s, script ends at %.0f s' % (t0, s.t), flush=True)
+    out = emulate('browse', card, ctx.sock, s, secs=6)
+    # (sftp-server's log: the folders listed, and hello.txt read)
+    sl = os.path.join(WORK, 'sftp.log')
+    # (the link to alpha is listed as alpha: psissh asks for the real path)
+    ok = grep(sl, 'opendir "%s/alpha"' % root, 'opendir "%s/big"' % root, 'hello.txt" flags READ',
+              'open "%s/beta/' % root, 'flags WRITE,CREATE')
+    return ok, out
+
+
+TESTS = {'browse': test_browse, 'at': test_at, 'web': test_web, 'mail': test_mail, 'ssh': test_ssh, 'proxy': test_proxy,
          'update': test_update, 'kern': test_kern, 'kernwirsa': test_kernwirsa, 'kernwirsafast': test_kernwirsafast}
 ALL = ['at', 'web', 'mail', 'ssh']             # (proxy needs the Internet: asked for by name)
+
+# Local tests (tools/emu/local/*.net.py, not part of the repository): each
+# runs with this file's names (Script, make_card, emulate, grep...) and adds
+# its own to TESTS. Asked for by name; never part of "all".
+LOCAL = os.path.join(HERE, 'local')
+if os.path.isdir(LOCAL):
+    for _n in sorted(os.listdir(LOCAL)):
+        if _n.endswith('.net.py'):
+            _p = os.path.join(LOCAL, _n)
+            with open(_p) as _f:
+                exec(compile(_f.read(), _p, 'exec'), globals())
 
 
 def main():

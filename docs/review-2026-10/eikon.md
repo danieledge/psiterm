@@ -4,7 +4,7 @@ Scope: `app/psiterm.rss`, `app/psiterm.hrh`, `app/psiterm.cpp`, `app/pthelp.cpp`
 Checked against the EIKON Application Style Guide (as distilled in the `epoc-eikon-ui-guide` skill) and the "UI rules" section of `psiterm/CLAUDE.md`.
 
 Severity key: **P** = panic risk, **V** = visible inconsistency, **W** = wording.
-All paths are under `/home/daniel/www/psion/psiterm/`.
+All paths are relative to the repository.
 
 ## 0. Panic-risk sweep (EIKON 8): clean
 

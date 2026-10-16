@@ -48,6 +48,7 @@ python3 tools/emu/net.py web mail   # or some of: at web mail ssh
 | `web` | PsiWeb: Ctrl+O, `127.0.0.1`, Enter | `nethttp.py` served `GET /` |
 | `mail` | PsiMail: a new account (port 143, Security None, a password), which checks at once | `fakeimap.py` saw LOGIN and FETCH |
 | `ssh` | PsiTerm: Tools > SSH keys > Import `D:\PSIKEY`, SSH to a new server, accept the host key, run `echo` | the sshd accepted the key |
+| `browse` | PsiTerm 0.91's file view (Get file / Send file) over SFTP: folders opened in place, favourites, Up, Esc while listing, the Location pane's keys, Go to, the toolbar shown and hidden, a file got and one sent. `sftp-server` serves a test tree in `build/emu/net/bt` | `sftp.log` shows the folders listed, `hello.txt` read and a file written |
 
 Screenshots are in `build/emu/net/<test>/` (`end.png` is the last frame), with
 the modem's log (`<test>-modem.log`) and the servers' logs (`http.log`,

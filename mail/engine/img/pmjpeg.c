@@ -114,7 +114,8 @@ int pmimg_decode_jpeg(PmImgIn *in, const PmImgOpts *from, PmImage *out, char *er
 	}
 	/* a half, quarter or eighth of it is plenty? then decode only that much */
 	for (shrink = 3; shrink > 0; shrink--)
-		if ((info.m_width >> shrink) >= o.max_w / 2 || (info.m_height >> shrink) >= o.max_h / 2) break;
+		if ((info.m_width >> shrink) >= (o.exact ? o.max_w : o.max_w / 2)
+			|| (info.m_height >> shrink) >= (o.exact ? o.max_h : o.max_h / 2)) break;
 	if (shrink && pmimg_in_rewind(in)) {
 		if (shrink == 3) reduce = 1;
 		else pjpeg_set_shrink((unsigned char)shrink);

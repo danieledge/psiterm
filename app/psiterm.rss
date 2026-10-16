@@ -15,9 +15,11 @@ NAME PSIT
 #include <eikcmbut.rh>
 #include <eiklabel.rh>
 #include <eikrted.rh>
+#include <eikprogi.rh>
 #include <eikctrls.hrh>
 #include <eiktbar.rh>
 #include <eiktbar.hrh>
+#include <eikbutb.hrh>
 #include <eikmnbut.rh>
 #include <eikspace.rh>
 #include <eikclock.rh>
@@ -195,7 +197,7 @@ RESOURCE MENU_PANE r_pt_term_menu
 		MENU_ITEM { command=EPtCmdSsh; txt="SSH to..."; },
 		MENU_ITEM { command=EPtCmdSshDisconnect; txt="End SSH"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdConnect; txt="Connect"; },
-		MENU_ITEM { command=EPtCmdHangup; txt="Hang up modem"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdHangup; txt="Disconnect"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdInstallKey; txt="Install login key on server..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { cascade=r_pt_files_popup; txt="Files"; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
@@ -232,7 +234,8 @@ RESOURCE MENU_PANE r_pt_debug_menu
 		MENU_ITEM { command=EPtCmdCharInfo; txt="Character codes"; },
 		MENU_ITEM { command=EPtCmdCheckTabs; txt="Check tmux tabs"; },
 		MENU_ITEM { command=EPtCmdScreenshot; txt="Screenshot"; },
-		MENU_ITEM { command=EPtCmdSendSize; txt="Type screen size"; }
+		MENU_ITEM { command=EPtCmdSendSize; txt="Type screen size"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdSendLog; txt="Send log to server"; }
 		};
 	}
 
@@ -434,14 +437,60 @@ RESOURCE DIALOG r_pt_conn_dialog
 	title="Connection settings";
 	flags=EEikDialogFlagWait;
 	buttons=r_pt_conn_buttons;
+	pages=r_pt_conn_pages;
+	}
+
+RESOURCE ARRAY r_pt_conn_pages
+	{
+	items=
+		{
+		PAGE { text="Link"; id=EPtPageLink; lines=r_pt_conn_link_lines; },
+		PAGE { text="Network"; id=EPtPageProxy; lines=r_pt_conn_proxy_lines; },
+		PAGE { text="Psion Internet"; id=EPtPageInternet; lines=r_pt_conn_internet_lines; }
+		};
+	}
+
+// (link keep-up) the Psion Internet connection after use: on a page of its
+// own here (PsiMail and PsiWeb have it on Network, which is full in
+// PsiTerm: an ER5 dialog page does not scroll to a line below its foot)
+RESOURCE ARRAY r_pt_conn_internet_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="After use, Psion Internet"; id=EPtDlgKeepUp; control=CHOICELIST { array_id=r_pt_keepup_array; }; },
+		DLG_LINE { type=EEikCtLabel; control=LABEL { standard_font=EEikLabelFontAnnotation;
+			txt="Disconnect with Shift+Ctrl+U - the modem route always hangs up after use"; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pt_conn_link_lines
+	{
 	items=
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Baud rate"; id=EPtDlgBaud; control=CHOICELIST { array_id=r_pt_baud_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Flow control"; id=EPtDlgFlow; control=CHOICELIST { array_id=r_pt_flow_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="SSH connects via"; id=EPtDlgLink; control=CHOICELIST { array_id=r_pt_link_array; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Psion Internet: first send"; id=EPtDlgPppStart; control=EDWIN { width=14; maxlength=40; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Reconnect if dropped"; id=EPtDlgReconnect; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
+		DLG_LINE { type=EEikCtEdwin; prompt="Psion Internet: first send"; id=EPtDlgPppStart; control=EDWIN { width=14; maxlength=40; }; }
 		};
+	}
+
+RESOURCE ARRAY r_pt_conn_proxy_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Reconnect if dropped"; id=EPtDlgReconnect; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Use proxy"; id=EPtDlgProxy; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Proxy host"; id=EPtDlgProxyHost; control=EDWIN { width=22; maxlength=60; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Proxy port"; id=EPtDlgProxyPort; control=NUMBER_EDITOR { min=1; max=65535; }; }
+		};
+	}
+
+// (link keep-up) Connection settings > Network: the Psion Internet
+// connection after use (shared, PsiLink.ini v4; the same words in all four
+// programs)
+RESOURCE ARRAY r_pt_keepup_array
+	{
+	items={ LBUF { txt="Stays connected"; }, LBUF { txt="Disconnects when idle"; } };
 	}
 
 RESOURCE ARRAY r_pt_baud_array
@@ -788,7 +837,10 @@ RESOURCE DIALOG r_pt_xfer_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgXferWhat; control=LABEL { txt=""; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPtDlgXferHow; control=LABEL { txt=""; }; }
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgXferPct; control=LABEL { txt=""; horiz_align=EEikLabelAlignHCenter; }; },
+		DLG_LINE { type=EEikCtProgInfo; id=EPtDlgXferGauge;
+			control=PROGRESSINFO { text_type=EEikProgressTextNone; finalval=1000; width=420; height=22; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgXferHow; control=LABEL { txt=""; horiz_align=EEikLabelAlignHCenter; }; }
 		};
 	}
 
@@ -800,55 +852,181 @@ RESOURCE DLG_BUTTONS r_pt_xfer_buttons
 		};
 	}
 
-// Get file: the server's folder, folders first. Enter opens a folder or
-// fetches a file; Up (or Backspace) goes to the folder above.
-RESOURCE DIALOG r_pt_remote_get_dialog
+// 0.91: Get file / Send file's file view. Not a dialog: while browsing, the
+// program's window is the file view (a title band, the Location pane and
+// the server's folder as a list, as the System screen and EIKON's Browse
+// show folders), with its own menus, shortcuts and toolbar; Close (Ctrl+E or
+// Esc) puts the terminal back, with the SSH session still running under it.
+// The terminal sends plain Ctrl+letters to the server, so its shortcuts are
+// Shift+Ctrl; the file view sends nothing to the server, so its own are the
+// standard Ctrl+letters (and the terminal's Shift+Ctrl ones still work for
+// Close, Show toolbar, Help and About).
+RESOURCE TOOLBAR r_pt_browse_toolbar
 	{
-	title="Get file";
-	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight;
-	buttons=r_pt_remote_get_buttons;
+	breadth=KEikStdToolBarWidth;
+	controls=
+		{
+		TBAR_CTRL
+			{
+			type=EEikCtLabel;
+			flags=EEikToolBarCtrlHasSetMinLength;
+			length=KEikStdFileNameLabelHeight;
+			control=LABEL { txt="PsiTerm"; horiz_align=EEikLabelAlignHCenter; vert_align=EEikLabelAlignVCenter; };
+			},
+		TBAR_BUTTON { id=EPtCmdBrUp; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Up"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPtCmdBrFavourite; behavior=EEikButLatches; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Favourite"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPtCmdBrAct; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Get"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPtCmdBrClose; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Close"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_CTRL
+			{
+			type=EEikCtSpacer;
+			flags=EEikToolBarCtrlHasSetMinLength|EEikToolBarCtrlIsStretchable;
+			length=0;
+			control=SPACER;
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtClock;
+			control=CLOCK { digitalresourceid=R_EIK_DIGITAL_CLOCK; analogresourceid=R_EIK_ANALOG_CLOCK; };
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtSpacer;
+			flags=EEikToolBarCtrlHasSetMinLength;
+			length=KEikStdGapBelowClock;
+			control=SPACER;
+			}
+		};
+	}
+
+RESOURCE HOTKEYS r_pt_browse_get_hotkeys
+	{
+	control=
+		{
+		HOTKEY { command=EPtCmdBrClose; key='e'; },
+		HOTKEY { command=EPtCmdBrFavourite; key='f'; },
+		HOTKEY { command=EPtCmdBrGoto; key='g'; },
+		HOTKEY { command=EPtCmdBrOpen; key='o'; },
+		HOTKEY { command=EPtCmdToolbar; key='t'; },
+		HOTKEY { command=EPtCmdBrUp; key='u'; }
+		};
+	shift_control=
+		{
+		HOTKEY { command=EPtCmdBrClose; key='e'; },
+		HOTKEY { command=EPtCmdToolbar; key='b'; },
+		HOTKEY { command=EPtCmdHelp; key='h'; },
+		HOTKEY { command=EPtCmdAbout; key='a'; }
+		};
+	}
+
+// Send: Ctrl+S sends to the folder shown (it saves the file there)
+RESOURCE HOTKEYS r_pt_browse_send_hotkeys
+	{
+	control=
+		{
+		HOTKEY { command=EPtCmdBrClose; key='e'; },
+		HOTKEY { command=EPtCmdBrFavourite; key='f'; },
+		HOTKEY { command=EPtCmdBrGoto; key='g'; },
+		HOTKEY { command=EPtCmdBrOpen; key='o'; },
+		HOTKEY { command=EPtCmdBrAct; key='s'; },
+		HOTKEY { command=EPtCmdToolbar; key='t'; },
+		HOTKEY { command=EPtCmdBrUp; key='u'; }
+		};
+	shift_control=
+		{
+		HOTKEY { command=EPtCmdBrClose; key='e'; },
+		HOTKEY { command=EPtCmdToolbar; key='b'; },
+		HOTKEY { command=EPtCmdHelp; key='h'; },
+		HOTKEY { command=EPtCmdAbout; key='a'; }
+		};
+	}
+
+RESOURCE MENU_BAR r_pt_browse_get_menubar
+	{
+	titles=
+		{
+		MENU_TITLE { menu_pane=r_pt_browse_get_file_menu; txt="File"; },
+		MENU_TITLE { menu_pane=r_pt_browse_view_menu; txt="View"; },
+		MENU_TITLE { menu_pane=r_pt_browse_fav_menu; txt="Favourites"; },
+		MENU_TITLE { menu_pane=r_pt_browse_tools_menu; txt="Tools"; }
+		};
+	}
+
+RESOURCE MENU_BAR r_pt_browse_send_menubar
+	{
+	titles=
+		{
+		MENU_TITLE { menu_pane=r_pt_browse_send_file_menu; txt="File"; },
+		MENU_TITLE { menu_pane=r_pt_browse_view_menu; txt="View"; },
+		MENU_TITLE { menu_pane=r_pt_browse_fav_menu; txt="Favourites"; },
+		MENU_TITLE { menu_pane=r_pt_browse_tools_menu; txt="Tools"; }
+		};
+	}
+
+// Get: Enter opens a folder or gets a file, so Get file... shows Enter
+RESOURCE MENU_PANE r_pt_browse_get_file_menu
+	{
 	items=
 		{
-		DLG_LINE { type=EEikCtLabel; prompt="Folder"; id=EPtDlgRemoteDir; control=LABEL { txt=""; }; },
-		DLG_LINE { type=EEikCtColListBox; id=EPtDlgRemoteList;
-			control=LISTBOX { height=6; width=30; }; }
+		MENU_ITEM { command=EPtCmdBrOpen; txt="Open"; },
+		MENU_ITEM { command=EPtCmdBrAct; txt="Get file..."; extratxt="Enter"; },
+		MENU_ITEM { command=EPtCmdBrUp; txt="Up a folder"; },
+		MENU_ITEM { command=EPtCmdBrGoto; txt="Go to folder..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdBrClose; txt="Close"; }
 		};
 	}
 
-RESOURCE DLG_BUTTONS r_pt_remote_get_buttons
+RESOURCE MENU_PANE r_pt_browse_send_file_menu
 	{
-	buttons=
-		{
-		DLG_BUTTON { id=EPtBidUp; button=CMBUT { txt="Up"; }; hotkey='U'; },
-		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
-		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Get"; }; hotkey=EEikBidOk; flags=0; }
-		};
-	}
-
-// Send file, second step: which folder on the server it goes to. Enter
-// sends it to the folder shown; Open (or a second tap) goes into the
-// highlighted folder, Up (or Backspace) to the folder above.
-RESOURCE DIALOG r_pt_remote_send_dialog
-	{
-	title="Send to folder";
-	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight;
-	buttons=r_pt_remote_send_buttons;
 	items=
 		{
-		DLG_LINE { type=EEikCtLabel; prompt="Folder"; id=EPtDlgRemoteDir; control=LABEL { txt=""; }; },
-		DLG_LINE { type=EEikCtColListBox; id=EPtDlgRemoteList;
-			control=LISTBOX { height=6; width=30; }; }
+		MENU_ITEM { command=EPtCmdBrOpen; txt="Open"; },
+		MENU_ITEM { command=EPtCmdBrAct; txt="Send here"; },
+		MENU_ITEM { command=EPtCmdBrUp; txt="Up a folder"; },
+		MENU_ITEM { command=EPtCmdBrGoto; txt="Go to folder..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdBrClose; txt="Close"; }
 		};
 	}
 
-RESOURCE DLG_BUTTONS r_pt_remote_send_buttons
+RESOURCE MENU_PANE r_pt_browse_view_menu
 	{
-	buttons=
+	items=
 		{
-		DLG_BUTTON { id=EPtBidOpen; button=CMBUT { txt="Open"; }; hotkey='O'; },
-		DLG_BUTTON { id=EPtBidUp; button=CMBUT { txt="Up"; }; hotkey='U'; },
-		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
-		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Send"; }; hotkey=EEikBidOk; flags=0; }
+		MENU_ITEM { command=EPtCmdToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox; }
+		};
+	}
+
+// Favourite folder (tick box: the folder shown is one), then this server's
+// favourites, added at run time: one goes there
+RESOURCE MENU_PANE r_pt_browse_fav_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdBrFavourite; txt="Favourite folder"; flags=EEikMenuItemCheckBox; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_browse_tools_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdHelp; txt="Help on PsiTerm"; },
+		MENU_ITEM { command=EPtCmdAbout; txt="About PsiTerm"; }
+		};
+	}
+
+// File > Go to folder... (Ctrl+G): a folder on the server, typed. "/" starts
+// from the top, "~" is the home folder, anything else is inside the folder
+// shown.
+RESOURCE DIALOG r_pt_goto_dialog
+	{
+	title="Go to folder";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Folder"; id=EPtDlgGotoPath;
+			control=EDWIN { width=26; maxlength=250; }; }
 		};
 	}
 

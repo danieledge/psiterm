@@ -31,6 +31,7 @@ extern "C" {
 
 #include "psigrey.h"
 #include "psidisp.h"
+#include "ptxfer.h"            // (0.91) the file view and its host
 
 #include <psiterm.rsg>
 #include "psiterm.hrh"
@@ -405,8 +406,11 @@ public:
 private:
 	void SetSizeAndPositionL(const TSize& aSize);
 	void PreLayoutDynInitL();
+	void HandleControlStateChangeL(TInt aControlId);
 	TBool OkToExitL(TInt aButtonId);
 	void TestL();                      // the Test button (0.74)
+	void DimProxyLines();              // (0.89) host and port wait for "Use proxy"
+	void DimKeepUpLine();              // (link keep-up) "After use": dimmed on the modem route
 	TPsiSettings& iSettings;
 	CTermView* iView;                  // its terminal holds the port when SSH is not running
 	};
@@ -517,6 +521,8 @@ public:
 	void SetKeyBase(const TDesC& aBase) { iKeyBase.Copy(aBase); }
 	void StartSpeedTestL();
 	void StartUpdateL();
+	TBool SendingLog() const { return iSshActive && iLaunchMode == 6; }
+	void StartSendLogL();     // Tools > Send log to server (0.89, psissh mode 6)
 	void ScreenshotL();                 // after a short delay (menu gone)
 	static TInt ShotCallback(TAny* aSelf);
 	void DisconnectSsh();              // File > End SSH: asks psissh to stop (twice: ends it now)
@@ -776,6 +782,9 @@ private:
 	TUint8 iEntropy[PSI_ENTROPY_SIZE];
 	TInt iEntropyPos;
 	TInt iEntropyFill;
+	TBuf<60> iLogHost;        // 0.89: the shared proxy Send log uses (PsiLink.ini)
+	TInt iLogPort;
+	TBool iLogBusy;           // the "Sending log..." busy message is up
 	TInt iLaunchMode;         // mode of the running psissh (0 SSH, 1 speed test, 2 update)
 	TFileName iUpdateFile;    // where the update SIS is saved
 	HBufC8* iDebugText;       // collected Debug tool output
@@ -825,11 +834,16 @@ private:
 // ---------------------------------------------------------------------------
 // EIKON application framework classes
 // ---------------------------------------------------------------------------
-class CPsiTermAppUi : public CEikAppUi
+class CEikToolBar;
+
+class CPsiTermAppUi : public CEikAppUi, public MPtBrowseHost
 	{
 public:
 	void ConstructL();
 	~CPsiTermAppUi();
+	// 0.91: Get file / Send file's file view, in place of the terminal (which
+	// goes on running under it) with its own menus, shortcuts and toolbar
+	void OpenBrowseL(TBool aSend);
 	void ScreenGreysL();               // Preferences > Screen greys... (ssh/psigreyui.cpp)
 private:
 	// Reading mode (View > Reading mode; ssh/psidisp.h): on while PsiTerm
@@ -854,7 +868,17 @@ public:
 	TBool ToolbarShown() const;
 private:
 	void ToolbarPicturesL();
-	void ButtonPictureL(TInt aId, TInt aIcon, const TDesC* aText = NULL);
+	void ButtonPictureL(CEikToolBar* aBar, TInt aId, TInt aIcon, const TDesC* aText = NULL);
+	// the file view (ptxfer.cpp)
+	void ShowBrowseL(TBool aSend);
+	void CloseBrowse();
+	static TInt BrowseCloseCallback(TAny* aSelf);
+	void BrowseCloseSoon();                 // MPtBrowseHost
+	void BrowseFavouriteShown(TBool aOn);   // MPtBrowseHost
+	CPtBrowseView* iBrowse;                 // the file view, while it is up
+	TBool iBrowseStacked;                   // ...and on the control stack
+	CEikToolBar* iBrowseBar;                // its toolbar (made the first time)
+	CIdle* iBrowseIdle;                     // closes it, once its own code has returned
 	TRect TermRect(TBool aToolbar) const;
 	void ToolbarPopupL(TInt aCommand);
 	CTermView* iView;

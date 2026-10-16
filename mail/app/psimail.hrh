@@ -29,6 +29,8 @@ enum TPmCommands
 	EPmCmdDeleteAccount,
 	EPmCmdConnSettings,
 	EPmCmdRestart,
+	EPmCmdSendLog,           // Tools > Troubleshooting > Send log to server (0.86)
+	EPmCmdTroubleMenu,
 	EPmCmdOpen,
 	EPmCmdBack,
 	EPmCmdPrev,
@@ -123,8 +125,13 @@ enum TPmDialogControls
 	EPmDlgBaud,
 	EPmDlgFlow,
 	EPmDlgLink,
+	EPmDlgModemTls,
 	EPmDlgPrefetch,
 	EPmDlgPppStart,
+	EPmDlgUseProxy,
+	EPmDlgProxyHost,
+	EPmDlgProxyPort,
+	EPmDlgKeepUp,            // (0.89) Psion Internet after use: Stays connected / Disconnects when idle
 	EPmDlgStore,
 	EPmDlgChoice,
 	EPmDlgWords,
@@ -171,7 +178,8 @@ enum TPmDialogControls
 	EPmDlgCheckConnect,      // If not connected
 	EPmDlgAutoSend,          // Send waiting mail when connected
 	EPmDlgWebPictures,       // Preferences: Web pictures (0.75: Ask / Always / Never)
-	EPmDlgDetailed           // Show detailed progress (0.75)
+	EPmDlgDetailed,          // Show detailed progress (0.75)
+	EPmDlgWebProxy           // Preferences: Web pictures via proxy (0.84: No / Yes)
 	};
 
 enum TPmButtons
@@ -186,6 +194,8 @@ enum TPmButtons
 enum TPmPages
 	{
 	EPmPageAccount = 0x300,
+	EPmPageLink,
+	EPmPageProxy,
 	EPmPageIncoming,
 	EPmPageOutgoing,
 	EPmPageOptions,

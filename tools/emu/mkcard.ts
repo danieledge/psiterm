@@ -8,7 +8,10 @@
 // Default output: build/emu/card.img. Needs $PSION_EMU (the psionEmulators
 // checkout; default ../psionEmulators next to this repo) for its FAT16 writer.
 // --seed adds a mailbox and calendar for PsiMail's TESTSEED (tools/emu/seed.py).
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+// Local card makers (tools/emu/local/*.card.ts, not part of the repository)
+// add other names: each exports cards = { name: (c) => void }, c holding
+// w(cardpath, data), f(hostfile), t(text), pkg(defaultdir) and REPO.
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url)) + '/';
@@ -27,6 +30,10 @@ const img = createBlankImage(16*1024*1024);
 const w = (p: string, d: Uint8Array) => { const r = writeFileAtPath(img, p, d); if (!r.ok) throw new Error(p + ': ' + r.reason); };
 const t = (s: string) => new Uint8Array(Buffer.from(s, 'latin1'));
 const f = (p: string) => new Uint8Array(readFileSync(p));
+const local: Record<string, (c: any) => void> = {};
+if (existsSync(HERE + 'local/'))
+	for (const n of readdirSync(HERE + 'local/').filter(n => n.endsWith('.card.ts')).sort())
+		Object.assign(local, (await import(HERE + 'local/' + n)).cards || {});
 w('PAD.BIN', new Uint8Array(Number(process.env.EMU_PAD || 9000)));   // (shifts the layout: the harness's CF emulation can wedge on some)
 w('SYSTEM/LIBS/ESTLIB.DLL', f(HERE + 'ESTLIB.DLL'));   // the EPOC C library (from the SDK's redistributable stdlib.sis)
 if (app === 'psimail') {
@@ -47,8 +54,10 @@ if (app === 'psimail') {
 	w('SYSTEM/APPS/PSIKT/PSIKT.APP', f(P + 'psikt.app'));
 	w('SYSTEM/APPS/PSIKT/PSIKT.RSC', f(P + 'psikt.rsc'));
 	w('SYSTEM/LIBS/PSIKERN6.LDD', f(P + 'psikern.ldd'));
+} else if (local[app]) {
+	local[app]({ w, f, t, pkg, REPO });
 } else {
-	console.error('usage: mkcard.ts psimail|psiterm|psiweb|psikern [--seed] [out.img]'); process.exit(1);
+	console.error('usage: mkcard.ts ' + ['psimail', 'psiterm', 'psiweb', 'psikern', ...Object.keys(local)].join('|') + ' [--seed] [out.img]'); process.exit(1);
 }
 if (seedOn) {
 	const A = 'SEEDA0/';    // (TESTSEED copies it to C:\PsiMail\A0)

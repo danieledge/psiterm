@@ -26,12 +26,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include "pm.h"
+#include "../../ssh/pgdevbox.h"
 
 #define WEB_MAX       16
 #define WEB_MAX_KB    300
 #define WEB_TOTAL_KB  1536
 #define WEB_TIME_MS   (240 * 1000L)
 #define WEB_URL_MAX   400
+
+/* the HTTP proxy does the upstream TLS and the 16-grey GIF transcoding for
+   us.  Since 0.87 it is the one shared by PsiTerm, PsiMail and PsiWeb
+   (Connection settings, PsiLink.ini): the app copies it into the shared
+   chunk (use_proxy, proxy_host, proxy_port). */
+#define PROXY_ON(s)   ((s)->use_proxy && (s)->proxy_host[0] && (s)->proxy_port > 0)
 
 typedef struct { char url[WEB_URL_MAX]; int w, h; } WebPic;
 
@@ -142,43 +149,79 @@ static int parse_url(const char *u, Url *o)
 
 static char g_host[80];
 static int g_port = -1, g_tls, g_conn = -1;
+static int g_proxy_down;                     /* this run: the proxy did not answer, so go direct */
 
 /* GETs url into path: PM_RES_OK, or FAILED with why (this picture only),
    or CANCELLED / OFFLINE (the line: stop) */
 static int get(const char *url0, const char *path, long max, long *got, char *why, int whymax)
 {
-	static char line[600], req[800];
+	static char line[600], req[1024];
 	static unsigned char buf[2048];
 	char url[WEB_URL_MAX];
 	int hops;
+	int proxy = (pm_shared()->web_pic_proxy && PROXY_ON(pm_shared()) && !g_proxy_down) ? 1 : 0;   /* the preference, and a proxy to use */
 	*got = 0;
 	pm_copy(url, url0, sizeof(url));
 	for (hops = 0; hops < 4; hops++) {
 		Url u;
-		int status = 0, chunked = 0, close_after = 0, attempt, image = -1;
+		int status = 0, chunked = 0, close_after = 0, attempt, image = -1, direct = 0;
 		long clen = -1;
 		char loc[WEB_URL_MAX];
 		FILE *f;
 		loc[0] = 0;
 		if (parse_url(url, &u) != 0) { snprintf(why, whymax, "not a web address"); return PM_RES_FAILED; }
+		/* where we actually connect: the proxy, or the origin.  With the proxy
+		   on, the hop is always plain HTTP (the proxy does the upstream TLS). */
+		{
+		const char *chost = proxy ? pm_shared()->proxy_host : u.host;
+		int cport = proxy ? pm_shared()->proxy_port : u.port;
+		int ctls  = proxy ? 0 : u.tls;
 		for (attempt = 0; attempt < 2; attempt++) {
 			int reused = g_conn >= 0 && pmn_is_open() && pmn_conn_id() == g_conn &&
-				g_port == u.port && g_tls == u.tls && !strcmp(g_host, u.host);
+				g_port == cport && g_tls == ctls && !strcmp(g_host, chost);
 			if (!reused) {
 				if (pm_shared()->offline) { snprintf(why, whymax, "Working offline"); return PM_RES_OFFLINE; }
 				pm_progress("Connecting to %s...", u.host);
-				if (pmn_connect(u.host, u.port, u.tls, why, whymax) != 0) {
+				if (pmn_connect(chost, cport, ctls, why, whymax) != 0) {
 					g_conn = -1;
 					if (pm_cancelled()) return PM_RES_CANCELLED;
+					if (proxy) {
+						/* the proxy is down or gone: straight to the web instead,
+						   for the rest of this run too (a failure is not cached) */
+						pm_log("web picture: the proxy %s:%d did not answer (%s) - fetching directly", chost, cport, why);
+						proxy = 0;
+						g_proxy_down = 1;
+						direct = 1;
+						break;
+					}
 					if (tlsv_problem()[0]) snprintf(why, whymax, "%s: %s", u.host, tlsv_problem());
-					pm_log("web picture: could not connect to %s:%d: %s", u.host, u.port, why);
+					pm_log("web picture: could not connect to %s:%d: %s", chost, cport, why);
 					return PM_RES_FAILED;
 				}
 				g_conn = pmn_conn_id();
-				pm_copy(g_host, u.host, sizeof(g_host));
-				g_port = u.port;
-				g_tls = u.tls;
+				pm_copy(g_host, chost, sizeof(g_host));
+				g_port = cport;
+				g_tls = ctls;
 			}
+			if (proxy) {
+				/* an absolute-URL request, always http:// so the proxy does the
+				   upstream TLS; the origin stays in the Host header.  The port
+				   goes in the URL only when it is not the origin scheme's default
+				   (80 for http, 443 for https). */
+				int def = u.tls ? 443 : 80;
+				if (u.port == def)
+					snprintf(req, sizeof(req), "GET http://%s%s HTTP/1.1\r\nHost: %s\r\n"
+						"User-Agent: PsiMail (Psion Series 5mx)\r\n"
+						"Accept: image/jpeg, image/png, image/gif\r\n"
+						"Proxy-Connection: keep-alive\r\nConnection: keep-alive\r\n\r\n",
+						u.host, u.path, u.host);
+				else
+					snprintf(req, sizeof(req), "GET http://%s:%d%s HTTP/1.1\r\nHost: %s\r\n"
+						"User-Agent: PsiMail (Psion Series 5mx)\r\n"
+						"Accept: image/jpeg, image/png, image/gif\r\n"
+						"Proxy-Connection: keep-alive\r\nConnection: keep-alive\r\n\r\n",
+						u.host, u.port, u.path, u.host);
+			} else
 			snprintf(req, sizeof(req), "GET %s HTTP/1.1\r\nHost: %s\r\nUser-Agent: PsiMail (Psion Series 5mx)\r\n"
 				"Accept: image/jpeg, image/png, image/gif\r\nConnection: keep-alive\r\n\r\n", u.path, u.host);
 			if (pmn_write(req, (int)strlen(req)) != 0) {
@@ -220,6 +263,8 @@ static int get(const char *url0, const char *path, long max, long *got, char *wh
 			}
 			if (status) break;
 		}
+		}
+		if (direct) { hops--; continue; }       /* the same address again, not via the proxy */
 		if (!status) { snprintf(why, whymax, "the connection to %s kept dropping", u.host); return PM_RES_FAILED; }
 		/* a redirect: no body worth reading (a short one is skipped below) */
 		if (status >= 300 && status < 400 && loc[0]) {
@@ -313,6 +358,7 @@ int web_fetch(int acct, const char *folder, unsigned int uid, char *why, int why
 	if (!n) { snprintf(why, whymax, "No pictures from the web in this message"); return PM_RES_OK; }
 	if (s->offline) { snprintf(why, whymax, "Not downloaded - you are working offline"); return PM_RES_OFFLINE; }
 	pm_log("web pictures: %d in message %u (%s)", n, uid, s->net.net_mode ? "Psion Internet" : "modem");
+	g_proxy_down = 0;
 	last_host[0] = 0;
 	for (i = 0; i < n; i++) {
 		char img[200], pmi[200], err[100];
@@ -364,4 +410,119 @@ int web_fetch(int acct, const char *folder, unsigned int uid, char *why, int why
 	}
 	pm_log("web pictures: %d shown, %d not, %ld KB, %lu ms", shown, failed, total / 1024, pm_ms() - t0);
 	return r;
+}
+
+/* ---- Tools > Send log to server (PM_CMD_PUTLOG) ------------------------
+ * POSTs psimail.old and psimail.log to the same proxy the web pictures use
+ * (the shared proxy host:port) as text/plain:
+ *
+ *   POST /_putlog?app=PsiMail&ver=<version> HTTP/1.0
+ *   Host: <proxy>   Content-Type: text/plain   Content-Length: n   Connection: close
+ *
+ * The body is streamed from the files in 1 KB pieces (nothing big on the
+ * 64 KB stack). If it comes to more than LOG_MAX the front is cut, so the
+ * newest lines are the ones kept. The reply is read for its status line only. */
+#define LOG_MAX (1000L * 1024)
+
+static int log_send_file(const char *path, long skip, long *left)
+{
+	static char b[1024];
+	FILE *f = fopen(path, "rb");
+	int ok = 1;
+	if (!f) return 1;
+	if (skip > 0) fseek(f, skip, SEEK_SET);
+	for (;;) {
+		int k = (int)fread(b, 1, sizeof(b), f);
+		if (k <= 0) break;
+		if (k > *left) k = (int)*left;       /* (the file grew meanwhile) */
+		if (k > 0 && pmn_write(b, k) != 0) { ok = 0; break; }
+		*left -= k;
+		if (*left <= 0 || pm_cancelled()) break;
+	}
+	fclose(f);
+	return ok;
+}
+
+int pm_send_log(char *why, int whymax)
+{
+	static char hdr_old[] = "==== psimail.old ====\n", hdr_cur[] = "==== psimail.log ====\n";
+	static char req[400], line[300], pold[160], pcur[160];
+	PmShared *s = pm_shared();
+	long sold, scur, total, cut, left, ho = 0, hc = 0, skip_old = 0, skip_cur = 0;
+	int k, status = 0, ok = 1, lport;
+	const char *lhost;
+
+	if (!PROXY_ON(s)) { snprintf(why, whymax, "Not available - set a proxy in Connection settings"); return PM_RES_FAILED; }
+	if (s->offline) { snprintf(why, whymax, "Working offline"); return PM_RES_OFFLINE; }
+	/* (not the Atom's own proxy: it has no /_putlog; then PsiDevBox.ini, if set) */
+	if (!pg_devbox(s->proxy_host, s->proxy_port, &lhost, &lport)) {
+		snprintf(why, whymax, "Not available - set a proxy in Connection settings");
+		return PM_RES_FAILED;
+	}
+	pm_log_release();                        /* (the log is open for writing: shut it to read it) */
+	pm_log_path(pold, sizeof(pold), 1);
+	pm_log_path(pcur, sizeof(pcur), 0);
+	sold = fsize(pold); scur = fsize(pcur);
+	if (sold < 0) sold = 0;
+	if (scur < 0) scur = 0;
+	if (!sold && !scur) { snprintf(why, whymax, "No log to send"); return PM_RES_FAILED; }
+	/* the pieces, oldest first; cut from the front if over LOG_MAX */
+	if (sold) ho = (long)strlen(hdr_old);
+	hc = (long)strlen(hdr_cur);
+	total = ho + sold + hc + scur;
+	cut = total > LOG_MAX ? total - LOG_MAX : 0;
+	if (cut > 0) {
+		/* the front goes first: the old log (and its heading), then the front of the current one */
+		if (cut >= sold) { skip_cur = cut - sold; sold = 0; ho = 0; }
+		else { skip_old = cut; sold -= cut; ho = 0; }
+		scur -= skip_cur;
+		total = ho + sold + hc + scur;
+	}
+
+	g_conn = -1;
+	pmn_close(0);                            /* a fresh line: not one the web pictures kept */
+	pm_progress("Sending log...");
+	if (pmn_connect(lhost, lport, 0, why, whymax) != 0) {
+		pm_log("send log: could not connect to %s:%d: %s", lhost, lport, why);
+		return pm_cancelled() ? PM_RES_CANCELLED : PM_RES_FAILED;
+	}
+	snprintf(req, sizeof(req),
+		"POST /_putlog?app=PsiMail&ver=%s HTTP/1.0\r\nHost: %s:%d\r\nUser-Agent: PsiMail (Psion Series 5mx)\r\n"
+		"Content-Type: text/plain\r\nContent-Length: %ld\r\nConnection: close\r\n\r\n",
+		s->net.version, lhost, lport, total);
+	left = total;
+	if (pmn_write(req, (int)strlen(req)) != 0) ok = 0;
+	if (ok && ho > 0) { if (pmn_write(hdr_old, (int)strlen(hdr_old)) != 0) ok = 0; else left -= ho; }
+	if (ok && sold > 0) ok = log_send_file(pold, skip_old, &left);
+	if (ok && left > 0) { if (pmn_write(hdr_cur, (int)hc) != 0) ok = 0; else left -= hc; }
+	if (ok && scur > 0) ok = log_send_file(pcur, skip_cur, &left);
+	if (ok && left > 0) {                    /* a file that shrank: pad so the length holds */
+		static char sp[64];
+		memset(sp, ' ', sizeof(sp));
+		while (ok && left > 0) {
+			k = left > (long)sizeof(sp) ? (int)sizeof(sp) : (int)left;
+			if (pmn_write(sp, k) != 0) ok = 0;
+			left -= k;
+		}
+	}
+	if (!ok) {
+		pmn_close(1);
+		if (pm_cancelled()) return PM_RES_CANCELLED;
+		snprintf(why, whymax, "the connection was lost");
+		return PM_RES_FAILED;
+	}
+	/* the status line (anything else is ignored; garbage is "not a web server") */
+	for (k = 0; k < 20 && !status; k++) {
+		int n = pmn_readline(line, sizeof(line), 30000);
+		if (n < 0) { pmn_close(1); snprintf(why, whymax, pm_cancelled() ? "stopped" : "no reply from the proxy"); return pm_cancelled() ? PM_RES_CANCELLED : PM_RES_FAILED; }
+		if (n == 0) continue;
+		if (strncmp(line, "HTTP/", 5) || !strchr(line, ' ')) { pmn_close(1); snprintf(why, whymax, "not a web proxy"); return PM_RES_FAILED; }
+		status = atoi(strchr(line, ' ') + 1);
+	}
+	pmn_close(0);
+	pm_log("send log: %ld bytes, the proxy said %d", total, status);
+	if (status == 200) { snprintf(why, whymax, "Log sent"); return PM_RES_OK; }
+	if (status == 413) snprintf(why, whymax, "the log is too big");
+	else snprintf(why, whymax, "the proxy said %d", status);
+	return PM_RES_FAILED;
 }

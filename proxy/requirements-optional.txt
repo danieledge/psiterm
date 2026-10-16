@@ -1,0 +1,4 @@
+# Optional: server-side JavaScript rendering with headless Chromium.
+# After installing, fetch the browser with:  python -m playwright install chromium
+# It is used only when PSIPROXY_JS_RENDER allows it (see README.md, Security).
+playwright>=1.40            # Apache-2.0

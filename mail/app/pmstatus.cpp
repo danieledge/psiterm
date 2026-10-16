@@ -81,6 +81,8 @@ static TPtrC QuietText(TInt aOp, const TDesC& aProgress)
 		return _L("Sending...");
 	case PM_CMD_CALSYNC:
 		return _L("Updating the calendar...");
+	case PM_CMD_PUTLOG:
+		return _L("Sending log...");
 	case PM_CMD_UPDATE:
 		if (aProgress.Length() >= 11 && aProgress.Left(11) == _L("Downloading"))
 			return _L("Downloading PsiMail...");
@@ -247,6 +249,22 @@ TBool CPmView::OutcomeText(const PmCmd& aCmd, TInt aRes, const TDesC& aMsg, TDes
 		return EFalse;                           // (its own dialogs)
 	if (op == PM_CMD_PICTURES && aRes == PM_RES_OK)
 		return EFalse;                           // (the pictures themselves say so)
+	if (op == PM_CMD_PUTLOG)
+		{
+		// "Log sent", or "Could not send log - the proxy said 404"
+		if (aRes == PM_RES_OK)
+			aOut = _L("Log sent");
+		else if (aRes == PM_RES_CANCELLED)
+			aOut = _L("Stopped");
+		else if (aMsg.Length() >= 2 && aMsg.Left(2) == _L("No"))   // "Not available ...", "No log to send"
+			aOut.Copy(Clip(aMsg, aOut.MaxLength()));
+		else
+			{
+			aOut = _L("Could not send log - ");
+			aOut.Append(Clip(aMsg, aOut.MaxLength() - aOut.Length()));
+			}
+		return ETrue;
+		}
 	if (DetailedProgress() || aRes != PM_RES_OK)
 		{
 		// changes kept to tell the server later are what was asked for:

@@ -69,10 +69,15 @@ make -f psiweb.marm rel > "$TOP/build/psiweb-app.log" 2>&1 \
 	|| { grep -i -B1 -A4 "error\|undefined" "$TOP/build/psiweb-app.log" | head -40; exit 1; }
 )
 
+# psihold.exe: holds the Psion Internet connection up after use (ssh/psihold.cpp)
+echo "== psihold.exe"
+make -f "$TOP/ssh/psihold.mk" PSION_SDK="$PSION_SDK" > "$TOP/build/psihold.log" 2>&1 \
+	|| { grep -E "error|undefined" "$TOP/build/psihold.log" | head -20; exit 1; }
+
 echo "== package"
 P=$TOP/build/web-pkg
 rm -rf "$P"; mkdir -p "$P" "$(dirname "$SIS")"
-cp "$REL/psiweb.app" "$REL/psiweb.rsc" "$HERE/pkg/psiweb.pkg" "$TOP/build/web-icons/psiweb.mbm" "$P/"
+cp "$REL/psiweb.app" "$REL/psiweb.rsc" "$HERE/pkg/psiweb.pkg" "$TOP/build/web-icons/psiweb.mbm" "$TOP/build/psihold/psihold.exe" "$P/"
 cp "$ENGINE_EXE" "$P/psiweb.exe"
 install -m 644 "$REL/stdlib.sis" "$P/STDLIB.SIS"   # ESTLIB.DLL for psiweb.exe (not in the 5mx ROM)
 python3 "$HERE/pkg/mkicon.py" "$P/psiweb.aif" > /dev/null
@@ -82,6 +87,8 @@ if [ "$ENGINE" = links ]; then
 	  echo "networking and TLS (MIT). Source: https://github.com/danieledge/psiterm"
 	  echo "(web/ and web/links/fetch.sh, which fetches the exact Links sources used, and"
 	  echo "web/links/patches, the changes made to them)."
+	  echo
+	  echo "This software is based in part on the work of the Independent JPEG Group."
 	  echo
 	  echo "The sharp text (Preferences > Text) is drawn from the DejaVu fonts, rendered"
 	  echo "ahead by web/links/mkstrike.py; their licence (Bitstream Vera, public domain"

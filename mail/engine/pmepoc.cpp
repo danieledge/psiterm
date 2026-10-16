@@ -213,6 +213,7 @@ extern "C" long pm_free_kb(const char* aPath)
 
 static FILE* gLog = 0;
 static long gLogLen = 0;
+static TInt gLogReopen = 0;              // closed by pm_log_release (a copy was wanted): opened again to append
 static TUint gLogFailAt = 0;             // when opening the log last failed (0 = never): tried again a minute later
 
 static void LogPath(char* aOut, int aMax, const char* aName)
@@ -233,6 +234,24 @@ static void LogKeepOld()
 	ToName(to, b);
 	Fs().Delete(to);
 	Fs().Rename(from, to);
+	}
+
+// Tools > Send log to server (webpics.c pm_send_log): the path of the log
+// (aOld: the last engine's), and the log closed so it can be read; the next
+// line opens it again to append
+extern "C" void pm_log_path(char* aOut, int aMax, int aOld)
+	{
+	LogPath(aOut, aMax, aOld ? "psimail.old" : "psimail.log");
+	}
+
+extern "C" void pm_log_release(void)
+	{
+	if (gLog)
+		{
+		fclose(gLog);
+		gLog = 0;
+		gLogReopen = 1;
+		}
 	}
 
 extern "C" void pm_log(const char* aFmt, ...)
@@ -262,14 +281,16 @@ extern "C" void pm_log(const char* aFmt, ...)
 			return;
 		char path[160];
 		LogPath(path, sizeof(path), "psimail.log");
-		gLog = fopen(path, gLogFailAt ? "a" : "w");
+		gLog = fopen(path, gLogFailAt || gLogReopen ? "a" : "w");
 		if (!gLog)
 			{
 			gLogFailAt = now ? now : 1;
 			return;
 			}
 		gLogFailAt = 0;
-		gLogLen = 0;
+		if (!gLogReopen)
+			gLogLen = 0;
+		gLogReopen = 0;
 		}
 	// the time, so a long gap (a decode, a stall) shows
 	char t[16];

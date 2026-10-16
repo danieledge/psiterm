@@ -65,6 +65,9 @@ typedef struct
 	                            0: linear (level k is 17k) */
 	PmImgAbort abort;        /* may be 0 */
 	void *abort_ctx;
+	int exact;               /* 1: a JPEG is decoded at the smallest scale that still gives
+	                            max_w x max_h or more (the Atom modem, which has the time);
+	                            0: half of that is enough (the Psion: a quarter of the work) */
 	} PmImgOpts;
 
 typedef struct

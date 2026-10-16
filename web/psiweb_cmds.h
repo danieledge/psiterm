@@ -21,8 +21,20 @@ enum
 	PW_CMD_QUIT,
 	PW_CMD_UPDATE,                  /* download a newer PsiWeb.sis (pwupdate.c) */
 	PW_CMD_HANGUP,                  /* hang up and give the serial port back now */
-	PW_CMD_SCROLL                   /* cmd_arg = the top of the view, pixels down the
+	PW_CMD_SCROLL,                  /* cmd_arg = the top of the view, pixels down the
 	                                   page (the app's scroll bar: page_y) */
+	PW_CMD_PUTLOG                   /* 0.71: Tools > Send log to server: POST PsiWeb.old
+	                                   and PsiWeb.log to the proxy (pwupdate.c
+	                                   pw_putlog_run); log_state / log_msg say how it went */
+	};
+
+/* log_state (psiweb.h) */
+enum
+	{
+	PW_LOG_IDLE = 0,
+	PW_LOG_RUNNING,
+	PW_LOG_SENT,
+	PW_LOG_FAILED                   /* log_msg says why */
 	};
 
 /* auth_state, save_state (psiweb.h) */

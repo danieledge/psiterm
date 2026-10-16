@@ -55,8 +55,12 @@ int pg_dial(char *why, int max) { return emu_hc(HP_DIAL, (int)g_sh.net.host, g_s
 void pg_hangup(void) { emu_hc(HP_HANGUP, 0, 0, 0, 0); }
 void pg_link_close(void) { emu_hc(HP_HANGUP, 0, 0, 0, 0); }
 void pw_log(const char *t) { (void)t; }
+long pw_log_size(int old) { (void)old; return 0; }
+long pw_log_read(int old, long pos, void *b, long max) { (void)old; (void)pos; (void)b; (void)max; return 0; }
 int pg_link_is_open(void) { return 0; }
+int pg_link_keep(void) { return 0; }
 int pg_net_closed(void) { return 0; }
+void pg_link_suspect(void) { }
 int pg_net_avail(void) { return emu_hc(HP_AVAIL, 0, 0, 0, 0); }
 int pg_net_read(void *b, int m) { return emu_hc(HP_READ, (int)b, m, 0, 0); }
 int pg_serial_write(const void *b, int n) { return emu_hc(HP_WRITE, (int)b, n, 0, 0); }

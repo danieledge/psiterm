@@ -13,6 +13,9 @@
 #include <eikenv.h>
 #include <eikdialg.h>
 #include <eiklabel.h>
+#include <eikappui.h>
+#include <eikapp.h>
+#include "psilink.h"             // PsiHoldStart: "Stay connected" (psihold.exe)
 
 // The result: one label per sentence, unused lines removed (a hidden line
 // would still take its height)
@@ -293,6 +296,18 @@ static void PgLinkRunL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& 
 		CleanupStack::PopAndDestroy();   // t
 		return;
 		}
+	// A link that is up now (Connect, or a Test that dialled) stays up after
+	// use if the setting says so: psihold.exe holds it (psilink.h). It does
+	// nothing when the route is the modem, the setting is "Disconnect when
+	// idle", the link is down or a holder runs already.
+	if (aNetMode)
+		{
+		TFileName near;
+		CEikAppUi* ui = env->EikAppUi();
+		if (ui && ui->Application())
+			near = ui->Application()->AppFullName();
+		PsiHoldStart(env->FsSession(), near);
+		}
 	CPgLinkResultDialog* d = new(ELeave) CPgLinkResultDialog(*t, aFirstLineId, aTitle);
 	d->ExecuteLD(aResultDialog);
 	CleanupStack::PopAndDestroy();       // t
@@ -308,4 +323,35 @@ void PgLinkConnectL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPp
 	int aResultDialog, int aFirstLineId, const TDesC8& aTitle)
 	{
 	PgLinkRunL(aBaudIndex, aRtsCts, aNetMode, aPppStart, aResultDialog, aFirstLineId, ETrue, &aTitle);
+	}
+
+// Disconnect (Psion Internet): see pglinktest.h
+void PgLinkDisconnectL()
+	{
+	CEikonEnv* env = CEikonEnv::Static();
+	if (PsiLinkActive() != 1)
+		{
+		env->InfoMsg(_L("Not connected to the Internet"));
+		return;
+		}
+	env->BusyMsgL(_L("Disconnecting..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0));
+	TInt r = PsiLinkDisconnect(20000000);
+	env->BusyMsgCancel();
+	if (r == 1)
+		env->InfoMsg(_L("Disconnected"));
+	else if (r == 0)
+		env->InfoMsg(_L("Not connected to the Internet"));
+	else if (r == 2)
+		env->InfoMsg(_L("Still hanging up - the Psion carries on by itself"));
+	else
+		{
+		TBuf<60> m;
+		m.Format(_L("Could not disconnect (%d)"), r);
+		env->InfoMsg(m);
+		}
+	}
+
+int PgLinkUp()
+	{
+	return PsiLinkActive() == 1;
 	}

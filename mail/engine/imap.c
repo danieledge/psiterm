@@ -290,6 +290,7 @@ int imap_open(int acct, char *why, int whymax)
 		if (r == PM_RES_OK) return PM_RES_OK;
 		if (r == PM_RES_CANCELLED) return r;
 		g_drops = drops;
+		if (idle >= 60000) pmn_link_suspect();   /* (a timeout after a long idle: PPP itself may be gone) */
 		pm_log("imap: the connection idle for %lu s had gone (%d): connecting again", idle / 1000, r);
 		why[0] = 0;                        /* (not the result of what follows) */
 	}

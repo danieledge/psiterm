@@ -1,0 +1,18 @@
+# local settings (may name hosts or tokens)
+psiproxy.env
+*.env
+!psiproxy.env.example
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+# logs and runtime state, if pointed here
+*.log
+*.log.[0-9]*
+psion-logs/
+control.sock
+config.json
+# local plug-ins and their list (see README, Plug-ins)
+plugins.local/
+*.local.json

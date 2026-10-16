@@ -29,6 +29,8 @@ _LIT(KPortName, "COMM::0");
 #ifndef PG_LINK_TEST_ONLY
 
 #include "psibell.h"
+#include "psilink.h"      // PsiLink.ini's "Stay connected", PsiHoldStart (psihold.exe)
+#include "pglinkseen.h"   // the link's last sign of life, shared by every engine
 
 // EXEs may have writable static data on EPOC R5 (unlike .app DLLs), but
 // global objects with constructors are avoided: handles live on the heap.
@@ -91,6 +93,26 @@ static int gResolverOpen = 0;
 static TNameEntry* gNameEntry = 0;
 static TInt64 gLinkFailAt;                 // when a link start last failed (0 = never)
 static int gLinkSuspect = 0;               // a receive or send failed: PPP may be down
+// (PPP) ER5's PPP has no LCP echo, so NIFMAN's NetworkActive cannot tell
+// that the modem or the peer dropped PPP: a link it calls up can be dead. So
+// an "up" link is only a claim until something goes over it:
+static int gClaimUp = 0;                  // NIFMAN says up but this session has not proved it: NetConnect probes it (a DNS query across PPP) before the real lookup/connect
+static int gRetryDead = 0;                // the last attempt timed out over a link NIFMAN called up, and was hung up: dial once more
+static int gPortStale = 0;                // ...so NIFMAN may still hold COMM::0 for a moment (StartPpp waits for it); cleared at the end of pg_dial
+static int gLinkProven = 0;               // the link has carried data since the last failure (the DNS probe was answered, or a connect completed); cleared by every suspect source
+static int gDialVerbose = 0;               // SSH mode: say what the link is doing (and keep the OS's NetDial log)
+static int gNoAt = 0;                      // StartPpp: the modem answered no AT and we went on (a timeout then says so)
+static int gClaimNext = 0;                // switch-on: the next PppDial probes the link (short timeouts) without the abortive closes gLinkSuspect brings
+static TInt64 gStopAt;                    // when NifStop last called Stop (0 = never): a hang-up stage soon after is stale, not a hang-up in progress
+static TInt gLastStage = -1;              // the last dial-up stage WaitLink saw
+static TInt gOpenForUs = 0;               // ...and how long it had been showing "connection open" when WaitLink ended
+static int gSawDial = 0;                  // ...and whether a dial-up stage (choosing..logged in) showed at all
+const TInt KClaimLookupUs     = 20000000;  // the DNS probe over a link that claims up (as the Test)
+const TInt KNoAtExtendUs      = 30000000;  // the longest a dial-up stage extends a wait when the modem answered no AT
+const TInt KStageLinkUp       = 1000;      // EIfProgressLinkUp (nifvar.h): the 5mx may report this rather than EConnectionOpen once PPP is up
+const TInt KPortFreeWaitUs    = 20000000;  // StartPpp: NIFMAN letting COMM::0 go after a Stop
+const TInt KOpenDeadUs        = 20000000;  // a link open this long before a lookup/connect timed out is taken as dead (a link that came up late is not)
+const TInt KStopSettleUs      = 10000000;  // PppDial: NIFMAN finishing its hang-up after a Stop, when StartPpp is not there to wait for the port
 
 // The last name looked up, kept while the session (and so the link) lasts:
 // a reconnect to the same server then skips GetByName. Over a dial-up each
@@ -147,6 +169,97 @@ extern "C" int pg_take_link_doubt()
 	return d;
 	}
 
+// ----- the shared link's last sign of life (pglinkseen.h) -------------------
+// One small global chunk, opened by the first engine to need it and kept for
+// the engine's life: when data last came in over the Psion Internet link (in
+// ANY of our programs), and when a failure last made the link suspect. The
+// kernel deletes it when the last engine holding it ends.
+static RChunk* gSeenChunk = 0;
+static TPgLinkSeen* gSeen = 0;
+static int gSeenTried = 0;
+
+static TPgLinkSeen* Seen()
+	{
+	if (gSeen || gSeenTried)
+		return gSeen;
+	gSeenTried = 1;
+	gSeenChunk = new RChunk;
+	if (!gSeenChunk)
+		return 0;
+	TInt r = gSeenChunk->CreateGlobal(_L(PG_SEEN_CHUNK), 256, 256);
+	if (r == KErrAlreadyExists)
+		r = gSeenChunk->OpenGlobal(_L(PG_SEEN_CHUNK), EFalse);
+	if (r != KErrNone)
+		{
+		delete gSeenChunk;
+		gSeenChunk = 0;
+		return 0;                        // no stamp: the rules fall back to the probe alone
+		}
+	gSeen = (TPgLinkSeen*)gSeenChunk->Base();
+	if (gSeen->iMagic != PG_SEEN_MAGIC)
+		{
+		gSeen->iSeen = gSeen->iSuspect = gSeen->iSpare = 0;
+		gSeen->iMagic = PG_SEEN_MAGIC;
+		}
+	return gSeen;
+	}
+
+// Universal time in seconds (runs on while the Psion is off; never 0)
+static TUint SeenNow()
+	{
+	TTime t;
+	t.UniversalTime();
+	TInt64 s = t.Int64() / TInt64(1000000);
+	TUint n = s.Low();
+	return n ? n : 1;
+	}
+
+// Data came in over the link (a receive, a connect's answer, the probe's answer)
+static void SeenData()
+	{
+	TPgLinkSeen* s = gNet ? Seen() : 0;
+	if (s)
+		s->iSeen = SeenNow();
+	}
+
+// A failure made the link suspect: earlier data no longer vouches for it
+static void SeenSuspect()
+	{
+	TPgLinkSeen* s = gNet ? Seen() : 0;
+	if (s)
+		s->iSuspect = SeenNow();
+	}
+
+// The link was hung up: nothing before it vouches for the next one
+static void SeenClear()
+	{
+	TPgLinkSeen* s = Seen();
+	if (s)
+		s->iSeen = 0;
+	}
+
+// Has data come in over the link recently, in this or another program, and
+// since its last suspicion? Then it is alive: never hang it up, and use it.
+static int SeenFresh()
+	{
+	return gNet && PgSeenFresh(Seen(), SeenNow(), PG_SEEN_FRESH_S);
+	}
+
+static int SeenAgo()
+	{
+	return PgSeenAgo(Seen(), SeenNow());
+	}
+
+// The engines call this when a long-idle connection stops answering (a NOOP
+// or a first read that times out): the Psion Internet link may be dead
+// although NIFMAN says it is up. pg_dial then verifies it before trusting it.
+extern "C" void pg_link_suspect()
+	{
+	gLinkSuspect = 1;
+	gLinkProven = 0;
+	SeenSuspect();
+	}
+
 static int LinkOpen()
 	{
 	return gNet ? gSockOpen : gCommOpen;
@@ -189,8 +302,36 @@ static const char* ErrWords(TInt aErr)
 	case -3055: return "the Internet account may not dial in";
 	case -3056: return "the Internet service wants the password changed";
 	case -3057: return "the Internet service's call-back was not accepted";
-	default:    return 0;
+	case -5120: return "the name was not found";
+	case -5121: return "no name was found for that address";
+	default:
+		if (aErr <= -5120 && aErr > -5200)
+			return "the name lookup (DNS) failed";
+		return 0;
 		}
+	}
+
+// Bounded descriptor text for the message helpers below: copy, append and
+// append-a-number that clip at the descriptor's room rather than panic
+// (a TDes8 overflow is USER 23, which takes the engine down).
+static void PutText(TDes8& aP, const char* aText, TBool aAppend)
+	{
+	if (!aAppend)
+		aP.Zero();
+	TInt room = aP.MaxLength() - aP.Length();
+	TInt n = aText ? (TInt)User::StringLength((const TUint8*)aText) : 0;
+	aP.Append(TPtrC8((const TUint8*)(aText ? aText : ""), n < room ? n : room));
+	}
+
+static void PutErr(TDes8& aP, const char* aBefore, TInt aErr)
+	{
+	char num[40];
+	TPtr8 q((TUint8*)num, 0, sizeof(num) - 1);
+	q.Copy(TPtrC8((const TUint8*)aBefore));
+	q.AppendNum(aErr);
+	q.Append(')');
+	q.ZeroTerminate();
+	PutText(aP, num, ETrue);
 	}
 
 static void SetMsgErr(char* aOut, int aMax, const char* aText, TInt aErr)
@@ -198,14 +339,14 @@ static void SetMsgErr(char* aOut, int aMax, const char* aText, TInt aErr)
 	if (!aOut || aMax < 16)
 		return;
 	TPtr8 p((TUint8*)aOut, 0, aMax - 1);
-	p.Copy(TPtrC8((const TUint8*)aText));
+	PutText(p, aText, EFalse);
 	const char* w = ErrWords(aErr);
 	if (w && p.Length() + 4 + (TInt)User::StringLength((const TUint8*)w) + 12 < aMax)
 		{
-		p.Append(_L8(": "));
-		p.Append(TPtrC8((const TUint8*)w));
+		PutText(p, ": ", ETrue);
+		PutText(p, w, ETrue);
 		}
-	p.AppendFormat(_L8(" (error %d)"), aErr);
+	PutErr(p, " (error ", aErr);
 	p.ZeroTerminate();
 	}
 
@@ -353,8 +494,9 @@ static void LinkLogNum(const char* aText, TInt aNum)
 		return;
 	char m[160];
 	TPtr8 p((TUint8*)m, 0, sizeof(m) - 1);
-	p.Copy(TPtrC8((const TUint8*)aText));
-	p.AppendNum(aNum);
+	PutText(p, aText, EFalse);
+	if (p.MaxLength() - p.Length() >= 11)
+		p.AppendNum(aNum);
 	p.ZeroTerminate();
 	LinkLog(m);
 	}
@@ -428,6 +570,67 @@ static int NifActive()
 	return active ? 1 : 0;
 	}
 
+// (PsiLink.ini v4) "Stay connected": the Psion's Internet connection stays
+// up after use. This engine's own hold (NifHoldLink) lasts only while its
+// RNif session is open - NIFMAN undoes a session's DisableTimers when the
+// session closes - so once the link is up, psihold.exe is started to hold
+// it after the engine lets go (psilink.h, psihold.cpp). Asked at each
+// connection: cheap when it runs already (a semaphore looked for), and a
+// holder that ended (a Disconnect, the setting off and on) is started again.
+static int gKeepUp = -1;                  // the setting, read once per link (-1: not yet)
+static int gHoldNoted = 0;                // a failure to start it already logged
+
+static int KeepUpSetting()
+	{
+	if (gKeepUp < 0)
+		{
+		gKeepUp = 0;
+		RFs fs;
+		if (fs.Connect() == KErrNone)
+			{
+			TPsiLink link;
+			link.SetDefaults();
+			if (link.Load(fs))
+				gKeepUp = link.iNetMode && link.iKeepUp ? 1 : 0;
+			fs.Close();
+			}
+		}
+	return gKeepUp;
+	}
+
+static void HoldAfterUse()
+	{
+	if (!gNet || !KeepUpSetting() || PsiHoldRunning())
+		return;
+	RFs fs;
+	if (fs.Connect() != KErrNone)
+		return;
+	TFileName me = RProcess().FileName();
+	TInt r = PsiHoldStart(fs, me);
+	fs.Close();
+	if (r == KErrNone)
+		{
+		LinkLog("nifman: started psihold.exe - the link stays up after use (Stay connected)");
+		gHoldNoted = 0;
+		}
+	else if (r != KErrAlreadyExists && !gHoldNoted)
+		{
+		LinkLogErr("nifman: psihold.exe not started", r);
+		gHoldNoted = 1;
+		}
+	}
+
+// The engines' idle release asks this: 1 = Psion Internet with "Stay
+// connected", so close only the idle TCP connection and keep this session
+// (and its hold on the link) while the engine runs; 0 = let go of it all
+// (the modem route frees the port; "Disconnect when idle" leaves the link
+// to the Psion's own idle time).
+extern "C" int pg_link_keep()
+	{
+	gKeepUp = -1;                         // (asked once per idle spell: read it afresh)
+	return gNet && KeepUpSetting() ? 1 : 0;
+	}
+
 // NetDial's stages (TNetDialProgress) in plain words; 0 for the rest
 static const char* NifStageName(TInt aStage)
 	{
@@ -445,7 +648,8 @@ static const char* NifStageName(TInt aStage)
 	case EFinishedConnect:    return "connected";
 	case EStartingLogIn:      return "logging in";
 	case EFinishedLogIn:      return "logged in";
-	case EConnectionOpen:     return "connection open";
+	case EConnectionOpen:
+	case KStageLinkUp:        return "connection open";
 	case EStartingHangUp:     return "hanging up";
 	case EFinishedHangUp:     return "hung up";
 	default:                  return 0;
@@ -461,6 +665,115 @@ static TInt NifStage()
 	if (gNif->Progress(p) != KErrNone)
 		return -1;
 	return p.iStage;
+	}
+
+// "connection open" by either stage number
+static int StageIsOpen(TInt aStage)
+	{
+	return aStage == EConnectionOpen || aStage == KStageLinkUp;
+	}
+
+// Why did the dial-up last fail? NIFMAN keeps the last error and the stage it
+// came in, which says more than a timeout does: logged on every lookup or
+// connect failure (the log lines are how a device log tells what happened)
+static void NifAppendClip(TDes8& aD, const char* aText)
+	{
+	TInt room = aD.MaxLength() - aD.Length();
+	TInt n = 0;
+	while (aText[n] && n < room)
+		n++;
+	aD.Append(TPtrC8((const TUint8*)aText, n));
+	}
+
+static void NifLogLastError(const char* aWhat)
+	{
+	if (!gLinkLog || !gNifOpen)
+		return;
+	TNifProgress p;
+	TInt r = gNif->LastProgressError(p);
+	// (Append/AppendFormat panic - USER 11 - past the descriptor's maximum:
+	// every piece is clipped to what is left, and the numbers need ~50 bytes)
+	char m[256];
+	TPtr8 d((TUint8*)m, 0, sizeof(m) - 1);
+	NifAppendClip(d, "nifman: ");
+	NifAppendClip(d, aWhat);
+	if (r != KErrNone)
+		{
+		if (d.MaxLength() - d.Length() >= 60)
+			d.AppendFormat(_L8(": LastProgressError not available (%d)"), r);
+		}
+	else
+		{
+		const char* sn = NifStageName(p.iStage);
+		if (d.MaxLength() - d.Length() >= 60)
+			d.AppendFormat(_L8(": last progress error %d at stage %d"), p.iError, p.iStage);
+		if (sn)
+			{
+			NifAppendClip(d, " (");
+			NifAppendClip(d, sn);
+			NifAppendClip(d, ")");
+			}
+		const char* w = ErrWords(p.iError);
+		if (w)
+			{
+			NifAppendClip(d, ": ");
+			NifAppendClip(d, w);
+			}
+		}
+	d.ZeroTerminate();
+	LinkLog(m);
+	}
+
+// Asks NIFMAN to take the connection down (hang up and let go of COMM::0).
+// For a link that claims to be up but carries nothing: without this NIFMAN
+// keeps the dead PPP and the port until its own idle time runs out, and every
+// retry meets the same dead link. Trapped: an unreachable NIFMAN must not
+// take the engine with it.
+static void NifStop(const char* aWhy)
+	{
+	if (!NifOpen())
+		return;
+	// RNif::Stop is synchronous with no bound: only for a link that is up
+	// (never while NIFMAN is dialling or already hanging up), and the line
+	// before it says where a hang would have been
+	TInt stage = NifStage();
+	if (!StageIsOpen(stage) && NifActive() != 1)
+		{
+		LinkLogNum("nifman: Stop not called: the link is not up, stage ", stage);
+		return;
+		}
+	LinkLogNum("nifman: calling Stop (synchronous), stage ", stage);
+	TInt r = KErrNone;
+	TRAPD(lr, r = gNif->Stop());
+	gStopAt = NowMicro();
+	SeenClear();                         // (the next link proves itself afresh)
+	if (lr != KErrNone)
+		r = lr;
+	if (r == KErrNone)
+		LinkLog(aWhy);
+	else
+		LinkLogErr("nifman: Stop failed", r);
+	}
+
+// The OS's own NetDial log is written only if C:\LOGS\Netdial\ exists
+// (comms notes 3.3): made once, so a failing dial-up leaves its own account
+static void EnsureNetdialLog()
+	{
+	// Opt-in (L1): only while the app asks for the link's detail (gDialVerbose,
+	// PsiTerm's SSH mode). The folder holds a log that grows with every dial
+	// and never shrinks, which a 16 MB machine cannot leave unbounded; to get
+	// the OS's own account from PsiMail or PsiWeb, make C:\LOGS\Netdial\ by hand.
+	static int done = 0;
+	if (done || !gDialVerbose)
+		return;
+	done = 1;
+	RFs fs;
+	if (fs.Connect() != KErrNone)
+		return;
+	TInt r = fs.MkDirAll(_L("C:\\LOGS\\Netdial\\"));
+	fs.Close();
+	if (r != KErrNone && r != KErrAlreadyExists)
+		LinkLogErr("could not make C:\\LOGS\\Netdial", r);
 	}
 
 // ----- keeping the Psion awake ---------------------------------------------
@@ -511,7 +824,12 @@ static const char* ErrName(TInt aErr)
 	case -3003: return "login failed";
 	case -3004: return "the dial-up script timed out";
 	case -3005: return "dial-up script error";
-	default:    return 0;
+	case -5120: return "name not found";
+	case -5121: return "no name for that address";
+	default:
+		if (aErr <= -5120 && aErr > -5200)
+			return "DNS lookup failed";
+		return 0;
 		}
 	}
 
@@ -520,16 +838,16 @@ static void SetMsgNet(char* aOut, int aMax, const char* aText, TInt aErr)
 	if (!aOut || aMax < 16)
 		return;
 	TPtr8 p((TUint8*)aOut, 0, aMax - 1);
-	p.Copy(TPtrC8((const TUint8*)aText));
+	PutText(p, aText, EFalse);
 	const char* name = ErrName(aErr);
 	if (name)
 		{
-		p.Append(_L8(" ("));
-		p.Append(TPtrC8((const TUint8*)name));
-		p.AppendFormat(_L8(", error %d)"), aErr);
+		PutText(p, " (", ETrue);
+		PutText(p, name, ETrue);
+		PutErr(p, ", error ", aErr);
 		}
 	else
-		p.AppendFormat(_L8(" (error %d)"), aErr);
+		PutErr(p, " (error ", aErr);
 	p.ZeroTerminate();
 	}
 
@@ -608,7 +926,10 @@ static void NetClose()
 		}
 	ReapOrphans(2000000);
 	gLinkSuspect = 0;
+	gLinkProven = 0;
+	gClaimNext = 0;
 	gAddrHost[0] = 0;               // a new link may see the name differently
+	gKeepUp = -1;                   // the setting read afresh for the next link
 	}
 
 // A link start (lookup or connect) failed: start afresh next time, and for
@@ -617,13 +938,45 @@ static void NetClose()
 // new dial-up brings the Psion's own connection dialogs back.
 static void NetFail()
 	{
+	NifLogLastError("the lookup or connect failed");
 	NetClose();
 	gLinkFailAt = NowMicro();
 	}
 
+// A lookup or connect TIMED OUT over a link that NIFMAN called up (or whose
+// dial-up had finished): PPP is most likely dead, and NIFMAN, which cannot
+// tell (no LCP echo), still holds the link and COMM::0. Take the link down
+// (RNif::Stop) so the port comes free, and drop the fail-hold: pg_dial
+// starts the link afresh at once, once, in the same call (gRetryDead).
+static void NetFailDead()
+	{
+	if (gNoAt)
+		{
+		// the modem answers no AT: a Stop and a redial cannot wake it
+		NetFail();
+		return;
+		}
+	if (SeenFresh())
+		{
+		// Data came in over the link moments ago - in another program, most
+		// likely, which is using it now: the link is alive, and this one's
+		// wait failed for some other reason (the link or the CPU busy, a slow
+		// server). Never hang up a link another program is using: fail this
+		// attempt only.
+		LinkLogNum("link: not hanging up - data came in over the link (s ago) ", SeenAgo());
+		NetFail();
+		return;
+		}
+	NifLogLastError("timed out over a link NIFMAN called up");
+	NifStop("nifman: Stop - hung up the link that timed out");
+	NetClose();
+	gLinkFailAt = TInt64(0);
+	gPortStale = 1;
+	gRetryDead = 1;
+	}
+
 // SSH mode says what the link is doing (updates stay quiet)
 extern "C" void pg_out_write(const void* aData, int aLen);
-static int gDialVerbose = 0;
 extern "C" void pg_dial_verbose(int aOn) { gDialVerbose = aOn; }
 static void LinkMsg(const char* aText);
 static void Say(const char* aText)
@@ -707,13 +1060,23 @@ static void NetHint(TInt aErr)
 // (0.68) Meanwhile NIFMAN is asked, once a second, what stage the dial-up
 // is at (TNetDialProgress): each new stage goes on the status line, and the
 // "still waiting" note says where it has got to.
-static int WaitLink(TRequestStatus& aStat, TInt aTimeoutUs, const char* aWhat)
+// (PPP) aTimeoutUs may be a short one for a link that only claims to be up;
+// if a dial-up stage then shows (NetDial is dialling after all), the wait is
+// extended to aExtendUs. The last stage seen is left in gLastStage.
+static int WaitLink(TRequestStatus& aStat, TInt aTimeoutUs, const char* aWhat, TInt aExtendUs = 0)
 	{
 	TInt waited = 0, sinceNote = 0;
 	TInt lastStage = -1;
+	TInt limit = aTimeoutUs;
+	if (gNoAt && aExtendUs > KNoAtExtendUs)
+		aExtendUs = KNoAtExtendUs;           // a modem that answered no AT: a genuinely dead one fails fast
+	TInt openSince = -1;
+	gLastStage = -1;
+	gOpenForUs = 0;
+	gSawDial = 0;
 	for (;;)
 		{
-		TInt slice = aTimeoutUs - waited;
+		TInt slice = limit - waited;
 		if (slice > KProgressPollUs)
 			slice = KProgressPollUs;
 		if (slice <= 0)
@@ -726,6 +1089,34 @@ static int WaitLink(TRequestStatus& aStat, TInt aTimeoutUs, const char* aWhat)
 		sinceNote += slice;
 		TInt stage = NifStage();
 		const char* stageName = NifStageName(stage);
+		if (stage >= 0)
+			gLastStage = stage;
+		// how long "connection open" has been showing (a link that came up
+		// late is not a dead one: callers read gOpenForUs)
+		if (StageIsOpen(stage))
+			{
+			if (openSince < 0)
+				openSince = waited;
+			gOpenForUs = waited - openSince;
+			}
+		else
+			{
+			openSince = -1;
+			gOpenForUs = 0;
+			}
+		if (stage >= EStartingSelection && stage <= EFinishedLogIn)
+			gSawDial = 1;
+		// A dial-up stage shows it is dialling after all. So does a stale
+		// hang-up stage soon after our own Stop (Progress still reports
+		// the old link going down while the new dial is starting).
+		TInt64 sinceStop = NowMicro() - gStopAt;
+		int staleHangUp = gStopAt != TInt64(0) && sinceStop < TInt64(120000000)
+			&& (stage == EStartingHangUp || stage == EFinishedHangUp);
+		if (((stage >= EStartingSelection && stage <= EFinishedLogIn) || staleHangUp) && aExtendUs > limit)
+			{
+			limit = aExtendUs;           // it is dialling after all: the cold-dial budget
+			LinkLogNum("a dial-up stage showed: waiting up to (s) ", limit / 1000000);
+			}
 		if (stage >= 0 && stage != lastStage)
 			{
 			lastStage = stage;
@@ -751,6 +1142,117 @@ static int WaitLink(TRequestStatus& aStat, TInt aTimeoutUs, const char* aWhat)
 			Say(m);
 			}
 		}
+	}
+
+// After a lookup or connect timed out (w == 0): is the link itself dead? Only
+// if it was merely claimed up and no dial-up showed (nothing has proved it),
+// or "connection open" had been showing for a good while before the timeout.
+// A dial that came up late (open for a few seconds when the wait ended) is not.
+// A connect over a link that has carried data since its last failure
+// (gLinkProven) is the server's doing, never the link's.
+static int LinkLooksDead(int aLookup)
+	{
+	if (!aLookup && gLinkProven)
+		return 0;
+	if (StageIsOpen(gLastStage) && gOpenForUs >= KOpenDeadUs)
+		return 1;
+	return gClaimUp && !gSawDial && !gLinkProven;
+	}
+
+// The proof that a link which only CLAIMS to be up carries data (NIFMAN has no
+// LCP echo, and a lookup or a connect can be answered with nothing crossing
+// PPP: the resolver's cache, the hosts file, a remembered address). One DNS
+// query for a fresh, unique name under .invalid (reserved: it never resolves,
+// and the unique label defeats any negative cache), so only a DNS server
+// reached ACROSS the link can answer it - with an address, or with any error
+// of the DNS family (-5120..-5199: "no such name" is an answer). A timeout
+// means the link is dead - unless data came in over it meanwhile, in another
+// program (SeenFresh). Another error proves nothing either way: go on.
+// Returns 0: go on with the real lookup or connect (proven: gLinkProven set,
+// gClaimUp cleared, normal waits; or, after a non-answer error, still only
+// claimed); -1: failed (aResult set, and NetFail or NetFailDead done).
+static int ProbeLink(char* aResult, int aMax)
+	{
+	if (pg_quit_requested())
+		{
+		SetMsg(aResult, aMax, "Stopped");
+		NetFail();
+		return -1;
+		}
+	TInt r = gResolver->Open(*gSs, KAfInet, KProtocolInetUdp);
+	if (r != KErrNone)
+		{
+		SetMsgErr(aResult, aMax, "no name resolver - is TCP/IP installed?", r);
+		NetFail();
+		return -1;
+		}
+	gResolverOpen = 1;
+	Say("  Checking the Psion's Internet connection...\r\n");
+	TBuf<40> name;
+	name.Format(_L("p%u.invalid"), (TUint)User::TickCount());
+	gLookupStat = KRequestPending;
+	gResolver->GetByName(name, *gNameEntry, gLookupStat);
+	int w = WaitLink(gLookupStat, KClaimLookupUs, "checking the Psion's Internet connection", KLookupTimeoutUs);
+	if (w != 1)
+		{
+		gResolver->Cancel();
+		if (!TakeCancelled(gLookupStat))
+			gLookupOrphan = 1;               // NetClose (in NetFail) should complete it
+		if (w < 0)
+			{
+			SetMsg(aResult, aMax, "Stopped");
+			NetFail();
+			return -1;
+			}
+		if (SeenFresh())
+			{
+			// no answer for this process, but data came in over the link
+			// meanwhile (another program): alive, only busy - go on and
+			// let the real lookup or connect be judged on its own
+			LinkLogNum("link: DNS probe timed out, but data came in over the link (s ago) - alive, going on ", SeenAgo());
+			if (gLookupOrphan)
+				{
+				// (the cancelled probe is still out: its status cannot carry
+				// the real lookup - fail this attempt only, the link kept)
+				SetMsg(aResult, aMax, "The Psion's Internet connection is busy - try again in a moment");
+				NetFail();
+				return -1;
+				}
+			gResolver->Close();
+			gResolverOpen = 0;
+			gLinkProven = 1;
+			gClaimUp = 0;
+			return 0;
+			}
+		LinkLog("link: DNS probe timed out - link is dead");
+		if (gNoAt && !gSawDial)
+			SetMsg(aResult, aMax, "Could not connect - no answer from the modem");   // (the log has the detail)
+		else
+			SetMsg(aResult, aMax, "The Psion's Internet connection did not answer");
+		if (LinkLooksDead(1))
+			NetFailDead();                   // a dead link: hang it up; pg_dial tries once more
+		else
+			NetFail();
+		return -1;
+		}
+	TInt err = gLookupStat.Int();
+	gResolver->Close();
+	gResolverOpen = 0;
+	if (PgProbeAnswered(err))
+		{
+		gLinkProven = 1;
+		gClaimUp = 0;
+		SeenData();
+		LinkLogNum("link: link proven by DNS probe (answer ", err);
+		return 0;
+		}
+	// Completed with an error that is not a DNS answer. Not proof that the
+	// link is dead (only a timeout suggests that: a dead PPP drops packets
+	// silently), and ER5's code for "no such name" is not documented - taking
+	// it for a dead link hung up live, shared links. Go on: the real lookup
+	// or connect is judged instead (gClaimUp stays: its timeout still counts).
+	LinkLogNum("link: DNS probe completed with an error that is not a DNS answer - not judged dead, going on: ", err);
+	return 0;
 	}
 
 static int NetConnect(char* aResult, int aMax)
@@ -780,6 +1282,7 @@ static int NetConnect(char* aResult, int aMax)
 		gSsOpen = 1;
 		}
 	NifOpen();                               // for the stages while it dials; no dial itself
+	EnsureNetdialLog();                      // (once) so the OS writes its NetDial log
 
 	TBuf<128> host;
 	host.Copy(TPtrC8((const TUint8*)gShared->host));
@@ -789,6 +1292,21 @@ static int NetConnect(char* aResult, int aMax)
 		SetMsg(aResult, aMax, "no server name given");
 		return -1;
 		}
+	// A link that only claims to be up: prove it first, whether the host is a
+	// name or a number (the real lookup or connect may be answered with nothing
+	// crossing PPP, and a short budget on the real connect would blame the link
+	// for a down server)
+	// (A link that data came in over moments ago, in this program or another,
+	// is proved already: a second program shares it without a probe - EPOC's
+	// NIFMAN carries every program's sockets over the one PPP link.)
+	if (gClaimUp && SeenFresh())
+		{
+		LinkLogNum("link: shared link carried data (s ago): using it without a probe ", SeenAgo());
+		gLinkProven = 1;
+		gClaimUp = 0;
+		}
+	if (gClaimUp && ProbeLink(aResult, aMax) != 0)
+		return -1;
 	TInetAddr addr;
 	int lookedUp = 0, fromCache = 0;
 	int sameHost = 1;
@@ -831,7 +1349,9 @@ static int NetConnect(char* aResult, int aMax)
 		}
 		gLookupStat = KRequestPending;
 		gResolver->GetByName(host, *gNameEntry, gLookupStat);
-		int w = WaitLink(gLookupStat, KLookupTimeoutUs, "waiting for the Psion's Internet connection");
+		// (a link that only claimed to be up has been proved by ProbeLink)
+		TInt lookLimit = KLookupTimeoutUs;
+		int w = WaitLink(gLookupStat, lookLimit, "waiting for the Psion's Internet connection", KLookupTimeoutUs);
 		if (w != 1)
 			{
 			gResolver->Cancel();
@@ -848,15 +1368,23 @@ static int NetConnect(char* aResult, int aMax)
 				TPtrC8 h((const TUint8*)gShared->host);
 				if (h.Length() > 60) h.Set(h.Left(60));
 				p.Format(_L8("Timed out looking up %S: the Psion's Internet connection did not come up in %d s"),
-					&h, KLookupTimeoutUs / 1000000);
+					&h, (gLastStage < EStartingSelection || gLastStage > EFinishedLogIn ? lookLimit : KLookupTimeoutUs) / 1000000);
 				p.ZeroTerminate();
-				SetMsg(aResult, aMax, m);
+				if (gNoAt && !gSawDial)
+					SetMsg(aResult, aMax, "Could not connect - no answer from the modem");   // (the log has the detail)
+				else
+					SetMsg(aResult, aMax, m);
 				}
-			NetFail();
+			if (w == 0 && LinkLooksDead(1))
+				NetFailDead();           // a dead link: hang it up; pg_dial tries once more
+			else
+				NetFail();
 			return -1;
 			}
 		gResolver->Close();
 		gResolverOpen = 0;
+		if (gLookupStat.Int() == KErrNone)
+			gLinkProven = 1;             // the ISP's DNS answered: the link carries data
 		if (gLookupStat.Int() != KErrNone)
 			{
 			NetHint(gLookupStat.Int());
@@ -909,9 +1437,12 @@ static int NetConnect(char* aResult, int aMax)
 		}
 	gConnStat = KRequestPending;
 	gSock->Connect(addr, gConnStat);     // starts the dial-up if it isn't up
-	// a numeric host (or a remembered address) skips the lookup, so then
-	// this is the step that dials
-	int w = WaitLink(gConnStat, lookedUp ? KConnectTimeoutUs : KLookupTimeoutUs, "connecting");
+	// A link that was proven (the lookup just answered, ProbeLink answered, or
+	// it carried data since its last failure) gets the normal connect wait: a
+	// connect that stalls is the server's. A numeric host with no link in sight
+	// is what dials: the full wait. A dial-up stage that shows extends either.
+	TInt connLimit = (lookedUp || fromCache || gLinkProven) ? KConnectTimeoutUs : KLookupTimeoutUs;
+	int w = WaitLink(gConnStat, connLimit, "connecting", KLookupTimeoutUs);
 	if (w != 1)
 		{
 		gSock->CancelConnect();
@@ -919,7 +1450,10 @@ static int NetConnect(char* aResult, int aMax)
 			gConnOrphan = 1;
 		gSock->Close();
 		SetMsg(aResult, aMax, w < 0 ? "Stopped" : "Timed out connecting to the server");
-		NetFail();
+		if (w == 0 && LinkLooksDead(0))
+			NetFailDead();                   // (a proven link is never blamed: LinkLooksDead)
+		else
+			NetFail();
 		return -1;
 		}
 	if (gConnStat.Int() != KErrNone)
@@ -933,11 +1467,14 @@ static int NetConnect(char* aResult, int aMax)
 		return -1;
 		}
 	gSockOpen = 1;
+	gLinkProven = 1;                         // a connect completed: the link carries data
+	SeenData();                              // (and says so to the other programs)
 	gLinkFailAt = TInt64(0);
 	gNetSent = gNetGotData = 0;
 	gNetClosedWhy = 0;
 	Say("  TCP connection open.\r\n");
 	NifHoldLink();                           // online: no idle disconnect until NetClose
+	HoldAfterUse();                          // ...and, if so set, after it too (psihold.exe)
 	return 0;
 	}
 
@@ -974,7 +1511,10 @@ static void NetRxDone()
 		{
 		gRxLen = gRecvDes->Length();
 		if (gRxLen > 0)
+			{
 			KeepAwake(gRxLen);
+			SeenData();                  // data came in: the shared link is alive
+			}
 		if (!gNetGotData && gRxLen > 0)
 			{
 			gNetGotData = 1;
@@ -994,6 +1534,8 @@ static void NetRxDone()
 			// pg_dial asks the stack (LinkUp) and, if it has, starts the
 			// link afresh (StartPpp and all)
 			gLinkSuspect = 1;
+			gLinkProven = 0;
+			SeenSuspect();
 			char m[80];
 			SetMsgNet(m, sizeof(m), "  The connection dropped", gRecvStat.Int());
 			LinkMsg(m);
@@ -1013,6 +1555,8 @@ static int NetWrite(const void* aBuf, int aLen)
 		gSock->CancelWrite();
 		User::WaitForRequest(stat);
 		gLinkSuspect = 1;                // a minute without an ACK: PPP may be gone
+		gLinkProven = 0;
+		SeenSuspect();
 		LinkMsg("  Sending to the server timed out.\r\n");
 		return -1;
 		}
@@ -1020,6 +1564,8 @@ static int NetWrite(const void* aBuf, int aLen)
 		{
 		char m[80];
 		gLinkSuspect = 1;
+		gLinkProven = 0;
+		SeenSuspect();
 		SetMsgNet(m, sizeof(m), "  Could not send to the server", stat.Int());
 		LinkMsg(m);
 		return -1;
@@ -1271,17 +1817,28 @@ static void SwitchOnCheck()
 	gSwitchOnSeen = gShared->switch_on;
 	if (gNet)
 		{
+		gLinkProven = 0;                // the Psion was off: nothing is proved any more
+		SeenSuspect();                  // (for the other programs too)
 		if (!gSsOpen)
 			{
 			LinkLog("switch-on: not online (no Internet session open)");
 			return;
 			}
+		// NIFMAN cannot tell a dead PPP from a live one (no LCP echo), so its
+		// "up" is not taken as proof: the stack's interfaces are asked as well
+		// (as the check at pg_dial), and an "up" is marked suspect, so the next
+		// connection probes it with the short timeouts
 		int up = NifActive();
-		if (up < 0)
+		if (up != 0 && LinkUp() == 0)
+			up = 0;
+		else if (up < 0)
 			up = LinkUp();
 		if (up == 1)
 			{
-			LinkLog("switch-on: the Psion's Internet connection is still up");
+			// (gLinkSuspect would also make the next close abortive, and a
+			// LOGOUT or QUIT would be reset: only the next dial probes)
+			gClaimNext = 1;
+			LinkLog("switch-on: the Psion's Internet connection looks up (not proof: probed at the next connection)");
 			return;
 			}
 		gLinkSuspect = 1;
@@ -1999,13 +2556,57 @@ static int StartPpp(char* aResult, int aResultMax)
 	const char* cmd = gShared->ppp_start;
 	gNet = 0;                            // the serial helpers below talk to COMM::0
 	int r = OpenSerial();
+	if (r == -10 && gPortStale)
+		{
+		// The last attempt timed out over a dead link and NIFMAN was told to
+		// hang it up (NetFailDead), but it may still hold COMM::0 for a moment.
+		// "Busy" is then NOT "the link is up": wait, bounded, for the port to
+		// come free (asking NIFMAN to stop again half way), then dial afresh.
+		Say("  Waiting for the old Internet connection to let go of the serial port...\r\n");
+		TInt64 t0 = NowMicro();
+		int stopAgain = 1;
+		while (r == -10 && NowMicro() - t0 < TInt64(KPortFreeWaitUs))
+			{
+			if (pg_quit_requested())
+				break;
+			if (stopAgain && NowMicro() - t0 > TInt64(8000000))
+				{
+				stopAgain = 0;
+				NifStop("nifman: Stop again - the port is still held");
+				}
+			pg_msleep(1000);
+			r = OpenSerial();
+			}
+		gPortStale = 0;
+		if (r == -10 || pg_quit_requested())
+			{
+			if (gCommOpen) { gComm->Close(); gCommOpen = 0; }
+			gNet = 1;
+			gRxPos = gRxLen = 0;
+			if (pg_quit_requested())
+				SetMsg(aResult, aResultMax, "Stopped");
+			else
+				{
+				SetMsg(aResult, aResultMax, "Serial port still in use - try again");
+				LinkLog("serial port still held by the old Internet connection 20 s after the Stop (NIFMAN has not let go of COMM::0)");
+				}
+			return -1;
+			}
+		LinkLog("serial port free again after the Stop");
+		}
+	gPortStale = 0;
 	if (r != 0)
 		{
 		if (gCommOpen) { gComm->Close(); gCommOpen = 0; }
 		gNet = 1;
 		gRxPos = gRxLen = 0;
 		if (r == -10)
+			{
+			// NIFMAN has the port: its link is up, or coming up. Only a claim:
+			// the connect has the short wait (the long one if it is dialling)
 			Say("  Serial port busy - the Internet connection is probably up already.\r\n");
+			gClaimUp = 1;
+			}
 		else if (r == -13)
 			Say("  The serial port is in use by another program - trying anyway.\r\n");
 		else
@@ -2021,19 +2622,48 @@ static int StartPpp(char* aResult, int aResultMax)
 	int at = ModemAnswersAt();
 	if (!at)
 		{
-		// still in PPP from a start that the Psion never finished? Escape
-		// to the command prompt and hang up, as the modem mode does
-		Say("no answer - hanging up an old connection first\r\n");
-		pg_msleep(1100);
-		pg_serial_write("+++", 3);
-		pg_msleep(1100);
-		pg_serial_write("ATH\r", 4);
-		pg_msleep(500);
-		gRxPos = gRxLen = 0;
-		gComm->ResetBuffers();
-		at = ModemAnswersAt();
-		if (!at)
-			Say("  The modem does not answer AT - it may already be in PPP; going on.\r\n");
+		// A modem in PPP mode answers no AT, and +++ ATH does nothing for it
+		// (a WiRSa in PPP): so first ask NIFMAN.
+		//   up      - the modem is in PPP and that link is what we want: go on
+		//             (it is only a claim: the short timeouts check it)
+		//   down    - nothing is using the modem: one escape to the command
+		//             prompt (the Atom needs it). If it still says nothing, go
+		//             on all the same: after a Stop a WiRSa that ignores DTR and
+		//             +++ is still in PPP, and NetDial renegotiating LCP is what
+		//             recovers it. The go-on is only a claim (gClaimUp): a modem
+		//             that is really dead then fails in about 20 s, not 60.
+		//   unknown - as before: escape, and go on
+		int nif = NifOpen() ? NifActive() : -1;
+		LinkLog(nif == 1 ? "modem: no answer to AT, NIFMAN says the link is up"
+		                 : nif == 0 ? "modem: no answer to AT, NIFMAN says the link is down"
+		                            : "modem: no answer to AT, NIFMAN would not say");
+		if (nif == 1)
+			{
+			Say("no answer - the Internet connection is up; going on\r\n");
+			gClaimUp = 1;
+			}
+		else
+			{
+			Say("no answer - hanging up an old connection first\r\n");
+			pg_msleep(1100);
+			pg_serial_write("+++", 3);
+			pg_msleep(1100);
+			pg_serial_write("ATH\r", 4);
+			pg_msleep(500);
+			gRxPos = gRxLen = 0;
+			gComm->ResetBuffers();
+			at = ModemAnswersAt();
+			if (!at)
+				{
+				Say("  The modem does not answer AT - it may already be in PPP; going on.\r\n");
+				if (nif == 0)
+					{
+					gClaimUp = 1;
+					gNoAt = 1;
+					LinkLog("modem: no AT answer after +++ATH and NIFMAN down: going on, short timeouts (is it on, and at this baud rate?)");
+					}
+				}
+			}
 		}
 	if (at)
 		{
@@ -2097,6 +2727,153 @@ static int StartPpp(char* aResult, int aResultMax)
 	return rc;
 	}
 
+// The Psion Internet route of pg_dial: bring the link up if need be, then
+// connect. Sets gClaimUp when the link is only claimed to be up (NIFMAN says
+// so, or a session is still held), and gRetryDead (NetFailDead) when the
+// attempt timed out over such a link and it has been hung up.
+static int PppDial(char* aResult, int aResultMax)
+	{
+	gClaimUp = 0;
+	gRetryDead = 0;
+	gNoAt = 0;
+	// a link start failed a moment ago: say so at once rather than dial again
+	// (and bring the Psion's connection dialogs back). Fail fast, as before:
+	// PsiWeb follows a failed connection with one request per picture, and
+	// waiting out the hold in each would turn one down server into a minute
+	// per picture. (NetFailDead drops the hold, so its one retry gets here.)
+	if (gLinkFailAt != TInt64(0) && NowMicro() - gLinkFailAt < KLinkFailHoldUs)
+		{
+		SetMsg(aResult, aResultMax, "The Psion's Internet connection failed a moment ago - try again in a few seconds");
+		return -1;
+		}
+	ReapOrphans(0);
+	if (gLookupOrphan || gConnOrphan)
+		{
+		// the last attempt's request never completed, even after closing
+		// the session: leave ESOCK alone rather than pile a second one on
+		// (and no other waits happen while one is out - see WaitFor)
+		SetMsg(aResult, aResultMax, "The Psion's Internet connection is still busy with the last attempt - wait a moment and try again");
+		return -1;
+		}
+	// The last TCP connection, if a caller left it open (a close without
+	// a hang-up): a second RSocket::Open on the same handle would leak
+	// the ESOCK subsession, and its pending receive would be taken for
+	// the new connection's - which then looked closed or dropped.
+	int claimNext = gClaimNext;          // (read and cleared here, so a gLinkSuspect turn
+	gClaimNext = 0;                      // cannot leave it to fire an extra probe next time)
+	NetCloseSocket(gLinkSuspect);
+	if (gLinkSuspect)
+		{
+		// a receive or send failed, or an idle connection stopped answering:
+		// was it the TCP connection (a server closing, a reset on the way) or
+		// the PPP link itself? Ask NIFMAN (NetworkActive), or failing that
+		// the stack - but with no LCP echo NIFMAN cannot tell a dead PPP
+		// from a live one, so "up" is only a claim, and the connect below
+		// is probed by NetConnect (a DNS query across PPP; a dead link is
+		// hung up and dialled afresh). Bringing it back costs half a minute and the Psion's
+		// connection dialogs, so a link that answers is kept.
+		int up = NifActive();
+		if (up < 0)
+			up = LinkUp();
+		else
+			LinkLog(up ? "nifman: NetworkActive says the link is up (unproven: probing)" : "nifman: NetworkActive says the link is down");
+		if (up == 1 && LinkUp() == 0)
+			{
+			LinkLog("the stack lists no interface up: the link has gone");
+			up = 0;                  // (the cross-check: NIFMAN's "up" is only a claim)
+			}
+		if (up == 1)
+			{
+			Say("  The Psion's Internet connection looks up: checking it.\r\n");
+			gLinkSuspect = 0;
+			gAddrHost[0] = 0;        // the probe must be a lookup, not the remembered address
+			}
+		else
+			{
+			Say(up == 0 ? "  The Psion's Internet connection has gone: starting it again.\r\n"
+			            : "  The connection dropped: starting the Internet connection again.\r\n");
+			NetClose();              // the link dropped: start it afresh
+			}
+		}
+	else if (gSsOpen && claimNext)
+		{
+		// switched on since the last connection: the same cross-check (NIFMAN
+		// cannot tell a dead PPP, the stack's interfaces can say it is gone)
+		int up = NifActive();
+		if (up != 0 && LinkUp() == 0)
+			up = 0;
+		else if (up < 0)
+			up = LinkUp();
+		if (up == 0)
+			{
+			LinkLog("switch-on: the link has gone since the Psion was switched off");
+			Say("  The Psion's Internet connection has gone: starting it again.\r\n");
+			NetClose();
+			}
+		else
+			gAddrHost[0] = 0;        // probed with a lookup, claimed up (below)
+		}
+	else if (gSsOpen && NifActive() == 0)
+		{
+		// nothing failed, but NIFMAN says the link is down (its idle
+		// hang-up, before the timers were held; the ISP's): a lookup
+		// now would make NetDial dial by itself, from PPP's leftovers -
+		// start it again our way (StartPpp and all) instead.
+		LinkLog("nifman: NetworkActive says the link is down before the connection");
+		Say("  The Psion's Internet connection has gone: starting it again.\r\n");
+		NetClose();
+		}
+	if (gSsOpen && !gLinkProven)
+		{
+		gClaimUp = 1;                // a held session on a link that "is up" and has carried nothing since the last failure: unproven
+		LinkLog("link claimed up, not proven: probing it before the connection");
+		}
+	// Another program (or an earlier session of ours) may already have the
+	// Psion's Internet connection up - NIFMAN shares one PPP link between all
+	// apps. Check BEFORE StartPpp: opening the serial port and doing the AT/+++
+	// dance on a line that is already carrying PPP breaks the live link (and
+	// the other app's session). If it is up, claim it and let the connect probe
+	// it, rather than dialling again. NifActive() needs a NIFMAN session, which
+	// a fresh app has not opened yet, so open it here.
+	if (!gSsOpen && NifOpen() && NifActive() == 1)
+		{
+		gClaimUp = 1;
+		LinkLog("nifman: a link is already up (perhaps another program): not starting PPP, probing it");
+		}
+	if (gShared->ppp_start[0] && !gSsOpen && !gClaimUp && StartPpp(aResult, aResultMax) != 0)
+		{
+		gLinkFailAt = NowMicro();
+		return -1;
+		}
+	if (!gSsOpen && !gClaimUp && NifOpen() && NifActive() == 1)
+		{
+		// StartPpp met an error with a link up, or an empty start command left
+		// the dialling to NetDial: only a claim, so the connect probes it.
+		gClaimUp = 1;
+		LinkLog("nifman: a link is up but not ours: claimed, not proven (probing it)");
+		}
+	if (gPortStale && !gShared->ppp_start[0])
+		{
+		// NetDial dials by itself (no start command, so no StartPpp to wait for
+		// the port): NIFMAN may still be hanging the old link up after our
+		// Stop, and a connect now meets KErrInUse. Wait, bounded, for it.
+		NifOpen();
+		TInt64 t0 = NowMicro();
+		Say("  Waiting for the old Internet connection to finish hanging up...\r\n");
+		while (NowMicro() - t0 < TInt64(KStopSettleUs))
+			{
+			if (pg_quit_requested())
+				break;
+			TInt st = NifStage();
+			if (NifActive() == 0 || (st != EStartingHangUp && st != EFinishedHangUp))
+				break;
+			pg_msleep(500);
+			}
+		gPortStale = 0;
+		}
+	return NetConnect(aResult, aResultMax);
+	}
+
 extern "C" int pg_dial(char* aResult, int aResultMax)
 	{
 	char cmd[220];
@@ -2116,67 +2893,24 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 			SetMsg(aResult, aResultMax, "Stopped");
 			return -1;
 			}
-		// a link start failed a moment ago: say so at once rather than
-		// dial again (and bring the Psion's connection dialogs back)
-		if (gLinkFailAt != TInt64(0) && NowMicro() - gLinkFailAt < KLinkFailHoldUs)
+		int r = PppDial(aResult, aResultMax);
+		if (r != 0 && gRetryDead && !gNoAt && !pg_quit_requested())
 			{
-			SetMsg(aResult, aResultMax, "The Psion's Internet connection failed a moment ago - try again in a few seconds");
-			return -1;
+			// it timed out over a link NIFMAN called up, and the link has
+			// been hung up: dial it afresh, once, rather than hand the
+			// failure to the person (who would only retry into the old
+			// NIFMAN state)
+			Say("  The Psion's Internet connection did not answer: hanging it up and starting it again.\r\n");
+			LinkLog("redialling once after hanging up the dead link");
+			r = PppDial(aResult, aResultMax);
+			// the retry failed too (NetFailDead dropped the hold for it): hold
+			// again, or the next caller dials at once into the same trouble
+			if (r != 0 && gLinkFailAt == TInt64(0))
+				gLinkFailAt = NowMicro();
 			}
-		ReapOrphans(0);
-		if (gLookupOrphan || gConnOrphan)
-			{
-			// the last attempt's request never completed, even after closing
-			// the session: leave ESOCK alone rather than pile a second one on
-			// (and no other waits happen while one is out - see WaitFor)
-			SetMsg(aResult, aResultMax, "The Psion's Internet connection is still busy with the last attempt - wait a moment and try again");
-			return -1;
-			}
-		// The last TCP connection, if a caller left it open (a close without
-		// a hang-up): a second RSocket::Open on the same handle would leak
-		// the ESOCK subsession, and its pending receive would be taken for
-		// the new connection's - which then looked closed or dropped.
-		NetCloseSocket(gLinkSuspect);
-		if (gLinkSuspect)
-			{
-			// a receive or send failed: was it the TCP connection (a server
-			// closing, a reset on the way) or the PPP link itself? Ask
-			// NIFMAN (NetworkActive), or failing that the stack, before
-			// throwing the dial-up away: bringing it back costs half a
-			// minute and the Psion's connection dialogs.
-			int up = NifActive();
-			if (up < 0)
-				up = LinkUp();
-			else
-				LinkLog(up ? "nifman: NetworkActive says the link is up" : "nifman: NetworkActive says the link is down");
-			if (up == 1)
-				{
-				Say("  The Psion's Internet connection is still up.\r\n");
-				gLinkSuspect = 0;
-				}
-			else
-				{
-				Say(up == 0 ? "  The Psion's Internet connection has gone: starting it again.\r\n"
-				            : "  The connection dropped: starting the Internet connection again.\r\n");
-				NetClose();              // the link dropped: start it afresh
-				}
-			}
-		else if (gSsOpen && NifActive() == 0)
-			{
-			// nothing failed, but NIFMAN says the link is down (its idle
-			// hang-up, before the timers were held; the ISP's): a lookup
-			// now would make NetDial dial by itself, from PPP's leftovers -
-			// start it again our way (StartPpp and all) instead.
-			LinkLog("nifman: NetworkActive says the link is down before the connection");
-			Say("  The Psion's Internet connection has gone: starting it again.\r\n");
-			NetClose();
-			}
-		if (gShared->ppp_start[0] && !gSsOpen && StartPpp(aResult, aResultMax) != 0)
-			{
-			gLinkFailAt = NowMicro();
-			return -1;
-			}
-		return NetConnect(aResult, aResultMax);
+		gRetryDead = 0;
+		gPortStale = 0;              // (only valid between a Stop and the dial that follows it)
+		return r;
 		}
 	if (!gCommOpen)
 		{
@@ -2184,7 +2918,11 @@ extern "C" int pg_dial(char* aResult, int aResultMax)
 		TInt r = pg_link_open();
 		if (r != 0)
 			{
-			if (r == -10 || r == -13)
+			if ((r == -10 || r == -13) && PsiLinkActive() == 1)
+				// (PPP has the port: the Psion Internet connection was left up -
+				// "Stay connected" - and the route has since become the modem)
+				SetMsg(aResult, aResultMax, "the Psion Internet connection has the serial port - disconnect it first (File > Disconnect)");
+			else if (r == -10 || r == -13)
 				SetMsg(aResult, aResultMax, "the serial port is in use by another program");
 			else
 				SetMsgErr(aResult, aResultMax, "could not set up the serial port", r);   // (pg_link_open's step codes)
@@ -3015,6 +3753,7 @@ static void LtModem(RComm& aComm, PgLinkTest* aT)
 
 // Psion Internet, with consent: the user's "first send" command to the modem
 // (e.g. ATDT777 puts a WiRSa into PPP), as the engines' StartPpp does
+static int LtNifActive();
 static void LtPppStart(PgLinkTest* aT)
 	{
 	if (!aT->ppp_start[0])
@@ -3040,7 +3779,9 @@ static void LtPppStart(PgLinkTest* aT)
 			User::After(200000);
 			TBuf8<256> buf;
 			int at = LtAt(comm, buf, aT, 1500);
-			if (at != PG_AT_OK && !aT->abort_test)
+			// (a link NIFMAN calls up means the modem is in PPP: +++ ATH does
+			// nothing for it, as in StartPpp)
+			if (at != PG_AT_OK && !aT->abort_test && LtNifActive() != 1)
 				{
 				LtEscape(comm);
 				at = LtAt(comm, buf, aT, 1500);

@@ -24,6 +24,9 @@ void pg_msleep(int ms) { usleep(ms * 1000); }
 int pg_quit_requested(void) { return 0; }
 void pg_link_close(void) { if (g_fd >= 0) { close(g_fd); g_fd = -1; } fprintf(stderr, "[net] port released\n"); }
 int pg_link_is_open(void) { return g_fd >= 0; }
+/* psiglue: Psion Internet with "Stay connected" (PG_LINK_KEEP=1 tests that path) */
+int pg_link_keep(void) { const char *k = getenv("PG_LINK_KEEP"); return k && *k == '1'; }
+void pg_link_suspect(void) { }              /* (no Psion Internet link on a PC) */
 int pg_net_closed(void) { return g_closed; }     /* (0.54) the link says the far end has gone */
 
 int pg_dial(char *why, int max)

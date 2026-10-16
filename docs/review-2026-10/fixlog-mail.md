@@ -1,6 +1,6 @@
 # Fix log: PsiMail (`mail/`)
 
-Findings from `recovery.md` (R), `bestpractice.md` (B) and `eikon.md` (E) whose code is under `mail/`. Paths are under `/home/daniel/www/psion/psiterm/`. Nothing is committed; `dist/` untouched; versions not bumped.
+Findings from `recovery.md` (R), `bestpractice.md` (B) and `eikon.md` (E) whose code is under `mail/`. Paths are relative to the repository. Nothing is committed; `dist/` untouched; versions not bumped.
 
 ## Engine (`mail/engine`, `mail/psimail.h`)
 

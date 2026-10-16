@@ -3,7 +3,8 @@
 # at the same path so the SDK's absolute paths and symlinks keep working.
 #
 #   tools/docker/psibuild setup        build the image, fetch and install the SDK
-#   tools/docker/psibuild all          build PsiTerm, PsiMail and PsiWeb (dist/*.sis)
+#   tools/docker/psibuild all          build PsiTerm, PsiMail and PsiWeb (dist/*.sis), then
+#                                      tools/docker/psibuild.local's builds, if it is here
 #   tools/docker/psibuild <command>    anything else, e.g. "mail/build.sh host"
 #
 # Layout (PSION_WORK, default: the folder above this checkout):
@@ -45,8 +46,10 @@ setup)
 	;;
 all)
 	cd "$REPO"
-	run "bash build.sh && mail/build.sh && web/build.sh"
-	ls -la "$REPO"/dist/*.sis
+	# (tools/docker/psibuild.local, if here - not part of the repository -
+	# holds commands for other builds in this checkout, run after these)
+	run "bash build.sh && mail/build.sh && web/build.sh && { [ ! -f tools/docker/psibuild.local ] || bash tools/docker/psibuild.local; }"
+	ls -la "$REPO"/dist/Psi{Term,Mail,Web}.sis
 	;;
 "")
 	sed -n '2,13p' "$0"

@@ -7,7 +7,7 @@ TARGETPATH    \system\apps\psiweb
 PROJECT       ptproj
 SUBPROJECT    psiweb
 
-SOURCE        psiweb.cpp pwhelp.cpp
+SOURCE        psiweb.cpp pwhelp.cpp pwfavs.cpp
 SUBPROJECT    psitermssh
 SOURCE        pglinktest.cpp psigreyui.cpp
 SUBPROJECT    psiweb

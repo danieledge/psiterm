@@ -7,8 +7,9 @@
 // Left/Right choose, Up/Down make the chosen version lighter or darker in
 // small steps (gamma 0.10 a step: gamma above 1 takes the levels to look
 // darker than their numbers, so every grey is drawn lighter), Enter uses
-// it in all three programs, Esc closes, and A opens the detailed settings
-// below for fine adjustment.
+// it in all three programs, Esc closes, A opens the detailed settings
+// below for fine adjustment, and Del (after a query) resets every grey
+// setting, Reading mode's included, to the standard ones and saves that.
 //
 // The detailed settings:
 // A full-screen page, as a test card: the 16 levels as bars, then ramps
@@ -73,7 +74,7 @@ CPsiGreyScreen* CPsiGreyScreen::NewL(MPsiGreyObserver& aObserver)
 	}
 
 CPsiGreyScreen::CPsiGreyScreen(MPsiGreyObserver& aObserver)
-	: iObserver(aObserver), iField(EGreyLevels), iLevel(7), iSimple(ETrue)
+	: iObserver(aObserver), iField(EGreyLevels), iLevel(7), iSimple(ETrue), iAskReset(EFalse)
 	{
 	}
 
@@ -370,8 +371,18 @@ void CPsiGreyScreen::DrawChoices(CWindowGc& aGc) const
 	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	aGc.SetPenColor(KRgbBlack);
 	TInt hy = all.iBr.iY - 4;
-	aGc.DrawText(_L("1-4: choose   Up/Down: lighter/darker   Enter: save   Esc: close   A: detailed settings"),
-		TPoint(4, hy));
+	if (iAskReset)
+		{
+		// statement, then the question (a bold line, as a query's title)
+		const CFont* bold = iEikonEnv->TitleFont();
+		aGc.UseFont(bold);
+		aGc.DrawText(_L("Reset every grey setting to standard?   Y: yes   Other keys: no"),
+			TPoint(4, hy));
+		aGc.UseFont(small);
+		}
+	else
+		aGc.DrawText(_L("1-4: choose   Up/Down: lighter/darker   Enter: save   Esc: close   A: detailed   Del: reset"),
+			TPoint(4, hy));
 	aGc.DrawText(_L("Look at the doorway and the tree (dark), the clouds (light) and the ball (smooth)"),
 		TPoint(4, hy - small->HeightInPixels() - 3));
 	aGc.DiscardFont();
@@ -400,6 +411,22 @@ void CPsiGreyScreen::NudgeL(TInt aDelta)
 
 TKeyResponse CPsiGreyScreen::ChoiceKeyL(TInt aCode)
 	{
+	if (iAskReset)
+		{
+		// Y: every grey setting, Reading mode's too, back to the standard
+		// ones, saved for all the programs; any other key keeps them
+		iAskReset = EFalse;
+		if (aCode == 'y' || aCode == 'Y')
+			{
+			PsiGrey std;
+			psigrey_defaults(&std);
+			psigrey_compute(&std, GreyPow);
+			iObserver.GreyScreenDone(ETrue, std);
+			}
+		else
+			DrawNow();
+		return EKeyWasConsumed;
+		}
 	switch (aCode)
 		{
 	case EKeyEscape:
@@ -426,6 +453,13 @@ TKeyResponse CPsiGreyScreen::ChoiceKeyL(TInt aCode)
 	case 'a':
 	case 'A':
 		iSimple = EFalse;                    // the detailed settings
+		DrawNow();
+		break;
+	case EKeyDelete:
+	case EKeyBackspace:
+		// Reset greys? asked on this screen: it is above every window and
+		// takes every key, so a query dialog would open hidden behind it
+		iAskReset = ETrue;
 		DrawNow();
 		break;
 	default:

@@ -18,6 +18,7 @@ NAME PSIW
 #include <eikclock.rh>
 #include <eikspace.rh>
 #include <eikrted.rh>
+#include <eiklbx.rh>
 #include <eikseced.rh>
 #include <eikon.rsg>
 
@@ -107,14 +108,15 @@ RESOURCE HOTKEYS r_pw_hotkeys
 		{
 		HOTKEY { command=EPwCmdZoomOut; key='m'; },
 		HOTKEY { command=EPwCmdReading; key='r'; },
+		HOTKEY { command=EPwCmdAddFav; key='d'; },
 		HOTKEY { command=EPwCmdPageInfo; key='q'; },
 		HOTKEY { command=EPwCmdHelp; key='h'; },
 		HOTKEY { command=EPwCmdAbout; key='a'; }
 		};
 	}
 
-// Menus in EIKON's order: File, View, the program's own (Go), then Tools
-// ending with About
+// Menus in EIKON's order: File, View, the program's own (Go, Favourites),
+// then Tools ending with About
 RESOURCE MENU_BAR r_pw_menubar
 	{
 	titles=
@@ -122,6 +124,7 @@ RESOURCE MENU_BAR r_pw_menubar
 		MENU_TITLE { menu_pane=r_pw_file_menu; txt="File"; },
 		MENU_TITLE { menu_pane=r_pw_view_menu; txt="View"; },
 		MENU_TITLE { menu_pane=r_pw_go_menu; txt="Go"; },
+		MENU_TITLE { menu_pane=r_pw_favs_menu; txt="Favourites"; },
 		MENU_TITLE { menu_pane=r_pw_tools_menu; txt="Tools"; }
 		};
 	}
@@ -168,7 +171,32 @@ RESOURCE MENU_PANE r_pw_go_menu
 		MENU_ITEM { command=EPwCmdBack; txt="Back"; },
 		MENU_ITEM { command=EPwCmdForward; txt="Forward"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPwCmdTop; txt="Top of page"; },
-		MENU_ITEM { command=EPwCmdBottom; txt="End of page"; }
+		MENU_ITEM { command=EPwCmdBottom; txt="End of page"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPwCmdHistory; cascade=r_pw_history_menu; txt="History"; }
+		};
+	}
+
+// Go > History: the latest pages, Full history..., Clear history. The pages
+// are added by CPwAppUi::HistoryMenuL (the two commands here are moved after
+// them); at most 8 commands
+RESOURCE MENU_PANE r_pw_history_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPwCmdHistoryFull; txt="Full history..."; },
+		MENU_ITEM { command=EPwCmdClearHistory; txt="Clear history"; }
+		};
+	}
+
+// Favourites: Add (Shift+Ctrl+D; Ctrl+D is Delete), Organise, then the
+// favourites themselves, the first five, and More favourites... for the
+// rest (CPwAppUi::FavsMenuL); at most 8 commands
+RESOURCE MENU_PANE r_pw_favs_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPwCmdAddFav; txt="Add to favourites..."; extratxt="Shift+Ctrl+D"; },
+		MENU_ITEM { command=EPwCmdOrganiseFav; txt="Organise favourites..."; }
 		};
 	}
 
@@ -180,6 +208,7 @@ RESOURCE MENU_PANE r_pw_tools_menu
 		MENU_ITEM { command=EPwCmdPrefs; txt="Preferences..."; },
 		MENU_ITEM { command=EPwCmdConnSettings; txt="Connection settings..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPwCmdRestart; txt="Restart browser engine"; },
+		MENU_ITEM { command=EPwCmdSendLog; txt="Send log to server"; },
 		MENU_ITEM { command=EPwCmdUpdate; txt="Update PsiWeb..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPwCmdHelp; txt="Help on PsiWeb"; },
 		MENU_ITEM { command=EPwCmdAbout; txt="About PsiWeb"; }
@@ -196,7 +225,82 @@ RESOURCE DIALOG r_pw_open_dialog
 		DLG_LINE { type=EEikCtEdwin; prompt="Address"; id=EPwDlgUrl;
 			control=EDWIN { width=30; maxlength=500; }; },
 		DLG_LINE { type=EEikCtLabel; control=LABEL { standard_font=EEikLabelFontAnnotation;
-			txt="Or words to search for"; }; }
+			txt="Or words to search for"; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Recent"; id=EPwDlgRecent;
+			control=CHOICELIST { array_id=r_pw_empty_array; }; }
+		};
+	}
+
+// Add to favourites (and Edit in Organise favourites)
+RESOURCE DIALOG r_pw_fav_dialog
+	{
+	title="Favourite";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPwDlgFavName;
+			control=EDWIN { width=30; maxlength=80; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Address"; id=EPwDlgFavUrl;
+			control=EDWIN { width=30; maxlength=500; }; }
+		};
+	}
+
+// Organise favourites: the list with Edit and Delete (they act at once, the
+// list stays), and Close
+RESOURCE DIALOG r_pw_organise_dialog
+	{
+	title="Organise favourites";
+	flags=EEikDialogFlagWait;
+	buttons=r_pw_organise_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtColListBox; id=EPwDlgOrgList;
+			control=LISTBOX { height=6; width=34; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pw_organise_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPwBidEdit; button=CMBUT { txt="Edit..."; }; hotkey='E'; },
+		DLG_BUTTON { id=EPwBidDelete; button=CMBUT { txt="Delete"; }; hotkey='D'; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Close"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+// More favourites and Full history: pick a page to open
+RESOURCE DIALOG r_pw_pick_favs_dialog
+	{
+	title="Favourites";
+	flags=EEikDialogFlagWait;
+	buttons=r_pw_pick_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtColListBox; id=EPwDlgOrgList;
+			control=LISTBOX { height=6; width=34; }; }
+		};
+	}
+
+RESOURCE DIALOG r_pw_pick_history_dialog
+	{
+	title="History";
+	flags=EEikDialogFlagWait;
+	buttons=r_pw_pick_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtColListBox; id=EPwDlgOrgList;
+			control=LISTBOX { height=6; width=34; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pw_pick_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Open"; }; hotkey=EEikBidOk; flags=0; }
 		};
 	}
 
@@ -205,6 +309,20 @@ RESOURCE DIALOG r_pw_conn_dialog
 	title="Connection settings";
 	flags=EEikDialogFlagWait;
 	buttons=r_pw_conn_buttons;
+	pages=r_pw_conn_pages;
+	}
+
+RESOURCE ARRAY r_pw_conn_pages
+	{
+	items=
+		{
+		PAGE { text="Link"; id=EPwPageLink; lines=r_pw_conn_link_lines; },
+		PAGE { text="Network"; id=EPwPageProxy; lines=r_pw_conn_proxy_lines; }
+		};
+	}
+
+RESOURCE ARRAY r_pw_conn_link_lines
+	{
 	items=
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Connect via"; id=EPwDlgLink; control=CHOICELIST { array_id=r_pw_link_array; }; },
@@ -214,8 +332,21 @@ RESOURCE DIALOG r_pw_conn_dialog
 		};
 	}
 
-// Preferences (Ctrl+K): the home page, pictures, and the proxy. The
-// connection itself is in Connection settings (shared with PsiTerm and
+RESOURCE ARRAY r_pw_conn_proxy_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="After use, Psion Internet"; id=EPwDlgKeepUp; control=CHOICELIST { array_id=r_pw_keepup_array; }; },
+		DLG_LINE { type=EEikCtLabel; control=LABEL { standard_font=EEikLabelFontAnnotation;
+			txt="Disconnect with Ctrl+U - the modem route always hangs up after use"; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Use proxy"; id=EPwDlgProxy; control=CHOICELIST { array_id=r_pw_proxy_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Proxy host"; id=EPwDlgProxyHost; control=EDWIN { width=22; maxlength=60; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Proxy port"; id=EPwDlgProxyPort; control=NUMBER_EDITOR { min=1; max=65535; }; }
+		};
+	}
+
+// Preferences (Ctrl+K): the home page and pictures. The proxy and the
+// connection itself are in Connection settings (shared with PsiTerm and
 // PsiMail). Screen greys... opens the greys screen shared with PsiTerm and
 // PsiMail (ssh/psigreyui.cpp; docs/display.md) on top; the dialog is still
 // there when it closes.
@@ -228,12 +359,7 @@ RESOURCE DIALOG r_pw_prefs_dialog
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Home page"; id=EPwDlgHome; control=EDWIN { width=24; maxlength=200; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Pictures"; id=EPwDlgPictures; control=CHOICELIST { array_id=r_pw_pictures_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Text"; id=EPwDlgText; control=CHOICELIST { array_id=r_pw_text_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Use a proxy"; id=EPwDlgProxy; control=CHOICELIST { array_id=r_pw_proxy_array; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Proxy host"; id=EPwDlgProxyHost; control=EDWIN { width=24; maxlength=60; }; },
-		DLG_LINE { type=EEikCtNumberEditor; prompt="Proxy port"; id=EPwDlgProxyPort; control=NUMBER_EDITOR { min=1; max=65535; }; },
-		DLG_LINE { type=EEikCtLabel; control=LABEL { standard_font=EEikLabelFontAnnotation;
-			txt="A proxy such as WebOne fetches https pages for the Psion & keeps one connection open"; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Text"; id=EPwDlgText; control=CHOICELIST { array_id=r_pw_text_array; }; }
 		};
 	}
 
@@ -311,9 +437,16 @@ RESOURCE ARRAY r_pw_pictures_array
 	items={ LBUF { txt="Only when asked"; }, LBUF { txt="On every page"; } };
 	}
 
+// Connection settings > Network: the Psion Internet connection after use
+// (shared, PsiLink.ini v4; the same words in all four programs)
+RESOURCE ARRAY r_pw_keepup_array
+	{
+	items={ LBUF { txt="Stays connected"; }, LBUF { txt="Disconnects when idle"; } };
+	}
+
 RESOURCE ARRAY r_pw_proxy_array
 	{
-	items={ LBUF { txt="No - fetch directly"; }, LBUF { txt="Yes"; } };
+	items={ LBUF { txt="No"; }, LBUF { txt="Yes"; } };
 	}
 
 // Update: where to fetch PsiWeb-version.txt and PsiWeb.sis from - the same

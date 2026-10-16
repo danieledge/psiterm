@@ -2,14 +2,16 @@
 ; PsiMail.app: screen, menus, settings.  psimail.exe: the mail engine.
 ; pmbutton.exe: the Email icon below the screen opens PsiMail (a preference);
 ; PsiMail starts it whenever PsiMail opens with that preference on.
+; psihold.exe: holds the Psion Internet connection up after use ("Stay connected", ssh/psihold.cpp)
 &EN
-#{"PsiMail"},(0x01000A7C),0,83,0
+#{"PsiMail"},(0x01000A7C),0,92,0
 "psimail.app"-"!:\System\Apps\PsiMail\PsiMail.app"
 "psimail.rsc"-"!:\System\Apps\PsiMail\PsiMail.rsc"
 "psimail.mbm"-"!:\System\Apps\PsiMail\PsiMail.mbm"
 "psimail.aif"-"!:\System\Apps\PsiMail\PsiMail.aif"
 "psimail.exe"-"!:\System\Apps\PsiMail\psimail.exe"
 "pmbutton.exe"-"!:\System\Apps\PsiMail\pmbutton.exe"
+"psihold.exe"-"!:\System\Apps\PsiMail\psihold.exe"
 ; the settings PsiMail writes: kept over an upgrade, removed with the program
 ; (the mail itself, in \System\Data\PsiMail on the memory disk or the internal
 ; disk, is the user's and stays; so does Store.log, should a store move have failed)

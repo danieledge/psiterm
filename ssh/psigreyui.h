@@ -58,6 +58,7 @@ private:
 	TInt iLevel;
 	CFbsBitmap* iRamps;
 	TBool iSimple;                     // "Which looks best?" (A: the detailed settings)
+	TBool iAskReset;                   // Del pressed: asking "Reset greys?" on the screen itself
 	TInt iChoice;                      // 0..KChoices-1
 	TInt iNudge[KChoices];             // Up/Down: steps lighter (+) or darker (-)
 	PsiGrey iVersions[KChoices];

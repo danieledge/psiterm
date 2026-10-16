@@ -66,6 +66,13 @@ extern void pg_hangup(void);
 extern int pg_entropy(unsigned char*, int);
 extern const char* pg_home(void);
 extern int pg_take_link_doubt(void);
+extern int pg_attach(void);
+extern void pg_set_link_log(void (*)(const char*));
+/* from ptlog.cpp (PsiTerm.log, 0.89) */
+extern void pt_log_open(int append);
+extern void pt_log(const char* text);
+extern long pt_log_size(int old);
+extern long pt_log_read(int old, long pos, void* buf, long max);
 
 #define PSI_FD_SIGR 51
 #define PSI_FD_SIGW 52
@@ -1240,6 +1247,152 @@ fail:
 	return 2;
 }
 
+/* Mode 6: Tools > Send log to server (0.89). POSTs PsiTerm.old and
+   PsiTerm.log to the proxy the app is set to use (PsiLink.ini, passed in
+   proxy_host / proxy_port):
+
+     POST /_putlog?app=PsiTerm&ver=<version> HTTP/1.0
+     Host: <proxy>:<port>   Content-Type: text/plain
+     Content-Length: n      Connection: close
+
+   Each log follows a "==== name ====" line. If there is more than
+   LOG_MAX the front is cut, so the newest lines survive. The files are
+   read in 1 KB pieces. Only the reply's status line is read; 200 is
+   success. How it went goes to the app in log_state / log_msg. Exit code
+   12 = sent. */
+#define LOG_MAX (1000L * 1024)
+
+static void log_end(int state, const char *fmt, ...)
+{
+	PsiShared *s = pg_shared();
+	va_list ap;
+	va_start(ap, fmt);
+	vsprintf(psi_fmtbuf, fmt, ap);
+	va_end(ap);
+	psi_fmtbuf[80] = 0;
+	strcpy(s->log_msg, psi_fmtbuf);
+	pt_log(s->log_msg);
+	s->log_state = state;
+}
+
+/* sends bytes from..from+n of a log; 0 ok, -1 failed or stopped. Over the
+   modem the bytes are paced in 256-byte pieces (it drops data if the
+   Psion sends at full speed for long). */
+static int putlog_file(int old, long from, long n)
+{
+	PsiShared *s = pg_shared();
+	static unsigned char b[1024];
+	int i;
+	while (n > 0) {
+		long k = pt_log_read(old, from, b, n < (long)sizeof(b) ? n : (long)sizeof(b));
+		if (k <= 0) break;
+		for (i = 0; i < k; i += 256) {
+			int m = k - i < 256 ? (int)(k - i) : 256;
+			if (pg_serial_write(b + i, m) != m) return -1;
+			if (!s->net_mode && (pg_wait(25, 0, 0) & 8)) return -1;
+		}
+		if (s->net_mode && pg_quit_requested()) return -1;
+		from += k;
+		n -= k;
+	}
+	while (n > 0) {                          /* the file shrank: pad, so the length holds */
+		static const char sp[16] = "                ";
+		int m = n < 16 ? (int)n : 16;
+		if (pg_serial_write(sp, m) != m) return -1;
+		n -= m;
+	}
+	return 0;
+}
+
+static int run_putlog(void)
+{
+	static const char hdr_old[] = "==== PsiTerm.old ====\n", hdr_cur[] = "==== PsiTerm.log ====\n";
+	PsiShared *s = pg_shared();
+	char req[400], why[96], line[200];
+	long sold, scur, ho, hc, total, cut, skip_old = 0, skip_cur = 0;
+	int n = 0, c, status = 0, i, ok;
+
+	s->proxy_host[sizeof(s->proxy_host) - 1] = 0;
+	s->version[sizeof(s->version) - 1] = 0;
+	if (!s->proxy_host[0] || s->proxy_port <= 0 || s->proxy_port > 65535) {
+		log_end(PSI_LOG_FAILED, "no proxy set");
+		return 2;
+	}
+	sold = pt_log_size(1);
+	scur = pt_log_size(0);
+	if (sold < 0) sold = 0;
+	if (scur < 0) scur = 0;
+	if (sold <= 0 && scur <= 0) {
+		log_end(PSI_LOG_FAILED, "no log to send");
+		return 2;
+	}
+	ho = sold ? (long)strlen(hdr_old) : 0;
+	hc = (long)strlen(hdr_cur);
+	total = ho + sold + hc + scur;
+	cut = total > LOG_MAX ? total - LOG_MAX : 0;
+	if (cut > 0) {
+		/* the front goes first: the old log, then the front of the current one */
+		if (cut >= sold) { skip_cur = cut - sold; sold = 0; ho = 0; }
+		else { skip_old = cut; sold -= cut; ho = 0; }
+		scur -= skip_cur;
+		total = ho + sold + hc + scur;
+	}
+
+	/* the same connect path as SSH and the updates: pg_dial goes to host:port */
+	strcpy(s->host, s->proxy_host);
+	s->port = s->proxy_port;
+	why[0] = 0;
+	pg_take_resize();
+	if (pg_dial(why, sizeof(why)) != 0) {
+		pg_hangup();
+		log_end(PSI_LOG_FAILED, "%.60s", why[0] ? why : "no connection to the proxy");
+		return 2;
+	}
+	sprintf(req, "POST /_putlog?app=PsiTerm&ver=%.15s HTTP/1.0\r\nHost: %.64s:%d\r\nUser-Agent: PsiTerm/%.15s\r\n"
+		"Content-Type: text/plain\r\nContent-Length: %ld\r\nConnection: close\r\n\r\n",
+		s->version, s->proxy_host, s->proxy_port, s->version, total);
+	ok = pg_serial_write(req, (int)strlen(req)) == (int)strlen(req);
+	if (ok && ho > 0) ok = pg_serial_write(hdr_old, (int)ho) == (int)ho;
+	if (ok && sold > 0) ok = putlog_file(1, skip_old, sold) == 0;
+	if (ok) ok = pg_serial_write(hdr_cur, (int)hc) == (int)hc;
+	if (ok && scur > 0) ok = putlog_file(0, skip_cur, scur) == 0;
+	if (!ok) {
+		pg_hangup();
+		log_end(PSI_LOG_FAILED, pg_quit_requested() ? "stopped" : "the connection was lost");
+		return 2;
+	}
+	/* the status line; anything else in the reply is ignored and garbage is "not a web proxy" */
+	for (i = 0; i < 400 && !status; i++) {
+		unsigned char ch;
+		int r = io_read(&ch, 1, 30000);
+		if (r != 1) {
+			pg_hangup();
+			log_end(PSI_LOG_FAILED, r == -2 ? "stopped" : "no reply from the proxy");
+			return 2;
+		}
+		c = ch;
+		if (c == '\r') continue;
+		if (c != '\n') { if (n < (int)sizeof(line) - 1) line[n++] = (char)c; continue; }
+		line[n] = 0;
+		if (n == 0) continue;                /* (modem CONNECT leftovers) */
+		n = 0;
+		if (strncmp(line, "HTTP/", 5) || !strchr(line, ' ')) {
+			pg_hangup();
+			log_end(PSI_LOG_FAILED, "not a web proxy");
+			return 2;
+		}
+		status = atoi(strchr(line, ' ') + 1);
+	}
+	pg_hangup();
+	if (status == 200) {
+		log_end(PSI_LOG_SENT, "log sent (%ld bytes)", total);
+		return 12;
+	}
+	if (status == 413) log_end(PSI_LOG_FAILED, "the log is too big");
+	else log_end(PSI_LOG_FAILED, "the proxy said %d", status);
+	return 2;
+}
+
 extern int psi_keygen(const char *base, const char *name, char *pub, int pubmax, char *why, int whymax);
 extern int psi_keyimport(const char *src, const char *base, const char *name,
 	char *pub, int pubmax, char *why, int whymax);
@@ -1278,6 +1431,20 @@ int main(int argc, char **argv)
 	PsiShared* s;
 	(void)argc; (void)argv;
 
+#ifndef PSI_HOST_TEST
+	/* (0.89) the link log: C:\System\Data\PsiTerm.log. Opened here, before
+	   pg_init, so the serial port's own lines are in it. A new log for a
+	   session, an update or a screenshot upload; Send log only adds to it;
+	   the speed test and the key tools write none. */
+	if (pg_attach() == 0) {
+		int m = pg_shared()->mode;
+		if (m == 0 || m == 2 || m == 3 || m == 6) {
+			pt_log_open(m == 6);
+			pg_set_link_log(pt_log);
+			pt_log(m == 6 ? "send log" : m == 2 ? "engine start: update" : m == 3 ? "engine start: upload" : "engine start: ssh");
+		}
+	}
+#endif
 	r = pg_init();
 	s = pg_shared();
 	if (s) {
@@ -1292,6 +1459,11 @@ int main(int argc, char **argv)
 		return psi_end(r);
 	}
 	if (r != 0) {
+		if (s && s->mode == 6) {                 /* Send log: say why in the app's infoprint */
+			log_end(PSI_LOG_FAILED, r == -13 || r == -10 ? "the serial port is in use" : "could not open the serial port (%d)", r);
+			pg_set_exit(2);
+			return psi_end(2);
+		}
 		if (s) {
 			char msg[160];
 			if (r == -13)
@@ -1312,6 +1484,11 @@ int main(int argc, char **argv)
 	   of getting online (checking the modem, dialling, the Internet
 	   connection), as the terminal does for SSH; without this it said only
 	   "Checking..." until the link was up */
+	if (s->mode == 6) {                          /* Send log: silent, the app says how it went */
+		r = run_putlog();
+		pg_set_exit(r);
+		return psi_end(r);
+	}
 	pg_dial_verbose(1);
 
 	if (s->mode == 2 || s->mode == 3) {

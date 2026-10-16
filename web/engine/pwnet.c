@@ -18,7 +18,9 @@ extern int  pg_serial_write(const void *buf, int len);
 extern int  pg_wait(int ms, int want_net, int want_kbd);
 extern void pg_link_close(void);
 extern int  pg_link_is_open(void);
+extern int  pg_link_keep(void);           /* psiglue: Psion Internet + "Stay connected" */
 extern int  pg_net_closed(void);          /* psiglue: the link says the connection is over */
+extern void pg_link_suspect(void);        /* psiglue: PPP may be dead although NIFMAN says up */
 extern unsigned long pwb_ms(void);
 
 #define IDLE_RELEASE_MS 60000       /* give the serial port back after this */
@@ -31,6 +33,14 @@ static int  g_port;
 static char g_host[128];
 static char g_tail[16];          /* modem: last bytes, to spot NO CARRIER */
 static int  g_dead;
+
+/* Psion Internet: PPP has no LCP echo, so NIFMAN calls a dead link up. A
+   request sent on a connection that had been idle for 30 s or more, and not
+   answered at all in 15 s, tells psiglue the link is suspect: the next dial
+   checks it (short timeouts, then a hang-up and a fresh dial). */
+static int  g_awaiting;                 /* a request is out and nothing has come back */
+static int  g_flagged;                  /* ...and psiglue has been told */
+static unsigned long g_wr_at, g_wr_gap; /* when it was sent, and the idle time before it */
 
 int pwn_modem(void)
 {
@@ -65,6 +75,7 @@ int pwn_connect(const char *host, int port, int tls, char *why, int whymax)
 	g_port = port;
 	snprintf(g_host, sizeof(g_host), "%s", host);
 	memset(g_tail, 0, sizeof(g_tail));
+	g_awaiting = g_flagged = 0;
 	return 0;
 }
 
@@ -107,6 +118,13 @@ int pwn_dead(void)
 
 int pwn_write(const void *buf, int len)
 {
+	unsigned long now = pwb_ms();
+	if (!g_awaiting) {
+		g_wr_gap = now - g_last_use;
+		g_wr_at = now;
+		g_awaiting = 1;
+		g_flagged = 0;
+	}
 	used();
 	if (!g_open)
 		return -1;
@@ -157,6 +175,16 @@ static int modem_data(unsigned char *b, int n)
 	return i;
 }
 
+/* a read timed out with nothing back since the request */
+static void idle_probe(void)
+{
+	if (pwn_modem() || !g_awaiting || g_flagged) return;
+	if (g_wr_gap >= 30000 && pwb_ms() - g_wr_at >= 15000) {
+		g_flagged = 1;
+		pg_link_suspect();
+	}
+}
+
 int pwn_read(void *buf, int max, int timeout_ms)
 {
 	int n;
@@ -170,21 +198,26 @@ int pwn_read(void *buf, int max, int timeout_ms)
 		if (!tls_pending() && pg_net_avail() == 0) {
 			int m = pg_wait(timeout_ms, 1, 0);
 			if (m & 8) return PWN_CANCEL;
-			if (pg_net_avail() == 0)
+			if (pg_net_avail() == 0) {
+				if (!(m & 1)) idle_probe();
 				return (m & 1) ? 0 : PWN_TIMEOUT;   /* closed : nothing yet */
+			}
 		}
 		/* a record is on its way: allow for a slow line */
 		n = tls_read(buf, max, 20000);
 		if (n == -2) return PWN_CANCEL;
 		if (n < 0 && pwn_modem() && pg_net_avail() == 0) return 0;
+		if (n > 0) g_awaiting = 0;
 		return n;
 	}
 #endif
 	if (pg_net_avail() == 0) {
 		int m = pg_wait(timeout_ms, 1, 0);
 		if (m & 8) return PWN_CANCEL;
-		if (pg_net_avail() == 0)
+		if (pg_net_avail() == 0) {
+			if (!(m & 1)) idle_probe();
 			return (m & 1) ? 0 : PWN_TIMEOUT;
+		}
 	}
 	n = pg_net_read(buf, max);
 	if (n > 0 && pwn_modem()) {
@@ -192,6 +225,7 @@ int pwn_read(void *buf, int max, int timeout_ms)
 		if (n == 0)
 			return 0;                       /* closed */
 	}
+	if (n > 0) g_awaiting = 0;
 	return n;
 }
 
@@ -205,13 +239,24 @@ void pwn_close(int hangup)
 
 /* Called about once a second from the engine's event loop: after a minute
  * with no fetch using the link, hang up and let go of the serial port so
- * other programs (PsiTerm) can have it. The next fetch dials again. */
+ * other programs (PsiTerm) can have it. The next fetch dials again.
+ * Psion Internet with "Stay connected" (PsiLink.ini): only the idle TCP
+ * connection goes. The engine keeps its socket server session, and with it
+ * NIFMAN's idle timers held off, while it runs: closing the session was
+ * what let PPP drop between an engine's requests (NIFMAN's "Timeout\Client"
+ * starts once nothing uses the link). PPP has the port either way. */
 void pwn_idle_tick(void)
 {
 	if (!pg_link_is_open())
 		return;
 	if (pwb_ms() - g_last_use < IDLE_RELEASE_MS)
 		return;
+	if (pg_link_keep()) {
+		if (g_open)
+			pwn_close(1);                   /* (the next fetch connects again, over the same link) */
+		used();                             /* (asked again after the next idle minute, not every tick) */
+		return;
+	}
 	pwn_release_now();
 }
 

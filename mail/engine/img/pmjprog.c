@@ -290,7 +290,8 @@ static int setup(Dec *d, char *err, int errmax)
 	d->ybh = d->ncomp > 1 ? d->mcuy * y->v : y->bh;
 	/* the shrink pmjpeg.c would use; more if the memory says so */
 	for (shrink = 3; shrink > 0; shrink--)
-		if ((d->w >> shrink) >= d->o->max_w / 2 || (d->h >> shrink) >= d->o->max_h / 2) break;
+		if ((d->w >> shrink) >= (d->o->exact ? d->o->max_w : d->o->max_w / 2)
+			|| (d->h >> shrink) >= (d->o->exact ? d->o->max_h : d->o->max_h / 2)) break;
 	while (shrink < 3 && bytes_for(d, keep_for(shrink)) > d->o->max_full_bytes) shrink++;
 	need = bytes_for(d, keep_for(shrink));
 	if (need > d->o->max_full_bytes) { pmimg_err(err, errmax, "too big"); return PMIMG_E_TOO_BIG; }
