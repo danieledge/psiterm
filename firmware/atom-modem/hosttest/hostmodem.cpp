@@ -16,6 +16,7 @@
 // ARM harness (web/links/emu/run_links.py --proxy 127.0.0.1:PORT) or a PC.
 // MIT licence (see LICENSE at the top of the repository).
 #include "../src/modem.h"
+#include "../src/atremote.h"
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <netdb.h>
@@ -303,16 +304,219 @@ public:
 		tcp = -1;
 		peek.clear();
 		}
-	bool WifiUp() override { return true; }
-	void WifiBegin(const char*, const char*) override {}
-	void WifiEnd() override {}
-	void WifiInfo(char* o, size_t m) override { snprintf(o, m, "\"(PC)\" IP 127.0.0.1 RSSI 0"); }
+	// A pretend WiFi world, for PsiConnect (AT$SCAN, AT$JOIN, AT$STAT?): it starts
+	// joined to "Home-WiFi"; a join takes 2.5 s and works with the password
+	// "psion5mx" (none for the open one), else fails as the Atom would
+	// report it. HOSTMODEM_JOIN_MS changes how long a join takes;
+	// HOSTMODEM_WIFI_SAVED=1 starts it with "Home-WiFi" saved, as AT&W would. The scan has a duplicate, a hidden network and awkward names.
+	// 2.2: HOSTMODEM_NETS=1 saves "Home-WiFi" and "Lab-WiFi" (both psion5mx);
+	// HOSTMODEM_WG=1 adds a WireGuard config (throwaway keys made at the start)
+	// in mode Auto and a pretend tunnel; HOSTMODEM_HOME=1 puts the uplink on
+	// the home network (Auto then keeps the tunnel down).
+	struct FakeNet { const char* ssid; int rssi; int secure; int ch; };
+	std::string wifiCur = "Home-WiFi", wifiWant, wifiWantPass;
+	bool wifiUp = true;
+	uint64_t wifiJoinAt = 0;
+	int wifiFail = am::EWifiFailNone;
+	static const FakeNet* Nets(int& aCount)
+		{
+		static const FakeNet kNets[] = {
+			{ "Lab-WiFi", -61, 1, 11 },
+			{ "Home-WiFi", -83, 1, 36 },          // (the same name further away: listed once)
+			{ "BTHub6-7X2Q", -74, 1, 1 },
+			{ "Home-WiFi", -48, 1, 6 },
+			{ "", -70, 1, 3 },                    // hidden
+			{ "Cafe \"Guest\" Wi-Fi", -80, 0, 6 },
+			{ "Caf\xc3\xa9 a/b", -88, 1, 9 },     // UTF-8, and an "a/"
+			{ "VM5551234", -90, 1, 1 } };
+		aCount = (int)(sizeof(kNets) / sizeof(kNets[0]));
+		return kNets;
+		}
+	void WifiTick()
+		{
+		if (!wifiJoinAt || NowUs() < wifiJoinAt)
+			return;
+		wifiJoinAt = 0;
+		int n;
+		const FakeNet* nets = Nets(n);
+		const FakeNet* f = 0;
+		for (int i = 0; i < n; i++)
+			if (nets[i].ssid[0] && wifiWant == nets[i].ssid)
+				f = &nets[i];
+		if (!f)
+			wifiFail = am::EWifiFailNoNetwork;
+		else if (f->secure ? wifiWantPass != "psion5mx" : !wifiWantPass.empty())
+			wifiFail = am::EWifiFailPassword;
+		else
+			{
+			wifiUp = true;
+			wifiCur = wifiWant;
+			}
+		fprintf(stderr, "\n[wifi: %s \"%s\"]\n", wifiUp ? "joined" : "could not join", wifiWant.c_str());
+		}
+	bool WifiUp() override { WifiTick(); return wifiUp; }
+	void WifiBegin(const char* s, const char*p) override
+		{
+		wifiWant = s;
+		wifiWantPass = p;
+		wifiUp = false;
+		wifiFail = am::EWifiFailNone;
+		const char* ms = getenv("HOSTMODEM_JOIN_MS");   // (the emulator's time can run far ahead of the PC's)
+		wifiJoinAt = NowUs() + (uint64_t)(ms ? atoi(ms) : 2500) * 1000;
+		fprintf(stderr, "\n[wifi: joining \"%s\"]\n", s);
+		}
+	void WifiEnd() override { wifiUp = false; }
+	void WifiInfo(char* o, size_t m) override { snprintf(o, m, "\"%s\" IP 127.0.0.1 RSSI -48", wifiCur.c_str()); }
+	int WifiScanFull(am::WifiNet* o, int m) override
+		{
+		int n;
+		const FakeNet* nets = Nets(n);
+		int k = 0;
+		for (int i = 0; i < n && k < m; i++, k++)
+			{
+			snprintf(o[k].ssid, sizeof(o[k].ssid), "%s", nets[i].ssid);
+			o[k].rssi = (int8_t)nets[i].rssi;
+			o[k].secure = (uint8_t)nets[i].secure;
+			o[k].channel = (uint8_t)nets[i].ch;
+			}
+		fprintf(stderr, "\n[wifi: scan, %d networks]\n", k);
+		return k;
+		}
+	bool WifiLink(char* s, size_t sm, char* ip, size_t im, int& rssi) override
+		{
+		if (!WifiUp()) return false;
+		snprintf(s, sm, "%s", wifiCur.c_str());
+		snprintf(ip, im, "127.0.0.1");
+		rssi = wifiCur == "Home-WiFi" ? -48 : -61;
+		return true;
+		}
+	int WifiFail() override { WifiTick(); return wifiFail; }
+	int Internet() override { return WifiUp() ? 1 : -1; }
+	int DnsOk() override { return WifiUp() ? 1 : -1; }
 	bool LoadSettings(am::Settings& s) override { if (!haveSaved) return false; s = saved; return true; }
 	bool SaveSettings(const am::Settings& s) override { saved = s; haveSaved = true; return true; }
+	// 2.2: the other records, kept in memory for the run
+	am::Settings2 saved2; bool haveSaved2 = false;
+	am::NetList savedNets; bool haveNets = false;
+	am::WgConfig savedWg; bool haveWg = false;
+	bool LoadSettings2(am::Settings2& s, size_t& len) override { len = haveSaved2 ? sizeof(s) : 0; if (haveSaved2) s = saved2; return haveSaved2; }
+	bool SaveSettings2(const am::Settings2& s) override { saved2 = s; haveSaved2 = true; return true; }
+	bool LoadNets(am::NetList& l, size_t& len) override { len = haveNets ? sizeof(l) : 0; if (haveNets) l = savedNets; return haveNets; }
+	bool SaveNets(const am::NetList& l) override { savedNets = l; haveNets = true; fprintf(stderr, "\n[nets saved: %u]\n", (unsigned)l.count); return true; }
+	bool LoadWg(am::WgConfig& c, size_t& len) override { len = haveWg ? sizeof(c) : 0; if (haveWg) c = savedWg; return haveWg; }
+	bool SaveWg(const am::WgConfig& c) override { savedWg = c; haveWg = true; return true; }
+	// the uplink: a phone's hotspot, or (HOSTMODEM_HOME=1) the home network 192.168.10.0/24
+	bool UplinkAddr(uint32_t& ip, uint32_t& mask) override
+		{
+		if (!WifiUp()) { ip = mask = 0; return false; }
+		ip = getenv("HOSTMODEM_HOME") ? am::Ip4(192, 168, 10, 50) : am::Ip4(172, 20, 10, 2);
+		mask = getenv("HOSTMODEM_HOME") ? am::Ip4(255, 255, 255, 0) : am::Ip4(255, 255, 255, 240);
+		return true;
+		}
+	// a pretend tunnel: connecting for 1.5 s, then up, a handshake every 2 minutes
+	bool wgOn = false;
+	uint64_t wgStartUs = 0;
+	void WgApply(const am::WgConfig&, bool want) override
+		{
+		if (want == wgOn) return;
+		wgOn = want;
+		wgStartUs = NowUs();
+		fprintf(stderr, "\n[wireguard: %s]\n", want ? "starting" : "stopped");
+		}
+	void WgInfo(am::WgStatus& o) override
+		{
+		memset(&o, 0, sizeof(o));
+		o.handshakeAge = -1;
+		if (!wgOn) { o.state = am::EWgStOff; return; }
+		uint64_t ms = (NowUs() - wgStartUs) / 1000;
+		if (ms < 1500) { o.state = am::EWgStConnecting; return; }
+		o.state = am::EWgStUp;
+		o.handshakeAge = (int32_t)(((ms - 1500) / 1000) % 120);
+		o.rx = (uint32_t)(ms / 10);
+		o.tx = (uint32_t)(ms / 20);
+		o.endpointIp = am::Ip4(203, 0, 113, 7);
+		}
 	void Led(am::LedState s) override
 		{
 		static const char* const kNames[] = { "no WiFi", "WiFi up", "connected", "data", "connecting" };
 		if (s != am::ELedData) fprintf(stderr, "\n[LED: %s]\n", kNames[s]);
+		}
+	};
+
+// HOSTMODEM_ATPORT=PORT: AT commands over TCP on 127.0.0.1:PORT, as the Atom
+// serves them on 192.168.7.1:2323 during a PPP call (board/pppat.cpp) - here
+// always, with no PPP: a test seam for PsiConnect's TCP route
+struct AtPort
+	{
+	int srv = -1, cli = -1;
+	am::AtRemote session;
+	void Open(int aPort)
+		{
+		srv = socket(AF_INET, SOCK_STREAM, 0);
+		int one = 1;
+		setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+		sockaddr_in a = {};
+		a.sin_family = AF_INET;
+		a.sin_port = htons((uint16_t)aPort);
+		a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+		if (bind(srv, (sockaddr*)&a, sizeof(a)) != 0 || listen(srv, 2) != 0)
+			{
+			perror("hostmodem: AT port");
+			close(srv);
+			srv = -1;
+			return;
+			}
+		fcntl(srv, F_SETFL, O_NONBLOCK);
+		fprintf(stderr, "hostmodem: AT commands over TCP on 127.0.0.1:%d\n", aPort);
+		}
+	void Serve(am::Modem& aModem, am::Hal& aHal)
+		{
+		if (srv < 0)
+			return;
+		int c = accept(srv, 0, 0);
+		if (c >= 0)
+			{
+			if (cli >= 0)
+				close(c);                        // one client at a time
+			else
+				{
+				cli = c;
+				fcntl(cli, F_SETFL, O_NONBLOCK);
+				session.Begin(aHal.Millis());
+				}
+			}
+		if (cli < 0)
+			return;
+		uint8_t in[256];
+		bool gone = false;
+		while (session.CanTake())
+			{
+			ssize_t n = recv(cli, in, sizeof(in), MSG_PEEK);
+			if (n == 0) { gone = true; break; }
+			if (n < 0) { gone = errno != EAGAIN && errno != EWOULDBLOCK; break; }
+			size_t took = session.Input(aModem, in, (size_t)n, aHal.Millis());
+			if (took && recv(cli, in, took, 0) < 0) { gone = true; break; }
+			if (took < (size_t)n)
+				break;
+			}
+		const uint8_t* p;
+		size_t left;
+		while (!gone && (left = session.Pending(p)) > 0)
+			{
+			ssize_t w = send(cli, p, left, MSG_NOSIGNAL);
+			if (w < 0)
+				{
+				gone = errno != EAGAIN && errno != EWOULDBLOCK;
+				break;
+				}
+			session.Sent((size_t)w);
+			}
+		if (gone || session.Expired(aHal.Millis()))
+			{
+			close(cli);
+			cli = -1;
+			session.Begin(aHal.Millis());
+			}
 		}
 	};
 
@@ -402,10 +606,67 @@ int main(int argc, char** argv)
 		hal.saved.baud = (uint32_t)atol(argv[2]);
 		hal.haveSaved = true;
 		}
+	if (getenv("HOSTMODEM_WIFI_SAVED"))
+		{
+		// as an Atom set up already: "Home-WiFi" saved (so ATZ goes back to it)
+		if (!hal.haveSaved)
+			am::FactoryDefaults(hal.saved);
+		snprintf(hal.saved.ssid, sizeof(hal.saved.ssid), "Home-WiFi");
+		snprintf(hal.saved.pass, sizeof(hal.saved.pass), "psion5mx");
+		hal.haveSaved = true;
+		}
+	if (getenv("HOSTMODEM_NETS"))
+		{
+		// (2.2) networks saved already: "Home-WiFi" and "Lab-WiFi", both password psion5mx
+		am::NetListInit(hal.savedNets);
+		am::NetUpsert(hal.savedNets, "Home-WiFi", "psion5mx", -1);
+		am::NetUpsert(hal.savedNets, "Lab-WiFi", "psion5mx", -1);
+		hal.haveNets = true;
+		}
+	if (getenv("HOSTMODEM_WG"))
+		{
+		// (2.2) a WireGuard config, with throwaway keys made now (nothing real,
+		// nothing kept): the endpoint is a documentation address (RFC 5737)
+		char key[3][48];
+		for (int k = 0; k < 3; k++)
+			{
+			uint8_t b[32];
+			for (int i = 0; i < 32; i++) b[i] = (uint8_t)(rand() ^ (NowUs() >> (i % 16)));
+			static const char* const kB64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+			int n = 0;
+			for (int i = 0; i < 30; i += 3)
+				{
+				uint32_t w = (b[i] << 16) | (b[i + 1] << 8) | b[i + 2];
+				key[k][n++] = kB64[(w >> 18) & 63]; key[k][n++] = kB64[(w >> 12) & 63];
+				key[k][n++] = kB64[(w >> 6) & 63]; key[k][n++] = kB64[w & 63];
+				}
+			uint32_t w = (b[30] << 16) | (b[31] << 8);
+			key[k][n++] = kB64[(w >> 18) & 63]; key[k][n++] = kB64[(w >> 12) & 63]; key[k][n++] = kB64[(w >> 6) & 63];
+			key[k][n++] = '=';
+			key[k][n] = 0;
+			}
+		char text[600], why[80];
+		snprintf(text, sizeof(text), "[Interface]\nPrivateKey = %s\nAddress = 192.168.3.2/32\nDNS = 192.168.10.1\n"
+			"[Peer]\nPublicKey = %s\nPresharedKey = %s\nAllowedIPs = 192.168.10.0/24\nEndpoint = 203.0.113.7:51820\n"
+			"PersistentKeepalive = 25\n", key[0], key[1], key[2]);
+		if (!am::WgParse(text, hal.savedWg, why, sizeof(why)))
+			fprintf(stderr, "hostmodem: the test WireGuard config: %s\n", why);
+		else
+			hal.haveWg = true;
+		memset(text, 0, sizeof(text));
+		memset(key, 0, sizeof(key));
+		am::FactoryDefaults2(hal.saved2);
+		hal.saved2.wgMode = am::EWgModeAuto;
+		hal.haveSaved2 = true;
+		}
 	modem.Begin();
+	static AtPort at;
+	if (getenv("HOSTMODEM_ATPORT"))
+		at.Open(atoi(getenv("HOSTMODEM_ATPORT")));
 	for (;;)
 		{
 		modem.Loop();
+		at.Serve(modem, hal);
 		pollfd p[2] = { { hal.ser, POLLIN, 0 }, { hal.tcp, POLLIN, 0 } };
 		poll(p, hal.tcp >= 0 ? 2 : 1, modem.Buffered() ? 0 : 1);
 		}

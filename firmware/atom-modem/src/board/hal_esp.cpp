@@ -7,21 +7,34 @@
 #endif
 #include "../usbnet/usbhost.h"
 #include "../cabundle.h"
+#include "wgtunnel.h"
+#include "pppdns.h"
 #include <Preferences.h>
+#include "lwip/netif.h"
+#include "lwip/tcpip.h"
 #include <esp_heap_caps.h>
 #include <esp_system.h>
 
 static const char* const kNvs = "atommodem";
 
+static AtomHal* sAtomHal = 0;             // the one HAL, for the WiFi event callback
+
 AtomHal::AtomHal()
-	: iInternet(-1), iProbing(false), iProbePort(0), iCur(&iPlain), iWeb(0), iUsb(0), iBaud(115200), iTx(kPinTx),
+	: iInternet(-1), iDnsOk(-1), iWifiFail(am::EWifiFailNone), iWifiEvents(false), iProbing(false), iProbePort(0), iCur(&iPlain), iWeb(0), iUsb(0), iBaud(115200), iTx(kPinTx),
 	  iRx(kPinRx), iRts(kPinRts), iCts(kPinCts), iDcdPin(-1), iFlow(false), iStarted(false), iRunning(false),
 	  iUsbStarted(false), iUsbWanted(false)
 	{
 	iProbeHost[0] = 0;
+	sAtomHal = this;                          // (for WifiEvent: there is one)
 	}
 
 // ----- the Internet check: a TCP connect in a task of its own ------------------------
+
+// (2.2) a TCP connect alone can pass with DNS broken (the check's target is
+// an address), so a real name is looked up too, and the Internet counts as
+// working only if both did. The lookup goes through lwIP's resolver, as the
+// modem's own dials do; its cache can hide a fault for up to the name's TTL
+static const char* const kProbeName = "one.one.one.one";
 
 void AtomHal::ProbeTask(void* aSelf)
 	{
@@ -29,7 +42,10 @@ void AtomHal::ProbeTask(void* aSelf)
 	WiFiClient c;
 	bool ok = c.connect(h->iProbeHost, h->iProbePort, 4000);
 	c.stop();
-	h->iInternet = ok ? 1 : 0;
+	IPAddress a;
+	bool dns = WiFi.hostByName(kProbeName, a) == 1 && (uint32_t)a != 0;
+	h->iDnsOk = dns ? 1 : 0;
+	h->iInternet = ok && dns ? 1 : 0;
 	h->iProbing = false;
 	vTaskDelete(0);
 	}
@@ -42,7 +58,7 @@ void AtomHal::ProbeInternet(const char* aHost, uint16_t aPort)
 	iProbeHost[sizeof(iProbeHost) - 1] = 0;
 	iProbePort = aPort;
 	iProbing = true;
-	if (xTaskCreate(ProbeTask, "inetchk", 4096, this, 1, 0) != pdPASS)
+	if (xTaskCreate(ProbeTask, "inetchk", 6144, this, 1, 0) != pdPASS)
 		iProbing = false;
 	}
 
@@ -233,13 +249,39 @@ void AtomHal::WifiBegin(const char* aSsid, const char* aPass)
 	{
 	// the station, keeping the access point if the web pages have one up
 	WiFi.mode(WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA ? WIFI_AP_STA : WIFI_STA);
-	WiFi.setSleep(false);                     // modem sleep adds 100 ms+ of latency
+	WiFi.persistent(false);                   // our own NVS holds the creds; don't wear the flash
 	WiFi.setAutoReconnect(true);
 	iInternet = -1;                           // (a new network: not checked yet)
+	iDnsOk = -1;
+	iWifiFail = am::EWifiFailNone;            // (AT$STAT? FAIL=: for this join)
+	if (!iWifiEvents)
+		{
+		WiFi.onEvent(WifiEvent);
+		iWifiEvents = true;
+		}
 	WiFi.begin(aSsid, aPass);
+	// modem sleep must be turned off AFTER begin() - begin() resets it to the
+	// default on this core, which parks the radio and drops the first inbound
+	// packets to a sleeping device (cold pings/HTTP time out until it is warm;
+	// it has bitten OTA and the web UI). Off = the web UI/OTA answer at once.
+	WiFi.setSleep(false);
 	char m[80];
 	snprintf(m, sizeof(m), "WiFi: joining \"%s\"", aSsid);
 	Log(m);
+	}
+
+// A real radio down/up, not a bare begin(): esp_wifi off then on clears a
+// wedged PHY/MAC - the soft case of "won't rejoin until a power cycle" (a
+// bare WiFi.begin() and a soft reset both leave the radio as it was). Used
+// only by the rejoin retry, never on the first clean join. Left alone while
+// an access point is up, so a config-mode AP is not torn down.
+void AtomHal::WifiHardReset()
+	{
+	if (WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA)
+		return;
+	WiFi.mode(WIFI_OFF);
+	delay(100);
+	WiFi.mode(WIFI_STA);
 	}
 
 void AtomHal::WifiInfo(char* aOut, size_t aMax)
@@ -259,6 +301,86 @@ int AtomHal::WifiScan(char aNames[][33], int aMax)
 		}
 	WiFi.scanDelete();
 	return n;
+	}
+
+// AT$SCAN: the networks with their signal, security and channel (a blocking
+// scan, about 2 to 4 s, hidden networks left out by the core)
+int AtomHal::WifiScanFull(am::WifiNet* aOut, int aMax)
+	{
+	if (WiFi.getMode() == WIFI_OFF)
+		WiFi.mode(WIFI_STA);
+	// the station cannot scan while it is still trying to join (the IDF says
+	// "busy"): stop that attempt first; whoever asked joins again after
+	if (WiFi.status() != WL_CONNECTED)
+		{
+		WiFi.disconnect(false, false);
+		delay(50);
+		}
+	int n = WiFi.scanNetworks();
+	if (n < 0)
+		{
+		delay(200);
+		n = WiFi.scanNetworks();            // (once more: a join that was just ending)
+		}
+	if (n < 0) n = 0;
+	if (n > aMax) n = aMax;
+	for (int i = 0; i < n; i++)
+		{
+		strncpy(aOut[i].ssid, WiFi.SSID(i).c_str(), sizeof(aOut[i].ssid) - 1);
+		aOut[i].ssid[sizeof(aOut[i].ssid) - 1] = 0;
+		int r = WiFi.RSSI(i);
+		aOut[i].rssi = (int8_t)(r < -127 ? -127 : r > -1 ? -1 : r);
+		aOut[i].secure = WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? 0 : 1;
+		aOut[i].channel = (uint8_t)WiFi.channel(i);
+		}
+	WiFi.scanDelete();
+	return n;
+	}
+
+bool AtomHal::WifiLink(char* aSsid, size_t aSsidMax, char* aIp, size_t aIpMax, int& aRssi)
+	{
+	if (WiFi.status() != WL_CONNECTED)
+		return false;
+	snprintf(aSsid, aSsidMax, "%s", WiFi.SSID().c_str());
+	snprintf(aIp, aIpMax, "%s", WiFi.localIP().toString().c_str());
+	aRssi = (int)WiFi.RSSI();
+	return true;
+	}
+
+// Why a join is not working, from the station's disconnect reasons (the
+// IDF's wifi_err_reason_t, by number so that both cores' headers do). The
+// disconnect that WiFi.begin() itself causes (8, "leaving") and the like
+// are not failures and are ignored.
+void AtomHal::WifiEvent(arduino_event_id_t aEvent, arduino_event_info_t aInfo)
+	{
+	AtomHal* h = sAtomHal;
+	if (!h)
+		return;
+	if (aEvent == ARDUINO_EVENT_WIFI_STA_GOT_IP)
+		h->iWifiFail = am::EWifiFailNone;
+	else if (aEvent == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
+		{
+		switch (aInfo.wifi_sta_disconnected.reason)
+			{
+		case 201:                            // NO_AP_FOUND
+		case 210: case 211: case 212:        // NO_AP_FOUND with compatible security / in the auth or RSSI threshold
+			h->iWifiFail = am::EWifiFailNoNetwork;
+			break;
+		case 2:                              // AUTH_EXPIRE
+		case 14:                             // MIC_FAILURE
+		case 15:                             // 4WAY_HANDSHAKE_TIMEOUT: a wrong WPA2 password
+		case 202:                            // AUTH_FAIL
+		case 204:                            // HANDSHAKE_TIMEOUT
+			h->iWifiFail = am::EWifiFailPassword;
+			break;
+		case 203:                            // ASSOC_FAIL
+		case 205:                            // CONNECTION_FAIL
+			h->iWifiFail = am::EWifiFailOther;
+			break;
+		default:
+			break;                           // (8 ASSOC_LEAVE and the rest: not a failure to join)
+			}
+		}
 	}
 
 // ----- the USB host -----------------------------------------------------------------
@@ -302,12 +424,24 @@ void AtomHal::ApplyUplink(const am::Settings2& aS2)
 
 bool AtomHal::LoadSettings(am::Settings& aS)
 	{
+	// Length-tolerant, like LoadSettings2: accept a record SHORTER than the
+	// current struct (one saved by an older, smaller build) and zero-fill the
+	// rest, so growing Settings in a future build does not fail the load and
+	// trigger a factory reset that would wipe the saved WiFi network. Validity
+	// is the caller's magic check (magic is at offset 0, always present).
 	Preferences p;
 	if (!p.begin(kNvs, true))
 		return false;
-	size_t n = p.getBytes("cfg", &aS, sizeof(aS));
+	size_t have = p.getBytesLength("cfg");
+	if (have == 0 || have > sizeof(aS))
+		{
+		p.end();
+		return false;
+		}
+	memset(&aS, 0, sizeof(aS));
+	size_t n = p.getBytes("cfg", &aS, have);
 	p.end();
-	return n == sizeof(aS);
+	return n == have;
 	}
 
 bool AtomHal::SaveSettings(const am::Settings& aS)
@@ -424,3 +558,87 @@ void AtomHal::WebInfo(char* aOut, size_t aMax)
 	else if (aMax)
 		aOut[0] = 0;
 	}
+
+// ----- 2.2: the uplink's address, the tunnel, the DNS relay, the new records -------------
+
+bool AtomHal::UplinkAddr(uint32_t& aIp, uint32_t& aMask)
+	{
+	// the default netif is the uplink (WiFi, or USB): the tunnel and the PPP
+	// link never become the default
+	LOCK_TCPIP_CORE();
+	struct netif* n = netif_default;
+	aIp = n && netif_is_up(n) ? ip4_addr_get_u32(netif_ip4_addr(n)) : 0;
+	aMask = aIp ? ip4_addr_get_u32(netif_ip4_netmask(n)) : 0;
+	UNLOCK_TCPIP_CORE();
+	return aIp != 0;
+	}
+
+void AtomHal::WgApply(const am::WgConfig& aConfig, bool aWant)
+	{
+	am::gWg.Begin(*this);
+	am::gWg.Apply(aConfig, aWant);
+	}
+
+void AtomHal::WgInfo(am::WgStatus& aOut) { am::gWg.Info(aOut); }
+
+bool AtomHal::DnsRelayStart()
+	{
+	bool ok = am::gPppDns.Start();
+	if (!ok)
+		Log("ppp: the DNS relay could not start (port 53 in use?): the Psion gets the uplink's DNS");
+	return ok;
+	}
+
+void AtomHal::DnsRelayStop()
+	{
+	if (!am::gPppDns.Running())
+		return;
+	const am::DnsRelay& r = am::gPppDns.Relay();
+	char m[96];
+	snprintf(m, sizeof(m), "ppp: DNS relay: %lu queries, %lu answered, %lu timed out, %lu dropped",
+		(unsigned long)r.Forwarded(), (unsigned long)r.Answered(), (unsigned long)r.TimedOut(), (unsigned long)r.Dropped());
+	Log(m);
+	am::gPppDns.Stop();
+	}
+
+void AtomHal::DnsRelayUpstream(uint32_t aServer)
+	{
+	am::gPppDns.SetUpstream(aServer);
+	char d[16], m[64];
+	am::Ip4Text(aServer, d, sizeof(d));
+	snprintf(m, sizeof(m), "DNS relay: queries go to %s", d);
+	Log(m);
+	}
+
+template <class T> static bool LoadRecord(const char* aKey, T& aOut, size_t& aLength)
+	{
+	Preferences p;
+	aLength = 0;
+	if (!p.begin(kNvs, true))
+		return false;
+	size_t have = p.getBytesLength(aKey);
+	if (have == 0 || have > sizeof(aOut))
+		{
+		p.end();
+		return false;
+		}
+	memset(&aOut, 0, sizeof(aOut));
+	aLength = p.getBytes(aKey, &aOut, have);
+	p.end();
+	return aLength == have;
+	}
+
+template <class T> static bool SaveRecord(const char* aKey, const T& aIn)
+	{
+	Preferences p;
+	if (!p.begin(kNvs, false))
+		return false;
+	size_t n = p.putBytes(aKey, &aIn, sizeof(aIn));
+	p.end();
+	return n == sizeof(aIn);
+	}
+
+bool AtomHal::LoadNets(am::NetList& aL, size_t& aLength) { return LoadRecord("nets", aL, aLength); }
+bool AtomHal::SaveNets(const am::NetList& aL) { return SaveRecord("nets", aL); }
+bool AtomHal::LoadWg(am::WgConfig& aC, size_t& aLength) { return LoadRecord("wg", aC, aLength); }
+bool AtomHal::SaveWg(const am::WgConfig& aC) { return SaveRecord("wg", aC); }

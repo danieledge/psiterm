@@ -4,6 +4,7 @@
 // MIT licence (see LICENSE at the top of the repository).
 #include "fakehal.h"
 #include "../src/status.h"
+#include "../src/canvas.h"
 #include "../src/button.h"
 #include <stdlib.h>
 #include <algorithm>
@@ -64,7 +65,7 @@ static void TestBasics()
 	CHECK(Has(r.Got(), "ERROR"));
 	r.TypeRun("ATI\r");
 	g = r.Got();
-	CHECK(g.find("\r\nAtom modem 2.0 (Psion-tuned)") == 0);     // the first line: the name
+	CHECK(g.find("\r\nPsiConnect 2.2 (Psion-tuned)") == 0);     // the first line: the name
 	CHECK(Has(g, "IP 192.168.1.50"));
 	CHECK(Has(g, "pacing 5500 bytes/s"));
 	CHECK(g.size() >= 6 && g.substr(g.size() - 6) == "\r\nOK\r\n");
@@ -544,13 +545,13 @@ static void TestPsiglue()
 	CHECK(Has(r.Got(), "OK"));
 	r.TypeRun("ATI\r", 300);
 	g = r.Got();
-	CHECK(g.find("ATI\r\r\nAtom modem") == 0);
+	CHECK(g.find("ATI\r\r\nPsiConnect") == 0);
 	}
 
 // ===== 2.0 =====================================================================
 
 static_assert(sizeof(am::Settings) == 140, "the 1.x NVS record must keep its size");
-static_assert(sizeof(am::Settings2) == 256, "the 2.0 NVS record must keep its size");
+static_assert(sizeof(am::Settings2) == 448, "the 2.0 NVS record grows only by appending (length-tolerant load keeps back-compat)");
 
 // the 2.0 record: defaults, AT&W, ATZ, an older (shorter) record, the factory reset
 static void TestSettings2()
@@ -558,9 +559,26 @@ static void TestSettings2()
 	Rig r;
 	const am::Settings2& s2 = r.modem->Config2();
 	CHECK(s2.magic == am::kMagic2 && s2.uplink == am::EUplinkAuto && s2.flow == 0 && s2.web == am::EWebOn);
-	CHECK(s2.tls == 0 && s2.tlsVerify == 1 && s2.img == 1 && s2.imgWidth == 300 && s2.exec == 0);
+	CHECK(s2.tls == 1 && s2.tlsVerify == 1 && s2.img == 1 && s2.imgWidth == 300 && s2.exec == 0);
 	CHECK(s2.tlsPorts[0] == 443 && s2.tlsPorts[3] == 995 && s2.tlsPorts[4] == 0);
 	CHECK(s2.pins[0] == -1 && s2.pins[4] == -1 && s2.webPass[0] == 0 && s2.execToken[0] == 0);
+	// the PPP TLS mail relay is off by default (no upstream hosts)
+	CHECK(s2.imapHost[0] == 0 && s2.smtpHost[0] == 0 && s2.popHost[0] == 0);
+	CHECK(!am::MailRelayAny(s2) && am::MailRelayHost(s2, 993) == 0);
+	// the hosts are set by AT$MAIL*, saved by AT&W and restored by ATZ
+	r.TypeRun("AT$MAILIMAP=imap.example.com\r"); r.TypeRun("AT$MAILSMTP=smtp.example.com\r"); r.TypeRun("AT$MAILPOP=pop.example.com\r");
+	CHECK(strcmp(s2.imapHost, "imap.example.com") == 0 && strcmp(s2.smtpHost, "smtp.example.com") == 0 && strcmp(s2.popHost, "pop.example.com") == 0);
+	CHECK(am::MailRelayAny(s2) && strcmp(am::MailRelayHost(s2, 993), "imap.example.com") == 0
+		&& strcmp(am::MailRelayHost(s2, 465), "smtp.example.com") == 0 && strcmp(am::MailRelayHost(s2, 995), "pop.example.com") == 0
+		&& am::MailRelayHost(s2, 22) == 0);
+	r.TypeRun("AT$MAILIMAP?\r");
+	CHECK(Has(r.Got(), "imap.example.com"));
+	r.TypeRun("AT&W\r");
+	CHECK(r.hal.haveSaved2 && strcmp(r.hal.saved2.imapHost, "imap.example.com") == 0 && strcmp(r.hal.saved2.smtpHost, "smtp.example.com") == 0);
+	r.TypeRun("AT$MAILIMAP=\r");                                  // clear one
+	CHECK(s2.imapHost[0] == 0 && am::MailRelayHost(s2, 993) == 0);
+	r.TypeRun("ATZ\r");
+	CHECK(strcmp(s2.imapHost, "imap.example.com") == 0);        // AT&W'd value comes back
 	// AT&W saves both records; ATZ brings them back
 	r.TypeRun("AT$FC=1\r"); r.TypeRun("AT$TLS=1\r"); r.TypeRun("AT$PW=240\r"); r.TypeRun("AT&W\r");
 	CHECK(r.hal.haveSaved && r.hal.haveSaved2 && r.hal.saved2.flow == 1 && r.hal.saved2.tls == 1 && r.hal.saved2.imgWidth == 240);
@@ -570,7 +588,7 @@ static void TestSettings2()
 	CHECK(s2.flow == 1 && s2.tls == 1 && s2.imgWidth == 240);
 	// AT&F: factory for both, the WiFi kept (and the link hardware: see TestFactoryKeepsLink)
 	r.TypeRun("AT$SSID=Home\r"); r.TypeRun("AT&F\r");
-	CHECK(s2.flow == 1 && s2.tls == 0 && strcmp(r.modem->Config().ssid, "Home") == 0);
+	CHECK(s2.flow == 1 && s2.tls == 1 && strcmp(r.modem->Config().ssid, "Home") == 0);
 	r.TypeRun("AT$FC=0\r");
 	// a 1.x modem (no cfg2 at all) comes up with the defaults
 	{
@@ -591,6 +609,8 @@ static void TestSettings2()
 	r2.modem->Begin();
 	CHECK(r2.modem->Config2().flow == 1 && r2.modem->Config2().imgWidth == 300 && r2.modem->Config2().tlsPorts[0] == 443);
 	CHECK(r2.hal.pinsApplied >= 1 && r2.hal.pins.flow == 1);
+	// the appended mail-relay fields were absent from the short record: zeroed (feature off)
+	CHECK(r2.modem->Config2().imapHost[0] == 0 && !am::MailRelayAny(r2.modem->Config2()));
 	// a record with the wrong magic is ignored
 	r2.hal.saved2.magic = 0x12345678; r2.hal.saved2Len = 0;
 	r2.modem->Begin();
@@ -668,7 +688,7 @@ static void TestNewCommands()
 	CHECK(Has(r.Got(), "RTS/CTS"));
 	r.TypeRun("ATI\r");
 	std::string g = r.Got();
-	CHECK(Has(g, "RTS/CTS") && Has(g, "Uplink AUTO") && Has(g, "USB-C: device") && Has(g, "TLS termination: off"));
+	CHECK(Has(g, "RTS/CTS") && Has(g, "Uplink AUTO") && Has(g, "USB-C: device") && Has(g, "TLS termination: on"));
 	r.TypeRun("AT$FC=0\r");
 	CHECK(r.modem->Config().paceRate == 5500);
 	r.TypeRun("AT$FCSWAP=1\r");
@@ -748,6 +768,7 @@ static void TestTlsTermination()
 	{
 	Rig r;
 	r.TypeRun("ATE0\r"); r.Got();
+	r.TypeRun("AT$TLS=0\r"); r.Got();           // (termination is on by default now; this block starts it off)
 	// off: a dial to 993 is plain
 	r.TypeRun("ATDT imap.example.com:993\r", 100);
 	CHECK(Has(r.Got(), "CONNECT") && r.hal.upConnects == 0 && r.hal.tcpPort == 993);
@@ -1005,20 +1026,21 @@ static void TestReachability()
 	r.Run(130000);
 	CHECK(r.hal.probes == probes);
 	CHECK(strcmp(r.modem->Config2().chkHost, "") == 0);
-	// the hotspot drops: recovering, logged; joined again after 20 s, then every 30 s
+	// the hotspot drops: recovering, logged; joined again after a short grace
+	// (kWifiRetryAfterMs, 8 s), then every so often (kWifiRetryEveryMs, 15 s)
 	r.TypeRun("AT$SSID=Hotspot\r"); r.TypeRun("AT$PASS=secret12\r"); r.Got();
 	r.hal.wifiSsid.clear();
 	r.hal.wifi = false;
 	r.Run(100);
 	CHECK(r.hal.Logged("WiFi: lost, joining again") && !r.modem->Link().Up());
-	r.Run(15000);
-	CHECK(r.hal.wifiSsid.empty());                              // (not yet)
 	r.Run(6000);
+	CHECK(r.hal.wifiSsid.empty());                              // (not yet: within the grace)
+	r.Run(5000);
 	CHECK(r.hal.wifiSsid == "Hotspot" && r.hal.Logged("joining \"Hotspot\" again"));
 	r.hal.wifiSsid.clear();
-	r.Run(25000);
+	r.Run(8000);
 	CHECK(r.hal.wifiSsid.empty());
-	r.Run(6000);
+	r.Run(8000);
 	CHECK(r.hal.wifiSsid == "Hotspot");
 	// it is back: joined, and checked again at once (not while it was down)
 	r.TypeRun("AT$CHK=1.1.1.1:53\r"); r.Got();
@@ -1131,128 +1153,307 @@ static void TestButton()
 	  CHECK(!r.b.Down() && r.b.HeldMs(r.t) == 0); }
 	}
 
-// ----- the status screen's text -------------------------------------------------
-static bool OnHero(const am::ScreenPage& p, const char* aText)
+// ----- the status screen: the pages, their layout, the gestures ---------------
+static bool OnBlocks(const am::ScreenPage& p, const char* aText)
 	{
-	for (int i = 0; i < am::kHeroRows; i++)
+	for (int i = 0; i < p.blocks; i++)
 		{
-		char joined[48];
-		snprintf(joined, sizeof(joined), "%s %s", p.hero[i].label, p.hero[i].value);
-		if (strstr(joined, aText) || strstr(p.hero[i].value, aText))
+		char joined[64];
+		snprintf(joined, sizeof(joined), "%s %s", p.block[i].label, p.block[i].text);
+		if (strstr(joined, aText) || strstr(p.block[i].text, aText))
 			return true;
 		}
 	return false;
 	}
-static bool OnPage(const am::ScreenPage& p, const char* aText)
+// the text the layout draws, all of it in one string
+static std::string Drawn(const am::Layout& l)
 	{
-	for (int i = 0; i < am::kScreenRows; i++)
-		if (strstr(p.line[i], aText))
-			return true;
-	return false;
+	std::string s;
+	for (int i = 0; i < l.n; i++)
+		if (l.op[i].op == am::EOpText) { s += l.op[i].text; s += "|"; }
+	return s;
+}
+// every step on the screen: text inside the margins across and between the
+// top and the bottom, no text smaller than the hint's, nothing left off
+static bool LayoutFits(const am::Layout& l)
+	{
+	if (l.n <= 0 || l.n >= am::kDrawOps || l.dropped)
+		{ printf("   %d steps, %d rows left off\n", l.n, l.dropped); return false; }
+	for (int i = 0; i < l.n; i++)
+		{
+		const am::DrawOp& o = l.op[i];
+		if (o.op == am::EOpText)
+			{
+			int w = am::StatusModel::TextWidth(o.font, o.h, o.text);
+			if (o.x < 0 || o.x + w > am::kScreenPx || o.y - o.h < 0 || o.y > am::kScreenPx || o.h < 8)
+				{ printf("   off screen: \"%s\" at %d,%d (%d wide, size %d)\n", o.text, o.x, o.y, w, o.h); return false; }
+			}
+		}
+	return true;
+	}
+static am::Layout gLay;
+static std::string FillLay(Rig& r, int aPage, am::ScreenPage& p, bool aHint = false)
+	{
+	am::StatusModel::Fill(*r.modem, r.hal, aPage, p);
+	p.hintOn = aHint;
+	am::StatusModel::Lay(p, gLay);
+	CHECK(LayoutFits(gLay));
+	return Drawn(gLay);
+	}
+// the size the layout gave a text
+static int SizeOf(const char* aText)
+	{
+	for (int i = 0; i < gLay.n; i++)
+		if (gLay.op[i].op == am::EOpText && !strcmp(gLay.op[i].text, aText))
+			return gLay.op[i].h;
+	return 0;
 	}
 
 static void TestStatusModel()
 	{
 	am::ScreenPage p;
+	std::string d;
 	Rig r;
 	r.TypeRun("ATE0\r"); r.Got();
-	// no WiFi, none set: the bar is red and the page says how to set it up
+	// no WiFi, none set: the bar is red, Home says so and how to set it up
 	r.hal.wifi = false;
 	r.Run(300);
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
-	CHECK(p.bar == am::ELedNoWifi && OnPage(p, "STATUS") && OnPage(p, "1/4") && OnPage(p, "No WiFi network set"));
-	CHECK(OnPage(p, "Call: none"));
-	// the big hero view carries the same state, word for word
-	CHECK(strcmp(p.state, "OFFLINE") == 0 && OnHero(p, "Not set") && OnHero(p, "Hold button"));
-	for (int i = 0; i < am::kScreenRows; i++)
-		CHECK(strlen(p.line[i]) <= (size_t)am::kScreenCols);
+	d = FillLay(r, am::EPageHome, p);
+	CHECK(p.bar == am::ELedNoWifi && strcmp(p.state, "No Wi-Fi") == 0 && strcmp(p.net, "Not set up") == 0 && p.netDim);
+	CHECK(Has(d, "No Wi-Fi") && Has(d, "Hold 2 s") && Has(d, "VPN off"));
+	// Home holds the essentials only: no IP, no baud, no call details; the
+	// three rows share one size, larger than the pages' text; the hint only
+	// just after a press
+	CHECK(!Has(d, "192.168") && !Has(d, "115200") && !Has(d, "1x Wi-Fi"));
+	CHECK(SizeOf("Hold 2 s") >= 12 && SizeOf("Hold 2 s") == SizeOf("VPN off"));
+	d = FillLay(r, am::EPageHome, p, true);
+	CHECK(Has(d, "1x Wi-Fi   2x details"));
 	// a network saved, not joined
 	r.TypeRun("AT$SSID=Home\r"); r.Got();
 	r.Run(300);
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
-	CHECK(OnPage(p, "WiFi Home") && OnPage(p, "Not connected") && p.bar == am::ELedNoWifi);
-	// joined
+	d = FillLay(r, am::EPageHome, p);
+	CHECK(Has(d, "Home") && Has(d, "Offline") && p.netDim && p.signal == 0 && p.inetTone == am::EToneRed);
+	d = FillLay(r, am::EPageNetwork, p);
+	CHECK(Has(d, "Home") && Has(d, "Offline") && Has(d, "No Wi-Fi") && strcmp(p.state, "No Wi-Fi") == 0);
+	// joined; the Internet check not yet back, then passed, then failed
 	r.hal.wifi = true; r.hal.wifiSsid = "Home";
 	r.Run(300);
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
-	CHECK(p.bar == am::ELedWifi && OnPage(p, "WiFi Home") && OnPage(p, "IP   192.168.1.50") && OnPage(p, "RSSI -60 dBm"));
-	CHECK(OnPage(p, "115200 baud, FC off") && OnPage(p, "To Psion  0"));
-	CHECK(strcmp(p.state, "ONLINE") == 0 && OnHero(p, "Home") && OnHero(p, "IP 192.168.1.50") && OnHero(p, "Ready to dial") && p.signal == 3);
-	// a TCP call
+	d = FillLay(r, am::EPageHome, p);
+	CHECK(p.bar == am::ELedWifi && strcmp(p.state, "Ready") == 0 && !p.netDim && p.signal == 3 && Has(d, "Checking"));
+	r.hal.internet = 1; r.Run(16000);
+	d = FillLay(r, am::EPageHome, p);
+	CHECK(Has(d, "Internet|") && p.inetTone == am::EToneGreen);
+	d = FillLay(r, am::EPageNetwork, p);
+	CHECK(strcmp(p.title, "Wi-Fi") == 0 && OnBlocks(p, "IP 192.168.1.50") && OnBlocks(p, "Signal -60 dBm"));
+	CHECK(Has(d, "192.168.1.50|") && Has(d, "-60 dBm|") && !Has(d, "..") && Has(d, "Connected|"));
+	// ... in Home's look: its band and row size, an icon a row
+	CHECK(p.bandTone == am::EToneGreen && SizeOf("-60 dBm") == 14 && p.blocks == 3 && p.block[1].icon == am::EIconBars);
+	// a long name and address: smaller, never off the screen (FillLay checks)
+	r.hal.wifiIp = "172.100.200.250"; r.hal.wifiRssi = -80;
+	d = FillLay(r, am::EPageNetwork, p);
+	CHECK(Has(d, "|172.100.200.250|") && SizeOf("172.100.200.250") >= 9 && p.block[1].tone == am::EToneAmber);
+	r.hal.wifiIp = "192.168.1.50"; r.hal.wifiRssi = -60;
+	r.hal.internet = 0; r.Run(130000);
+	d = FillLay(r, am::EPageHome, p);
+	CHECK(Has(d, "No Internet") && p.inetTone == am::EToneRed);
+	// a TCP call: In call on Home, the detail on the Call page
 	r.TypeRun("ATDT example.com:22\r", 100); r.Run(300);
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
-	CHECK(p.bar == am::ELedConnected && OnPage(p, "Call: tcp") && OnPage(p, "example.com:22"));
-	CHECK(strcmp(p.state, "CONNECTED") == 0 && OnHero(p, "example.com:22"));
+	d = FillLay(r, am::EPageHome, p);
+	CHECK(p.bar == am::ELedConnected && strcmp(p.state, "In call") == 0 && !Has(d, "example.com"));
+	d = FillLay(r, am::EPageCall, p);
+	CHECK(OnBlocks(p, "TCP") && OnBlocks(p, "To example.com:22") && OnBlocks(p, "To Psion 0"));
 	r.Feed("0123456789abcdef"); r.Run(200);
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
-	CHECK(OnPage(p, "To Psion  16"));
-	CHECK(OnHero(p, "P 16"));
-	// the modes page, mid call: the last dial
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageModes, p);
-	CHECK(OnPage(p, "MODES") && OnPage(p, "TCP: ready") && OnPage(p, "PPP: on") && OnPage(p, "TLS: off")
-		&& OnPage(p, "Uplink AUTO->WIFI") && OnPage(p, "example.com:22") && OnPage(p, "CONNECT") && OnPage(p, "Proxy PX=1 zip"));
-	// the server closes: NO CARRIER, and the bar and the call are back
+	FillLay(r, am::EPageCall, p);
+	CHECK(OnBlocks(p, "To Psion 16"));
+	// the modes page, mid call
+	d = FillLay(r, am::EPageModes, p);
+	CHECK(OnBlocks(p, "PPP On") && OnBlocks(p, "TLS On") && OnBlocks(p, "Proxy PX1") && OnBlocks(p, "Baud 115200")
+		&& OnBlocks(p, "RTS/CTS Off") && !Has(d, ".."));
+	// the server closes: NO CARRIER, and the Call page shows the last dial
 	r.hal.tcpOpen = false; r.Run(300);
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
-	CHECK(p.bar == am::ELedWifi && OnPage(p, "Call: none"));
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageModes, p);
-	CHECK(OnPage(p, "NO CARRIER") && OnPage(p, "example.com:22"));
+	d = FillLay(r, am::EPageHome, p);
+	CHECK(p.bar == am::ELedWifi && strcmp(p.state, "Ready") == 0);
+	FillLay(r, am::EPageCall, p);
+	CHECK(OnBlocks(p, "No call") && OnBlocks(p, "example.com:22") && OnBlocks(p, "NO CARRIER"));
 	// a call that is refused: the result is there too
 	r.hal.tcpOk = false;
 	r.TypeRun("ATDT nowhere.example:22\r", 100); r.Run(300);
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageModes, p);
-	CHECK(OnPage(p, "nowhere.example:22") && OnPage(p, "NO CARRIER"));
+	FillLay(r, am::EPageCall, p);
+	CHECK(OnBlocks(p, "nowhere.example:22") && OnBlocks(p, "NO CARRIER"));
 	r.hal.tcpOk = true;
-	// the proxy
+	// the proxy, and command mode
 	r.TypeRun("ATDT psiproxy\r", 100); r.Run(300);
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
-	CHECK(OnPage(p, "Call: proxy 0 req") && p.bar == am::ELedConnected);
+	FillLay(r, am::EPageCall, p);
+	CHECK(OnBlocks(p, "Web proxy") && OnBlocks(p, "Pages 0") && p.bar == am::ELedConnected);
 	r.Run(1100); r.TypeRun("+++", 1100);
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
-	CHECK(OnPage(p, "command mode"));
+	FillLay(r, am::EPageCall, p);
+	CHECK(OnBlocks(p, "Command mode: ATO"));
 	r.TypeRun("ATH\r", 100); r.Got();
 	// PPP
 	r.TypeRun("ATD777\r", 100); r.Run(300);
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
-	CHECK(OnPage(p, "Call: PPP up") && p.bar == am::ELedConnected);
+	d = FillLay(r, am::EPageHome, p);
+	CHECK(strcmp(p.state, "In call") == 0);
+	FillLay(r, am::EPageCall, p);
+	CHECK(OnBlocks(p, "PPP up"));
 	r.Run(1100); r.TypeRun("+++", 1100); r.TypeRun("ATH\r", 100); r.Got();
 	// psiexec
 	r.TypeRun("AT$XE=1\r"); r.TypeRun("AT$XH=pc:7777\r"); r.TypeRun("AT$XK=t0k\r"); r.Got();
 	r.Feed("OK\r\n");
 	r.TypeRun("ATDT psiexec\r", 100); r.Run(300);
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
-	CHECK(OnPage(p, "Call: exec"));
+	FillLay(r, am::EPageCall, p);
+	CHECK(OnBlocks(p, "Command"));
 	r.hal.tcpOpen = false; r.Run(300); r.Got();
-	// config mode: purple
+	// config mode: purple, "Setup"
 	r.modem->ConfigMode(true); r.Run(300);
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageStatus, p);
-	CHECK(p.bar == am::ELedConfig);
+	FillLay(r, am::EPageHome, p);
+	CHECK(p.bar == am::ELedConfig && strcmp(p.state, "Setup") == 0);
 	r.modem->ConfigMode(false); r.Run(300);
-	// the setup page: the access point with its password
-	r.hal.apInfo = "AP \"AtomModem-1a2b\" up at http://192.168.4.1/";
-	r.hal.apPassword = "psion-12345678";
+	// the setup page: the access point's name, password and bare address,
+	// whole (never cut short) and in the pages' text size
+	r.hal.apInfo = "AP \"PsiConnect-1A2B\" up at http://192.168.4.1/";
+	r.hal.apPassword = "psion-1a2bc3d4";
 	r.hal.webInfo = "http://192.168.1.50/";
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageSetup, p);
-	CHECK(OnPage(p, "SETUP") && OnPage(p, "AtomModem-1a2b") && OnPage(p, "psion-12345678") && OnPage(p, "http://192.168.4.1/")
-		&& OnPage(p, "http://192.168.1.50/") && OnPage(p, "Atom modem 2.0") && OnPage(p, "FakeBoard") && OnPage(p, "Heap"));
+	d = FillLay(r, am::EPageSetup, p);
+	CHECK(strcmp(p.title, "Setup") == 0 && OnBlocks(p, "PsiConnect-1A2B") && OnBlocks(p, "Password psion-1a2bc3d4")
+		&& OnBlocks(p, "192.168.4.1") && !OnBlocks(p, "FakeBoard"));
+	CHECK(Has(d, "|PsiConnect-1A2B|") && Has(d, "|psion-1a2bc3d4|") && Has(d, "|192.168.4.1|") && !Has(d, ".."));
+	CHECK(SizeOf("psion-1a2bc3d4") >= 9);
+	d = FillLay(r, am::EPageSetup, p, true);
+	CHECK(Has(d, "1x next   2x home"));
+	// ... and Home says a double-press shows it
+	d = FillLay(r, am::EPageHome, p, true);
+	CHECK(Has(d, "2x password"));
 	r.hal.apInfo.clear(); r.hal.apPassword.clear();
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageSetup, p);
-	CHECK(OnPage(p, "AP: off") && !OnPage(p, "psion-1234"));
-	// the log page: the newest line at the bottom, wrapped at 21
-	r.hal.Log("a log line that is longer than twenty-one columns for sure");
+	d = FillLay(r, am::EPageSetup, p);
+	CHECK(OnBlocks(p, "Access point off") && !OnBlocks(p, "psion-1234") && OnBlocks(p, "Hold 2 s")
+		&& OnBlocks(p, "192.168.1.50"));
+	// the system page: version, board, uplink, memory
+	FillLay(r, am::EPageSystem, p);
+	CHECK(OnBlocks(p, "Version 2.2") && OnBlocks(p, "FakeBoard") && OnBlocks(p, "Uplink Wi-Fi"));
+	// the log page: the newest line at the bottom, wrapped to the width
+	r.hal.Log("a log line that is longer than the screen is wide, for sure");
 	r.hal.Log("last line");
-	am::StatusModel::Fill(*r.modem, r.hal, am::EPageLog, p);
-	CHECK(OnPage(p, "LOG") && strcmp(p.line[am::kScreenRows - 1], "last line") == 0 && OnPage(p, "a log line that is") && OnPage(p, "twenty-one columns") && OnPage(p, "for sure"));
-	for (int i = 0; i < am::kScreenRows; i++)
-		CHECK(strlen(p.line[i]) <= (size_t)am::kScreenCols);
-	// the pages wrap round
-	am::StatusModel::Fill(*r.modem, r.hal, 4, p);
-	CHECK(OnPage(p, "1/4"));
-	// the byte counts
+	d = FillLay(r, am::EPageLog, p);
+	CHECK(p.blocks > 0 && strcmp(p.block[p.blocks - 1].text, "last line") == 0 && Has(d, "sure|") && Has(d, "a log line"));
+	// the mail page: the PsiMail relay crib
+	r.TypeRun("AT$MAILIMAP=imap.example.com\r"); r.TypeRun("AT$MAILSMTP=smtp.example.com\r");
+	FillLay(r, am::EPageMail, p);
+	CHECK(strcmp(p.title, "Mail") == 0 && OnBlocks(p, "Server 192.168.7.1") && OnBlocks(p, "IMAP port 993")
+		&& OnBlocks(p, "SMTP port 465") && OnBlocks(p, "Security None"));
+	// the pages wrap round (EPageCount is Home again)
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageCount, p);
+	CHECK(p.page == am::EPageHome);
+	// every page lays out on the screen, with and without its hint
+	for (int pg = 0; pg < am::EPageCount; pg++)
+		{
+		FillLay(r, pg, p);
+		d = FillLay(r, pg, p, true);
+		CHECK(p.hint[0] && Has(d, p.hint));
+		}
+	// the same page twice is the same layout, byte for byte (the LCD redraws
+	// only when they differ), and a change shows
+	am::Layout a, b;
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageHome, p); am::StatusModel::Lay(p, a);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageHome, p); am::StatusModel::Lay(p, b);
+	CHECK(memcmp(&a, &b, sizeof(a)) == 0);
+	r.hal.wifi = false; r.Run(300);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageHome, p); am::StatusModel::Lay(p, b);
+	CHECK(memcmp(&a, &b, sizeof(a)) != 0);
+	// a long or curly-quoted name: cleaned to ASCII and cut to fit (only a
+	// name the user chose is ever cut)
+	r.hal.wifi = true; r.hal.wifiSsid = "Robert\xe2\x80\x99s iPhone with a long name"; r.Run(300);
+	d = FillLay(r, am::EPageHome, p);
+	CHECK(Has(p.net, "Robert's iPhone") && Has(d, "Robert's") && Has(d, "..|"));
+	// the byte counts, the cleaning
 	char c[12];
 	am::StatusModel::Count(999, c, sizeof(c)); CHECK(strcmp(c, "999") == 0);
 	am::StatusModel::Count(12345, c, sizeof(c)); CHECK(strcmp(c, "12K") == 0);
 	am::StatusModel::Count(3400000, c, sizeof(c)); CHECK(strcmp(c, "3.4M") == 0);
+	am::StatusModel::Clean(c, "\xe2\x80\x9cHi\xe2\x80\x9d \xc3\xa9", 10);
+	CHECK(strcmp(c, "\"Hi\" e") == 0);
+	}
+
+// the frame buffer and /screen.bmp: the colours come out as drawn, in the
+// right byte order (a 16-bit sprite once showed black as navy)
+static void TestCanvas()
+	{
+	static uint16_t fb[am::Canvas::kSize * am::Canvas::kSize];
+	am::Layout l;
+	memset(&l, 0, sizeof(l));
+	l.n = 3;
+	l.op[0].op = am::EOpFill; l.op[0].w = 128; l.op[0].h = 128; l.op[0].fg = am::Rgb565(0, 0, 0);
+	l.op[1].op = am::EOpFill; l.op[1].w = 128; l.op[1].h = 10; l.op[1].fg = am::Rgb565(0, 180, 0);
+	l.op[2].op = am::EOpFill; l.op[2].x = 120; l.op[2].y = 120; l.op[2].w = 8; l.op[2].h = 8; l.op[2].fg = am::Rgb565(255, 0, 0);
+	am::Canvas::Render(l, fb);
+	CHECK(fb[0] == am::Rgb565(0, 180, 0) && fb[64 * 128 + 64] == 0 && fb[127 * 128 + 127] == 0xf800);
+	uint8_t h[am::Canvas::kBmpHeader], row[am::Canvas::kBmpRow];
+	am::Canvas::BmpHeader(h);
+	CHECK(h[0] == 'B' && h[1] == 'M' && h[2] + (h[3] << 8) + (h[4] << 16) == (int)am::Canvas::kBmpSize && h[18] == 128
+		&& h[22] == 128 && h[28] == 24);
+	am::Canvas::BmpRow(fb, 0, row);                 // BMP row 0: the screen's bottom row
+	CHECK(row[0] == 0 && row[1] == 0 && row[2] == 0);                          // black is black
+	CHECK(row[3 * 127] == 0 && row[3 * 127 + 1] == 0 && row[3 * 127 + 2] == 255);   // B, G, R: red
+	am::Canvas::BmpRow(fb, 127, row);               // the top row: the green band
+	CHECK(row[0] == 0 && row[1] >= 176 && row[1] <= 184 && row[2] == 0);
+	// a layout's shapes stay on the frame (nothing written past it)
+	am::ScreenPage p;
+	memset(&p, 0, sizeof(p));
+	p.page = am::EPageHome; p.signal = 4; p.vpnLocked = true;
+	snprintf(p.state, sizeof(p.state), "Ready"); snprintf(p.net, sizeof(p.net), "Home");
+	am::StatusModel::Lay(p, l);
+	am::Canvas::Render(l, fb);
+	CHECK(fb[0] == am::Rgb565(0, 180, 0) || fb[0] != 0);
+	}
+
+// the one button's pages: press, double-press, hold, and back to Home
+static void TestPager()
+	{
+	am::Pager g;
+	uint32_t t = 1000;
+	CHECK(g.Page() == am::EPageHome && !g.InDetails());
+	// a press steps round the short main ring
+	g.Click(t); CHECK(g.Page() == am::EPageNetwork);
+	g.Click(t); CHECK(g.Page() == am::EPageVpn);
+	g.Click(t); CHECK(g.Page() == am::EPageHome);
+	// a double-press is the page's action
+	g.Click(t);
+	CHECK(g.Double(t) == am::Pager::ENextNet && g.Page() == am::EPageNetwork);
+	g.Click(t);
+	CHECK(g.Double(t) == am::Pager::ECycleVpn && g.Page() == am::EPageVpn);
+	g.Click(t);
+	// ... on Home it opens the Details at Setup; a press steps through them
+	// all and round; a double-press is Home again
+	CHECK(g.Double(t) == am::Pager::ENothing && g.Page() == am::EPageSetup && g.InDetails());
+	int seen = 1;
+	for (int i = 0; i < am::kDetailPages; i++)
+		{
+		g.Click(t);
+		CHECK(g.InDetails());
+		if (g.Page() != am::EPageSetup) seen++;
+		}
+	CHECK(seen == am::kDetailPages && g.Page() == am::EPageSetup);
+	g.Click(t); CHECK(g.Page() == am::EPageCall);
+	CHECK(g.Double(t) == am::Pager::ENothing && g.Page() == am::EPageHome);
+	// the hold: config mode on shows Setup, off goes Home
+	g.ConfigMode(true, t); CHECK(g.Page() == am::EPageSetup);
+	g.ConfigMode(false, t); CHECK(g.Page() == am::EPageHome);
+	// back to Home after a while without a press
+	g.Click(t);
+	CHECK(!g.Idle(t + am::Pager::kHomeAfterMs - 1, false) && g.Page() == am::EPageNetwork);
+	CHECK(g.Idle(t + am::Pager::kHomeAfterMs, false) && g.Page() == am::EPageHome);
+	CHECK(!g.Idle(t + 10 * am::Pager::kHomeAfterMs, false));   // (Home stays Home)
+	// the Details wait longer
+	t += 100000;
+	g.Double(t);
+	CHECK(!g.Idle(t + am::Pager::kHomeAfterMs, false) && g.Page() == am::EPageSetup);
+	// ... and Setup stays while the access point is up, then goes once it is not
+	CHECK(!g.Idle(t + am::Pager::kDetailsHomeAfterMs * 5, true) && g.Page() == am::EPageSetup);
+	CHECK(g.Idle(t + am::Pager::kDetailsHomeAfterMs * 5, false) && g.Page() == am::EPageHome);
+	// a press restarts the wait; the clock wrapping round is no trouble
+	t = 0xffffffffu - 1000;
+	g.Click(t);
+	CHECK(!g.Idle(t + 2000, false) && g.Page() == am::EPageNetwork);
+	CHECK(g.Idle(t + am::Pager::kHomeAfterMs + 5, false));
 	}
 
 // ----- PPP output: whole frames, in order, paced, held when offline -----------
@@ -1405,7 +1606,7 @@ static void TestFactoryKeepsLink()
 	CHECK(Has(r.Got(), "OK"));
 	CHECK(s2.flow == 1 && s2.flowSwap == 1 && s2.ppp == 0 && s2.pins[0] == 6 && s2.pins[1] == 5 && s2.pins[3] == 8 && s2.pins[4] == -1);
 	CHECK(r.modem->Config().swapPins == 1 && strcmp(r.modem->Config().ssid, "Home") == 0);
-	CHECK(s2.tls == 0 && r.modem->Config().proxy == 0);          // the rest is factory
+	CHECK(s2.tls == 1 && r.modem->Config().proxy == 0);          // the rest is factory
 	CHECK(r.hal.pins.flow == 1 && r.hal.pins.pins[0] == 6);      // and the board was told
 	r.TypeRun("AT$RESET=YES\r");
 	CHECK(r.hal.reset);
@@ -1432,6 +1633,128 @@ static void TestPppDns()
 	CHECK(am::Ip4(1, 2, 3, 4) == 0x04030201);                      // (lwIP's byte order on a little-endian CPU)
 	}
 
+// PsiConnect's commands: AT$SCAN, AT$JOIN, AT$STAT?, and the log never
+// showing a password
+static void TestWifiFromPsion()
+	{
+	Rig r;
+	auto net = [](const char* s, int rssi, int sec, int ch) {
+		am::WifiNet w; memset(&w, 0, sizeof(w));
+		snprintf(w.ssid, sizeof(w.ssid), "%s", s); w.rssi = (int8_t)rssi; w.secure = (uint8_t)sec; w.channel = (uint8_t)ch;
+		return w; };
+	r.hal.nets = { net("Weak", -85, 1, 1), net("Home", -70, 1, 6), net("", -40, 1, 3), net("Home", -50, 1, 11),
+		net("Say \"hi\" a/b\\", -60, 0, 1), net("Caf\xc3\xa9", -75, 1, 2), net("NoSignal", 0, 1, 0) };
+	r.TypeRun("ATE0\r"); r.Got();
+	r.TypeRun("AT$SCAN\r", 100);
+	std::string g = r.Got();
+	// strongest first, the hidden one gone, "Home" once at its best, escapes
+	CHECK(g == "\r\n+SCAN:-50,1,11,\"Home\"\r\n+SCAN:-60,0,1,\"Say \\\"hi\\\" a\\/b\\\\\""
+		"\r\n+SCAN:-75,1,2,\"Caf\\xC3\\xA9\"\r\n+SCAN:-85,1,1,\"Weak\"\r\n+SCAN:0,1,0,\"NoSignal\"\r\nOK\r\n");
+	r.hal.nets.clear();
+	r.TypeRun("AT$SCAN\r", 100);
+	CHECK(r.Got() == "\r\nOK\r\n");                              // nothing in range: just OK
+
+	// joining: quoted, escaped, with a password
+	r.TypeRun("AT$JOIN=\"Say \\\"hi\\\" a\\/b\\\\\",\"pa,ss\\\"w\\x41rd\"\r");
+	CHECK(r.Got() == "\r\nOK\r\n");
+	CHECK(r.hal.wifiSsid == "Say \"hi\" a/b\\" && r.hal.wifiPass == "pa,ss\"wArd");
+	CHECK(std::string(r.modem->Config().ssid) == "Say \"hi\" a/b\\");
+	// bare fields, an open network (no password, or "")
+	r.TypeRun("AT$JOIN=Cafe Wifi\r");
+	CHECK(r.Got() == "\r\nOK\r\n" && r.hal.wifiSsid == "Cafe Wifi" && r.hal.wifiPass == "");
+	r.TypeRun("AT$JOIN=\"Open\",\"\"\r");
+	CHECK(r.Got() == "\r\nOK\r\n" && r.hal.wifiSsid == "Open" && r.hal.wifiPass == "");
+	// refused: no name, too long, a short WPA password, junk after, no closing quote, a query
+	const char* bad[] = { "AT$JOIN=\r", "AT$JOIN=\"\"\r", "AT$JOIN=\"123456789012345678901234567890123\"\r",
+		"AT$JOIN=\"Home\",\"short\"\r", "AT$JOIN=\"Home\",\"password1\" x\r", "AT$JOIN=\"Home\r",
+		"AT$JOIN=\"Home\",\"pass\\x4\"\r", "AT$JOIN?\r", 0 };
+	for (int i = 0; bad[i]; i++)
+		{
+		r.TypeRun(bad[i]);
+		CHECK(Has(r.Got(), "ERROR"));
+		}
+	CHECK(r.hal.wifiSsid == "Open");                             // (none of those joined)
+
+	// the status: joined, with the Internet
+	r.hal.wifi = true; r.hal.internet = 1;
+	r.TypeRun("AT$JOIN=\"Home\",\"correct horse\"\r"); r.Got();
+	r.Run(50);
+	r.TypeRun("AT$STAT?\r", 100);
+	g = r.Got();
+	CHECK(Has(g, "\r\n+STAT:VER=2.2\r\n") && Has(g, "+STAT:BOARD=FakeBoard") && Has(g, "+STAT:SSID=\"Home\"")
+		&& Has(g, "+STAT:WIFI=INTERNET") && Has(g, "+STAT:CUR=\"Home\"") && Has(g, "+STAT:IP=192.168.1.50")
+		&& Has(g, "+STAT:RSSI=-60") && Has(g, "+STAT:NET=1") && Has(g, "+STAT:FAIL=NONE") && Has(g, "+STAT:UP=WIFI")
+		&& Has(g, "+STAT:CALL=0") && Has(g, "+STAT:BAUD=115200") && Has(g, "+STAT:FC=0") && Has(g, "+STAT:CHK=\""));
+	CHECK(g.size() >= 6 && g.substr(g.size() - 6) == "\r\nOK\r\n");
+	CHECK(!Has(g, "correct horse"));
+	// joined, Internet not (yet) confirmed
+	r.hal.internet = -1;
+	r.TypeRun("AT$STAT?\r", 100);
+	g = r.Got();
+	CHECK(Has(g, "+STAT:WIFI=JOINED") && Has(g, "+STAT:NET=-1"));
+	// joining, then refused
+	r.hal.wifi = false;
+	r.TypeRun("AT$JOIN=\"Home\",\"wrong password\"\r"); r.Got();
+	r.TypeRun("AT$STAT?\r", 100);
+	g = r.Got();
+	CHECK(Has(g, "+STAT:WIFI=JOINING") && !Has(g, "+STAT:CUR=") && Has(g, "+STAT:FAIL=NONE"));
+	r.hal.wifiFail = am::EWifiFailPassword;
+	r.TypeRun("AT$STAT?\r", 100);
+	g = r.Got();
+	CHECK(Has(g, "+STAT:WIFI=DOWN") && Has(g, "+STAT:FAIL=PASSWORD"));
+	r.hal.wifiFail = am::EWifiFailNone;                         // a rejoin starts the board's afresh...
+	r.Run(200);
+	r.TypeRun("AT$STAT?\r", 100);
+	CHECK(Has(r.Got(), "+STAT:FAIL=PASSWORD"));                  // ... but the reason is kept
+	r.hal.wifiFail = am::EWifiFailNoNetwork;
+	r.TypeRun("AT$STAT?\r", 100);
+	CHECK(Has(r.Got(), "+STAT:FAIL=NONET"));
+	// and long after a join with no answer: down
+	r.hal.wifiFail = am::EWifiFailNone;
+	r.TypeRun("AT$JOIN=\"Home\",\"password1\"\r"); r.Got();
+	r.Run(41000);
+	r.TypeRun("AT$STAT?\r", 100);
+	g = r.Got();
+	CHECK(Has(g, "+STAT:WIFI=DOWN") && Has(g, "+STAT:FAIL=NONE"));
+	// joined: the reason goes
+	r.hal.wifiFail = am::EWifiFailPassword;
+	r.Run(100);
+	r.hal.wifi = true; r.hal.wifiFail = am::EWifiFailNone;
+	r.Run(100);
+	r.hal.wifi = false;
+	r.TypeRun("AT$STAT?\r", 100);
+	CHECK(Has(r.Got(), "+STAT:FAIL=NONE"));
+	// AT&W keeps the joined network
+	r.TypeRun("AT$JOIN=\"Kept\",\"password9\"\r"); r.Got();
+	r.TypeRun("AT&W\r"); r.Got();
+	CHECK(r.hal.haveSaved && std::string(r.hal.saved.ssid) == "Kept" && std::string(r.hal.saved.pass) == "password9");
+
+	// the log: no password from any of the ways to set one
+	r.TypeRun("AT$PASS=hunter22\r"); r.TypeRun("AT$XK=tok3n\r"); r.TypeRun("AT$WEBPASS=webpw\r");
+	r.TypeRun("AT$APPASS=appassword\r"); r.TypeRun("ATW\"Net,zimodempw\"\r"); r.Got();
+	r.TypeRun("AT$LOG?\r", 300);
+	g = r.Got();
+	CHECK(!Has(g, "correct horse") && !Has(g, "wrong password") && !Has(g, "password9") && !Has(g, "hunter22")
+		&& !Has(g, "tok3n") && !Has(g, "webpw") && !Has(g, "appassword") && !Has(g, "zimodempw") && !Has(g, "pa,ss"));
+	CHECK(Has(g, "cmd: $JOIN=(hidden)") && Has(g, "cmd: $PASS=(hidden)") && Has(g, "cmd: W\"Net,(hidden)")
+		&& Has(g, "cmd: $SCAN") && Has(g, "cmd: $STAT?"));
+	bool clean = true;
+	for (const std::string& l : r.hal.logs)
+		if (Has(l, "hunter22") || Has(l, "password9") || Has(l, "correct horse") || Has(l, "zimodempw"))
+			clean = false;
+	CHECK(clean);
+	// AT&V and AT$PASS? never show it either
+	r.TypeRun("AT&V\r", 200);
+	g = r.Got();
+	CHECK(Has(g, "$PASS=(set)") && !Has(g, "hunter22"));
+	r.TypeRun("AT$PASS?\r");
+	CHECK(Has(r.Got(), "(set)"));
+	// "A/" inside a command line is the repeat; the escaped slash never is one
+	r.TypeRun("AT\r"); r.Got();
+	r.TypeRun("AT$JOIN=\"a\\/b\",\"password1\"\r");
+	CHECK(r.Got() == "\r\nOK\r\n" && r.hal.wifiSsid == "a/b");
+	}
+
 int main()
 	{
 	printf("basics\n");   TestBasics();
@@ -1454,9 +1777,12 @@ int main()
 	printf("preset network\n"); TestSeedNetwork();
 	printf("button\n");   TestButton();
 	printf("status screen\n"); TestStatusModel();
+	printf("screen pages\n"); TestPager();
+	printf("screen drawing\n"); TestCanvas();
 	printf("ppp drain\n"); TestPppDrain();
 	printf("factory keeps link\n"); TestFactoryKeepsLink();
 	printf("ppp dns\n");  TestPppDns();
+	printf("wifi from the psion\n"); TestWifiFromPsion();
 	printf("%d checks, %d failed\n", gChecks, gFails);
 	return gFails ? 1 : 0;
 	}

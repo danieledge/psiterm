@@ -41,10 +41,12 @@ enum TSchemaApply
 	SAWeb,           // the web pages and the access point
 	SAUplink,        // the uplink manager
 	SAUsb,           // the USB port's mode: at the next restart
-	SADcd            // the DCD line is driven again
+	SADcd,           // the DCD line is driven again
+	SAWg             // the WireGuard tunnel decides again (2.2)
 	};
 
-enum TSchemaGroup { SGWifi, SGUplink, SGSerial, SGProxy, SGTls, SGPictures, SGExec, SGSystem };
+enum TSchemaGroup { SGWifi, SGUplink, SGSerial, SGProxy, SGTls, SGMail, SGPictures, SGExec, SGSystem, SGWg };
+static const int kSchemaGroups = 10;
 
 struct SchemaEntry
 	{
@@ -72,6 +74,22 @@ bool SchemaSet(Config& aC, const SchemaEntry& aE, const char* aValue);
 // STSecret: whether one is set
 bool SchemaSecretSet(const Config& aC, const SchemaEntry& aE);
 const char* SchemaGroupName(TSchemaGroup aG);
+
+// AT$SCHEMA? (2.2): the table for a program (PsiConnect builds its settings
+// pages from it). Flags: 'L' a serial line setting (a wrong value can cut
+// the Psion off: applied after the OK, and undone if no command is heard
+// with it within 15 s), 'R' takes effect at the next restart, 'S' a secret
+// (never shown)
+void SchemaFlags(const SchemaEntry& aE, char* aOut, size_t aMax);
+// "BOOL", "INT", "ENUM:OFF|ON|AUTO", "STR", "SECRET", "BAUD", "PACE",
+// "PROXY", "PORTS", "PINS"
+void SchemaTypeText(const SchemaEntry& aE, char* aOut, size_t aMax);
+// the web page that shows a setting ("/wifi", "/settings" or "/vpn"): every
+// entry is on exactly one, and the host test checks it (webui.cpp draws each
+// page from this, so a new setting cannot be left off the web)
+const char* SchemaWebPage(const SchemaEntry& aE);
+// one +SCHEMA: line for entry aIndex (without CR LF)
+void SchemaLine(int aIndex, char* aOut, size_t aMax);
 
 bool ValidBaud(long aBaud);
 

@@ -29,6 +29,9 @@
 #include "uplink.h"
 #include "proxy.h"
 #include "ppp.h"
+#include "wgconf.h"
+#include "netlist.h"
+#include "dnsrelay.h"
 
 namespace am {
 
@@ -96,6 +99,38 @@ private:
 	size_t iHead, iCount;
 	};
 
+// ----- a WiFi network seen in a scan (AT$SCAN) ------------------------------
+struct WifiNet
+	{
+	char ssid[33];             // as broadcast (bytes, not always ASCII); "" = hidden
+	int8_t rssi;               // dBm; 0 = not known
+	uint8_t secure;            // 1: needs a password, 0: open
+	uint8_t channel;           // 0 = not known
+	};
+
+// why the last join did not work (Hal::WifiFail, AT$STAT? FAIL=)
+enum TWifiFail { EWifiFailNone = 0, EWifiFailNoNetwork, EWifiFailPassword, EWifiFailOther };
+
+// ----- the WireGuard tunnel, as the board reports it (AT$STAT?, the pages) ----
+enum TWgState
+	{
+	EWgStOff = 0,          // not running (off, no config, at home, no uplink: see TWgWant)
+	EWgStTime,             // waiting for the clock (NTP): the handshake needs the time
+	EWgStResolve,          // looking up the endpoint
+	EWgStConnecting,       // handshake sent, no answer yet
+	EWgStUp,               // a handshake within the last 3 minutes
+	EWgStRetry             // it failed; trying again shortly
+	};
+
+struct WgStatus
+	{
+	int state;             // TWgState
+	int32_t handshakeAge;  // seconds since the last handshake, -1 none yet
+	uint32_t rx, tx;       // bytes through the tunnel (inside it), since it started
+	uint32_t endpointIp;   // the endpoint's address once looked up (ip4_addr), 0 not yet
+	char why[48];          // a few words when it is not up ("endpoint not found")
+	};
+
 // ----- the platform: serial line, TCP, WiFi, NVS, LED ----------------------
 enum LedState { ELedNoWifi, ELedWifi, ELedConnected, ELedData, ELedConnecting, ELedConfig };
 
@@ -129,6 +164,8 @@ public:
 	// the uplink's DNS server as an lwIP ip4_addr (bytes a,b,c,d in memory
 	// order: see Ip4()), 0 = not known. PPP hands it to the Psion
 	virtual uint32_t UplinkDns() { return 0; }
+	// the uplink's own address and netmask (ip4_addr order); false = none
+	virtual bool UplinkAddr(uint32_t& aIp, uint32_t& aMask) { aIp = aMask = 0; return false; }
 	virtual const char* BoardName() { return "host"; }
 	virtual void ApPass(char* aOut, size_t aMax) { if (aMax) aOut[0] = 0; }   // the access point's password, while it is up
 	virtual void Idle() {}                              // a moment's wait in a busy loop
@@ -141,14 +178,37 @@ public:
 	// WiFi
 	virtual bool WifiUp() = 0;
 	virtual void WifiBegin(const char* aSsid, const char* aPass) = 0;
+	virtual void WifiHardReset() {}            // a real radio down/up for the rejoin retry (no-op off-device)
 	virtual void WifiEnd() = 0;
 	virtual void WifiInfo(char* aOut, size_t aMax) = 0; // "SSID x, IP a.b.c.d, RSSI -60"
 	virtual int WifiScan(char aNames[][33], int aMax) { (void)aNames; (void)aMax; return 0; }
+	// the networks in range with their signal and security, up to aMax (the
+	// default asks WifiScan for the names only: signal and channel unknown)
+	virtual int WifiScanFull(WifiNet* aOut, int aMax);
+	// the network joined now: its name, address and signal; false = none
+	virtual bool WifiLink(char* aSsid, size_t aSsidMax, char* aIp, size_t aIpMax, int& aRssi)
+		{ (void)aSsid; (void)aSsidMax; (void)aIp; (void)aIpMax; aRssi = 0; return false; }
+	// TWifiFail: why joining has not worked since the last WifiBegin
+	virtual int WifiFail() { return EWifiFailNone; }
 	// the Internet check: a TCP connect to aHost:aPort, run by the board in
 	// the background (never in the modem's loop); Internet() is the last
 	// result, -1 unknown, 0 failed, 1 passed
 	virtual void ProbeInternet(const char* aHost, uint16_t aPort) { (void)aHost; (void)aPort; }
 	virtual int Internet() { return -1; }
+	// the check's DNS lookup (2.2): -1 unknown, 0 failed, 1 a name resolved.
+	// Internet() is 1 only when this passed too
+	virtual int DnsOk() { return -1; }
+	// the WireGuard tunnel (board/wgtunnel.cpp): brought up with aConfig when
+	// aWant, taken down when not. Called when either changes (and harmless
+	// to call again). WgInfo: how it is doing
+	virtual void WgApply(const WgConfig& aConfig, bool aWant) { (void)aConfig; (void)aWant; }
+	virtual void WgInfo(WgStatus& aOut) { aOut.state = EWgStOff; aOut.handshakeAge = -1; aOut.rx = aOut.tx = 0; aOut.endpointIp = 0; aOut.why[0] = 0; }
+	// the DNS relay on 192.168.7.1:53 (board/pppdns.cpp), for a PPP call:
+	// started with the link (false: not available, the Psion is then offered
+	// the uplink's DNS), stopped with it; its upstream set by the modem
+	virtual bool DnsRelayStart() { return false; }
+	virtual void DnsRelayStop() {}
+	virtual void DnsRelayUpstream(uint32_t aServer) { (void)aServer; }
 	// the USB host (ESP32-S3): a TUsbState, and a few words (the device, its address)
 	virtual int UsbState(char* aDetail, size_t aMax) { if (aMax) aDetail[0] = 0; return EUsbNone; }
 	// settings
@@ -157,6 +217,11 @@ public:
 	// the 2.0 record: aLength is how many bytes were stored (an older record is shorter)
 	virtual bool LoadSettings2(Settings2& aS, size_t& aLength) { (void)aS; aLength = 0; return false; }
 	virtual bool SaveSettings2(const Settings2& aS) { (void)aS; return true; }
+	// 2.2: the saved networks and the WireGuard config, each its own record
+	virtual bool LoadNets(NetList& aL, size_t& aLength) { (void)aL; aLength = 0; return false; }
+	virtual bool SaveNets(const NetList& aL) { (void)aL; return true; }
+	virtual bool LoadWg(WgConfig& aC, size_t& aLength) { (void)aC; aLength = 0; return false; }
+	virtual bool SaveWg(const WgConfig& aC) { (void)aC; return true; }
 	virtual void FactoryReset() {}                      // clears NVS and restarts (the board)
 	virtual void Restart() {}
 	// optional extras
@@ -166,12 +231,15 @@ public:
 	virtual void ApplyPins(const Settings& aS, const Settings2& aS2) { (void)aS; (void)aS2; }
 	virtual void ApplyWeb(const Settings2& aS2) { (void)aS2; }   // the pages and the access point
 	virtual void ApplyUplink(const Settings2& aS2) { (void)aS2; } // (the USB host at the next restart)
-	virtual void ApInfo(char* aOut, size_t aMax) { if (aMax) aOut[0] = 0; }   // "AtomModem-1a2b up, 192.168.4.1"
+	virtual void ApInfo(char* aOut, size_t aMax) { if (aMax) aOut[0] = 0; }   // "PsiConnect-1A2B up, 192.168.4.1"
 	virtual void WebInfo(char* aOut, size_t aMax) { if (aMax) aOut[0] = 0; }  // "http://192.168.1.50/"
 private:
 	LogRing iLog;
 	bool iTlsVerify;
 	};
+
+// the command line as the log shows it, with every secret left out
+void LogSafe(const char* aCmd, char* aOut, size_t aMax);
 
 // ----- the modem ----------------------------------------------------------
 class Modem
@@ -213,6 +281,41 @@ public:
 	bool InConfigMode() const { return iConfigMode; }
 	void LogLine(const char* aLine) { iHal.Log(aLine); }
 
+	// ----- 2.2: the saved networks -----
+	const NetList& Nets() const { return iNets; }
+	// switch to saved entry aIndex now (pinned while it is in range); false: no such entry
+	bool SwitchNet(int aIndex);
+	// the next saved network in range (the button); false: none other
+	bool NextNet();
+	// add or update (the web pages: saved at once with aSave)
+	bool AddNet(const char* aSsid, const char* aPass, bool aSave);
+	bool ForgetNet(int aIndex, bool aSave);
+	const char* Pinned() const { return iPinned; }
+
+	// ----- 2.2: WireGuard -----
+	const WgConfig& Wg() const { return iWg; }
+	int WgMode() const { return iS2.wgMode; }
+	// AT$WG / the pages / the button; aSave: saved at once (not waiting for AT&W)
+	void SetWgMode(int aMode, bool aSave);
+	// the next mode Off -> On -> Auto -> Off (the button), saved
+	int CycleWgMode();
+	// a pasted config (the web page, AT$WGL): parsed, kept and saved at once.
+	// False: not taken, aWhy says why (never quoting a key)
+	bool SetWgConfig(const char* aText, char* aWhy, size_t aWhyMax);
+	void ClearWgConfig();
+	TWgWant WgWant() const { return iWgWant; }
+	// a one-line state for the LCD, the pages and AT$WG? ("up, 12 s ago")
+	void WgStateText(char* aOut, size_t aMax) const;
+	// the board's view of the tunnel (cached each tick)
+	const WgStatus& WgNow() const { return iWgStatus; }
+
+	// ----- 2.2: AT commands over PPP (atremote.h) -----
+	// one command line from PsiConnect over TCP: run as a serial one would be
+	// (AtRemoteAllowed refusing what would cut the PPP link or the serial
+	// line), its answer captured into aOut (always verbose; at most aMax-1
+	// bytes, NUL-terminated); returns its length. Never hangs up
+	size_t RemoteLine(const char* aLine, char* aOut, size_t aMax);
+
 private:
 	enum TResult { ROk = 0, RConnect = 1, RRing = 2, RNoCarrier = 3, RError = 4, RNone = -1 };
 	void SerialIn(uint8_t aC);
@@ -227,11 +330,23 @@ private:
 	TResult DialExec(const char* aCommand);
 	bool ExecHandshake(const char* aCommand);
 	TResult SetCommand(const char* aCmd, const char*& aP, bool& aHandled);
-	void Apply(TSchemaApply aWhat, uint32_t aOldBaud);
+	void Apply(TSchemaApply aWhat, uint32_t aOldBaud, bool aFromPsion = false);
 	void Info();
 	void ShowSettings();
 	void Help();
 	void ShowLog();
+	void Scan();                        // AT$SCAN
+	TResult Join(const char* aArgs);    // AT$JOIN=ssid,password
+	void Status();                      // AT$STAT?
+	void ListNets();                    // AT$NETS?
+	void ShowSchema();                  // AT$SCHEMA?
+	int NetArg(const char* aArg) const; // AT$NET=, AT$FORGET=: an index (1-based) or a quoted name
+	void ChooseNet(uint32_t aNow, bool aStart);   // scan and join the best saved network
+	void SaveNetsNow();
+	void WgTick(uint32_t aNow);
+	void UpsertCurrent();
+	void StartLineTrial();
+	void LineTrialRevert();
 	void Result(TResult aR);
 	void Say(const char* aText);
 	void SayLine(const char* aText);
@@ -290,19 +405,58 @@ private:
 	uint32_t iConfigUntilMs;
 	uint32_t iLastTickMs;
 	// the WiFi: joining again when it stays down, and the Internet check
-	static const uint32_t kWifiRetryAfterMs = 20000;   // down this long: join again
-	static const uint32_t kWifiRetryEveryMs = 30000;   // ... and every so often after that
+	static const uint32_t kWifiRetryAfterMs = 8000;    // down this long: reset the radio and join again
+	static const uint32_t kWifiRetryEveryMs = 15000;   // ... and every so often after that
 	static const uint32_t kProbeSoonMs = 15000;        // the check, while not confirmed
 	static const uint32_t kProbeAgainMs = 120000;      // ... and once it has passed
+	uint32_t iJoinMs;                   // when AT$JOIN asked (0: not since the start)
+	int iJoinFail;                      // TWifiFail seen since then, kept until joined (a
+	                                    // rejoin's WifiBegin clears the board's own)
 	uint32_t iWifiDownMs;               // 0: not down
 	uint32_t iWifiRetryMs;
+	uint32_t iWifiRetries;              // rejoins attempted this outage (a hard radio reset only from the 2nd)
 	uint32_t iProbeDueMs;
 	int iLastWifiState;
 	int iLastActive;
 	void NetTick(uint32_t aNow);
+	// 2.2
+	NetList iNets;
+	char iPinned[33];                   // a network picked by hand (AT$NET), kept while in range
+	uint32_t iNetSkip;                  // saved entries that failed this time round (bit i)
+	int iNetTrying;                     // the entry being joined by ChooseNet, -1 none
+	WgConfig iWg;
+	TWgWant iWgWant;
+	bool iWgApplied;                    // WgApply has been called with the current want
+	uint32_t iWgGen, iWgAppliedGen;     // bumped when the config or mode changes
+	uint32_t iWgIp;                     // the uplink address the decision was made on
+	WgStatus iWgStatus;
+	int iWgLastState;
+	uint32_t iWgTickMs;
+	int iLastDnsOk;                     // the check's DNS lookup, as last logged
+	uint32_t iDnsUp;                    // the DNS relay's upstream last given to the board
+	char iWgText[kWgTextMax + 1];       // AT$WGL lines gathered
+	size_t iWgTextLen;
+	bool iWgTextBad;                    // a line did not fit: END refuses
+	// the line trial (2.2): AT$FC, $FCSWAP, $SWAP, $PINS, $DCD changed from the
+	// Psion are applied after the OK and undone if no command is heard within
+	// kBaudTrialMs (as the speed is), so a wrong setting cannot cut the Psion off
+	bool iPendingPins;                  // apply the pins after the OK
+	bool iLineTrial;                    // a line change is on trial
+	bool iLineArmed;
+	uint32_t iLineStartMs;
+	uint8_t iLineOldFlow, iLineOldFlowSwap, iLineOldSwap;
+	int8_t iLineOldPins[kPinCount];
+	int8_t iLineOldDcd;
 	uint8_t iTcpBuf[1460];
 	uint8_t iUpBuf[256];                // Psion -> server, batched
 	size_t iUpLen;
+	// RemoteLine: the answer goes here rather than to the serial line
+	void RemoteReload();                // ATZ over PPP: the saved settings, the live link kept
+	char* iCap;                         // 0: not capturing
+	size_t iCapLen, iCapMax;
+	bool iCapCut;                       // something did not fit
+	bool iInResult;                     // Result() may use the reserved room
+	bool iRemote;                       // a RemoteLine is running
 	};
 
 } // namespace am

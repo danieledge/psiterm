@@ -15,6 +15,7 @@
 #include "lwip/ip4_addr.h"
 #include "lwip/lwip_napt.h"
 #include "lwip/netif.h"
+#include "lwip/tcpip.h"         // LOCK_TCPIP_CORE: ip_napt_* are core functions and must run under the lock
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
 
@@ -25,7 +26,7 @@ static struct netif gPppIf;
 namespace am {
 
 PppLink::PppLink()
-	: iActive(false), iUp(false), iDropped(false), iNat(false), iBytesIn(0), iDns(0), iDropFrames(0), iDropping(false), iStageLen(0),
+	: iActive(false), iUp(false), iDropped(false), iDropErr(0), iDropLogged(false), iNat(false), iBytesIn(0), iDns(0), iDropFrames(0), iDropping(false), iStageLen(0),
 	  iUpLogged(false), iPendOfs(0), iPendLen(0)
 #ifdef AM_PPP_DEVICE
 	, iPcb(0), iQueue(0)
@@ -34,9 +35,13 @@ PppLink::PppLink()
 
 PppLink::~PppLink() {}
 
-// the DNS to give the Psion: the uplink's, else 1.1.1.1
+// the DNS to give the Psion: the modem's own relay (2.2: 192.168.7.1, which
+// forwards to the right server wherever the modem is), else the uplink's,
+// else 1.1.1.1
 static uint32_t ChooseDns(Hal& aHal)
 	{
+	if (aHal.DnsRelayStart())
+		return Ip4(192, 168, 7, 1);
 	uint32_t d = aHal.UplinkDns();
 	return d ? d : kPppFallbackDns;
 	}
@@ -171,6 +176,11 @@ void PppLink::OnStatus(int aErr)
 			// NAT the Psion out of the modem's default route (WiFi, or USB
 			// when that is the uplink). Needs CONFIG_LWIP_IP_FORWARD and
 			// CONFIG_LWIP_IPV4_NAPT (both on in the S3 prebuilt lwIP).
+			// This callback runs ON the tcpip thread, which already holds the
+			// core lock - so call ip_napt_* bare here. (Do NOT LOCK_TCPIP_CORE
+			// here: the lock is non-recursive and would deadlock the tcpip
+			// thread the instant PPP comes up. Only Stop(), on the loop task,
+			// needs to take the lock.)
 			ip_napt_enable_no(nif->num, 1);
 			iNat = true;
 			}
@@ -179,7 +189,29 @@ void PppLink::OnStatus(int aErr)
 	else
 		{
 		iUp = false;
+		iDropErr = aErr;                    // stash why; Poll logs it from the loop task (ring is not ours here)
 		iDropped = true;                    // the Modem ends the call on the next Poll
+		}
+	}
+
+// a short word for a PPPERR_* code, for the drop log line
+static const char* PppErrName(int aErr)
+	{
+	switch (aErr)
+		{
+		case PPPERR_PARAM:       return "bad parameter";
+		case PPPERR_OPEN:        return "already open";
+		case PPPERR_DEVICE:      return "device error";
+		case PPPERR_ALLOC:       return "out of memory";
+		case PPPERR_USER:        return "closed locally";
+		case PPPERR_CONNECT:     return "connection lost";
+		case PPPERR_AUTHFAIL:    return "authentication failed";
+		case PPPERR_PROTOCOL:    return "protocol error";
+		case PPPERR_PEERDEAD:    return "peer dead (no echo reply)";
+		case PPPERR_IDLETIMEOUT: return "idle timeout";
+		case PPPERR_CONNECTTIME: return "connect-time limit";
+		case PPPERR_LOOPBACK:    return "loopback detected";
+		default:                 return "unknown";
 		}
 	}
 
@@ -197,6 +229,8 @@ bool PppLink::Start(Hal& aHal)
 	QueueReset();
 	iUp = iDropped = iNat = false;
 	iUpLogged = false;
+	iDropLogged = false;
+	iDropErr = 0;
 	iBytesIn = 0;
 	iDropFrames = 0;
 	ppp_pcb* pcb = pppapi_pppos_create(&gPppIf, PppCallbacks::Output, PppCallbacks::Status, this);
@@ -239,7 +273,14 @@ void PppLink::Stop(Hal& aHal)
 			{
 			struct netif* nif = ppp_netif(pcb);
 			if (nif)
+				{
+				// under the core lock (see Up()): this is the crash on hangup -
+				// ip_napt_enable_no(...,0) -> ip_napt_deinit -> sys_untimeout,
+				// which asserts if the TCPIP core is not locked
+				LOCK_TCPIP_CORE();
 				ip_napt_enable_no(nif->num, 0);
+				UNLOCK_TCPIP_CORE();
+				}
 			}
 		pppapi_close(pcb, 1);               // 1: drop carrier now
 		pppapi_free(pcb);
@@ -248,8 +289,10 @@ void PppLink::Stop(Hal& aHal)
 	iActive = iUp = iNat = false;
 	iDropped = false;
 	QueueReset();
-	char m[64];
-	snprintf(m, sizeof(m), "ppp: stopped (%u frames dropped)", (unsigned)iDropFrames);
+	aHal.DnsRelayStop();
+	char m[96];
+	snprintf(m, sizeof(m), "ppp: stopped (%u frames dropped, %u B in from the Psion)",
+		(unsigned)iDropFrames, (unsigned)iBytesIn);
 	aHal.Log(m);
 	}
 
@@ -266,11 +309,20 @@ size_t PppLink::Input(Hal& aHal, const uint8_t* aData, size_t aLen)
 
 void PppLink::Poll(Hal& aHal)
 	{
-	// the link runs on the tcpip thread; here only the log line, from the loop task
+	// the link runs on the tcpip thread; here only the log lines, from the loop task
 	if (iActive && iUp && !iUpLogged)
 		{
 		iUpLogged = true;
 		aHal.Log("ppp: up - the Psion is online (NAT on)");
+		}
+	// a drop detected on the tcpip thread: log its cause once, here where the ring
+	// is ours (the Modem then ends the call and Stop() logs the frame count)
+	if (iDropped && !iDropLogged)
+		{
+		iDropLogged = true;
+		char m[80];
+		snprintf(m, sizeof(m), "ppp: link lost - %s (err %d)", PppErrName(iDropErr), iDropErr);
+		aHal.Log(m);
 		}
 	}
 
@@ -303,7 +355,7 @@ bool PppLink::Start(Hal& aHal)
 
 void PppLink::Stop(Hal& aHal)
 	{
-	(void)aHal;
+	aHal.DnsRelayStop();
 	iActive = iUp = iNat = false;
 	iDropped = false;
 	iHostQ.clear();

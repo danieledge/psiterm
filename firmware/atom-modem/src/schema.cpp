@@ -9,6 +9,7 @@ namespace am {
 
 static const char* const kUplinkNames[] = { "AUTO", "WIFI", "USB", 0 };
 static const char* const kWebNames[] = { "OFF", "ON", "AP", 0 };
+static const char* const kWgNames[] = { "OFF", "ON", "AUTO", 0 };
 
 #define F1(field) SR1, (uint16_t)offsetof(Settings, field), (uint8_t)sizeof(((Settings*)0)->field)
 #define F2(field) SR2, (uint16_t)offsetof(Settings2, field), (uint8_t)sizeof(((Settings2*)0)->field)
@@ -40,6 +41,11 @@ static const SchemaEntry kSchema[] =
 	{ "TLS", STBool, F2(tls), 0, 1, 0, SANone, SGTls, "TLS termination", "1: a dial to one of the ports below is made over TLS by the modem; the Psion sees the plain protocol" },
 	{ "TLSP", STPorts, F2(tlsPorts), 0, 0, 0, SANone, SGTls, "TLS ports", "The ports it applies to, e.g. 443,465,993,995" },
 	{ "TLSV", STBool, F2(tlsVerify), 0, 1, 0, SANone, SGTls, "Check certificates", "1: the server's certificate is checked. 0 is dangerous: only for your own server" },
+	// TLS offload over PPP (the stunnel-style mail relay, ppptls.cpp)
+	{ "MAILIMAP", STStr, F2(imapHost), 0, 63, 0, SANone, SGMail, "IMAPS upstream", "Upstream IMAPS host for the PPP TLS relay: over a PPP call PsiMail connects plaintext to 192.168.7.1:993 and the modem does the TLS to this host:993. Empty: that port is off" },
+	{ "MAILSMTP", STStr, F2(smtpHost), 0, 63, 0, SANone, SGMail, "SMTPS upstream", "Upstream SMTPS host: plaintext 192.168.7.1:465, the modem does the TLS to this host:465. Empty: off" },
+	{ "MAILPOP", STStr, F2(popHost), 0, 63, 0, SANone, SGMail, "POP3S upstream", "Upstream POP3S host: plaintext 192.168.7.1:995, the modem does the TLS to this host:995. Empty: off" },
+	{ "MAILXCODE", STBool, F2(mailXcode), 0, 1, 0, SANone, SGMail, "Slim embedded images", "1 (Layer 2): over the PPP TLS relay the modem transcodes embedded email images to small 16-grey GIFs and rewrites the message so the Psion downloads the slim version. IMAPS (993) only; needs the IMAPS upstream set above" },
 	// pictures
 	{ "PI", STBool, F2(img), 0, 1, 0, SANone, SGPictures, "Convert pictures", "1: pictures through the proxy are scaled and dithered to 16 greys" },
 	{ "PW", STInt, F2(imgWidth), 64, 640, 0, SANone, SGPictures, "Width", "At most this many pixels wide" },
@@ -53,6 +59,8 @@ static const SchemaEntry kSchema[] =
 	{ "WEBPASS", STSecret, F2(webPass), 0, 32, 0, SAWeb, SGSystem, "Web password", "For the pages on the network (user atom). None: those pages are off" },
 	{ "APPASS", STSecret, F2(apPass), 8, 32, 0, SAWeb, SGSystem, "Access point password", "WPA2, 8 to 32 characters" },
 	{ "LOGL", STInt, F2(logLevel), 0, 2, 0, SANone, SGSystem, "Log level", "0 quiet, 1 normal, 2 verbose" },
+	// WireGuard (2.2): the tunnel home. Its config is pasted on the web page (or AT$WGL)
+	{ "WG", STEnum, F2(wgMode), 0, 2, kWgNames, SAWg, SGWg, "WireGuard", "OFF; ON (always, when a config is set); AUTO (on unless the Atom is already on the home network). Only AllowedIPs go through it" },
 	};
 
 int SchemaCount() { return (int)(sizeof(kSchema) / sizeof(kSchema[0])); }
@@ -67,8 +75,10 @@ const char* SchemaGroupName(TSchemaGroup aG)
 	case SGSerial: return "Serial";
 	case SGProxy: return "Web proxy";
 	case SGTls: return "TLS termination";
+	case SGMail: return "Mail TLS relay (PPP)";
 	case SGPictures: return "Pictures";
 	case SGExec: return "Remote compute";
+	case SGWg: return "WireGuard";
 	default: return "System";
 		}
 	}
@@ -255,6 +265,64 @@ bool SchemaSet(Config& aC, const SchemaEntry& aE, const char* aValue)
 		return SetPins(aC.s2, aValue);
 		}
 	return false;
+	}
+
+} // namespace am
+
+namespace am {
+
+void SchemaFlags(const SchemaEntry& aE, char* aOut, size_t aMax)
+	{
+	size_t n = 0;
+	if (aMax == 0)
+		return;
+	if ((aE.apply == SABaud || aE.apply == SAPins || aE.apply == SADcd) && n + 1 < aMax) aOut[n++] = 'L';
+	if (aE.apply == SAUsb && n + 1 < aMax) aOut[n++] = 'R';
+	if (aE.type == STSecret && n + 1 < aMax) aOut[n++] = 'S';
+	aOut[n] = 0;
+	}
+
+void SchemaTypeText(const SchemaEntry& aE, char* aOut, size_t aMax)
+	{
+	switch (aE.type)
+		{
+	case STBool: case STBoolInv: snprintf(aOut, aMax, "BOOL"); break;
+	case STInt: snprintf(aOut, aMax, "INT"); break;
+	case STEnum:
+		{
+		size_t n = (size_t)snprintf(aOut, aMax, "ENUM:");
+		for (int j = 0; aE.names[j] && n < aMax; j++)
+			n += (size_t)snprintf(aOut + n, aMax - n, "%s%s", j ? "|" : "", aE.names[j]);
+		break;
+		}
+	case STBaud: snprintf(aOut, aMax, "BAUD"); break;
+	case STPace: snprintf(aOut, aMax, "PACE"); break;
+	case STProxyMode: snprintf(aOut, aMax, "PROXY"); break;
+	case STStr: snprintf(aOut, aMax, "STR"); break;
+	case STSecret: snprintf(aOut, aMax, "SECRET"); break;
+	case STPorts: snprintf(aOut, aMax, "PORTS"); break;
+	case STPins: snprintf(aOut, aMax, "PINS"); break;
+		}
+	}
+
+const char* SchemaWebPage(const SchemaEntry& aE)
+	{
+	if (aE.group == SGWifi || strcmp(aE.name, "WEB") == 0 || strcmp(aE.name, "WEBPASS") == 0 || strcmp(aE.name, "APPASS") == 0)
+		return "/wifi";
+	if (aE.group == SGWg)
+		return "/vpn";
+	return "/settings";
+	}
+
+// +SCHEMA:<name>,<type>,<min>,<max>,<group>,<flags>,"<group name>","<label>"
+void SchemaLine(int aIndex, char* aOut, size_t aMax)
+	{
+	const SchemaEntry& e = SchemaAt(aIndex);
+	char type[48], flags[8];
+	SchemaTypeText(e, type, sizeof(type));
+	SchemaFlags(e, flags, sizeof(flags));
+	snprintf(aOut, aMax, "+SCHEMA:%s,%s,%ld,%ld,%d,%s,\"%s\",\"%s\"", e.name, type, (long)e.min, (long)e.max,
+		(int)e.group, flags, SchemaGroupName(e.group), e.label);
 	}
 
 } // namespace am

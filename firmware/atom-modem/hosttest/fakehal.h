@@ -28,6 +28,8 @@ public:
 	double drainCredit = 0;
 	bool wifi = true;
 	std::string wifiSsid, wifiPass;
+	std::string wifiIp = "192.168.1.50";       // what WifiInfo and WifiLink report
+	int wifiRssi = -60;
 	bool tcpOk = true;                         // connects succeed
 	bool tcpOpen = false;
 	std::string tcpHost; int tcpPort = 0;
@@ -146,7 +148,25 @@ public:
 	bool WifiUp() override { return wifi; }
 	void WifiBegin(const char* s, const char* p) override { wifiSsid = s; wifiPass = p; }
 	void WifiEnd() override { wifi = false; }
-	void WifiInfo(char* o, size_t m) override { snprintf(o, m, "\"%s\" IP 192.168.1.50 RSSI -60", wifiSsid.c_str()); }
+	void WifiInfo(char* o, size_t m) override { snprintf(o, m, "\"%s\" IP %s RSSI %d", wifiSsid.c_str(), wifiIp.c_str(), wifiRssi); }
+	std::vector<am::WifiNet> nets;             // what a scan finds
+	int wifiFail = am::EWifiFailNone;          // WifiFail()
+	int WifiScanFull(am::WifiNet* o, int m) override
+		{
+		scans++;
+		int n = 0;
+		for (const am::WifiNet& w : nets) if (n < m) o[n++] = w;
+		return n;
+		}
+	bool WifiLink(char* s, size_t sm, char* ip, size_t im, int& rssi) override
+		{
+		if (!wifi) return false;
+		snprintf(s, sm, "%s", wifiSsid.c_str());
+		snprintf(ip, im, "%s", wifiIp.c_str());
+		rssi = wifiRssi;
+		return true;
+		}
+	int WifiFail() override { return wifiFail; }
 	bool LoadSettings(am::Settings& s) override { if (!haveSaved) return false; s = saved; return true; }
 	bool SaveSettings(const am::Settings& s) override { saved = s; haveSaved = true; return true; }
 	bool LoadSettings2(am::Settings2& s, size_t& len) override
@@ -173,6 +193,44 @@ public:
 	void ApPass(char* o, size_t m) override { snprintf(o, m, "%s", apPassword.c_str()); }
 	void ApInfo(char* o, size_t m) override { snprintf(o, m, "%s", apInfo.c_str()); }
 	void WebInfo(char* o, size_t m) override { snprintf(o, m, "%s", webInfo.c_str()); }
+
+	// 2.2: the saved networks and WireGuard records, the uplink's address,
+	// the tunnel (WgApply recorded; WgInfo reports wgStatus) and the DNS relay
+	bool haveNets = false; am::NetList savedNets; size_t savedNetsLen = 0;
+	bool haveWg = false; am::WgConfig savedWg;
+	int netsSaves = 0, wgSaves = 0;
+	bool LoadNets(am::NetList& l, size_t& len) override
+		{
+		if (!haveNets) { len = 0; return false; }
+		len = savedNetsLen ? savedNetsLen : sizeof(l);
+		memcpy(&l, &savedNets, len);
+		return true;
+		}
+	bool SaveNets(const am::NetList& l) override { savedNets = l; haveNets = true; savedNetsLen = 0; netsSaves++; return true; }
+	bool LoadWg(am::WgConfig& c, size_t& len) override { if (!haveWg) { len = 0; return false; } c = savedWg; len = sizeof(c); return true; }
+	bool SaveWg(const am::WgConfig& c) override { savedWg = c; haveWg = true; wgSaves++; return true; }
+	uint32_t upIp = 0, upMask = 0;             // the uplink's address (0: use 192.168.1.50/24 while WiFi is up)
+	bool UplinkAddr(uint32_t& ip, uint32_t& mask) override
+		{
+		if (!wifi) { ip = mask = 0; return false; }
+		ip = upIp ? upIp : am::Ip4(192, 168, 1, 50);
+		mask = upIp ? upMask : am::Ip4(255, 255, 255, 0);
+		return true;
+		}
+	int wgApplies = 0;
+	bool wgWant = false;
+	am::WgStatus wgStatus = {};                // what the "board" reports
+	void WgApply(const am::WgConfig&, bool want) override { wgApplies++; wgWant = want; if (!want) wgStatus.state = am::EWgStOff; }
+	void WgInfo(am::WgStatus& o) override { o = wgStatus; if (!wgWant) { o.state = am::EWgStOff; } }
+	bool relayOk = false;                      // DnsRelayStart's answer
+	bool relayOn = false;
+	uint32_t relayUp = 0;
+	bool DnsRelayStart() override { relayOn = relayOk; return relayOk; }
+	void DnsRelayStop() override { relayOn = false; }
+	void DnsRelayUpstream(uint32_t a) override { relayUp = a; }
+	int dnsOk = -1;
+	int DnsOk() override { return dnsOk; }
+	int scans = 0;
 
 	// the UART puts bytes on the wire at baud/10 bytes a second
 	void Drain()

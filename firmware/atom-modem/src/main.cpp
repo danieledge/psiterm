@@ -1,4 +1,4 @@
-// main.cpp - setup() and loop() for the Atom modem on the M5Stack AtomS3
+// main.cpp - setup() and loop() for the PsiConnect on the M5Stack AtomS3
 // Lite (ESP32-S3) and the plain Atom (ESP32). The modem itself (Hayes
 // commands, +++, pacing, the web proxy, pictures, psiexec) is the portable
 // code in modem.cpp and friends; the board side is board/ and usbnet/.
@@ -18,6 +18,9 @@
 #include "usbnet/usbhost.h"
 #include "button.h"
 #include "board/pppproxy.h"
+#include "board/pppat.h"
+#include "board/ppptls.h"
+#include "board/wgtunnel.h"
 #if defined(AM_HAS_LCD)
 #include "board/screen.h"
 #endif
@@ -44,6 +47,8 @@ static am::UsbNet gUsb;
 static am::Modem* gModem = 0;
 static am::Button gButton;
 static am::PppProxy gPppProxy;
+static am::PppAt gPppAt;
+static am::PppTls gPppTls;
 
 // The ring towards the Psion: as big as the heap allows after WiFi, leaving
 // room for the web proxy: the modem object with the proxy (about 25 KB), a
@@ -92,12 +97,12 @@ static uint8_t* AllocRing(size_t& aSize)
 		if (p)
 			{
 			if (aSize < am::Proxy::kSlack + 4 * 1024)
-				Serial.printf("Atom modem: only %u bytes for the buffer: the web proxy will not work\n", (unsigned)aSize);
+				Serial.printf("PsiConnect: only %u bytes for the buffer: the web proxy will not work\n", (unsigned)aSize);
 			return p;
 			}
 		}
 	// nothing at all: there is no modem without it, so start again
-	Serial.println("Atom modem: no memory for the buffer; restarting");
+	Serial.println("PsiConnect: no memory for the buffer; restarting");
 	Serial.flush();
 	delay(1000);
 	ESP.restart();
@@ -153,10 +158,18 @@ static void FactoryResetIfHeld()
 	}
 
 // the button while running, through the debounced click/hold machine.
-// The LCD boards (the AtomS3R, where the button is the screen): a click is
-// the next page (or just wakes a dimmed backlight), a hold is config mode
-// (the access point and the pages for ten minutes). The AtomS3 Lite and the
-// Atom: a click is config mode, as before
+// The LCD boards (the AtomS3R, where the button is the screen) - the pages
+// and gestures are Pager's (status.h):
+//   press         the next page: Home -> Wi-Fi -> VPN -> Home, or the next
+//                 Details page
+//   double-press  the page's one action: Home opens the Details (Setup
+//                 first), Wi-Fi joins the next saved network, VPN steps
+//                 WireGuard Off -> On -> Auto (saved at once); in the
+//                 Details it goes back to Home
+//   hold (2 s)    config mode on or off (the access point and the pages for
+//                 ten minutes), showing the Setup page while it is on
+// A press on a dimmed screen only wakes it. The AtomS3 Lite and the Atom: a
+// click is config mode, as before
 static void ButtonTick()
 	{
 	uint32_t now = millis();
@@ -166,13 +179,34 @@ static void ButtonTick()
 #if defined(AM_HAS_LCD)
 	if (ev == am::Button::EClick)
 		{
-		if (!am::gScreen.Wake(now))           // (a dimmed screen: the click only wakes it)
-			am::gScreen.NextPage(now);
+		if (!am::gScreen.Wake(now))           // (a dimmed screen: the press only wakes it)
+			am::gScreen.Click(now);
+		}
+	else if (ev == am::Button::EDouble)
+		{
+		if (am::gScreen.Wake(now))
+			return;
+		am::Pager::TAction act = am::gScreen.Double(now);
+		if (act == am::Pager::ECycleVpn)
+			{
+			static const char* const kNames[] = { "Off", "On", "Auto" };
+			int mode = gModem->CycleWgMode();
+			am::gScreen.Toast(now, "VPN mode", kNames[mode], WgValid(gModem->Wg()) ? "" : "(no config set)");
+			}
+		else if (act == am::Pager::ENextNet)
+			{
+			am::gScreen.Toast(now, "Wi-Fi", "Looking...");   // (the scan takes a few seconds)
+			if (gModem->NextNet())
+				am::gScreen.Toast(now, "Switching to", gModem->Config().ssid);
+			else
+				am::gScreen.Toast(now, "Wi-Fi", "No other", "saved network in range");
+			}
 		}
 	else
 		{
 		am::gScreen.Wake(now);
 		gModem->ConfigMode(!gModem->InConfigMode());
+		am::gScreen.ConfigMode(gModem->InConfigMode(), now);
 		}
 #else
 	if (ev == am::Button::EClick)
@@ -190,10 +224,13 @@ void setup()
 	am::gScreen.Begin();                      // (M5Unified first: the reset countdown is shown on it)
 #endif
 	FactoryResetIfHeld();
+#if defined(AM_HAS_LCD)
+	gButton.EnableDouble(true);               // (2.2: a double-press is the page's action; status.h)
+#endif
 	WiFi.mode(WIFI_STA);                      // (WiFi takes its memory before the ring does)
 	size_t size;
 	uint8_t* ring = AllocRing(size);
-	Serial.printf("Atom modem %s on the %s: buffer %u bytes, %u KB free\n", am::kVersion, kBoardName, (unsigned)size,
+	Serial.printf("PsiConnect %s on the %s: buffer %u bytes, %u KB free\n", am::kVersion, kBoardName, (unsigned)size,
 		(unsigned)(ESP.getFreeHeap() / 1024));
 #if defined(BOARD_HAS_PSRAM)
 	// (the figures the AtomS3R should show: 8192 KB of PSRAM, less the ring)
@@ -225,6 +262,9 @@ void loop()
 	gModem->Loop();
 	gWeb.Loop();
 	gPppProxy.Loop(*gModem, gHal);            // (the proxy for PsiWeb over PPP: only while a PPP call is up)
+	gPppAt.Loop(*gModem, gHal);               // (AT commands for PsiConnect over PPP, 192.168.7.1:2323: only while a PPP call is up)
+	gPppTls.Loop(*gModem, gHal);              // (the stunnel-style TLS mail relay over PPP: only while a PPP call is up and a mail host is set)
+	am::gWg.Loop(millis());                   // (the WireGuard tunnel: the clock, the endpoint, the handshake)
 	ButtonTick();
 #if defined(AM_HAS_LCD)
 	am::gScreen.Tick(*gModem, gHal, millis());   // (after the pages, never inside Modem::Loop())

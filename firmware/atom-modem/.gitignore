@@ -1,5 +1,6 @@
 .pio/
 hosttest/test_modem
+hosttest/test_v22
 hosttest/test_usbnet
 hosttest/test_proxy
 hosttest/hostmodem
@@ -7,3 +8,19 @@ hosttest/test_proxy_tinfl
 hosttest/tinfl.o
 hosttest/*.o
 hosttest/pictures/
+hosttest/render_screens
+hosttest/screens/
+src/webpass_local.h
+hosttest/test_atremote
+hosttest/test_imapxcode
+hosttest/run.out
+*_local.h
+# WireGuard client configs and keys: never commit them (paste them on the
+# VPN web page or send them with AT$WGL; they live in the device's flash only)
+*.conf
+wg*.conf
+*wireguard*.conf
+*.wg
+wg-*.txt
+*_local.*
+*.key

@@ -5,6 +5,10 @@
 #include <WiFi.h>
 #include <esp_system.h>
 #include <Update.h>
+#if defined(AM_HAS_LCD)
+#include "screen.h"
+#include "../canvas.h"
+#endif
 
 namespace am {
 
@@ -33,12 +37,16 @@ void WebUi::Begin(Modem& aModem, AtomHal& aHal)
 	iHal = &aHal;
 	uint8_t mac[6];
 	WiFi.macAddress(mac);
-	snprintf(iApName, sizeof(iApName), "AtomModem-%02x%02x", mac[4], mac[5]);
+	snprintf(iApName, sizeof(iApName), "PsiConnect-%02X%02X", mac[4], mac[5]);
 	iServer.on("/", HTTP_GET, [this]() { PageStatus(); });
 	iServer.on("/wifi", HTTP_GET, [this]() { PageWifi(); });
 	iServer.on("/settings", HTTP_GET, [this]() { PageSettings(); });
 	iServer.on("/log", HTTP_GET, [this]() { PageLog(); });
+	iServer.on("/screen.bmp", HTTP_GET, [this]() { ScreenBmp(); });
 	iServer.on("/system", HTTP_GET, [this]() { PageSystem(); });
+	iServer.on("/vpn", HTTP_GET, [this]() { PageVpn(); });
+	iServer.on("/wg", HTTP_POST, [this]() { PostWg(); });
+	iServer.on("/net", HTTP_POST, [this]() { PostNet(); });
 	iServer.on("/api/settings", HTTP_GET, [this]() { ApiSettings(); });
 	iServer.on("/set", HTTP_POST, [this]() { Post(); });
 	iServer.on("/api/settings", HTTP_POST, [this]() { Post(); });
@@ -49,7 +57,7 @@ void WebUi::Begin(Modem& aModem, AtomHal& aHal)
 			{
 			if (!iOtaAllowed)
 				{
-				iServer.requestAuthentication(BASIC_AUTH, "Atom modem");
+				iServer.requestAuthentication(BASIC_AUTH, "PsiConnect");
 				return;
 				}
 			bool ok = iOtaBegun && !Update.hasError();
@@ -197,7 +205,7 @@ bool WebUi::Allowed()
 		}
 	if (!iServer.authenticate("atom", iS2.webPass))
 		{
-		iServer.requestAuthentication(BASIC_AUTH, "Atom modem");
+		iServer.requestAuthentication(BASIC_AUTH, "PsiConnect");
 		return false;
 		}
 	return true;
@@ -216,8 +224,11 @@ bool WebUi::OtaAuth()
 
 // ----- pieces of pages ---------------------------------------------------------------------------
 
-void WebUi::Send(const char* aText) { iServer.sendContent(aText); }
-void WebUi::SendP(const __FlashStringHelper* aText) { iServer.sendContent(String(aText)); }
+// Never send an empty piece: in a chunked reply, sendContent("") is the
+// zero-length chunk that ENDS the page (a saved network with a password cut
+// the WiFi page off after its name)
+void WebUi::Send(const char* aText) { if (aText[0]) iServer.sendContent(aText); }
+void WebUi::SendP(const __FlashStringHelper* aText) { String s(aText); if (s.length()) iServer.sendContent(s); }
 
 void WebUi::SendEsc(const char* aText)
 	{
@@ -229,24 +240,25 @@ void WebUi::SendEsc(const char* aText)
 		else if (*p == '"') s += "&quot;";
 		else s += *p;
 		}
-	iServer.sendContent(s);
+	if (s.length())
+		iServer.sendContent(s);
 	}
 
 void WebUi::Head(const char* aTitle)
 	{
 	iServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
 	iServer.send(200, "text/html; charset=utf-8", "");
-	Send("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Atom modem: ");
+	Send("<!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>PsiConnect: ");
 	SendEsc(aTitle);
 	Send("</title>");
 	SendP(FPSTR(kCss));
-	Send("</head><body><header><h1>Atom modem</h1><a href=\"/\">Status</a><a href=\"/wifi\">WiFi</a>"
+	Send("</head><body><header><h1>PsiConnect</h1><a href=\"/\">Status</a><a href=\"/wifi\">WiFi</a><a href=\"/vpn\">VPN</a>"
 		"<a href=\"/settings\">Settings</a><a href=\"/log\">Log</a><a href=\"/system\">System</a></header><main>");
 	}
 
 void WebUi::Tail()
 	{
-	Send("<p><small>Atom modem ");
+	Send("<p><small>PsiConnect ");
 	Send(kVersion);
 	Send(" on the ");
 	Send(kBoardName);
@@ -355,6 +367,27 @@ void WebUi::PageStatus()
 	else
 		Send("none");
 	Send("</td></tr>");
+	{
+	static const char* const kModes[] = { "Off", "On", "Auto" };
+	int mode = iModem->WgMode() <= 2 ? iModem->WgMode() : 0;
+	char t[80];
+	iModem->WgStateText(t, sizeof(t));
+	Send("<tr><td><a href=\"/vpn\">WireGuard</a></td><td><b>"); Send(kModes[mode]); Send("</b>: "); SendEsc(t);
+	Send("<form method=\"post\" action=\"/set\" style=\"margin:0\"><input type=\"hidden\" name=\"back\" value=\"/\">"
+		"<input type=\"hidden\" name=\"save\" value=\"1\">");
+	static const char* const kVals[] = { "OFF", "ON", "AUTO" };
+	for (int i = 0; i < 3; i++)
+		{
+		Send("<button name=\"s_WG\" value=\""); Send(kVals[i]); Send(i == mode ? "\" class=\"go\">" : "\">");
+		Send(kModes[i]); Send("</button>");
+		}
+	Send("</form></td></tr>");
+	int dns = iHal->DnsOk();
+	Send("<tr><td>Internet check</td><td>");
+	Send(iHal->Internet() == 1 ? "passed" : iHal->Internet() == 0 ? "failed" : "not run yet");
+	Send(dns == 1 ? " (DNS works)" : dns == 0 ? " (DNS lookups fail)" : "");
+	Send("</td></tr>");
+	}
 	snprintf(w, sizeof(w), "proxy %s; TLS termination %s; pictures %s; remote compute %s",
 		ProxyMode(iModem->Config()) ? "on" : "off", iModem->Config2().tls ? "on" : "off", iModem->Config2().img ? "on" : "off",
 		iModem->Config2().exec ? "on" : "off");
@@ -398,14 +431,48 @@ void WebUi::PageWifi()
 	Send("<tr><td>Password</td><td><input type=\"password\" name=\"s_PASS\" placeholder=\"");
 	Send(iModem->Config().pass[0] ? "(set; leave blank to keep)" : "(none)"); Send("\"></td></tr></table>");
 	Send("<button class=\"go\">Join and save</button></form>");
-	Send("<p><small>A phone's Personal Hotspot is a network like any other: turn it on, then enter its name and password here.</small></p>");
+	Send("<p><small>A phone's Personal Hotspot is a network like any other: turn it on, then enter its name and password here. "
+		"Join and save adds it to the saved networks below.</small></p>");
+	// the saved networks (2.2)
+	const NetList& nl = iModem->Nets();
+	Send("<h2>Saved networks</h2>");
+	if (!nl.count)
+		Send("<p>None yet.</p>");
+	else
+		{
+		Send("<table>");
+		bool up = WiFi.status() == WL_CONNECTED;
+		for (int i = 0; i < nl.count; i++)
+			{
+			bool cur = strcmp(nl.net[i].ssid, iModem->Config().ssid) == 0;
+			char n[8];
+			snprintf(n, sizeof(n), "%d", i);
+			Send("<tr><td>"); SendEsc(nl.net[i].ssid);
+			Send(nl.net[i].pass[0] ? "" : " <small>(open)</small>");
+			if (cur) Send(up ? " <b>(in use)</b>" : " <b>(joining)</b>");
+			if (strcmp(nl.net[i].ssid, iModem->Pinned()) == 0) Send(" <small>picked by hand</small>");
+			Send("</td><td><form method=\"post\" action=\"/net\" style=\"margin:0\"><input type=\"hidden\" name=\"i\" value=\"");
+			Send(n); Send("\"><button name=\"a\" value=\"switch\">Switch to it</button>"
+				"<button name=\"a\" value=\"forget\" onclick=\"return confirm('Forget this network?')\">Forget</button></form></td></tr>");
+			}
+		Send("</table>");
+		}
+	Send("<p><small>At the start, and when the WiFi is lost, the modem joins the strongest saved network in range. "
+		"One switched to by hand is kept while it is in range. Up to 8 are kept.</small></p>");
+	Send("<h3>Add a network</h3><form method=\"post\" action=\"/net\"><input type=\"hidden\" name=\"a\" value=\"add\"><table>"
+		"<tr><td>Network</td><td><input name=\"ssid\" maxlength=\"32\"></td></tr>"
+		"<tr><td>Password</td><td><input type=\"password\" name=\"pass\" maxlength=\"64\" placeholder=\"(none for an open network)\"></td></tr>"
+		"</table><button class=\"go\">Save</button></form>");
 	Send("<h2>Access point</h2><p>This modem's own network, for these pages when it is not on yours: <b>");
 	SendEsc(iApName); Send("</b>");
 	if (iApUp) { Send(", up now with the password <b>"); SendEsc(iApPass); Send("</b>"); }
 	Send(".</p><form method=\"post\" action=\"/set\"><input type=\"hidden\" name=\"back\" value=\"/wifi\"><table>");
-	Field(*SchemaFind("APPASS"));
-	Field(*SchemaFind("WEB"));
-	Field(*SchemaFind("WEBPASS"));
+	for (int i = 0; i < SchemaCount(); i++)
+		{
+		const SchemaEntry& e = SchemaAt(i);
+		if (strcmp(SchemaWebPage(e), "/wifi") == 0 && e.group != SGWifi)
+			Field(e);                           // (SSID and PASS: the form above)
+		}
 	Send("</table><button class=\"go\">Apply</button></form>");
 	Tail();
 	}
@@ -416,16 +483,22 @@ void WebUi::PageSettings()
 	Head("Settings");
 	Send("<div class=\"warn\"><b>Serial safety:</b> the Psion's port is RS-232 (up to ±12 V). Every serial pin below must reach it "
 		"through an RS-232 transceiver (a MAX3232, or the Atomic RS232 Base). Never wire a pin straight to the Psion.</div>");
-	static const TSchemaGroup kGroups[] = { SGUplink, SGSerial, SGProxy, SGTls, SGPictures, SGExec, SGSystem };
+	// every group with a setting on this page (SchemaWebPage), in the table's order
+	static const TSchemaGroup kGroups[] = { SGUplink, SGSerial, SGProxy, SGTls, SGMail, SGPictures, SGExec, SGSystem, SGWifi, SGWg };
 	for (size_t g = 0; g < sizeof(kGroups) / sizeof(kGroups[0]); g++)
 		{
+		bool any = false;
+		for (int i = 0; i < SchemaCount(); i++)
+			if (SchemaAt(i).group == kGroups[g] && strcmp(SchemaWebPage(SchemaAt(i)), "/settings") == 0)
+				any = true;
+		if (!any)
+			continue;
 		Send("<h2>"); Send(SchemaGroupName(kGroups[g])); Send("</h2>");
 		Send("<form method=\"post\" action=\"/set\"><input type=\"hidden\" name=\"back\" value=\"/settings\"><table>");
 		for (int i = 0; i < SchemaCount(); i++)
 			{
 			const SchemaEntry& e = SchemaAt(i);
-			if (e.group != kGroups[g] || (kGroups[g] == SGSystem && (strcmp(e.name, "WEB") == 0 || strcmp(e.name, "WEBPASS") == 0
-				|| strcmp(e.name, "APPASS") == 0)))
+			if (e.group != kGroups[g] || strcmp(SchemaWebPage(e), "/settings") != 0)
 				continue;
 			Field(e);
 			}
@@ -433,6 +506,9 @@ void WebUi::PageSettings()
 		if (kGroups[g] == SGTls)
 			Send("<p><small>With TLS termination the modem sees your mail and pages in plain text, and so does the serial cable. "
 				"For your own modem on your own network only. Set the account's TLS to <i>none</i> in PsiMail, keeping port 993 or 465.</small></p>");
+		if (kGroups[g] == SGMail)
+			Send("<p><small>Only for the PPP route. Set a host and the modem accepts plaintext mail on 192.168.7.1 (993/465/995) and does the TLS to it, "
+				"checking the certificate (AT$TLSV). In PsiMail point IMAP/SMTP at <code>192.168.7.1</code> with security <i>None</i>. Empty = off.</small></p>");
 		if (kGroups[g] == SGExec)
 			Send("<p><small>Runs commands on a PC through <code>tools/psiexecd.py</code>, which allows only the commands it is started with. "
 				"The token is kept in the modem's flash only.</small></p>");
@@ -460,6 +536,32 @@ void WebUi::PageLog()
 	Tail();
 	}
 
+// the LCD as it is now: the frame buffer pushed to the panel, as a 24-bit
+// BMP (about 48 KB), sent a row at a time
+void WebUi::ScreenBmp()
+	{
+	if (!Allowed()) return;
+#if defined(AM_HAS_LCD)
+	const uint16_t* fb = gScreen.Frame();
+	if (fb)
+		{
+		iServer.setContentLength(Canvas::kBmpSize);
+		iServer.sendHeader("Cache-Control", "no-store");
+		iServer.send(200, "image/bmp", "");
+		uint8_t buf[Canvas::kBmpRow];
+		Canvas::BmpHeader(buf);
+		iServer.sendContent((const char*)buf, Canvas::kBmpHeader);
+		for (int r = 0; r < Canvas::kSize; r++)
+			{
+			Canvas::BmpRow(fb, r, buf);
+			iServer.sendContent((const char*)buf, Canvas::kBmpRow);
+			}
+		return;
+		}
+#endif
+	iServer.send(404, "text/plain", "No screen on this board");
+	}
+
 void WebUi::PageSystem()
 	{
 	if (!Allowed()) return;
@@ -474,10 +576,125 @@ void WebUi::PageSystem()
 		"<p><small>Or from a computer: <code>curl -u atom:PASSWORD -F firmware=@firmware.bin http://IP/ota</code></small></p>");
 	Send("<h2>Factory reset</h2><p>Every setting, the WiFi network and passwords included, back to the factory ones. The modem restarts.</p>"
 		"<form method=\"post\" action=\"/set\"><input type=\"hidden\" name=\"reset\" value=\"YES\"><button onclick=\"return confirm('Factory reset?')\">Factory reset</button></form>");
-	Send("<h2>About</h2><p>Atom modem "); Send(kVersion); Send(" on the "); Send(kBoardName);
+	Send("<h2>About</h2><p>PsiConnect "); Send(kVersion); Send(" on the "); Send(kBoardName);
 	Send(". <a href=\"/api/settings\">Settings as JSON</a>. The firmware and its documentation are in the PsiTerm repository "
 		"(<code>firmware/atom-modem/docs/UPGRADE.md</code>).</p>");
 	Tail();
+	}
+
+// ----- 2.2: the VPN page, and the forms for it and the saved networks ------------------------
+
+void WebUi::PageVpn()
+	{
+	if (!Allowed()) return;
+	Head("VPN");
+	const WgConfig& c = iModem->Wg();
+	const WgStatus& st = iModem->WgNow();
+	char t[120];
+	Send("<h2>WireGuard</h2><table>");
+	iModem->WgStateText(t, sizeof(t));
+	Send("<tr><td>State</td><td>"); SendEsc(t); Send("</td></tr>");
+	if (iModem->WgWant() == EWgWantUp)
+		{
+		char e[16];
+		Ip4Text(st.endpointIp, e, sizeof(e));
+		snprintf(t, sizeof(t), "%lu bytes in, %lu out; endpoint address %s", (unsigned long)st.rx, (unsigned long)st.tx,
+			st.endpointIp ? e : "not looked up yet");
+		Send("<tr><td>Traffic</td><td>"); Send(t); Send("</td></tr>");
+		}
+	Send("</table><form method=\"post\" action=\"/set\"><input type=\"hidden\" name=\"back\" value=\"/vpn\">"
+		"<input type=\"hidden\" name=\"save\" value=\"1\"><table>");
+	for (int i = 0; i < SchemaCount(); i++)
+		if (strcmp(SchemaWebPage(SchemaAt(i)), "/vpn") == 0)
+			Field(SchemaAt(i));
+	Send("</table><button class=\"go\">Apply and save</button></form>");
+	Send("<h2>Config</h2>");
+	if (WgValid(c))
+		{
+		char sum[400];
+		WgSummary(c, sum, sizeof(sum));
+		Send("<pre>"); SendEsc(sum); Send("</pre>");
+		Send("<form method=\"post\" action=\"/wg\"><input type=\"hidden\" name=\"clear\" value=\"YES\">"
+			"<button onclick=\"return confirm('Delete the WireGuard config?')\">Delete the config</button></form>");
+		}
+	else
+		Send("<p>None yet.</p>");
+	Send("<h3>Paste a config</h3><p><small>The whole client config as your WireGuard server gives it ([Interface] and [Peer]). "
+		"It is kept in this modem's flash only; the keys are never shown again. Only the AllowedIPs go through the tunnel "
+		"(e.g. your home network, 192.168.10.0/24); everything else uses the WiFi as before.</small></p>"
+		"<form method=\"post\" action=\"/wg\"><textarea name=\"conf\" rows=\"12\" style=\"width:100%;font:12px monospace\" "
+		"autocomplete=\"off\" spellcheck=\"false\" placeholder=\"[Interface]&#10;PrivateKey = ...&#10;Address = ...&#10;DNS = ...&#10;&#10;[Peer]&#10;PublicKey = ...&#10;AllowedIPs = ...&#10;Endpoint = host:port\"></textarea>"
+		"<button class=\"go\">Save the config</button></form>");
+	Send("<p><small><b>UniFi:</b> Settings, VPN, VPN Server, your WireGuard server, Add client: name it, keep the "
+		"generated keys, then download or copy the client config and paste it here. In <b>Auto</b> the tunnel is up "
+		"except when the modem is already on the home network.</small></p>");
+	Tail();
+	}
+
+void WebUi::Back(bool aBad, const char* aText, const char* aBack)
+	{
+	Head("Applied");
+	Send(aBad ? "<p class=\"bad\">" : "<p class=\"ok\">");
+	SendEsc(aText);
+	Send("</p><p><a href=\""); SendEsc(aBack); Send("\">Back</a></p>");
+	Tail();
+	}
+
+// /wg: conf=<the config text> (parsed and saved at once), or clear=YES
+void WebUi::PostWg()
+	{
+	if (!Allowed()) return;
+	if (iServer.hasArg("clear") && iServer.arg("clear") == "YES")
+		{
+		iModem->ClearWgConfig();
+		Back(false, "The WireGuard config is deleted.", "/vpn");
+		return;
+		}
+	if (!iServer.hasArg("conf"))
+		{
+		Back(true, "No config sent.", "/vpn");
+		return;
+		}
+	char why[80];
+	String conf = iServer.arg("conf");
+	bool ok = conf.length() <= kWgTextMax && iModem->SetWgConfig(conf.c_str(), why, sizeof(why));
+	if (conf.length() > kWgTextMax)
+		snprintf(why, sizeof(why), "The config is too long");
+	// (wipe our copy of the text: it holds the private key)
+	for (unsigned i = 0; i < conf.length(); i++)
+		conf.setCharAt(i, 0);
+	if (ok)
+		Back(false, "Saved. The tunnel follows the mode (Off, On or Auto).", "/vpn");
+	else
+		{
+		char m[120];
+		snprintf(m, sizeof(m), "Not saved: %s.", why);
+		Back(true, m, "/vpn");
+		}
+	}
+
+// /net: a=switch|forget with i=<index>, or a=add with ssid and pass (saved at once)
+void WebUi::PostNet()
+	{
+	if (!Allowed()) return;
+	String a = iServer.arg("a");
+	if (a == "add")
+		{
+		String ssid = iServer.arg("ssid"), pass = iServer.arg("pass");
+		bool ok = iModem->AddNet(ssid.c_str(), pass.c_str(), true);
+		for (unsigned i = 0; i < pass.length(); i++)
+			pass.setCharAt(i, 0);
+		Back(!ok, ok ? "Saved." : "Not saved: a name of 1 to 32 characters, and a password of 8 to 64 (or none) are needed.", "/wifi");
+		return;
+		}
+	int i = iServer.arg("i").toInt();
+	bool ok = false;
+	if (a == "switch")
+		ok = iModem->SwitchNet(i);
+	else if (a == "forget")
+		ok = iModem->ForgetNet(i, true);
+	Back(!ok, ok ? (a == "switch" ? "Switching: the page may stop answering if the modem leaves this network." : "Forgotten.")
+		: "No such saved network.", "/wifi");
 	}
 
 void WebUi::ApiSettings()

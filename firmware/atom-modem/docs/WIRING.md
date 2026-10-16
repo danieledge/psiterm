@@ -69,15 +69,108 @@ is a **log only** — it has no AT parser).
 3. Type `AT` → expect **`OK`**. Junk → step the baud down (57600, 38400…).
    Silence → swap R/T, or the TX/RX pair is wrong (loopback test).
 
+## Faster email: let the modem do the TLS (recommended)
+
+The Psion's 36 MHz ARM is slow at TLS — the handshake alone is seconds of dead
+waiting on every mail check. The Atom can do it instead, so the ARM does **no
+crypto at all**:
+
+1. On the Atom (over the serial line, once):
+
+   ```
+   AT$TLS=1      the Atom terminates TLS on its TLS ports
+   AT&W          save
+   ```
+
+   The default TLS ports are already `443, 465, 993, 995` (`AT$TLSP?`), i.e.
+   IMAPS/SMTPS/POP3S, and the certificate is checked (`AT$TLSV=1`).
+
+2. In **PsiMail → Tools → Connection**, Link page: **Modem provides TLS = Yes**.
+   Leave the mail account itself on **TLS, port 993** (SMTP 465) as normal.
+
+PsiMail then dials `993`/`465` in plain down the cable and speaks plaintext; the
+Atom opens the real TLS connection, checks the certificate, and tunnels. The
+handshake and the per-byte decrypt both move off the Psion.
+
+This applies to the **modem route only**. On the Psion Internet (PPP) route the
+setting is ignored and PsiMail does its own TLS, so the one account is safe both
+ways. (The certificate is now checked by the Atom, not PsiMail's own "trust this
+certificate?" prompt.)
+
 ## Using it (PPP + NAT)
 
 Once `AT` answers, set the Psion's **"Psion Internet"** to:
 
-- Static IP **192.168.7.2**, gateway/DNS **192.168.7.1**, "get IP from server" OFF.
+- Static IP **192.168.7.2**, gateway **192.168.7.1**, "get IP from server" OFF.
+- DNS **192.168.7.1** with firmware 2.2 or later (the Atom relays DNS there: to
+  the home DNS while the WireGuard tunnel is up, else the network's own, else
+  1.1.1.1). With older firmware nothing answers DNS on the Atom: use
+  **1.1.1.1**.
 - Flow control OFF (unless RTS/CTS is wired — below), auth none.
 - First-send string **`ATD777`** (brings up PPP-over-serial; the Atom NATs the
   Psion out over WiFi).
 - Shared proxy (Connection settings, all three apps): **192.168.7.1:8080**.
+
+## The home network from a hotspot (WireGuard, 2.2)
+
+On a phone's hotspot the home LAN (SSH to a machine at home, a PsiProxy at
+home) is not reachable. Firmware 2.2 has a WireGuard client: create
+a client on the UniFi gateway's WireGuard VPN server, paste its config on the
+Atom's web page **VPN**, and set the mode to **Auto** (up except at home).
+Only the config's AllowedIPs (e.g. `192.168.10.0/24`) go through it. Nothing
+changes on the Psion beyond DNS 192.168.7.1 above. See the README's
+*WireGuard* section. The keys stay on the Atom (NVS) and are never printed;
+never commit them, and keep the client's `.conf` file out of the repository
+folder.
+
+## TLS offload over PPP (mail: IMAPS/SMTPS/POP3S)
+
+The [modem-route TLS offload](#faster-email-let-the-modem-do-the-tls-recommended)
+above only works on the raw-modem route. The **PPP route** has its own offload: a
+small stunnel-style relay on the Atom. The Psion connects **in plaintext** to the
+Atom (192.168.7.1) on the standard TLS mail ports, and the Atom makes the real TLS
+connection to your mail host, checks the certificate, and tunnels the bytes. The
+36 MHz ARM again does **no crypto**.
+
+Why bother, when the PPP route *could* carry the Psion's own TLS? Two reasons:
+
+- **PPP's HDLC framing rides a marginal serial link better than the raw modem
+  route** — a dropped or corrupted byte is a dropped frame, retried, not a
+  desynced TLS stream — so you get PPP's robustness *and* no crypto on the Psion.
+- The Atom checks the certificate (`AT$TLSV`), not PsiMail's "trust this
+  certificate?" prompt.
+
+It is **not transparent**: you must point PsiMail at the Atom, not at the mail
+host (the Atom is not intercepting — it is a named relay).
+
+1. On the Atom, set the upstream host(s) and save (once):
+
+   ```
+   AT$MAILIMAP=imap.example.com     IMAPS: 192.168.7.1:993 -> imap.example.com:993
+   AT$MAILSMTP=smtp.example.com     SMTPS: 192.168.7.1:465 -> smtp.example.com:465
+   AT$MAILPOP=pop.example.com       POP3S: 192.168.7.1:995 -> pop.example.com:995   (optional)
+   AT&W
+   ```
+
+   Only the ports you set a host for are opened. Clear one with `AT$MAILIMAP=`
+   (empty). `AT$MAILIMAP?` queries it; `ATI` shows the relay when any host is set.
+   The certificate is checked unless `AT$TLSV=0` (dangerous; your own server only).
+
+2. In **PsiMail**, with the account on the **Psion Internet (PPP)** route:
+   - **IMAP** host `192.168.7.1`, port **993**, security **None**.
+   - **SMTP** host `192.168.7.1`, port **465**, security **None**.
+   - (POP host `192.168.7.1`, port **995**, security **None**.)
+
+   Leave "Modem provides TLS" **off** — that setting is for the modem route; here
+   you are pointing the account straight at the relay.
+
+PsiMail may hold IMAP and open SMTP at the same time; the relay supports
+**two** concurrent sessions (e.g. IMAP + SMTP), each its own TLS connection.
+Two, not three, because each live TLS session needs ~45-50 KB of internal RAM
+that cannot come from PSRAM; a third alongside the web proxy's TLS and the
+picture decoder would exhaust the internal heap and drop the Wi-Fi link. The
+staging buffers come from PSRAM on the AtomS3R and are taken when the PPP call
+comes up and freed when it goes.
 
 ## Flow control (RTS/CTS) — optional, for throughput
 

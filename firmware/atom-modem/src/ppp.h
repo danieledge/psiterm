@@ -9,9 +9,11 @@
 // *server* role (CONFIG_LWIP_PPP_SERVER_SUPPORT is off), so the modem cannot
 // hand the Psion an address over IPCP. The Psion is therefore given a STATIC
 // address in its Internet settings: IP 192.168.7.2, gateway 192.168.7.1 (the
-// modem's PPP end) and a real DNS server (the uplink's, logged at the dial;
-// 1.1.1.1 works anywhere): nothing on the modem answers DNS itself, the
-// queries are NAT'd out like any other packet. See docs and PppLink::Start.
+// modem's PPP end) and DNS 192.168.7.1: from 2.2 the modem answers DNS there
+// itself (a relay, board/pppdns.cpp, to the tunnel's DNS while the WireGuard
+// tunnel is up, else the uplink's, else 1.1.1.1), so the one setting works on
+// any network. (Before 2.2 nothing answered there: 1.1.1.1 was the setting.)
+// The same address is offered over IPCP. See docs and PppLink::Start.
 //
 // Output towards the Psion: lwIP's output callback runs on the tcpip thread
 // and must not touch the serial HAL. It only queues the frame (device: a
@@ -106,6 +108,8 @@ private:
 	bool iActive;
 	bool iUp;
 	bool iDropped;
+	volatile int iDropErr;     // the PPPERR_* that brought the link down (set on the tcpip thread, logged by Poll)
+	bool iDropLogged;          // the drop cause has been logged once
 	bool iNat;                 // NAT has been turned on
 	uint32_t iBytesIn;
 	uint32_t iDns;

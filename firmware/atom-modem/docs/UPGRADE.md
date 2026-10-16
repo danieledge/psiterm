@@ -4,6 +4,9 @@ This document is the engineering record for the 2.0 firmware: what the
 hardware can and cannot do, how the modem is wired to the Psion, how the
 firmware is put together, every AT command, the web pages, how to flash it
 and how to test it with the Psion. The user guide is `../README.md`.
+2.2 (WireGuard, the PPP DNS relay, saved networks, the line-setting trial,
+`AT$SCHEMA?`) is described in the README's sections on each, and the
+records and commands are added below.
 
 Contents
 
@@ -282,15 +285,40 @@ saved settings keeps `ppp=0`: on an updated board run `AT$PPP=1` then `AT&W`.
 | log | 1 | `$LOGL` | 0 quiet, 1 normal, 2 verbose |
 | chkHost | 1.1.1.1:53 | `$CHK` | the Internet check's target; empty = no check |
 
-`AT&W` saves both records. `AT&F` resets both but keeps the WiFi network,
-as before. `AT$RESET=YES`, the web page's *Factory reset*, and holding the
+| wgMode (2.2) | 0 off | `$WG` | 0 off, 1 on, 2 auto. It was the first spare byte (offset 441), so an older record loads it as off |
+
+2.2 adds two more records in the same namespace, each with a magic, a
+version and a length, loaded length-tolerantly:
+
+- **`nets`** (`NetList`, magic `ATNL`): up to 8 saved networks, name and
+  password each, in order of preference. A 2.1 modem's one network is moved
+  in at the first start. `AT&W` saves it (with the current network added or
+  updated); the web pages and the button save it at once.
+- **`wg`** (`WgConfig`, magic `ATWG`): the WireGuard config, parsed from the
+  pasted text: the keys (base64, checked to decode to 32 bytes), the
+  address, up to 2 DNS servers, up to 8 AllowedIPs, the endpoint, the
+  keepalive. Saved when it is pasted (web page, `AT$WGL=END`); a record that
+  is not complete and sane is ignored.
+
+`AT&W` saves the records. `AT&F` resets the settings but keeps the WiFi
+network, as before (and the saved networks and the WireGuard config). `AT$RESET=YES`, the web page's *Factory reset*, and holding the
 button while powering up clear both records.
 
-**No secret ever leaves the device.** The WiFi password, the access point
-password, the web password and the exec token live in NVS only. `AT$PASS?`,
+**No secret ever leaves the device.** The WiFi passwords, the access point
+password, the web password, the exec token and the WireGuard private and
+preshared keys live in NVS only. `AT$PASS?`,
 `AT$APPASS?`, `AT$WEBPASS?` and `AT$XK?` say *(set)* or *(none)*; the web
-pages never fill them into forms; `AT&V` and `ATI` never print them; the
-repository contains none of them.
+pages never fill them into forms; `AT&V` and `ATI` never print them;
+`AT$NETS?` and `AT$WGCONF?` say whether one is set; the log hides the values
+of `$PASS`, `$XK`, `$WEBPASS`, `$APPASS`, all of `$JOIN`, `$NETADD` and
+`$WGL`; the repository contains none of them (the host tests make
+throwaway keys at run time, or use the all-zero test key).
+
+**WireGuard keys** live only on the device, in NVS. They are entered
+through the web page *VPN* or `AT$WGL`, and are never printed again. Never
+commit them, and keep your client `.conf` file out of the repository folder
+(the firmware's `.gitignore` ignores `*.conf`, `wg*.conf`, `*.wg` and `*.key`
+as a safety net only).
 
 ## 6. AT command reference
 
@@ -308,7 +336,7 @@ power-off unless `AT&W` saves them.
 | `AT$HELP` | Lists every `AT$` setting with its range and current value (from the schema) |
 | `AT$UP=AUTO`, `WIFI`, `USB` | Which uplink carries the Psion's connections. `AT$UP?` also says which is in use and why |
 | `AT$USB=0/1` | The USB-C port: 0 a device (programming, the USB console), 1 a host (a phone or adapter; experimental, see `USB-TETHERING.md`). Takes effect at the next restart; `AT$USB=1` with `AT&W` and `ATZ` |
-| `AT$CHK=host:port` | The Internet check's target (default `1.1.1.1:53`, a TCP connect with no DNS); empty turns the check off. See section 8 |
+| `AT$CHK=host:port` | The Internet check's target (default `1.1.1.1:53`, a TCP connect); empty turns the check off. From 2.2 the check also looks up a name (`one.one.one.one`) and passes only if both work. See section 8 |
 | `AT$FC=0/1` | Flow control to the Psion: 0 none (pacing only, the RS232 Base), 1 RTS/CTS in the UART hardware. AUTO pacing then allows a higher rate |
 | `AT$FCSWAP=0/1` | Swaps the RTS and CTS pins |
 | `AT$PINS=tx,rx,rts,cts,dcd` | The header pins (−1 = the board's default). `AT$PINS?` shows them |
@@ -328,7 +356,12 @@ power-off unless `AT&W` saves them.
 | `AT$XK=token` | The shared token psiexecd expects |
 | `AT$EXEC=command` | Runs one command through psiexecd and prints its output, then `OK` (`ERROR` if `$XE=0`, the helper is not reachable, or the token is refused) |
 | `ATDT psiexec` | A call that is a text channel to psiexecd (`NO CARRIER` if `$XE=0`) |
-| `AT$LOG?` | The last 4 KB of the status log (what the USB console shows when it is available) |
+| `AT$LOG?` | The last 4 KB of the status log (what the USB console shows when it is available). Passwords are never in it: the `cmd:` lines leave out the values of `$PASS`, `$XK`, `$WEBPASS`, `$APPASS`, all of `$JOIN` and the password of `ATW"name,password"` (2.1) |
+| `AT$SCAN`, `AT$JOIN`, `AT$STAT?` | (2.1) The WiFi from a program on the Psion (PsiConnect): the networks in range with signal and security, joining one, and the state of the WiFi, the Internet check and the link. See the README's WiFi table |
+| `AT$NETS?`, `AT$NET=`, `AT$NETADD=`, `AT$FORGET=` | (2.2) The saved networks: list, switch to one, add one, forget one. See the README's *Saved networks* |
+| `AT$WG=OFF/ON/AUTO`, `AT$WG?`, `AT$WGCONF?`, `AT$WGL=`, `AT$WGCLR=YES` | (2.2) WireGuard: the mode, its state, the config (keys as *set*), a config sent line by line, deleting it. See the README's *WireGuard* |
+| `AT$SCHEMA?` | (2.2) Every setting, its type, range, group and flags, for a program (PsiConnect) |
+| (TCP 192.168.7.1:2323) | (2.2) AT commands over PPP for PsiConnect: while a PPP link is up, the same commands and answers over TCP from the PPP side (one client, no password, 120 s idle). Those that would end the link or change the serial line answer `+NOTVIAPPP: why` then `ERROR`; `ATZ` keeps the live link. See the README's *AT commands over PPP* |
 | `AT$LOGL=0/1/2` | How much is logged |
 | `AT$RESET=YES` | Factory reset, both records, WiFi included; the modem restarts |
 
@@ -358,7 +391,8 @@ Pages (one stylesheet, no scripts beyond a few lines, fits a phone):
 | Page | Has |
 |---|---|
 | `/` | Status: uplink, WiFi (network, IP, signal), USB (device or host, what is attached, carrier), serial (baud, flow control, pins), pacing, the current call, features, free memory, uptime, the access point |
-| `/wifi` | Scan, pick a network, enter its password (*Join and save*); the access point's password, the web mode and password |
+| `/wifi` | Scan, pick a network, enter its password (*Join and save*); (2.2) the saved networks with *Switch to it* and *Forget*, and *Add a network*; the access point's password, the web mode and password |
+| `/vpn` | (2.2) WireGuard: the state, the traffic, the mode, the config as far as it may be shown, *Paste a config* and *Delete the config*. The status page `/` has the mode as three buttons (Off, On, Auto) and the Internet check with its DNS lookup |
 | `/settings` | Every other setting, a form per group: Uplink (mode, USB host), Serial (baud, flow control, swaps, the pin map, DCD, pacing), Web proxy (mode including reader, gzip), TLS termination (on, ports, verify), Pictures (on, width, size), Remote compute (on, host, token), System (log level). The safety note heads the page |
 | `/log` | The log ring, refreshed on demand |
 | `/system` | Save to flash, restart, factory reset (with a confirmation), the firmware version |
@@ -366,7 +400,11 @@ Pages (one stylesheet, no scripts beyond a few lines, fits a phone):
 
 Every field on these pages is one row of the schema, so the web and `AT$`
 sets are the same set; a host test walks the schema and checks every entry
-answers `AT$X?` and accepts `AT$X=`.
+answers `AT$X?` and accepts `AT$X=`. From 2.2 each entry also names its page
+(`SchemaWebPage`: `/wifi`, `/settings` or `/vpn`) and the pages draw
+themselves from that, so a new setting cannot be left off the web; the
+host test checks every entry has a page, is in `AT&V` and in `AT$SCHEMA?`
+(which PsiConnect builds its settings pages from).
 
 ## 8. The uplinks
 
@@ -400,8 +438,10 @@ logged as they change:
 | joined, Internet reachable | the check passed |
 | lost, joining again | the network went after the Internet had been confirmed; the modem rejoins (after 20 s, then every 30 s) for up to 10 minutes before calling it down |
 
-The check (`AT$CHK=host:port`, default a TCP connect to `1.1.1.1:53`, no
-DNS needed) runs in a task of its own on the board, never in the modem's
+The check (`AT$CHK=host:port`, default a TCP connect to `1.1.1.1:53`; from
+2.2 also a lookup of `one.one.one.one` through the uplink's DNS, so a
+network whose DNS is broken is not reported as "Internet reachable") runs in
+a task of its own on the board, never in the modem's
 loop and never during a call: soon after joining, every 15 s until it
 passes, every 2 minutes after, and again at once after a dial fails to
 connect. `AT$CHK=` (empty) turns it off. **Calls are allowed as soon as the
@@ -564,7 +604,7 @@ channel is plain TCP on your LAN; it is not for use over the Internet.
 | Environment | Board | Platform | USB host |
 |---|---|---|---|
 | `atoms3-lite` | `m5stack-atoms3` (AtomS3 Lite) | pioarduino `platform-espressif32` 53.03.13 (Arduino-ESP32 3.1.3 on ESP-IDF 5.3), pinned by its release URL | yes |
-| `atoms3r` | `m5stack-atoms3` with `memory_type = qio_opi` (AtomS3R: the same SoC, header and Atomic RS232 Base wiring as the Lite, plus 8 MB octal PSRAM; no WS2812, so the status is the 128x128 LCD, through M5Unified, built with `-DAM_HAS_LCD=1`). Not yet tried on hardware | as `atoms3-lite` | yes |
+| `atoms3r` | `m5stack-atoms3` with `memory_type = qio_opi` (AtomS3R: the same SoC, header and Atomic RS232 Base wiring as the Lite, plus 8 MB octal PSRAM; no WS2812, so the status is the 128x128 LCD, through M5Unified, built with `-DAM_HAS_LCD=1`). In use with 2.2 | as `atoms3-lite` | yes |
 | `m5stack-atom` | `m5stack-atom` (the plain Atom, as 1.x) | `espressif32@6.9.0` (Arduino-ESP32 2.0.17) | compiled out |
 
 On the AtomS3R the core's malloc puts blocks of 4 KB and more in PSRAM, so
@@ -580,9 +620,22 @@ pio run -e atoms3-lite -t upload    # flash over USB-C (device mode)
 pio device monitor                  # the USB console, 115200 (device mode only)
 ```
 
-No libraries beyond the Arduino core are used, so there is nothing else to
-pin. The S3 environment uses the `default_8MB.csv` partition table (one
-app, no OTA, 3 MB for the program, the rest free).
+Beyond the Arduino core, the AtomS3R uses M5Unified (`lib_deps`) and the S3
+boards use WireGuard, vendored and pinned in `lib/wireguard` (its
+`library.json` names the upstream commit). The S3 environments use the
+`default_8MB.csv` partition table: two app slots of about 3 MB each, so a
+firmware update over the web (`/ota`, see `WIRING.md`) is written beside the
+running one.
+
+### The web password in a public build
+
+The tree has **no web password built in**. A fresh modem's station-mode
+pages (and `/ota`) stay off until one is set with `AT$WEBPASS=...` and
+`AT&W`, or on the access point's *WiFi* page. For your own builds you may
+bake a default into `src/webpass_local.h`, which git ignores
+(`#define AM_DEFAULT_WEBPASS "..."`; `src/settings.cpp` includes it only if
+it is there). Never commit that file, and do not share a `.bin` built
+with it.
 
 ### A build that joins a known network from its first start
 
@@ -592,9 +645,9 @@ start, when no network has been saved yet (the state that would otherwise
 start the portal), a non-empty preset is taken, saved to NVS and joined;
 afterwards `AT$SSID`/`AT$PASS` and the pages override it as usual, and a
 factory reset brings the preset back. The values are given on the command
-line only, with the password **from the environment** (the project's
-`~/.secrets`), so that it exists nowhere but in the shell that builds and
-in the resulting `.bin`:
+line only, with the password **from the environment** (for example a
+secrets file you source), so that it exists nowhere but in the shell that
+builds and in the resulting `.bin`:
 
 ```sh
 . ~/.secrets && [ -n "$WIFI_IOT_SSID" ] && [ -n "$WIFI_IOT_PASSWORD" ] && \
@@ -602,8 +655,8 @@ PLATFORMIO_BUILD_FLAGS="-DAM_DEFAULT_SSID=\\\"$WIFI_IOT_SSID\\\" -DAM_DEFAULT_PA
 pio run -e atoms3r -t upload              # or -e atoms3-lite
 ```
 
-(`WIFI_IOT_SSID` and `WIFI_IOT_PASSWORD` come from Vaultwarden through
-`sync-secrets`. A name or password with spaces, quotes or a backslash does not
+(`WIFI_IOT_SSID` and `WIFI_IOT_PASSWORD` are just names: use your own. A
+name or password with spaces, quotes or a backslash does not
 survive this quoting.) The preset is taken **only when no network is saved**:
 on a board that already holds settings, erase them first (`pio run -t erase`,
 the factory-reset hold at power-on, or `AT$RESET=YES`), or set the network with
@@ -659,6 +712,11 @@ builds and runs:
   and `AT$EXEC` against a fake helper (refused when off, the token, the
   bounds), and the uplink state machine (AUTO's choice, the fall-back
   hold-off, the forced modes).
+- `test_v22` (2.2, with the sanitizers): the WireGuard parser, Auto, the
+  split-tunnel routing rule, the DNS relay, the saved networks, WireGuard
+  and the networks through the modem, the line-setting trial, schema
+  coverage of `AT` and the web pages, the double-press, and that no key or
+  password reaches the log or an answer.
 - `test_usbnet`: the NCM NTB16 builder and parser (round trips, bad
   signatures, lengths past the end, several datagrams in one NTB) and the
   Apple two-byte framing split across transfers.

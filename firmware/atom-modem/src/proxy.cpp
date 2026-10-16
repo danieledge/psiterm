@@ -348,7 +348,7 @@ void Proxy::ErrorPage(int aCode, const char* aWhat, const char* aDetail)
 	int bl = snprintf(iScratch, sizeof(iScratch),
 		"<html><head><title>Page not loaded</title></head><body>"
 		"<h2>Page not loaded</h2><p>%s</p><p>%s</p><p>%s</p>"
-		"<p><small>Atom modem %s web proxy</small></p></body></html>",
+		"<p><small>PsiConnect %s web proxy</small></p></body></html>",
 		aWhat, url, detail, kVersion);
 	if (bl < 0 || bl >= (int)sizeof(iScratch))
 		bl = (int)strlen(iScratch);
@@ -373,8 +373,8 @@ void Proxy::StatusPage()
 	static const char* const kModes[] = { "off", "simplified pages", "text only", "unchanged pages (TLS only)", "reader" };
 	unsigned pct = iFetched ? (unsigned)((uint64_t)iSent * 100 / iFetched) : 0;
 	int bl = snprintf(iScratch, sizeof(iScratch),
-		"<html><head><title>Atom modem web proxy</title></head><body>"
-		"<h2>Atom modem %s: web proxy</h2>"
+		"<html><head><title>PsiConnect web proxy</title></head><body>"
+		"<h2>PsiConnect %s: web proxy</h2>"
 		"<p>Mode: %s (AT$PX=%d)%s</p>"
 		"<p>Requests: %lu<br>From servers: %lu bytes<br>To the Psion: %lu bytes (%u%%)<br>Pictures converted: %lu</p>"
 		"<p>%s</p></body></html>",
@@ -539,7 +539,7 @@ bool Proxy::TakeRequest()
 		// a head bigger than 4 KB (cookies): refused, and the call ends
 		iPsionClose = true;
 		iReqUsed = iReqLen;
-		ErrorPage(400, "The request was too big for the Atom modem's proxy", "");
+		ErrorPage(400, "The request was too big for the PsiConnect's proxy", "");
 		return true;
 		}
 	long contentLength = RequestLength(iReq, headLen);
@@ -547,7 +547,7 @@ bool Proxy::TakeRequest()
 		{
 		iPsionClose = true;
 		iReqUsed = iReqLen;
-		ErrorPage(413, "The form was too big for the Atom modem's proxy", "");
+		ErrorPage(413, "The form was too big for the PsiConnect's proxy", "");
 		return true;
 		}
 	if (iReqLen < headLen + (size_t)contentLength)
@@ -628,7 +628,7 @@ bool Proxy::TakeRequest()
 		size_t hl = strlen(hostHdr), ul = strlen(iUrl);
 		if (7 + hl + ul >= sizeof(iUrl))
 			{
-			ErrorPage(400, "The address is too long for the Atom modem's proxy", "");
+			ErrorPage(400, "The address is too long for the PsiConnect's proxy", "");
 			return true;
 			}
 		memmove(iUrl + 7 + hl, iUrl, ul + 1);
@@ -638,12 +638,12 @@ bool Proxy::TakeRequest()
 	if (EqNoCase(iMethod, "CONNECT"))
 		{
 		iPsionClose = true;                  // (a client that tunnels gives up on this connection)
-		ErrorPage(501, "The Atom modem's proxy fetches https:// pages itself: ask for them as plain requests", "");
+		ErrorPage(501, "The PsiConnect's proxy fetches https:// pages itself: ask for them as plain requests", "");
 		return true;
 		}
 	if (!ParseUrl(iUrl))
 		{
-		ErrorPage(400, "The address is not one the Atom modem's proxy can fetch", "");
+		ErrorPage(400, "The address is not one the PsiConnect's proxy can fetch", "");
 		return true;
 		}
 	if (EqNoCase(iHost, kName))
@@ -730,7 +730,7 @@ bool Proxy::ConnectAndSend()
 			iMethod, iPath[0] == '?' ? "/" : "", (int)pl, iPath, iHost, iPort);
 	if (n <= 0 || n >= (int)sizeof(iScratch))
 		{
-		ErrorPage(400, "The address is too long for the Atom modem's proxy", "");
+		ErrorPage(400, "The address is too long for the PsiConnect's proxy", "");
 		return false;
 		}
 	bool post = iBodyLen && !EqNoCase(iMethod, "GET") && !EqNoCase(iMethod, "HEAD");
@@ -1148,7 +1148,7 @@ bool Proxy::ReadHead()
 				{
 				CloseUp();
 				iState = SIdle;
-				ErrorPage(502, "The server's answer had too many headers for the Atom modem's proxy", "");
+				ErrorPage(502, "The server's answer had too many headers for the PsiConnect's proxy", "");
 				return true;
 				}
 			char c = (char)iIn[iInPos++];
@@ -1386,7 +1386,7 @@ void Proxy::Body()
 					if (!iInf.Begin(iEncoding == 2 && (q[0] & 0x0f) == 8))
 						{
 						iInflateDone = true;
-						iSimp.Feed((const uint8_t*)"<p>Not enough memory in the Atom modem to unpack this page</p>", 61);
+						iSimp.Feed((const uint8_t*)"<p>Not enough memory in the PsiConnect to unpack this page</p>", 61);
 						}
 					}
 				if (!iInflateDone)

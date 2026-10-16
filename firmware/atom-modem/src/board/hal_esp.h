@@ -44,11 +44,26 @@ public:
 	void Log(const char* aLine) override;
 	bool WifiUp() override { return WiFi.status() == WL_CONNECTED; }
 	void WifiBegin(const char* aSsid, const char* aPass) override;
+	void WifiHardReset() override;
 	void WifiEnd() override { WiFi.disconnect(true); }
 	void WifiInfo(char* aOut, size_t aMax) override;
 	int WifiScan(char aNames[][33], int aMax) override;
+	int WifiScanFull(am::WifiNet* aOut, int aMax) override;
+	bool WifiLink(char* aSsid, size_t aSsidMax, char* aIp, size_t aIpMax, int& aRssi) override;
+	int WifiFail() override { return iWifiFail; }
 	void ProbeInternet(const char* aHost, uint16_t aPort) override;
 	int Internet() override { return WifiUp() ? iInternet : -1; }
+	int DnsOk() override { return WifiUp() ? iDnsOk : -1; }
+	bool UplinkAddr(uint32_t& aIp, uint32_t& aMask) override;
+	void WgApply(const am::WgConfig& aConfig, bool aWant) override;
+	void WgInfo(am::WgStatus& aOut) override;
+	bool DnsRelayStart() override;
+	void DnsRelayStop() override;
+	void DnsRelayUpstream(uint32_t aServer) override;
+	bool LoadNets(am::NetList& aL, size_t& aLength) override;
+	bool SaveNets(const am::NetList& aL) override;
+	bool LoadWg(am::WgConfig& aC, size_t& aLength) override;
+	bool SaveWg(const am::WgConfig& aC) override;
 	int UsbState(char* aDetail, size_t aMax) override;
 	bool LoadSettings(am::Settings& aS) override;
 	bool SaveSettings(const am::Settings& aS) override;
@@ -76,7 +91,11 @@ private:
 	void StartSerial();
 	static void ProbeTask(void* aSelf);
 
+	static void WifiEvent(arduino_event_id_t aEvent, arduino_event_info_t aInfo);
 	volatile int iInternet;                   // the last Internet check: -1, 0, 1
+	volatile int iDnsOk;                      // ... its DNS lookup: -1, 0, 1
+	volatile int iWifiFail;                   // am::TWifiFail since the last WifiBegin
+	bool iWifiEvents;                         // WifiEvent is registered
 	volatile bool iProbing;
 	char iProbeHost[40];
 	uint16_t iProbePort;

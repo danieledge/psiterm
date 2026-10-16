@@ -42,7 +42,12 @@ private:
 	void PageWifi();
 	void PageSettings();
 	void PageLog();
+	void ScreenBmp();                     // GET /screen.bmp: the LCD as drawn (AtomS3R)
 	void PageSystem();
+	void PageVpn();
+	void PostWg();
+	void PostNet();
+	void Back(bool aBad, const char* aText, const char* aBack);
 	void ApiSettings();
 	void Post();
 	void NotFound();

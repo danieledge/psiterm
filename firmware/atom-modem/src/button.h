@@ -13,7 +13,7 @@ namespace am {
 class Button
 	{
 public:
-	enum TEvent { ENone = 0, EClick, EHold };
+	enum TEvent { ENone = 0, EClick, EHold, EDouble };
 	static const uint32_t kDebounceMs = 20;     // a level must stay this long to count
 	static const uint32_t kClickMinMs = 30;     // pressed at least this long, and
 #if defined(AM_HAS_LCD)
@@ -22,8 +22,14 @@ public:
 	static const uint32_t kClickMaxMs = 1900;   // ... boards without the LCD: as before, any press under the hold is a click
 #endif
 	static const uint32_t kHoldMs = 2000;       // held this long: a hold (once per press)
+	static const uint32_t kDoubleGapMs = 350;   // (double-press on) a second press within this of the first release
 
-	Button() : iStarted(false), iRaw(1), iStable(1), iRawSinceMs(0), iDownMs(0), iHoldFired(false) {}
+	Button() : iStarted(false), iRaw(1), iStable(1), iRawSinceMs(0), iDownMs(0), iHoldFired(false), iDouble(false),
+		iPending(false), iUpMs(0) {}
+	// Double-press (2.2, the LCD boards): two clicks close together are one
+	// EDouble. A single click is then reported kDoubleGapMs after its release
+	// (once no second press has begun), so the two never both happen.
+	void EnableDouble(bool aOn) { iDouble = aOn; iPending = false; }
 	// aLevel: the pin's level (0 = pressed, the button pulls it low). Call
 	// often. A press between kClickMinMs and kClickMaxMs, once released, is
 	// an EClick; one still down at kHoldMs is an EHold, once, and its
@@ -40,6 +46,9 @@ private:
 	uint32_t iRawSinceMs;
 	uint32_t iDownMs;               // when the press began
 	bool iHoldFired;
+	bool iDouble;                   // double-press told apart
+	bool iPending;                  // a click waiting to see if a second follows
+	uint32_t iUpMs;                 // when that click was released
 	};
 
 } // namespace am

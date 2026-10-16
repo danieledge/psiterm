@@ -1,12 +1,16 @@
-# Atom modem: a Psion-tuned WiFi and USB modem
+# PsiConnect: the Atom modem, a Psion-tuned WiFi and USB modem
 
-Firmware for an **M5Stack AtomS3 Lite** (ESP32-S3) or a plain **Atom** (Lite
-or Matrix, ESP32), wired to a Psion Series 5/5mx through an RS-232
+Firmware for an **M5Stack AtomS3R** or **AtomS3 Lite** (ESP32-S3), or a
+plain **Atom** (Lite or Matrix, ESP32), wired to a Psion Series 5/5mx through an RS-232
 transceiver. It turns the Atom into a Hayes-style modem for PsiTerm, PsiMail
 and PsiWeb. It talks to the apps exactly as a WiRSa does (`ATDT host:port`,
 `CONNECT`, `+++`, `ATH`, `NO CARRIER`), paces its output so a three-wire
 link never overruns the Psion, and does RTS/CTS in hardware when the wiring
 has it.
+
+From 2.2 the firmware calls itself **PsiConnect**: `ATI`, the web pages and
+the access point use that name. The rest of the repository still calls it
+the Atom modem. Version 2.2 is in use on an AtomS3R with a Psion 5mx.
 
 Version 2.0 adds: the internet from an **iPhone through its Personal
 Hotspot** (the Atom joins it as a WiFi network; this is the supported path,
@@ -28,6 +32,15 @@ the Atom fetches pages itself, does the TLS for `https://`, simplifies the
 HTML as it streams and gzips it for the line. The 36 MHz Psion then does no
 TLS and lays out a fraction of the page. See
 [The web proxy for PsiWeb](#the-web-proxy-for-psiweb).
+
+Version 2.2 adds: a **WireGuard tunnel** to the home network (split by
+AllowedIPs, Off/On/Auto), so SSH and the rest of the home LAN work
+from a phone's hotspot; a **DNS relay** on 192.168.7.1 for the PPP route, so
+the Psion is set once and works on any network; **several saved WiFi
+networks**, joined by strength and switched by hand; and every setting from
+the terminal, PsiConnect and the web pages alike. See
+[WireGuard](#wireguard-the-home-network-from-anywhere-22) and
+[Saved networks](#saved-networks-22).
 
 MIT licence, as the rest of the repository (see `LICENSE` at the top).
 
@@ -51,7 +64,11 @@ been gone through. The Psion's own cable is never cut or altered.
 - [First set-up (WiFi)](#first-set-up-wifi)
 - [Settings for PsiTerm, PsiMail and PsiWeb](#settings-for-psiterm-psimail-and-psiweb)
 - [The web proxy for PsiWeb](#the-web-proxy-for-psiweb)
+- [Saved networks (2.2)](#saved-networks-22)
+- [WireGuard: the home network from anywhere (2.2)](#wireguard-the-home-network-from-anywhere-22)
 - [AT command reference](#at-command-reference)
+- [PPP: the Psion's own Internet](#ppp-the-psions-own-internet)
+- [Status screen (AtomS3R)](#status-screen-atoms3r)
 - [Pacing in detail](#pacing-in-detail)
 - [Status LED and button](#status-led-and-button)
 - [Optional: an emulated DCD](#optional-an-emulated-dcd)
@@ -152,6 +169,7 @@ own USB; the plain Atom shows up as a USB serial port (CH9102 or FTDI).
 ```sh
 pip install platformio
 cd firmware/atom-modem
+pio run -e atoms3r -t upload         # the AtomS3R (ESP32-S3, with the screen)
 pio run -e atoms3-lite -t upload     # the AtomS3 Lite (ESP32-S3)
 pio run -e m5stack-atom -t upload    # the plain Atom Lite / Matrix (ESP32)
 pio device monitor                   # optional: the USB status console, 115200 baud
@@ -159,7 +177,9 @@ pio device monitor                   # optional: the USB status console, 115200 
 
 `platformio.ini` pins the cores: pioarduino `platform-espressif32` 53.03.13
 (Arduino-ESP32 3.1.3, ESP-IDF 5.3) for the S3, `espressif32@6.9.0` (Arduino
-2.0.17) for the plain Atom. No other libraries are used. The Arduino IDE
+2.0.17) for the plain Atom. The AtomS3R also uses M5Unified (for its screen),
+and the S3 boards use WireGuard, vendored and pinned in `lib/wireguard`
+(see its `library.json`). The Arduino IDE
 no longer builds 2.0 on its own (the picture converter compiles PsiMail's
 decoders from `../../mail/engine/img`).
 
@@ -175,12 +195,14 @@ images are in `.pio/build/<env>/` (for the S3, the bootloader goes at
 ## First set-up (WiFi)
 
 **With a phone:** power the Atom. With no WiFi network saved it starts an
-access point `AtomModem-xxxx`; its password is shown on the USB console
+access point `PsiConnect-xxxx`; its password is shown on the USB console
 (and by `AT$LOG?`; `AT$APPASS=` sets one of your own). Join it and any web
 page opens the modem's pages: enter
 your network (or your phone's hotspot) and its password, *Join and save*.
 Afterwards the pages are at the modem's address on your network, with the
-web password you set (user `atom`). A short press of the button brings the
+web password you set (user `atom`). A new modem has no web password, and
+without one only the access point's pages work: set one with
+`AT$WEBPASS=...` and `AT&W` (or on the access point's *WiFi* page). A short press of the button brings the
 access point back for ten minutes at any time.
 
 **From the Psion:** open PsiTerm (its terminal talks straight to the modem),
@@ -194,10 +216,14 @@ ATI
 ```
 
 `AT$PASS` joins the network once both are set. `AT&W` saves them in flash, so
-the modem rejoins by itself at every power-up. `ATI` shows the modem's name,
+the modem rejoins by itself at every power-up. Easier still: the Psion
+set-up program **PsiConnect** (firmware 2.1 or later) lists the networks in
+range on the Psion's screen, joins the one chosen and shows how it went. `ATI` shows the modem's name,
 the network, its IP address, the uplink, the USB port, the serial set-up and
 what is on. The Zimodem form `ATW"My network,my password"` works too, and
-`AT$HELP` lists every setting.
+`AT$HELP` lists every setting. From 2.2 `AT&W` also adds the network to the
+saved networks (up to 8), so a home network and a phone's hotspot can both be
+kept: see [Saved networks](#saved-networks-22).
 
 ## Settings for PsiTerm, PsiMail and PsiWeb
 
@@ -211,7 +237,7 @@ In each app, go to **Tools > Connection settings**:
 | Psion Internet: first send | **Use Psion Internet** only for [PPP](#ppp-the-psions-own-internet) (`ATD777`, AtomS3 boards); otherwise not used |
 
 Then press **Test** (Ctrl+T). It should say *"The modem answered OK at 115200
-baud"* and *"Modem: Atom modem 2.0 (Psion-tuned)"*. If you changed the
+baud"* and *"Modem: PsiConnect 2.2 (Psion-tuned)"*. If you changed the
 modem's speed with `AT$SB`, set the same baud rate in the apps. With a
 four-wire transceiver and `AT$FC=1`, choose *Flow control: RTS/CTS*.
 
@@ -390,6 +416,136 @@ pacing and TCP back-pressure work as for any connection.
 - Pictures are passed through as they are, not scaled or converted.
 - One page at a time, as PsiWeb asks for them.
 
+## Saved networks (2.2)
+
+The modem keeps up to **8 WiFi networks** (name and password, in its flash
+only). At the start, and whenever the WiFi has been lost for a while, it
+scans and joins the **strongest saved network in range**, and falls back
+through the others if one will not join. A network picked by hand
+(`AT$NET`, the web pages, PsiConnect, a double-press on the Wi-Fi page) is kept
+while it is in range, then the modem chooses again. With only one network
+saved nothing changes from 2.1: no scan, it just rejoins.
+
+- **Adding:** join and keep (`AT$JOIN` or `AT$SSID`/`AT$PASS`, then `AT&W`;
+  PsiConnect's Join; the web page's *Join and save*) adds or updates an entry
+  instead of replacing the only one. `AT$NETADD="name","password"` or the
+  web page's *Add a network* saves one without joining it. A ninth replaces
+  the last in the list.
+- **Switching:** `AT$NET=2` or `AT$NET="Home"`; PsiConnect; *Switch to it* on the
+  web page; double-press on the Wi-Fi page.
+- **Forgetting:** `AT$FORGET=2` or `AT$FORGET="Home"`; PsiConnect; *Forget* on the
+  web page. Forgetting the one in use leaves it, as a phone does.
+- **Listing:** `AT$NETS?`, the web page *WiFi*, PsiConnect, the WI-FI screen page.
+- From the serial line the list changes are kept by `AT&W` (as every
+  `AT$` setting is); the web pages and the button save at once.
+- An Atom updated from 2.1 moves its one saved network into the list at its
+  first start.
+
+## WireGuard: the home network from anywhere (2.2)
+
+On a phone's hotspot the Atom is on the phone's network, not the home one:
+SSH to a machine at home, a PsiProxy at home and anything
+else on the home LAN cannot be reached, and a phone's own WireGuard does not
+carry its hotspot clients. So the Atom runs a WireGuard client of its own,
+to the home gateway (a UniFi gateway's built-in *WireGuard VPN Server*).
+
+**Split tunnel.** Only the config's **AllowedIPs** go through the tunnel
+(the home LAN, e.g. `192.168.10.0/24`); everything else goes out of the WiFi
+as before, so the web proxy, mail and PsiWeb are not slowed or routed home.
+`AllowedIPs = 0.0.0.0/0` is honoured (everything through the tunnel), except
+the WiFi's own subnet, the Psion's PPP link and the endpoint itself. It
+works for both routes: the Atom's own connections (`ATDT 192.168.10.62:22`,
+the proxy, the mail relay) and the Psion's own over PPP, which are NAT'd out
+of the tunnel with the tunnel's address.
+
+**Modes** (`AT$WG`, the web pages, PsiConnect, a double-press on the VPN page):
+
+| Mode | The tunnel |
+|---|---|
+| Off | down (the default) |
+| On | up whenever there is a network and a config |
+| Auto | up, **unless the Atom is already on the home network**: its WiFi address is inside one of the AllowedIPs, or the config's DNS server is on the WiFi's own subnet (which also covers a full-tunnel config). At home the LAN is reachable anyway, and a tunnel to the home gateway's public address from inside would only hairpin |
+
+Changes take effect at once, without a restart; Auto decides again within a
+second of any change of network. The clock must be right for the handshake,
+so the Atom sets it by NTP first (`pool.ntp.org`, `time.cloudflare.com`,
+`time.google.com`) and keeps it. Then it looks up the endpoint and starts
+the handshake; a failure is retried after 10, 20, 40, 80 and then 120 s.
+
+**Setting it up:**
+
+1. In UniFi Network: *Settings*, *VPN*, *VPN Server*, your WireGuard server,
+   *Add client*. Give it a name (e.g. "PsiConnect"), let UniFi make the
+   keys, and download or copy the client's config. It looks like this (the
+   keys are your own; never share them):
+   ```
+   [Interface]
+   PrivateKey = <the client's private key>
+   Address = 192.168.3.2/32
+   DNS = 192.168.10.1
+
+   [Peer]
+   PublicKey = <the server's public key>
+   PresharedKey = <optional>
+   AllowedIPs = 192.168.10.0/24
+   Endpoint = your-home.example.org:51820
+   PersistentKeepalive = 25
+   ```
+   If UniFi offers `AllowedIPs = 0.0.0.0/0`, change it to the home LAN
+   (`192.168.10.0/24`) for a split tunnel. Keep `PersistentKeepalive = 25`:
+   phone hotspots drop idle UDP mappings quickly.
+2. Open the Atom's web pages (`http://<atom-ip>/`, user `atom` and the web
+   password), **VPN**, paste the whole config into *Paste a config*, and
+   *Save the config*. It is checked (both keys, the address, AllowedIPs,
+   the endpoint) and kept in the Atom's flash only; the keys are never shown
+   again (the page says *Private key: set*). From a terminal, `AT$WGL`
+   does the same line by line.
+3. Choose the mode: *Auto* on the status page or the VPN page, `AT$WG=AUTO`
+   then `AT&W`, PsiConnect, or a double-press on the VPN screen page.
+4. Check: the VPN page, `AT$WG?` (`AUTO: up, handshake 12 s ago`), the LCD's
+   VPN page, PsiConnect's status. Then from the hotspot, PsiTerm to a
+   machine at home (say 192.168.10.62, port 22) should connect.
+
+**Keep the keys secret.** The keys live only on the Atom, in its flash
+(NVS). They go in through the web page *VPN* or `AT$WGL`, and are never
+printed again: not by the pages, `AT&V`, `AT$WGCONF?` or the log. Never
+commit them. Keep the client's `.conf` file out of the repository folder
+(the firmware's `.gitignore` ignores `*.conf`, `wg*.conf`, `*.wg` and
+`*.key`, as a safety net only).
+
+**Psion settings:** nothing changes on the modem route. On the PPP route,
+DNS 192.168.7.1 (see [PPP](#ppp-the-psions-own-internet)): while the tunnel
+is up the relay asks the tunnel's DNS (the home gateway), so home names
+resolve; the Atom's own `ATDT name:port` uses the uplink's DNS, so dial home
+machines by address.
+
+**Caveats:**
+
+- A network whose subnet is the same as the home one (both
+  `192.168.1.0/24`, say) cannot reach home: the local subnet wins, as on any
+  router, and Auto takes it for home. Use different subnets at home.
+- IPv4 only; IPv6 entries in the config are skipped. One peer only.
+- The tunnel's MTU is 1420. The Psion's PPP link uses 1500: bigger packets
+  to the home LAN are fragmented by the Atom (or refused with *fragmentation
+  needed* if the Psion set "don't fragment"); TCP copes either way.
+- Not on the plain Atom (ESP32 with Arduino 2.0.17: no NAT, and not built).
+- Verified with host tests (the parser, Auto, the routing rule, the DNS
+  relay) and a full device build, and in use on an AtomS3R with a UniFi
+  gateway.
+
+**How the split routing works** (for the curious; `src/board/wgtunnel.h`):
+lwIP has one default interface and routes by interface subnet, so a tunnel
+interface on its own carries nothing (its /32 address) or everything (made
+the default, as most ESP32 WireGuard examples do). The ESP-IDF's lwIP asks a
+hook, `ip4_route_src_hook`, first in every IPv4 route lookup, both for the
+Atom's own sockets and for every packet it forwards. The firmware wraps that
+hook at link time (`-Wl,--wrap=ip4_route_src_hook`): a destination inside
+an AllowedIPs prefix that is longer than any directly connected subnet
+holding it (and not the endpoint) goes to the tunnel; anything else goes to
+the IDF's own hook and routes exactly as before. The WireGuard library is
+esphome-libs/wireguard 0.4.8, vendored in `lib/wireguard` (two small marked
+changes: the default interface is never touched, and bytes are counted).
+
 ## AT command reference
 
 Commands start with `AT`, and several can share a line (`ATE0V1`). Enter ends
@@ -433,6 +589,14 @@ reached the Psion, or at once if the WiFi drops.
 | `AT$PASS=password` / `AT$PASS?` | Its password (`?` only says whether one is set). Joins the network once both are set |
 | `ATW"name,password"` | Zimodem: sets both and joins |
 | `ATW` | Lists the networks in range |
+| `AT$SCAN` | (2.1) The networks in range, strongest first, for a program: `+SCAN:<dBm>,<1 secured / 0 open>,<channel>,"<name>"` a line, then `OK`. Hidden networks are left out; a name on several access points is listed once |
+| `AT$JOIN="name","password"` | (2.1) Joins that network now (an open one: no password, or `""`). `OK` at once; `AT$STAT?` says how it went, `AT&W` keeps it, `ATZ` goes back to the saved one. In both commands a name or password is in double quotes with `\"` `\\` `\/` and `\xHH` escapes (so any byte, a comma, or an `a/` that would otherwise be the `A/` repeat, is safe). The password is never echoed by a status reply nor logged |
+| `AT$STAT?` | (2.1) The WiFi and the link, a `+STAT:NAME=value` line each: `VER`, `BOARD`, `SSID` (the one set), `WIFI` (`DOWN`, `JOINING`, `JOINED`, `INTERNET`), `CUR`/`IP`/`RSSI` (when joined), `NET` (the Internet check: 1, 0, -1 not known), `CHK`, `FAIL` (`NONE`, `NONET`, `PASSWORD`, `OTHER`: why joining is not working), `UP`, `CALL`, `BAUD`, `FC`. 2.2 appends `DNS` (the check's DNS lookup: 1, 0, -1), `NETS` (how many are saved), `WG` (`OFF`, `ON`, `AUTO`), `WGST` (`OFF`, `NOCONF`, `NOUPLINK`, `HOME`, `TIME`, `RESOLVE`, `CONNECTING`, `UP`, `RETRY`), `WGEP` (the endpoint, quoted), `WGHS` (seconds since the last handshake, -1 none), `WGRX`, `WGTX` (bytes). A reader skips names it does not know, so older readers still work |
+| `AT$NETS?` | (2.2) The saved networks in order of preference: `+NET:<n>,"<name>",<1 password / 0 open>,<CUR joined now / SEL being joined / ->[,PIN]`. Passwords are never shown |
+| `AT$NET=n` / `AT$NET="name"` | (2.2) Switches to saved network n (1-based) or that name now, with its saved password; kept while it is in range (`PIN`) |
+| `AT$NETADD="name","password"` | (2.2) Saves a network without joining it (`AT&W` keeps the list). Logged as `$NETADD=(hidden)` |
+| `AT$FORGET=n` / `AT$FORGET="name"` | (2.2) Forgets a saved network (`AT&W` keeps the list). Forgetting the one in use leaves it, and the modem joins another saved one |
+| `AT$SCHEMA?` | (2.2) Every setting for a program: `+SCHEMA:<name>,<type>,<min>,<max>,<group>,<flags>,"<group name>","<label>"`. Types `BOOL`, `INT`, `ENUM:A|B|C`, `STR`, `SECRET`, `BAUD`, `PACE`, `PROXY`, `PORTS`, `PINS`; flags `L` a serial line setting, `R` at the next restart, `S` a secret. PsiConnect builds its settings pages from it |
 | `ATC1` / `ATC0` | WiFi232: joins / leaves the saved network |
 | `AT$SB=`n / `AT$SB?` | The serial baud (300 to 921600). It changes **after** the `OK`, which goes at the old speed. `ATB`n (Zimodem) is the same. A new speed is on trial: see the note below |
 | `AT$PR=`n / `AT$PR=AUTO` / `AT$PR?` | Pacing rate towards the Psion in bytes/s. `0` turns pacing off. `AUTO` (the default) chooses from the baud rate (see [Pacing in detail](#pacing-in-detail)) |
@@ -461,9 +625,13 @@ The full reference is in [`docs/UPGRADE.md`, section 6](docs/UPGRADE.md#6-at-com
 | `AT$XE=0/1`, `AT$XH=host:port`, `AT$XK=token`, `AT$EXEC=cmd`, `ATDT psiexec` | Remote compute through `tools/psiexecd.py` |
 | `AT$LOG?`, `AT$LOGL=0/1/2` | The log kept in RAM (the USB console is gone in host mode) |
 | `AT$RESET=YES` | Factory reset, the WiFi too; restarts |
+| `AT$WG=OFF/ON/AUTO`, `AT$WG?` | (2.2) The WireGuard tunnel. `?` gives the mode and the state, e.g. `AUTO: up, handshake 12 s ago` |
+| `AT$WGCONF?` | (2.2) The tunnel's config as far as it may be shown: `+WGCONF:Address: ...`, `DNS`, `AllowedIPs`, `Endpoint`, `Keepalive`, and `Private key: set` |
+| `AT$WGL=line` ... `AT$WGL=END` | (2.2) A config sent line by line from a terminal (`AT$WGL=CLEAR` starts again). Send each line quoted with `\/` for a `/` (a key can hold an `a/`, which would otherwise be the `A/` repeat). `END` parses and saves it, or answers `+WGERR:<why>` and `ERROR`. Never logged. The web page is easier |
+| `AT$WGCLR=YES` | (2.2) Deletes the WireGuard config |
 
-Secrets (`$PASS`, `$APPASS`, `$WEBPASS`, `$XK`) are never printed: `?` says
-*(set)* or *(none)*.
+Secrets (`$PASS`, `$APPASS`, `$WEBPASS`, `$XK`, the WireGuard keys) are never
+printed: `?` says *(set)* or *(none)*, and the log leaves them out.
 
 **A new speed falls back if nothing answers at it.** After `AT$SB` or `ATB`
 changes the speed, the modem waits for a valid command line (a plain `AT` is
@@ -476,6 +644,13 @@ answered at the new speed. The trial only applies in command mode: dialling
 (`ATDT`) at the new speed confirms it. The 230400 test is: at 115200, send
 `AT$SB=230400` and wait for `OK`; switch the Psion's UART; send `AT` and wait
 for `OK`; then `AT&W` if it should stay.
+
+**From 2.2 the other line settings are on trial too.** `AT$FC`, `AT$FCSWAP`,
+`AT$SWAP`, `AT$PINS` and `AT$DCD` sent over the serial line answer `OK` with
+the old settings, take effect after it, and go back by themselves if no
+command line is heard with them within 15 seconds (*"No command in 15 s with
+the new serial line settings: back to the old ones"*). A command heard, or
+`AT&W`, keeps them. From the web pages they take effect at once.
 
 ## Pacing in detail
 
@@ -546,10 +721,25 @@ settings use a **static address** (the modem cannot hand one out):
 |---|---|
 | IP address | 192.168.7.2 |
 | Gateway | 192.168.7.1 |
-| DNS | the one logged at the dial (`AT$LOG?`: "ppp: starting - set the Psion to IP ..., DNS ..."), or **1.1.1.1** |
+| DNS | **192.168.7.1** with firmware 2.2 or later; **1.1.1.1** with older firmware |
+| Get IP address from server | No |
 
-Nothing on the modem answers DNS itself, so the Psion needs a real DNS
-server. RTS/CTS (`AT$FC=1`) and a higher baud rate are strongly
+**DNS (2.2):** the modem answers DNS on 192.168.7.1 itself, for the PPP side
+only, and offers that address over IPCP too. It is a small relay: each
+query goes to the tunnel's DNS server while the WireGuard tunnel is up and
+its config names one (so the home network's own names work), else to the
+DNS server the uplink's DHCP gave (the hotspot's or the home router's), else
+to 1.1.1.1. It keeps at most 16 queries waiting, each for 5 seconds, takes
+only well-formed standard queries of up to 512 bytes, and an answer only
+from the server the query went to. So one setting, 192.168.7.1, works at
+home, on a hotspot and through the tunnel. (Before 2.2 nothing answered on
+192.168.7.1 and the Psion needed a real server: a home router's address
+then failed away from home. 1.1.1.1 still works with 2.2, but without the
+home names.) If port 53 is already taken (the access point's captive DNS
+during setup), the relay does not start and the dial logs that the Psion
+was given the uplink's DNS instead.
+
+RTS/CTS (`AT$FC=1`) and a higher baud rate are strongly
 recommended: PPP frames are paced at the same rate as everything else.
 After `+++` nothing is sent until `ATO`.
 
@@ -558,19 +748,96 @@ proxy on **192.168.7.1, port 8080** (PPP side only). In PsiWeb's connection
 settings use *Proxy host* 192.168.7.1 and *Proxy port* 8080 and the
 "Psion Internet" route, instead of dialling `psiproxy`.
 
+### AT commands over PPP (PsiConnect)
+
+While a PPP link is up, the Psion's set-up program PsiConnect does not need the serial port that PPP is using: it sends
+the same AT commands over TCP to **192.168.7.1, port 2323**, and gets the
+same answers, one command line at a time (lines end with CR). Still
+firmware 2.2. The server exists only while a PPP link is up, listens on the
+PPP address only (and checks each client's local address too), takes one
+client at a time (a second connection is closed at once), and closes a
+connection after 120 s without input. There is no password: only the Psion
+is on the PPP side.
+
+The answers are always in words (`OK`, `ERROR`), whatever `ATQ`/`ATV` say;
+`ATE`, `ATQ` and `ATV` are accepted and change nothing (they are the serial
+line's). `ATZ` brings the saved settings back but keeps the live link as it
+is (speed, flow control, pins, DCD, the escape, `$PPP`, the uplink), so
+going back to the saved network never drops PPP. Commands that would end
+the PPP link or change the serial line are refused, with a line saying why
+before the `ERROR`:
+
+```
+AT$SB=57600
++NOTVIAPPP: it changes the serial line
+ERROR
+```
+
+Refused: `ATH`, `ATO`, `ATD...`, `ATA`, `ATB`, `ATC0`, `ATS<n>=` (reads are
+fine), `AT&F`, `AT&C`, `AT$RESET`, `AT$EXEC`, `AT$PPP=`, and setting `$SB`,
+`$FC`, `$FCSWAP`, `$SWAP`, `$PINS`, `$DCD`, `$UP` or `$USB` (reading them is
+fine): change those over the serial port. Everything else works: the scan,
+joining and switching networks (the WiFi changing does not end the PPP
+call), the saved networks, the VPN, the settings, `AT&W`, `AT$STAT?`,
+`AT$SCHEMA?`, `AT$LOG?`. A line longer than 255 characters is answered
+`+TOOLONG`, `ERROR`; an answer longer than 8 KB ends with `+TRUNCATED`
+before its result.
+
 ## Status screen (AtomS3R)
 
-The AtomS3R's 128x128 screen shows four pages; the bar on top is the LED's
-colour (see below). **Click** the screen (it is the button) for the next
-page; a click on a dimmed screen only wakes it. The backlight dims after a
-minute.
+The AtomS3R's 128x128 screen is the button: press the screen itself. It
+opens on **Home** and goes back to Home after 30 seconds without a press
+(90 seconds in the Details). The backlight dims after a minute; a press on a
+dimmed screen only wakes it. The dots at the foot show where you are (three
+for the main pages, six in the Details); for four seconds after each press
+they give way to what a press (`1x`) and a double-press (`2x`) do there.
+
+**Home** shows only the essentials: the state on a band in the LED's colour
+(*Ready*, *In call*, *Dialling*, *No Wi-Fi*, *Setup*), then three large rows,
+each with a drawn icon: the network's name with a Wi-Fi signal fan, the
+Internet check (a tick, a cross, or dots while checking) and the VPN (a
+padlock, closed while the tunnel is wanted up: *VPN on*, *off*, *home*,
+*trying*, *retry*, *idle*, *unset*).
+
+| Gesture | Home | Wi-Fi | VPN | Details |
+|---|---|---|---|---|
+| **Press** | Wi-Fi page | VPN page | Home | the next Details page |
+| **Double-press** | open the Details (at Setup) | join the **next saved network** in range | step the mode **Off, On, Auto** (saved at once) | back to Home |
+| **Hold 2 s** | config mode on or off (the access point and the pages for ten minutes); while it is on, the Setup page shows | | | |
+
+The main pages:
 
 | Page | Shows |
 |---|---|
-| 1 Status | WiFi name, IP, RSSI; the call (none, tcp host:port, proxy, PPP, exec); bytes to the Psion and to the server; baud and flow control; the last log line |
-| 2 Modes | TCP, the proxy (`PX`, zip, pictures), PPP, TLS, the uplink; the last dial and its result |
-| 3 Setup | the access point's name **and password** while it is up, its address, the LAN address of the pages, version, board, memory |
-| 4 Log | the last log lines |
+| Home | the state, the network and its signal, the Internet check, the VPN |
+| Wi-Fi | the state on the band (*Connected*, *Joining*, *No Wi-Fi*, *Not set up*), then the network's name, the signal in dBm and the IP address; offline, the saved network a double-press joins next |
+| VPN | the state on the band (*VPN up*, for example), then the mode; while it is up the last handshake and the bytes in and out, otherwise why not and the server |
+
+The Details (a double-press on Home; their band is slate grey):
+
+| Page | Shows |
+|---|---|
+| 1 Setup | while the access point is up: its name, **password** and the address to open (the page stays while the access point is up); otherwise how to start it, and the LAN address of the pages |
+| 2 Call | the call now (TCP host, web proxy, PPP, command) and the bytes each way, or the last dial and its result |
+| 3 Modes | the proxy (`PX`), PPP, TLS, baud and RTS/CTS |
+| 4 Mail | what to type into PsiMail for the PPP mail relay |
+| 5 System | the version, the board, the uplink, free memory |
+| 6 Log | the last log lines |
+
+Home, Wi-Fi and VPN share one look (2.2): a band in the state's colour, then
+three large rows, each with a drawn icon. The text is one family (FreeSans,
+regular and bold), drawn smooth; the Details use one smaller size. After a double-press the screen shows what
+was chosen for a moment ("VPN mode / Auto", "Switching to / Home"). A single
+press is acted on about a third of a second after it is let go (to tell it
+from a double-press). Each page is drawn into a frame buffer and sent to the
+panel whole, and only when it changed, so the screen does not flicker.
+
+**Seeing the screen remotely:** `http://<the modem>/screen.bmp` (behind the
+web password, like the other pages) returns the frame buffer exactly as it
+was last sent to the panel, as a 128x128 BMP. On the PC,
+`make -C hosttest screens` draws every page (in several states) to
+`hosttest/screens/*.png` with the same drawing code, so the two can be
+compared (run `pio run -e atoms3r` once first, for the fonts).
 
 ## Status LED and button
 
@@ -592,8 +859,11 @@ after 3 seconds every setting, including the WiFi network, returns to the
 factory settings. `AT$RESET=YES` and the web page's *Factory reset* do the
 same (`AT&F` keeps the WiFi network and the link settings). While running:
 on the AtomS3 Lite and Atom **a click** turns config mode on or off (the
-access point and the web pages for ten minutes); on the AtomS3R a click is
-the next screen page and **holding it for 2 seconds** is config mode.
+access point and the web pages for ten minutes); on the AtomS3R a press is
+the next screen page, **holding it for 2 seconds** is config mode, and
+**a double-press** is the page's action: the Details from Home, the next
+saved network on Wi-Fi, the WireGuard mode on VPN (see
+[Status screen](#status-screen-atoms3r)).
 
 The USB port prints status messages at 115200 baud (WiFi joined, IP address).
 It does not take AT commands. On an AtomS3 Lite in USB host mode the console
@@ -630,6 +900,18 @@ DCD on all the time.
     setting answers `?` and takes `=`; bad values are `ERROR`), each new
     `AT$` command, TLS termination reaching the HAL as TLS, psiexec and
     `AT$EXEC` against a fake helper, the uplink manager and config mode.
+  - `test_v22` (2.2, built with AddressSanitizer and UBSan): the WireGuard
+    config parser (good configs, CR LF, comments, IPv6 skipped; 24 kinds of
+    malformed, oversized and missing-field configs refused with a reason that
+    never quotes a key; random garbage), Auto's decision, the split-tunnel
+    routing rule, the DNS relay (forwarding, the ID mapping, retries,
+    timeouts, a full table, garbage both ways), the saved networks (choice,
+    fallback, pinning, migration from 2.1, limits, `AT$NETS?`/`$NET`/
+    `$NETADD`/`$FORGET`), WireGuard through the modem (`AT$WGL`, `AT$WG`,
+    `AT$STAT?`, Auto at home, the DNS relay's upstream), the line-setting
+    trial, every schema setting reachable by `AT` and on a web page, the
+    double-press, and that no key or password ever reaches the log or an
+    answer. Its keys are made from random bytes at run time.
   - `test_usbnet`: the CDC-NCM transfer blocks and Apple's two-byte frames
     (round trips, truncated and absurd blocks).
   - `test_proxy`: the simplifier (what goes and what stays, the same output
@@ -674,7 +956,14 @@ DCD on all the time.
   real sites. Its TLS uses the PC's OpenSSL 3 (`libssl.so.3`, loaded at run
   time, so no OpenSSL headers are needed), with the system's root
   certificates. `HOSTPROXY_REDIRECT=host:port` sends the proxy's fetches to a
-  local server instead.
+  local server instead. For PsiConnect's tests (2.2): `HOSTMODEM_NETS=1` saves
+  two networks, `HOSTMODEM_WG=1` adds a WireGuard config (throwaway keys made
+  at the start) in mode Auto with a pretend tunnel, and `HOSTMODEM_HOME=1`
+  puts the uplink on the home network.
+- `HOSTMODEM_ATPORT=2323 hosttest/hostmodem SOCKET` also serves the AT
+  commands over TCP on `127.0.0.1:2323` (as over PPP, but always: a test
+  seam for PsiConnect's TCP route). `test_atremote` covers the filter, the
+  session and a PPP call surviving it.
 - `hosttest/hostmodem --tcp 8080` is the web proxy alone on
   `127.0.0.1:8080`: each TCP connection is a `psiproxy` call. Point a browser,
   `curl -x`, or PsiWeb's ARM harness at it.

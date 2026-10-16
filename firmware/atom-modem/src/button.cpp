@@ -34,15 +34,35 @@ Button::TEvent Button::Feed(int aLevel, uint32_t aNowMs)
 		else
 			{
 			uint32_t held = iRawSinceMs - iDownMs;
-			if (!iHoldFired && held >= kClickMinMs && held <= kClickMaxMs)
-				ev = EClick;
+			bool click = !iHoldFired && held >= kClickMinMs && held <= kClickMaxMs;
+			if (!iDouble)
+				ev = click ? EClick : ENone;
+			else if (click && iPending)
+				{
+				iPending = false;               // the second click: a double
+				ev = EDouble;
+				}
+			else if (click)
+				{
+				iPending = true;                // wait and see
+				iUpMs = iRawSinceMs;
+				}
+			else
+				iPending = false;               // (a long press after a click: neither)
 			iHoldFired = false;
 			}
 		}
 	if (iStable == 0 && !iHoldFired && aNowMs - iDownMs >= kHoldMs)
 		{
 		iHoldFired = true;
+		iPending = false;                       // (a click then a hold: the hold)
 		ev = EHold;
+		}
+	// a click with no second press begun in time is a plain click
+	if (iDouble && iPending && iStable == 1 && iRaw == 1 && aNowMs - iUpMs > kDoubleGapMs && ev == ENone)
+		{
+		iPending = false;
+		ev = EClick;
 		}
 	return ev;
 	}

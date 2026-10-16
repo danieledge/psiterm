@@ -18,7 +18,7 @@ static int gChecks = 0, gFails = 0;
 static bool Has(const std::string& s, const char* p) { return s.find(p) != std::string::npos; }
 
 static_assert(sizeof(am::Settings) == 140, "the NVS record must keep its size");
-static_assert(sizeof(am::Settings2) == 256, "the 2.0 NVS record must keep its size");
+static_assert(sizeof(am::Settings2) == 448, "the 2.0 NVS record grows only by appending (length-tolerant load keeps back-compat)");
 
 // ===== the simplifier on its own ===============================================
 

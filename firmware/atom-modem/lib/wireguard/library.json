@@ -1,0 +1,13 @@
+{
+  "name": "wireguard",
+  "version": "0.4.8+psiconnect",
+  "description": "WireGuard for lwIP on the ESP32: esphome-libs/wireguard (droscy/esp_wireguard) v0.4.8, commit 9b7660fed27151abdcbf32b43861044cf4a32497, vendored for PsiConnect with two small marked changes (see the top of src/esp_wireguard.c). BSD-3-Clause (LICENSE). No dependencies: libsodium and mbedTLS come from the Arduino-ESP32 3.x core's prebuilt libraries.",
+  "license": "BSD-3-Clause",
+  "frameworks": ["arduino"],
+  "platforms": ["espressif32"],
+  "build": {
+    "includeDir": "include",
+    "srcDir": "src",
+    "flags": ["-Wno-unused-result", "-DESP_WIREGUARD_KEEP_DEFAULT_NETIF", "-DWIREGUARDIF_COUNT_BYTES", "-DCONFIG_WIREGUARD_MAX_SRC_IPS=9"]
+  }
+}

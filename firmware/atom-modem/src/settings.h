@@ -5,9 +5,11 @@
 // Two records:
 //   Settings  ("cfg", 140 bytes): everything 1.x had. Its size and layout
 //             never change, so a modem updated from 1.x keeps its settings.
-//   Settings2 ("cfg2", 256 bytes): what 2.0 added. Versioned, with spare
-//             bytes; new fields are appended and the size never changes. A
-//             missing or short record gives the factory values.
+//   Settings2 ("cfg2", 448 bytes): what 2.0 added. Versioned, with spare
+//             bytes; new fields are appended and the size grows only when a
+//             field is added (the load is length-tolerant, so an older,
+//             shorter record still loads). A missing or short record gives
+//             the factory values.
 // Secrets (the WiFi, access point and web passwords, the exec token) live
 // in these records in NVS only: nothing prints them, and the repository
 // holds none of them.
@@ -19,7 +21,7 @@
 
 namespace am {
 
-static const char* const kVersion = "2.0";
+static const char* const kVersion = "2.2";
 
 // ----- the 1.x record ------------------------------------------------------
 struct Settings
@@ -87,8 +89,30 @@ struct Settings2
 	char chkHost[40];          // host:port the Internet check connects to; empty = no check
 	uint8_t ppp;               // 1: a numeric dial (ATD777) brings up PPP (the Psion's
 	                           // "Psion Internet" route shares the modem's link, NAT'd)
-	uint8_t spare[256 - 4 - 2 - 2 - 4 - 5 - 1 - 3 - 1 - 2 - 2 - 1 - 1 - 16 - 33 - 33 - 64 - 33 - 40 - 1];
+	// The stunnel-style TLS-offload relay for the PPP route (ppptls.cpp): while
+	// a PPP call is up, PsiMail connects IN PLAINTEXT to the modem (192.168.7.1)
+	// on the standard TLS mail ports and the modem makes the real TLS connection
+	// to these upstream hosts. Empty = that port is not offered. Appended; an
+	// older record that lacks them loads with them zeroed (the feature off).
+	char imapHost[64];         // AT$MAILIMAP: upstream IMAPS host (192.168.7.1:993 -> host:993)
+	char smtpHost[64];         // AT$MAILSMTP: upstream SMTPS host (192.168.7.1:465 -> host:465)
+	char popHost[64];          // AT$MAILPOP:  upstream POP3S host (192.168.7.1:995 -> host:995)
+	uint8_t mailXcode;         // AT$MAILXCODE: 1 = Layer-2 IMAP embedded-image transcoding on the 993 relay (default 0)
+	uint8_t wgMode;            // AT$WG (2.2): TWgMode, the WireGuard tunnel off, on, or automatic (a spare byte
+	                           // before 2.2, so an older record loads it as 0: off)
+	uint8_t spare[448 - 4 - 2 - 2 - 4 - 5 - 1 - 3 - 1 - 2 - 2 - 1 - 1 - 16 - 33 - 33 - 64 - 33 - 40 - 1 - 64 - 64 - 64 - 1 - 1];
 	};
+
+// built-in tripwires so the NVS layout cannot drift unnoticed: the
+// length-tolerant load (hal_esp.cpp) and the 1.x->2.0 back-compat both rely on
+// the size staying 448 and the appended mail-relay fields staying where they
+// are. The host test asserts the same; these fire in the device build too.
+static_assert(sizeof(Settings2) == 448, "Settings2 must stay 448 bytes (NVS back-compat)");
+static_assert(offsetof(Settings2, imapHost) == 248, "imapHost moved: a short record would load mail hosts onto the wrong bytes");
+static_assert(offsetof(Settings2, wgMode) == 441, "wgMode must be the first of the old spare bytes");
+
+// AT$WG: the WireGuard tunnel (wgtunnel.h)
+enum TWgMode { EWgModeOff = 0, EWgModeOn = 1, EWgModeAuto = 2 };
 
 static const uint32_t kMagic2 = 0x41544d32;  // 'ATM2'
 static const uint16_t kSettings2Version = 1;
@@ -101,6 +125,15 @@ bool AcceptSettings2(Settings2& aS, size_t aLength);
 void TlsPortsText(const Settings2& aS, char* aOut, size_t aMax);
 bool SetTlsPorts(Settings2& aS, const char* aText);
 bool TlsPort(const Settings2& aS, uint16_t aPort);
+// the PPP TLS-offload relay's plaintext listen ports and their upstreams
+static const uint16_t kMailImapPort = 993;   // IMAPS -> imapHost
+static const uint16_t kMailSmtpPort = 465;   // SMTPS -> smtpHost
+static const uint16_t kMailPopPort  = 995;   // POP3S -> popHost
+// the configured upstream host for a listen port (993/465/995), or 0 if that
+// port has no host set (so the relay does not offer it)
+const char* MailRelayHost(const Settings2& aS, uint16_t aPort);
+// is any mail upstream configured at all (the relay is wanted)?
+bool MailRelayAny(const Settings2& aS);
 // "6,5,7,8,38" (-1 for a default), and back
 void PinsText(const Settings2& aS, char* aOut, size_t aMax);
 bool SetPins(Settings2& aS, const char* aText);

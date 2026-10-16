@@ -1,6 +1,14 @@
 // settings.cpp - see settings.h. MIT licence (see LICENSE at the top of the repository).
 #include "settings.h"
 #include "proxy.h"
+// optional local overrides (gitignored), e.g. a baked default web password
+// (AM_DEFAULT_WEBPASS) kept out of the repo. Device build only, so the host
+// tests (which expect an empty default web password) are unaffected.
+#if defined(ESP32) && defined(__has_include)
+#  if __has_include("webpass_local.h")
+#    include "webpass_local.h"
+#  endif
+#endif
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -79,7 +87,7 @@ void FactoryDefaults2(Settings2& aS)
 	for (int i = 0; i < kPinCount; i++)
 		aS.pins[i] = -1;
 	aS.web = EWebOn;
-	aS.tls = 0;
+	aS.tls = 1;                // terminate TLS on the TLS ports by default (the Atom's point: keep crypto off the 36 MHz Psion). Pair with "Modem provides TLS" in the app, or a client doing its own TLS to a TLS port double-wraps.
 	aS.tlsVerify = 1;
 	aS.img = 1;                // the Atom's point: pictures scaled and dithered to 16 greys by default (else full-size JPEGs flood the slow link)
 	aS.imgWidth = 300;
@@ -93,6 +101,13 @@ void FactoryDefaults2(Settings2& aS)
 	// a TCP connect to a public resolver: no DNS needed to tell "on the
 	// WiFi" from "on the Internet"
 	strncpy(aS.chkHost, "1.1.1.1:53", sizeof(aS.chkHost) - 1);
+#ifdef AM_DEFAULT_WEBPASS
+	// a baked default web password (HTTP basic auth user "atom"), so the web
+	// UI and OTA work out of the box. Set only via a build flag, never in
+	// committed source - like the WiFi credentials.
+	strncpy(aS.webPass, AM_DEFAULT_WEBPASS, sizeof(aS.webPass) - 1);
+	aS.webPass[sizeof(aS.webPass) - 1] = 0;
+#endif
 	}
 
 bool AcceptSettings2(Settings2& aS, size_t aLength)
@@ -118,8 +133,12 @@ bool AcceptSettings2(Settings2& aS, size_t aLength)
 	aS.execHost[sizeof(aS.execHost) - 1] = 0;
 	aS.execToken[sizeof(aS.execToken) - 1] = 0;
 	aS.chkHost[sizeof(aS.chkHost) - 1] = 0;
+	aS.imapHost[sizeof(aS.imapHost) - 1] = 0;
+	aS.smtpHost[sizeof(aS.smtpHost) - 1] = 0;
+	aS.popHost[sizeof(aS.popHost) - 1] = 0;
 	if (aS.imgWidth < 64 || aS.imgWidth > 640) aS.imgWidth = 300;
 	if (aS.imgMaxKB < 16 || aS.imgMaxKB > 512) aS.imgMaxKB = 64;
+	if (aS.wgMode > EWgModeAuto) aS.wgMode = EWgModeOff;
 	return true;
 	}
 
@@ -175,6 +194,20 @@ bool TlsPort(const Settings2& aS, uint16_t aPort)
 		if (aS.tlsPorts[i] == aPort)
 			return true;
 	return false;
+	}
+
+const char* MailRelayHost(const Settings2& aS, uint16_t aPort)
+	{
+	const char* h = 0;
+	if (aPort == kMailImapPort)      h = aS.imapHost;
+	else if (aPort == kMailSmtpPort) h = aS.smtpHost;
+	else if (aPort == kMailPopPort)  h = aS.popHost;
+	return (h && h[0]) ? h : 0;
+	}
+
+bool MailRelayAny(const Settings2& aS)
+	{
+	return aS.imapHost[0] || aS.smtpHost[0] || aS.popHost[0];
 	}
 
 void PinsText(const Settings2& aS, char* aOut, size_t aMax)

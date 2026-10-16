@@ -5,34 +5,35 @@
 #include <Arduino.h>
 #include <M5Unified.h>
 #include <string.h>
+#include <esp_heap_caps.h>
+#include "../canvas.h"
 
 namespace am {
 
 Screen gScreen;
 
-Screen::Screen()
-	: iPage(0), iReady(false), iDimmed(false), iForce(true), iLastDrawMs(0), iLastActiveMs(0), iBar(ELedNoWifi),
-	  iShownBar(ELedNoWifi), iShownPage(-1), iShownHeroRows(-1), iShownSignal(-2)
+// The page is drawn into this frame buffer (canvas.h: the same code the
+// host renderer runs) and pushed to the panel whole: drawing straight to the
+// panel (clear, then text) showed every redraw as a flicker. 32 KB, in PSRAM
+// on the AtomS3R; /screen.bmp serves it as it is.
+static uint16_t* gFb = 0;
+
+static_assert(sizeof(GlyphRec) == sizeof(lgfx::GFXglyph), "GlyphRec must match M5GFX's GFXglyph");
+static FaceData FaceOf(const lgfx::GFXfont& aF)
 	{
-	memset(iShown, 0, sizeof(iShown));
-	memset(iShownState, 0, sizeof(iShownState));
-	memset(iShownHero, 0, sizeof(iShownHero));
-	memset(iShownFoot, 0, sizeof(iShownFoot));
+	FaceData d;
+	d.bitmap = aF.bitmap;
+	d.glyph = reinterpret_cast<const GlyphRec*>(aF.glyph);
+	d.first = aF.first;
+	d.last = aF.last;
+	return d;
 	}
 
-static uint16_t BarColour(LedState aState, uint16_t& aText)
+Screen::Screen()
+	: iReady(false), iDimmed(false), iForce(true), iLastDrawMs(0), iLastActiveMs(0), iToastUntilMs(0), iBar(ELedNoWifi),
+	  iHaveShown(false)
 	{
-	aText = TFT_WHITE;
-	switch (aState)
-		{
-	case ELedNoWifi:     return M5.Display.color565(190, 0, 0);          // red
-	case ELedConnecting: aText = TFT_BLACK; return M5.Display.color565(230, 160, 0);   // amber
-	case ELedWifi:       aText = TFT_BLACK; return M5.Display.color565(0, 180, 0);     // green
-	case ELedConnected:  return M5.Display.color565(0, 0, 220);          // blue
-	case ELedData:       aText = TFT_BLACK; return M5.Display.color565(235, 235, 255); // white flash
-	case ELedConfig:     return M5.Display.color565(150, 0, 170);        // purple: the access point is up
-		}
-	return TFT_DARKGREY;
+	memset(&iShown, 0, sizeof(iShown));
 	}
 
 void Screen::Begin()
@@ -43,12 +44,20 @@ void Screen::Begin()
 	cfg.internal_rtc = false;
 	cfg.clear_display = true;
 	M5.begin(cfg);
-	M5.Display.setBrightness(64);
+	M5.Display.setBrightness(24);               // dim through the current-fragile boot/WiFi-init window; SetBar raises it once WiFi is up
 	M5.Display.setRotation(0);
-	M5.Display.setFont(&fonts::Font0);          // 6x8: 21 columns by 16 rows on 128x128
-	M5.Display.setTextSize(1);
-	M5.Display.setTextWrap(false);
 	M5.Display.fillScreen(TFT_BLACK);
+	Canvas::SetFace(EFaceSans, FaceOf(fonts::FreeSans24pt7b));
+	Canvas::SetFace(EFaceBold, FaceOf(fonts::FreeSansBold24pt7b));
+	const size_t kBytes = Canvas::kSize * Canvas::kSize * sizeof(uint16_t);
+#if defined(BOARD_HAS_PSRAM)
+	gFb = (uint16_t*)heap_caps_malloc(kBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+	if (!gFb)
+		gFb = (uint16_t*)malloc(kBytes);
+	if (gFb)
+		memset(gFb, 0, kBytes);
+	Serial.printf("LCD: %s\n", gFb ? "frame buffer ready" : "no memory for the frame buffer: the screen stays blank");
 	iReady = true;
 	iDimmed = false;
 	iForce = true;
@@ -63,18 +72,46 @@ void Screen::Backlight(bool aOn)
 	M5.Display.setBrightness(aOn ? 64 : 0);
 	}
 
+void Screen::Draw(const Layout& aLayout)
+	{
+	if (!gFb)
+		return;
+	Canvas::Render(aLayout, gFb);
+	// one transfer, so no half-drawn frame is ever seen. The buffer is RGB565
+	// in the CPU's byte order: said so by its type (M5GFX would otherwise
+	// take a plain uint16_t array as byte-swapped)
+	M5.Display.pushImage(0, 0, Canvas::kSize, Canvas::kSize, reinterpret_cast<const lgfx::rgb565_t*>(gFb));
+	}
+
+const uint16_t* Screen::Frame() const
+	{
+	return gFb;
+	}
+
 void Screen::Message(const char* aLine1, const char* aLine2, const char* aLine3)
 	{
 	if (!iReady)
 		return;
 	Backlight(true);
-	M5.Display.fillScreen(TFT_BLACK);
-	M5.Display.setTextColor(TFT_WHITE, TFT_BLACK);
-	M5.Display.drawString(aLine1, 2, 40);
-	M5.Display.drawString(aLine2, 2, 56);
-	M5.Display.drawString(aLine3, 2, 72);
+	static Layout l;
+	StatusModel::LayMessage(aLine1, aLine2, aLine3, l);
+	Draw(l);
 	iForce = true;
-	iShownPage = -1;                            // the next Tick draws the whole page
+	iHaveShown = false;                         // the next Tick draws the page whole
+	}
+
+void Screen::Toast(uint32_t aNowMs, const char* aLine1, const char* aLine2, const char* aLine3)
+	{
+	if (!iReady)
+		return;
+	iLastActiveMs = aNowMs;
+	Backlight(true);
+	static Layout l;
+	StatusModel::LayMessage(aLine1, aLine2, aLine3, l);
+	Draw(l);
+	iToastUntilMs = aNowMs + 1800;
+	if (!iToastUntilMs) iToastUntilMs = 1;
+	iHaveShown = false;
 	}
 
 void Screen::SetBar(LedState aState)
@@ -88,6 +125,10 @@ void Screen::SetBar(LedState aState)
 		if (iDimmed)
 			Backlight(true);
 		}
+	// once the modem is actually up (past OFFLINE/CONNECTING), bring the
+	// backlight to full - the boot dim was only to ease the cold-start current
+	if (iReady && !iDimmed && aState != ELedNoWifi && aState != ELedConnecting)
+		M5.Display.setBrightness(64);
 	iBar = aState;
 	iForce = true;
 	}
@@ -102,97 +143,28 @@ bool Screen::Wake(uint32_t aNowMs)
 	return true;
 	}
 
-void Screen::NextPage(uint32_t aNowMs)
+void Screen::Pressed(uint32_t aNowMs)
 	{
 	iLastActiveMs = aNowMs;
-	iPage = (iPage + 1) % StatusModel::Pages();
 	iForce = true;
 	}
 
-void Screen::Draw(const ScreenPage& aPage, bool aAll)
+void Screen::Click(uint32_t aNowMs)
 	{
-	M5.Display.startWrite();
-	for (int r = 0; r < kScreenRows; r++)
-		{
-		bool title = r == 0;
-		if (!aAll && !(title && iBar != iShownBar) && strcmp(iShown[r], aPage.line[r]) == 0)
-			continue;
-		uint16_t fg = TFT_WHITE, bg = TFT_BLACK;
-		if (title)
-			bg = BarColour(iBar, fg);
-		char row[kScreenCols + 1];
-		memset(row, ' ', kScreenCols);
-		row[kScreenCols] = 0;
-		size_t n = strlen(aPage.line[r]);
-		memcpy(row, aPage.line[r], n < (size_t)kScreenCols ? n : (size_t)kScreenCols);
-		M5.Display.setTextColor(fg, bg);
-		if (title)
-			M5.Display.fillRect(0, 0, 128, 8, bg);
-		M5.Display.drawString(row, 0, r * 8);
-		memcpy(iShown[r], aPage.line[r], sizeof(iShown[r]));
-		}
-	M5.Display.endWrite();
-	iShownBar = iBar;
+	Pressed(aNowMs);
+	iPager.Click(aNowMs);
 	}
 
-// four Wi-Fi signal bars at (aX,aBase) rising to the right, aLevel of them lit
-static void DrawSignal(int aX, int aBase, int aLevel, uint16_t aOn, uint16_t aOff)
+Pager::TAction Screen::Double(uint32_t aNowMs)
 	{
-	for (int i = 0; i < 4; i++)
-		{
-		int bw = 4, gap = 2, bh = 5 + i * 4;
-		int x = aX + i * (bw + gap);
-		int y = aBase - bh;
-		uint16_t c = i < aLevel ? aOn : aOff;
-		if (i < aLevel)
-			M5.Display.fillRect(x, y, bw, bh, c);
-		else
-			M5.Display.drawRect(x, y, bw, bh, c);
-		}
+	Pressed(aNowMs);
+	return iPager.Double(aNowMs);
 	}
 
-// the Status page as a dashboard: a state word on a colour band with Wi-Fi
-// signal bars, then grey label / white value rows, and a footer. Legible
-// across a desk; the dense 21x16 pages (Modes/Setup/Log) stay for detail.
-void Screen::DrawStatus(const ScreenPage& aPage, LedState aBar)
+void Screen::ConfigMode(bool aOn, uint32_t aNowMs)
 	{
-	const uint16_t kBody  = TFT_BLACK;
-	const uint16_t kLabel = M5.Display.color565(150, 150, 150);
-	const uint16_t kValue = TFT_WHITE;
-	const int kBand = 34;
-	uint16_t bfg;
-	uint16_t bbg = BarColour(aBar, bfg);        // the band colour and its text
-	M5.Display.startWrite();
-	// the state band
-	M5.Display.fillRect(0, 0, 128, kBand, bbg);
-	M5.Display.setTextColor(bfg, bbg);
-	M5.Display.setTextSize(2);                   // 12x16
-	M5.Display.drawString(aPage.state, 5, (kBand - 16) / 2);
-	if (aPage.signal >= 0)
-		DrawSignal(96, kBand - 8, aPage.signal, bfg, bfg);
-	// the body
-	M5.Display.fillRect(0, kBand, 128, 128 - kBand, kBody);
-	M5.Display.setTextSize(1);                   // 6x8
-	int y = kBand + 8;
-	for (int r = 0; r < aPage.heroRows && y <= 104; r++, y += 16)
-		{
-		if (aPage.hero[r].label[0])
-			{
-			M5.Display.setTextColor(kLabel, kBody);
-			M5.Display.drawString(aPage.hero[r].label, 5, y);
-			}
-		M5.Display.setTextColor(kValue, kBody);
-		M5.Display.drawString(aPage.hero[r].value, 46, y);   // value column
-		}
-	// the footer
-	if (aPage.foot[0])
-		{
-		M5.Display.drawFastHLine(5, 116, 118, kLabel);
-		M5.Display.setTextColor(kLabel, kBody);
-		M5.Display.drawString(aPage.foot, 5, 119);
-		}
-	M5.Display.endWrite();
-	M5.Display.setTextSize(1);
+	Pressed(aNowMs);
+	iPager.ConfigMode(aOn, aNowMs);
 	}
 
 void Screen::Tick(const Modem& aModem, Hal& aHal, uint32_t aNowMs)
@@ -201,48 +173,44 @@ void Screen::Tick(const Modem& aModem, Hal& aHal, uint32_t aNowMs)
 		return;
 	if (!iDimmed && aNowMs - iLastActiveMs >= kDimAfterMs)
 		Backlight(false);
+	if (iToastUntilMs)
+		{
+		if ((int32_t)(aNowMs - iToastUntilMs) < 0)
+			return;                             // (the toast stays a moment)
+		iToastUntilMs = 0;
+		iForce = true;
+		}
 	if (!iForce && aNowMs - iLastDrawMs < kRedrawMs)
 		return;
 	iLastDrawMs = aNowMs;
+	// back to Home after a while without a press; the Setup page stays while
+	// the access point is up (its name and password are being read)
+	bool keep = false;
+	if (iPager.Page() == EPageSetup)
+		{
+		char ap[8];
+		ap[0] = 0;
+		aHal.ApInfo(ap, sizeof(ap));
+		keep = ap[0] != 0;
+		}
+	if (iPager.Idle(aNowMs, keep))
+		iForce = true;
 	if (iDimmed && !iForce)
 		return;                                 // (nothing to see: no work to do)
 	iForce = false;
 	static ScreenPage page;                     // (static: off the 20 KB loop stack)
-	StatusModel::Fill(aModem, aHal, iPage, page);
+	static Layout lay;
+	StatusModel::Fill(aModem, aHal, iPager.Page(), page);
+	page.hintOn = iPager.HintOn(aNowMs);
 	iBar = page.bar;                            // the modem's own LED state: one source
-	if (iPage == EPageStatus)
-		{
-		// a data flash keeps the "on a call" colour, so the hero doesn't flash
-		LedState cbar = iBar == ELedData ? ELedConnected : iBar;
-		bool changed = iShownPage != iPage || cbar != iShownBar
-			|| strcmp(iShownState, page.state) != 0 || iShownHeroRows != page.heroRows
-			|| iShownSignal != page.signal || strcmp(iShownFoot, page.foot) != 0;
-		for (int r = 0; !changed && r < page.heroRows; r++)
-			if (strcmp(iShownHero[r].label, page.hero[r].label) != 0
-				|| strcmp(iShownHero[r].value, page.hero[r].value) != 0)
-				changed = true;
-		if (changed)
-			{
-			DrawStatus(page, cbar);
-			iShownPage = iPage;
-			iShownBar = cbar;
-			iShownSignal = page.signal;
-			strncpy(iShownState, page.state, sizeof(iShownState) - 1);
-			iShownState[sizeof(iShownState) - 1] = 0;
-			strncpy(iShownFoot, page.foot, sizeof(iShownFoot) - 1);
-			iShownFoot[sizeof(iShownFoot) - 1] = 0;
-			iShownHeroRows = page.heroRows;
-			for (int r = 0; r < page.heroRows; r++)
-				iShownHero[r] = page.hero[r];
-			memset(iShown, 0, sizeof(iShown));  // a later text page redraws in full
-			}
+	StatusModel::Lay(page, lay);
+	// only a page that looks different is drawn (Lay clears every byte, so
+	// two layouts of the same page compare equal)
+	if (iHaveShown && memcmp(&lay, &iShown, sizeof(lay)) == 0)
 		return;
-		}
-	bool all = iShownPage != iPage;
-	if (all)
-		M5.Display.fillScreen(TFT_BLACK);
-	iShownPage = iPage;
-	Draw(page, all);
+	Draw(lay);
+	memcpy(&iShown, &lay, sizeof(iShown));
+	iHaveShown = true;
 	}
 
 } // namespace am
