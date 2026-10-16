@@ -21,8 +21,11 @@ palmtop.
 | **PsiTerm** | An SSH terminal (xterm-256color) on a port of Dropbear: tmux, vim, htop and Claude Code on a palmtop, with file transfer | 0.95 | [below](#psiterm) |
 | **PsiMail** | Email for any IMAP/SMTP server with TLS (made for Fastmail), and a calendar that keeps the Agenda in step with CalDAV | 0.92 | [mail/README.md](mail/README.md) |
 | **PsiWeb** | A web browser (Links 2): HTML and CSS, no JavaScript | 0.76 | [web/README.md](web/README.md) |
-| **PsiProxy** (optional) | A small web proxy for a computer on your network: fetches https pages for PsiWeb, slims them and converts pictures to 16 greys | - | [proxy/README.md](proxy/README.md) |
+| **PsiProxy** (optional) | A small helper for a computer on your network. Not needed: it makes PsiWeb faster and lighter (TLS done on the computer, pages slimmed, pictures in 16 greys) - see [Do I need the proxy?](#the-proxy-optional) | - | [proxy/README.md](proxy/README.md) |
 | **Atom modem** | Firmware that turns an M5Stack Atom into a Wi-Fi modem tuned for the Psion | - | [firmware/atom-modem](firmware/atom-modem/README.md) |
+
+A companion project, [PsiLinux](https://github.com/danieledge/psilinux),
+brings Linux and Alpine Linux to the 5mx.
 
 All three apps look and behave like the Psion's own programs - EIKON toolbars,
 menus, dialogs and shortcuts, following Symbian's *EIKON Application Style
@@ -234,9 +237,10 @@ feature list, keys and settings are in [mail/README.md](mail/README.md).
 [Links 2](http://links.twibright.com/) built with the 1999 EPOC R5
 toolchain: HTML and some CSS, JPEG, PNG and GIF pictures (only when asked),
 no JavaScript. Light sites suit it best (68k.news, FrogFind, DuckDuckGo Lite,
-text.npr.org); a proxy on your network - [PsiProxy](proxy/README.md) or
-[WebOne](https://github.com/atauenis/webone) - is recommended for https
-sites, but optional. PsiMail opens links and "View as web page" in it. See
+text.npr.org). It browses on its own, https included; a proxy on your
+network - [PsiProxy](proxy/README.md) or
+[WebOne](https://github.com/atauenis/webone) - is optional, but makes https
+sites much quicker and lighter (see [The proxy](#the-proxy-optional)). PsiMail opens links and "View as web page" in it. See
 [web/README.md](web/README.md).
 
 ## Installing
@@ -291,7 +295,11 @@ connection is up and names can be looked up (it asks before dialling).
   turns an M5Stack Atom on an Atomic RS232 Base into a Hayes-style Wi-Fi
   modem that works exactly like a WiRSa, plus **output pacing** so the Psion
   is never overrun even on a three-wire cable without RTS/CTS. Its README has
-  the wiring, flashing, Wi-Fi set-up and the settings to use.
+  the wiring, flashing, Wi-Fi set-up and the settings to use. It has a
+  small web proxy of its own (`192.168.7.1` on its PPP link, or `psiproxy`
+  through the modem), which serves PsiWeb's pages and PsiMail's web
+  pictures; it is not PsiProxy, so *Send log to server* still needs a
+  PsiProxy on a computer.
 
 - **After use, Psion Internet** (Connection settings > Network): *Stays
   connected* (the standard on a new Psion) keeps the dial-up connection up
@@ -302,24 +310,46 @@ connection is up and names can be looked up (it asks before dialling).
 
 ### The proxy (optional)
 
-Connection settings > Network > **Use proxy** is one setting for all three
-apps, off as standard, with no address built in. Everything works without
-it. With it on:
-- **PsiWeb** fetches pages through it, so https costs the Psion no TLS
-  handshake and the modem dials once.
-- **PsiMail** fetches web pictures through it, if Preferences > Web pictures
-  via proxy is Yes (and directly if the proxy does not answer).
-- **Send log to server** (PsiTerm: Tools > Debug; PsiMail: Tools >
-  Troubleshooting; PsiWeb: Tools) sends that app's log to it, to help find a
-  fault. It is dimmed until a proxy is set. Logs go as plain HTTP and can
-  hold host, account and site names, so send them only to your own
-  PsiProxy.
+**You do not need a proxy.** Connection settings > Network > **Use proxy** is
+off as standard, and no address is built in. SSH, mail, the calendar, web
+pages and updates all work without it, with the Psion doing its own TLS 1.3.
+A proxy is a program on a computer on your network that does the heavy work
+a 36 MHz Psion finds slow. [PsiProxy](proxy/README.md), in this repository,
+is the one made for these apps.
 
-[PsiProxy](proxy/README.md) is the proxy made for these apps (Python, on any
-computer on your network; port 8081 by default). It slims pages, converts
-pictures to 16 greys and saves the logs Send log sends. Any plain HTTP proxy,
-such as [WebOne](https://github.com/atauenis/webone), also works for PsiWeb
-and web pictures, but not for Send log.
+**Do I need the proxy?**
+
+| App | Without the proxy | What the proxy adds |
+|---|---|---|
+| **PsiTerm** | Everything: SSH, SFTP, tmux, updates. PsiTerm never sends its connections through the proxy. | Only *Send log to server* (Tools > Debug). |
+| **PsiMail** | Everything: mail (IMAP/SMTP with its own TLS 1.3, certificates checked), the calendar (CalDAV), contacts, updates. Web pictures in HTML mail are fetched direct and decoded on the Psion. | With Preferences > Screen > *Web pictures via proxy*: web pictures are fetched by the computer and turned into small 16-grey pictures there - less to download, no TLS for the Psion, and formats the Psion cannot decode (WebP, AVIF) can be shown. If the proxy does not answer, they come direct. Also *Send log to server* (Tools > Troubleshooting). |
+| **PsiWeb** | Browses on its own: `http://` direct, `https://` with its own TLS 1.3 (certificates not checked). Pages and pictures arrive as the site sends them. | Every page goes through it. The computer does the TLS, so the Psion skips a handshake per site and can reach sites its own TLS cannot talk to. Pages are slimmed for a 640x240 screen (articles in one column, home pages as lists of headlines, site menus folded into one link), so there is less to fetch, draw and hold in memory. Pictures become 16-grey GIFs at most 320 pixels wide. One connection stays open, so the modem dials once. Updates from GitHub come through it too (still signature-checked). Also *Send log to server* (Tools). |
+
+*Send log to server* sends the app's log to your PsiProxy, to help find a
+fault. It is dimmed until a proxy is set. Logs go as plain HTTP and can hold
+host, account and site names, so send them only to your own PsiProxy.
+
+Any plain HTTP proxy, such as [WebOne](https://github.com/atauenis/webone),
+also works for PsiWeb's pages and PsiMail's web pictures, but only PsiProxy
+slims pages for the Psion and receives logs.
+
+**Setting it up** (full details in [proxy/README.md](proxy/README.md)):
+1. On a computer on your network with Python 3.10 or later, copy the
+   `proxy/` folder and install it:
+   `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
+2. Start it so the Psion can reach it:
+   `PSIPROXY_ADDR=0.0.0.0 .venv/bin/python psiproxyd.py`. It listens on port
+   **8081**. `psiproxy.service.example` is a systemd unit to keep it running.
+3. On the Psion, in any of the three apps: Tools > Connection settings >
+   Network > **Use proxy**: Yes, then the computer's address and port 8081.
+   The setting is shared by all three apps (`C:\System\Data\PsiLink.ini`), so
+   it is set once.
+4. In PsiMail, if you want web pictures through it: Tools > Preferences >
+   Screen > *Web pictures via proxy*: Yes.
+
+PsiProxy is an open forward proxy: keep it on a network you trust and never
+make it reachable from the internet. It can also load optional plug-ins of
+your own (see [proxy/README.md](proxy/README.md#plug-ins)).
 
 ## Updates
 

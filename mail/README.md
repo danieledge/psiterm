@@ -212,15 +212,15 @@ save the upload time).
 | General | Order of messages | newest or oldest first, by sender, by subject, unread first |
 | | Download ahead | how many of the newest messages' text to fetch after Check mail (0 = off) |
 | | Keep mail on | the memory disk (CF card) if there is one, or the internal disk |
-| | Show pictures | Yes, Only attached files, No |
-| | Web pictures | Ask, Always, Never (see [Privacy](#privacy)) |
-| | Web pictures via proxy | No (the standard) or Yes: fetch them through the shared proxy, which converts them for the Psion; if it does not answer, they come direct |
 | | Email icon opens | PsiMail or Built-in Email |
 | New mail | Alert for new mail | Sound & message, Message only, Off |
 | | Check for new mail | Off, every 10, 15 or 30 minutes, every hour |
 | | If not connected | Wait for a connection, or Connect |
 | | Send waiting mail when connected | No, Yes |
 | | Show detailed progress | every engine and link step, for finding connection problems |
+| Screen | Show pictures | Yes, Only attached files, No |
+| | Web pictures | Ask, Always, Never (see [Privacy](#privacy)) |
+| | Web pictures via proxy | No (the standard) or Yes: fetch them through the shared proxy (Connection settings > Network), which converts them to 16 greys on the computer; if it does not answer, they come direct |
 
 **Tools > Calendar settings**: see [The calendar](#the-calendar).
 **Tools > Connection settings**: see [Connections](#connections).
@@ -251,10 +251,21 @@ settings are shared with PsiTerm and PsiWeb.
   from an older version keeps *Disconnects when idle* until they change it.
   The modem route always hangs up after use.
 * **Use proxy** (Network page), shared with PsiTerm and PsiWeb, is optional
-  and off as standard; no address is built in. PsiMail uses it only for web
-  pictures (if Preferences > Web pictures via proxy is Yes) and for *Send log
-  to server*. [PsiProxy](../proxy/README.md), in this repository, is the
-  proxy made for it (port 8081 by default).
+  and off as standard; no address is built in. **PsiMail does not need it**:
+  mail, the calendar and contacts always go direct to your servers, over
+  PsiMail's own TLS 1.3 with the certificate checked. PsiMail uses the proxy
+  for only two things:
+  * **Web pictures** in HTML mail, if Preferences > Screen > *Web pictures
+    via proxy* is Yes. The computer fetches each picture (doing the TLS) and
+    turns it into a small 16-grey GIF, so there is less to download and
+    decode, and formats the Psion cannot decode (WebP, AVIF) can be shown. If
+    the proxy does not answer, the pictures come direct, for the rest of
+    that run.
+  * **Send log to server** (Tools > Troubleshooting), which needs PsiProxy.
+
+  [PsiProxy](../proxy/README.md), in this repository, is the proxy made for
+  these apps (port 8081 by default); the main
+  [README](../README.md#the-proxy-optional) says how to set it up.
 * **Modem provides TLS** (Link page) is only for a modem whose firmware does
   the TLS itself (the Atom modem's); leave it at No for a WiRSa or a WiFi232.
   If it is Yes and the modem does not, PsiMail notices on the first IMAP or

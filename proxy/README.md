@@ -1,16 +1,30 @@
 # PsiProxy
 
-PsiProxy is an **optional** helper for PsiWeb, PsiMail and the other apps. You
-do not need it: the apps work without it. It runs on a computer on your network
-(Linux, or anything with Python 3.10 or later) and does the heavy work that a
-36 MHz Psion cannot:
+PsiProxy is an **optional** helper for PsiTerm, PsiMail and PsiWeb. **You do
+not need it**: the apps are off it as standard, have no proxy address built
+in, and do everything on their own, TLS included. It runs on a computer on
+your network (Linux, macOS, or anything with Python 3.10 or later) and does
+the heavy work that a 36 MHz Psion finds slow.
 
-- it fetches pages for PsiWeb, doing the TLS itself, so the Psion can read
-  modern `https://` sites;
+What each app gets from it, once *Use proxy* is on:
+
+| App | Without PsiProxy | With PsiProxy |
+|---|---|---|
+| PsiTerm | everything (SSH, SFTP, updates) | *Send log to server* only |
+| PsiMail | everything (mail, calendar, contacts, updates; web pictures direct) | web pictures converted to 16 greys on the computer, if *Web pictures via proxy* is Yes (direct if the proxy does not answer); *Send log to server* |
+| PsiWeb | direct browsing with its own TLS 1.3 | TLS on the computer, slimmed pages, 16-grey pictures, one connection, updates through it; *Send log to server* |
+
+What it does:
+
+- it fetches pages for PsiWeb, doing the TLS itself, so the Psion skips a
+  TLS handshake for each site and can reach sites its own TLS cannot;
 - it slims each page for a 640x240, 16-grey browser with no CSS: articles are
   extracted into one clean column, home pages become a list of headlines, and
-  site menus fold into one `[ Menu ]` link;
-- it turns pictures (WebP, AVIF, JPEG, PNG, GIF) into small 16-grey GIFs;
+  site menus fold into one `[ Menu ]` link; less to fetch, lay out and hold
+  in memory;
+- it turns pictures (WebP, AVIF, JPEG, PNG, GIF) into small 16-grey GIFs, at
+  most 320 pixels wide, for PsiWeb and for PsiMail's web pictures;
+- it keeps one connection open with the Psion, so a modem dials once;
 - it streams downloads untouched, with `Range` support so updates can resume;
 - it receives logs from the apps' **Send log to server** button (`/_putlog`).
 
@@ -19,9 +33,12 @@ Optionally, it can render JavaScript-only pages in a headless Chromium (see
 
 ## Pointing the apps at it
 
-On the Psion, open the app's **Connection settings**, go to **Network** and
-turn on **Use proxy**. Enter the address of the computer running PsiProxy and
-port **8081**. The setting is shared by all the apps.
+On the Psion, open any app's **Tools > Connection settings**, go to
+**Network** and set **Use proxy** to Yes. Enter the address of the computer
+running PsiProxy and port **8081**. The setting is shared by all three apps
+(it is kept in `C:\System\Data\PsiLink.ini`), so it is set once. In
+PsiMail, also set Tools > Preferences > Screen > **Web pictures via proxy**
+to Yes if you want web pictures through it.
 
 PsiWeb sends every request, `https://` ones included, as a plain HTTP request
 with an absolute address. The link between the Psion and PsiProxy is therefore
@@ -186,6 +203,12 @@ It may also define `set_logger(fn)` and `start()`, which run at start. Its
 route answers only requests addressed to the proxy itself, unless it sets
 `PSIPROXY_LOCAL_ONLY = False`. Plug-ins read their own settings and secrets
 from the environment.
+
+For example, [PsiLinux](https://github.com/danieledge/psilinux) (Linux and
+Alpine Linux on the 5mx) has a package helper, `psiapk`, that runs as a
+plug-in: put `psiapk.py` from that project in `plugins.local/`, and either
+list it in `plugins.local.json` or start the proxy with
+`PSIPROXY_PLUGINS=psiapk` (the module names its own route, `/_apk/`).
 
 ## JavaScript rendering
 

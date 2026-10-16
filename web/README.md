@@ -48,11 +48,18 @@ The toolbar (Open, Back, Home, Pictures - pressed in while the page's pictures s
 
 **Tools > Preferences**: the home page and pictures.
 
-**A proxy (optional).** The proxy is one of the shared Connection settings: *Tools > Connection settings > Network > Use proxy*, with its address and port, used by PsiWeb, PsiMail's web pictures (if asked for) and *Send log to server* in all three apps. A proxy is recommended over a modem, but nothing needs one: it fetches `https://` pages for the Psion, which has no time for a TLS handshake on every page, and keeps one connection open, so the modem dials once. Two kinds work:
-- [PsiProxy](../proxy/README.md), in this repository: it also slims pages and converts pictures to 16 greys for the Psion's screen, and receives logs from *Send log to server*. It listens on port 8081 by default.
-- [WebOne](https://github.com/atauenis/webone), or any HTTP proxy that takes `GET http://...` requests.
+**A proxy (optional).** PsiWeb does not need one: without it (*Use proxy: No*, the standard), `http://` goes direct and `https://` uses PsiWeb's own TLS 1.3 client (X25519 + ChaCha20-Poly1305, with session resumption). Certificates are **not** checked, as in PsiTerm's updater. No proxy address is built in.
 
-Without a proxy (Use proxy: No, the standard), `http://` goes direct and `https://` uses PsiWeb's TLS 1.3 client (X25519 + ChaCha20-Poly1305, with session resumption). Certificates are **not** checked, as in PsiTerm's updater. No proxy address is built in.
+A proxy on a computer on your network makes browsing much quicker and lighter, which is why it is recommended. It is one of the shared Connection settings: *Tools > Connection settings > Network > Use proxy*, with its address and port, set once for all three apps. With it on, every request goes to the proxy as plain HTTP, `https://` ones too, and:
+- the computer does the TLS, so the Psion skips a handshake for each site, and can reach sites its own TLS cannot talk to;
+- one connection stays open for the whole session, so the modem dials once;
+- PsiWeb's updates from GitHub come through it too (they are still checked against the signature).
+
+Two kinds work:
+- [PsiProxy](../proxy/README.md), in this repository, the one made for PsiWeb. It also slims each page for the 640x240 screen (articles extracted into one column, home pages turned into lists of headlines, site menus folded into one `[ Menu ]` link), so there is less to fetch, lay out and hold in memory; turns pictures (WebP, AVIF, JPEG, PNG, GIF) into 16-grey GIFs at most 320 pixels wide; can render JavaScript-only pages in a headless browser, if you turn that on; and receives logs from *Send log to server*. It listens on port 8081 by default.
+- [WebOne](https://github.com/atauenis/webone), or any HTTP proxy that takes `GET http://...` requests: TLS and one connection, but no slimming and no logs.
+
+The link from the Psion to the proxy is plain HTTP, so keep the proxy on a network you trust.
 
 **Send log to server** (Tools): sends `PsiWeb.log` and `PsiWeb.old` to the proxy, if it is a PsiProxy, which saves them for you to read when something goes wrong. It is dimmed until a proxy is set. The log goes as plain HTTP and holds the addresses of the pages you visited, so send it only to your own PsiProxy.
 
