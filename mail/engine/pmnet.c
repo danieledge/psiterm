@@ -27,10 +27,12 @@ extern int  pg_net_read(void *buf, int max);
 extern int  pg_serial_write(const void *buf, int len);
 extern int  pg_wait(int ms, int want_net, int want_kbd);
 extern void pg_link_close(void);
+extern int  pg_link_keep(void);          /* psiglue: Psion Internet + "Stay connected" */
 extern int  pg_link_is_open(void);
 extern int  pg_rx_errors(int *last);      /* psiglue: serial line errors so far (host: 0) */
 extern void pg_set_link_log(void (*fn)(const char *));   /* psiglue's link messages, for the log */
 extern int  pg_net_closed(void);          /* psiglue: the link says the connection is over */
+extern void pg_link_suspect(void);        /* psiglue: PPP may be dead although NIFMAN says up */
 
 /* With nothing to do for this long, hang up and let go of the line.
  *
@@ -76,10 +78,58 @@ int pmn_conn_id(void) { return g_open ? g_connid : -1; }
 
 static int modem(void) { return pg_shared() && !pg_shared()->net_mode; }
 
+/* A connection that sat idle for a minute or more and then did not answer
+   (the NOOP in imap_open): on the Psion Internet route PPP has no LCP echo,
+   so NIFMAN still says the link is up while it is dead. Tell psiglue, so the
+   next dial checks the link (short timeouts, then a hang-up and a fresh
+   dial) instead of trusting NIFMAN and waiting out the full timeouts. */
+void pmn_link_suspect(void)
+{
+	if (!modem()) {
+		pm_log("net: idle connection did not answer: the link is suspect");
+		pg_link_suspect();
+	}
+}
+
 /* psiglue's one-line link messages ("Looking up...", "Modem: CONNECT",
    "The connection dropped (error -36)") in psimail.log too: on the Psion
    Internet route they are the only account of what the dial-up did */
 static void link_log(const char *msg) { pm_log("link: %s", msg); }
+
+/* "Modem provides TLS" is for the Atom modem's firmware (AT$TLS) only: any
+   other Wi-Fi modem (a WiRSa) just passes the bytes, and the server is
+   waiting for our TLS. So the setting is checked on the line, where it can
+   be: on a TLS port where the server speaks first (IMAP 993, SMTP 465, POP
+   995) a modem that provides TLS hands us the server's plain greeting at
+   once, while a server still waiting for TLS stays silent - then we do the
+   TLS ourselves, on this same connection, and the rest of this session does
+   too (no wait again). Other ports (HTTPS, where we speak first) follow what
+   the line showed last, or the setting if nothing has shown yet. */
+static int g_modem_tls_seen;              /* 1 the modem gave TLS, -1 it did not, 0 not known */
+#define MODEM_TLS_PROBE_MS 12000
+
+static int modem_gives_tls(int port)
+{
+	int m;
+	unsigned long t0;
+	if (port != 993 && port != 465 && port != 995)
+		return g_modem_tls_seen >= 0;
+	if (g_modem_tls_seen < 0)
+		return 0;
+	t0 = pm_ms();
+	m = pg_wait(MODEM_TLS_PROBE_MS, 1, 0);
+	if (m & 8)
+		return 1;                          /* (stopped: the caller's next read says so) */
+	if (pg_net_avail() > 0) {
+		g_modem_tls_seen = 1;
+		return 1;                          /* the greeting, in plain: left for the caller */
+	}
+	if (m & 1)
+		return 1;                          /* the line closed: the caller's read says so */
+	pm_log("net: no plain greeting in %lu ms: the modem does not provide TLS (Atom modem only) - the Psion does it", pm_ms() - t0);
+	g_modem_tls_seen = -1;
+	return 0;
+}
 
 int pmn_connect(const char *host, int port, int tls, char *why, int whymax)
 {
@@ -112,7 +162,12 @@ int pmn_connect(const char *host, int port, int tls, char *why, int whymax)
 	errs = pg_rx_errors(&last);
 	pm_log("net: connected in %lu ms (conn %d%s)", pm_ms() - t0, g_connid,
 		errs ? ", serial line errors so far" : "");
-	if (tls) {
+	if (tls && modem() && s->modem_tls && modem_gives_tls(port)) {
+		/* the Atom modem terminates TLS (AT$TLS): the line is already a
+		   plaintext tunnel inside the server's TLS, so the ARM does no
+		   crypto. The modem checked the certificate (AT$TLSV). */
+		pm_log("net: TLS done by the Atom modem (no crypto on the Psion)");
+	} else if (tls) {
 		t0 = pm_ms();
 		if (pmn_starttls(host, why, whymax) != 0) { pmn_close_why(1, why); return -1; }
 		pm_log("net: tls up in %lu ms", pm_ms() - t0);
@@ -321,6 +376,18 @@ void pmn_idle_tick(void)
 	long idle = modem() ? IDLE_RELEASE_MS : IDLE_RELEASE_NET_MS;
 	if (!g_open && !pg_link_is_open()) return;
 	if (pm_ms() - g_last_use < (unsigned long)idle) return;
+	if (!modem() && pg_link_keep()) {
+		/* Psion Internet with "Stay connected": log out and close the idle
+		   connection, but keep the socket server session (and NIFMAN's idle
+		   timers held off) while the engine runs, so the link stays up */
+		if (g_open) {
+			pm_log("net: nothing to do for %ld s: closing the connection, keeping the link (Stay connected)", idle / 1000);
+			imap_logout();
+			pmn_close_why(1, "idle, link kept");
+		}
+		g_last_use = pm_ms();
+		return;
+	}
 	pm_log("net: nothing to do for %ld s: releasing the line", idle / 1000);
 	pmn_release_now();
 }

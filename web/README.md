@@ -28,14 +28,17 @@ Install `dist/PsiWeb.sis` (to D: if you have a CF card). PsiWeb is on the Extras
 | Ctrl+M, Shift+Ctrl+M | zoom in / out (they cycle round the sizes); the Zoom in and Zoom out icons beside the screen do the same |
 | Ctrl+T | show or hide the toolbar (the page takes its room) |
 | Ctrl+I | show the pictures of this page, or take them away (as the Pictures button) |
+| Shift+Ctrl+D | add this page to Favourites |
 | Shift+Ctrl+Q | page information (title, address, status, free memory, connection) |
 | Ctrl+U | disconnect (hang up and free the serial port) |
-| Ctrl+K | preferences: home page, pictures, proxy |
+| Ctrl+K | preferences: home page, pictures |
 | Shift+Ctrl+H | help on PsiWeb |
 | Shift+Ctrl+A | about PsiWeb |
 | pen | tap links, buttons and form fields; the scroll bar beside the page (EIKON's) scrolls it |
 
-The toolbar (Open, Back, Home, Pictures - pressed in while the page's pictures show) and the menus (File, View, Go, Tools) follow the EIKON style guide, as PsiTerm's and PsiMail's do. Links' own menus, dialogs and bars are never shown: everything goes through PsiWeb.app.
+The toolbar (Open, Back, Home, Pictures - pressed in while the page's pictures show) and the menus (File, View, Go, Favourites, Tools) follow the EIKON style guide, as PsiTerm's and PsiMail's do. Links' own menus, dialogs and bars are never shown: everything goes through PsiWeb.app.
+
+**Favourites and History.** The menu bar is File, View, Go, Favourites, Tools. *Favourites > Add to favourites...* (Shift+Ctrl+D) saves the page showing (name from its title, editable); the first five are listed on the menu, *More favourites...* lists the rest, and *Organise favourites...* edits or deletes them (up to 40). *Go > History* lists the last five pages, newest first, with *Full history...* (50) and *Clear history*; a page is logged when it has loaded, a repeat moves to the top, and `about:` pages are skipped. *Open address* has a *Recent* line with the last twelve. They are kept in `C:\System\Apps\PsiWeb\Favourites.dat` and `History.dat` (not in PsiWeb.ini).
 
 **Passwords.** A page (or the proxy) that asks for a user name and password brings up PsiWeb's *User name and password* dialog. HTTP Basic and Digest (MD5 and SHA-256) are both understood. PsiWeb keeps the answer until it closes.
 
@@ -43,7 +46,17 @@ The toolbar (Open, Back, Home, Pictures - pressed in while the page's pictures s
 
 **Tools > Connection settings**: modem (`ATDT host:port`, as PsiTerm) or the Psion's own TCP/IP (dial-up), baud rate and flow control. These are the same settings as PsiTerm and PsiMail use. **Test** (Ctrl+T) tries them before OK. The serial port can be used by one program at a time, so disconnect PsiTerm or PsiMail first (and the Remote link must be off). The [Atom modem firmware](../firmware/atom-modem/README.md) is a Wi-Fi modem tuned for the Psion.
 
-**Tools > Preferences**: the home page, pictures, and a proxy. A [WebOne](https://github.com/atauenis/webone) proxy on your network is recommended over a modem: it keeps one connection open, so the modem dials once. Without a proxy, `http://` goes direct and `https://` uses PsiWeb's TLS 1.3 client (X25519 + ChaCha20-Poly1305, with session resumption). Certificates are **not** checked, as in PsiTerm's updater.
+**Tools > Preferences**: the home page and pictures.
+
+**A proxy (optional).** The proxy is one of the shared Connection settings: *Tools > Connection settings > Network > Use proxy*, with its address and port, used by PsiWeb, PsiMail's web pictures (if asked for) and *Send log to server* in all three apps. A proxy is recommended over a modem, but nothing needs one: it fetches `https://` pages for the Psion, which has no time for a TLS handshake on every page, and keeps one connection open, so the modem dials once. Two kinds work:
+- [PsiProxy](../proxy/README.md), in this repository: it also slims pages and converts pictures to 16 greys for the Psion's screen, and receives logs from *Send log to server*. It listens on port 8081 by default.
+- [WebOne](https://github.com/atauenis/webone), or any HTTP proxy that takes `GET http://...` requests.
+
+Without a proxy (Use proxy: No, the standard), `http://` goes direct and `https://` uses PsiWeb's TLS 1.3 client (X25519 + ChaCha20-Poly1305, with session resumption). Certificates are **not** checked, as in PsiTerm's updater. No proxy address is built in.
+
+**Send log to server** (Tools): sends `PsiWeb.log` and `PsiWeb.old` to the proxy, if it is a PsiProxy, which saves them for you to read when something goes wrong. It is dimmed until a proxy is set. The log goes as plain HTTP and holds the addresses of the pages you visited, so send it only to your own PsiProxy.
+
+**After use, Psion Internet** (Connection settings > Network): *Stays connected* (the standard on a new Psion) keeps the dial-up connection up after use, until you disconnect (Ctrl+U); *Disconnects when idle* leaves it to the Psion's own idle time, as before. Anyone updating from an older version keeps *Disconnects when idle* until they change it.
 
 **If the engine stops**: the browser engine runs as its own program, so the Psion carries on. PsiWeb says so on the page, and Tools > Restart browser engine starts it again.
 

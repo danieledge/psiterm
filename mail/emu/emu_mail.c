@@ -60,6 +60,9 @@ int pm_list_dir(const char *dir, const char *suffix, void (*cb)(const char *, vo
 	return n;
 }
 
+void pm_log_path(char *out, int max, int old) { snprintf(out, max, old ? "psimail.old" : "psimail.log"); }
+void pm_log_release(void) { }
+
 void pm_log(const char *fmt, ...)
 {
 	char b[400];
@@ -74,7 +77,9 @@ int pg_dial(char *why, int max) { return emu_hc(HP_DIAL, (int)g_sh.net.host, g_s
 void pg_hangup(void) { emu_hc(HP_HANGUP, 0, 0, 0, 0); }
 void pg_link_close(void) { emu_hc(HP_HANGUP, 0, 0, 0, 0); }
 int pg_link_is_open(void) { return 0; }
+int pg_link_keep(void) { return 0; }
 int pg_net_closed(void) { return 0; }
+void pg_link_suspect(void) { }
 int pg_net_avail(void) { return emu_hc(HP_AVAIL, 0, 0, 0, 0); }
 int pg_net_read(void *b, int m) { return emu_hc(HP_READ, (int)b, m, 0, 0); }
 int pg_serial_write(const void *b, int n) { return emu_hc(HP_WRITE, (int)b, n, 0, 0); }

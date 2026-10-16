@@ -197,15 +197,18 @@ static const unsigned char *rdstr(struct rd *r, unsigned int *len)
 	return s;
 }
 
-/* attributes: we want the size and whether it is a folder */
+/* the modified time (seconds since 1970) of the last attributes read; 0 = none */
+static unsigned long last_mtime;
+
+/* attributes: we want the size, whether it is a folder, and the modified time */
 static void rdattrs(struct rd *r, int *has_size, unsigned long *size, unsigned int *perm, int *has_perm)
 {
 	unsigned int flags = rd32(r), i, n, l;
-	*has_size = 0; *has_perm = 0; *size = 0; *perm = 0;
+	*has_size = 0; *has_perm = 0; *size = 0; *perm = 0; last_mtime = 0;
 	if (flags & FILEXFER_ATTR_SIZE) { *size = rd64(r); *has_size = 1; }
 	if (flags & FILEXFER_ATTR_UIDGID) { rd32(r); rd32(r); }
 	if (flags & FILEXFER_ATTR_PERMISSIONS) { *perm = rd32(r); *has_perm = 1; }
-	if (flags & FILEXFER_ATTR_ACMODTIME) { rd32(r); rd32(r); }
+	if (flags & FILEXFER_ATTR_ACMODTIME) { rd32(r); last_mtime = rd32(r); }
 	if (flags & FILEXFER_ATTR_EXTENDED) {
 		n = rd32(r);
 		for (i = 0; i < n && !r->bad; i++) { rdstr(r, &l); rdstr(r, &l); }
@@ -720,14 +723,14 @@ static void list_add(const unsigned char *name, unsigned int nlen, int has_size,
 	unsigned int perm, int has_perm)
 {
 	PsiShared *s = sh();
-	char line[40];
+	char line[56];
 	int t, ll, len = s->xfer_list_len;
 	if ((nlen == 1 && name[0] == '.') || (nlen == 2 && name[0] == '.' && name[1] == '.'))
 		return;
 	if (nlen == 0 || memchr(name, '\n', nlen) || memchr(name, '\t', nlen))
 		return;                       /* names we could not show safely */
 	t = !has_perm ? 'f' : S_TYPE(perm) == T_DIR ? 'd' : S_TYPE(perm) == T_REG ? 'f' : 'l';
-	ll = sprintf(line, "%c%lu\t", t, has_size ? size : 0UL);
+	ll = sprintf(line, "%c%lu\t%lu\t", t, has_size ? size : 0UL, last_mtime);
 	if (len + ll + (int)nlen + 1 > PSI_XFER_LIST_SIZE) {
 		s->xfer_list_more = 1;
 		return;

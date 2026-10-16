@@ -83,7 +83,9 @@ extern unsigned int fwrite(const void *, unsigned int, unsigned int, EMU_FILE *)
 unsigned int strlen(const char *);
 void pw_log(const char *t) { fwrite(t, 1, strlen(t), __stderr()); fwrite("\n", 1, 1, __stderr()); }
 int pg_link_is_open(void) { return 0; }
+int pg_link_keep(void) { return 0; }
 int pg_net_closed(void) { return 0; }
+void pg_link_suspect(void) { }
 int pg_net_avail(void) { return emu_hc(HP_AVAIL, 0, 0, 0, 0); }
 int pg_net_read(void *b, int m) { return emu_hc(HP_READ, (int)b, m, 0, 0); }
 int pg_serial_write(const void *b, int n) { return emu_hc(HP_WRITE, (int)b, n, 0, 0); }
@@ -97,3 +99,4 @@ int pg_entropy(unsigned char *o, int m) { return emu_hc(HP_ENTROPY, (int)o, m, 0
 
 /* Tools > Update PsiWeb: not in the emulator build */
 int pw_update_run(void) { return 4; }
+int pw_putlog_run(void) { return 4; }

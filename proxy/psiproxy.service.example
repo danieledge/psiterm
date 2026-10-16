@@ -1,0 +1,31 @@
+# PsiProxy as a systemd user service.
+#   cp psiproxy.service.example ~/.config/systemd/user/psiproxy.service
+#   (edit the paths if the proxy is not in ~/psiproxy)
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now psiproxy.service
+#   loginctl enable-linger "$USER"     # optional: run without a login session
+[Unit]
+Description=PsiProxy - web-slimming HTTP proxy for the Psion Series 5mx
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/psiproxy
+# Listen on this computer only. For a Psion on the LAN, set this computer's
+# LAN address (and, if you like, a tighter PSIPROXY_ALLOW).
+Environment=PSIPROXY_ADDR=127.0.0.1
+Environment=PSIPROXY_PORT=8081
+#Environment=PSIPROXY_ALLOW=192.168.1.0/24
+Environment=PSIPROXY_ALLOW_PRIVATE=0
+Environment=PSIPROXY_LOG_DIR=%h/psion-logs
+# Other settings can go in %h/.config/psiproxy/psiproxy.env.
+ExecStart=%h/psiproxy/.venv/bin/python %h/psiproxy/psiproxyd.py
+Restart=on-failure
+RestartSec=3
+# Light hardening (user services may ignore some of these)
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

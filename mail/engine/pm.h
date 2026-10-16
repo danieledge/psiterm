@@ -14,6 +14,8 @@ int pm_mkdir(const char *path);            /* 0 ok or exists */
 int pm_list_dir(const char *dir, const char *suffix,
                 void (*cb)(const char *name, void *ctx), void *ctx);
 void pm_log(const char *fmt, ...);
+void pm_log_path(char *out, int max, int old);   /* psimail.log (old: psimail.old) */
+void pm_log_release(void);                 /* close the log so it can be read: the next line opens it again */
 void pm_idle(int ms);                      /* sleep, keeping an eye on quit */
 void pm_rmtree(const char *dir);           /* delete a folder and all in it */
 int  pm_replace(const char *tmp, const char *path); /* tmp takes path's place (path may exist), in one step; 0 ok */
@@ -54,6 +56,7 @@ int  pmn_connect(const char *host, int port, int tls, char *why, int whymax);
 int  pmn_starttls(const char *host, char *why, int whymax);
 int  pmn_is_open(void);
 int  pmn_conn_id(void);
+void pmn_link_suspect(void);              /* an idle connection stopped answering: the Psion Internet link may be dead */
 int  pmn_write(const void *buf, int len);          /* 0 ok */
 int  pmn_printf(const char *fmt, ...);             /* 0 ok */
 int  pmn_read(void *buf, int max, int timeout_ms); /* >0, 0 closed, <0 */
@@ -205,6 +208,7 @@ int  pic_fetch(int acct, const char *folder, unsigned int uid, const char *parts
 /* one picture file to its .pmi, below the app (0 shown, 1 not: the .pmi says why, -1 could not write) */
 int  pic_decode_file(const char *img_path, const char *pmi_path, const char *label, long budget_left, char *note, int notemax);
 /* ---- pictures from the web, when asked for (webpics.c) */
+int  pm_send_log(char *why, int whymax);   /* PM_CMD_PUTLOG: POST the logs to the web proxy (webpics.c) */
 int  web_fetch(int acct, const char *folder, unsigned int uid, char *why, int whymax);
 unsigned long web_hash(const char *url);   /* <uid>_W<hash>.pmi: FNV-1a of the address */
 int  web_is_spacer(const char *url, int w, int h);

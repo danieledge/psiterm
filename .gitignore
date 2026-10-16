@@ -10,6 +10,9 @@ ssh/obj/
 ssh/hobj/
 ssh/psissh-host
 ssh/linktest
+ssh/psilinktest
+ssh/psiholdtest
+ssh/linkseentest
 ssh/emu/*.pe
 ssh/test/gf/gftest
 tools/sbtest/sbtest
@@ -19,6 +22,7 @@ pkg/psiterm.app
 pkg/psiterm.rsc
 pkg/psiterm.mbm
 pkg/psissh.exe
+pkg/psihold.exe
 pkg/STDLIB.SIS
 __pycache__/
 *.pyc
@@ -45,3 +49,32 @@ known_hosts
 tools/shot/host.raw
 tools/shot/host.screen
 .claude/
+
+# ---- kept out of this public repo ----------------------------------------
+# local additions: emulator tests and card makers (tools/emu/local/), and
+# other projects checked out here (list those in .git/info/exclude)
+/tools/emu/local/
+/tools/docker/psibuild.local
+# packages other than the released apps', and the local-only combined suite
+# (only the three released apps' packages are published)
+dist/*.sis
+!dist/PsiTerm.sis
+!dist/PsiMail.sis
+!dist/PsiWeb.sis
+# core dumps (qemu-user and others)
+*.core
+core
+core.[0-9]*
+# local headers, logs, environment and PsiProxy's own config
+*_local.h
+*.log
+*.log.old
+!experimental/kernel/results/*.log
+.env
+.env.*
+!.env.example
+proxy/psiproxy.env
+proxy/*.secret
+
+# Claude Code's local notes
+CLAUDE.local.md

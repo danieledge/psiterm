@@ -1,6 +1,6 @@
 # Error-recovery review: PsiTerm and PsiMail (branch dev, read-only)
 
-Scope: ssh/psiglue.cpp, ssh/psishim.c, ssh/sftp.c, ssh/tmuxq.c, ssh/tls13.c, ssh/pglinktest.cpp, ssh/psilink.h, app/psiterm.cpp, app/ptxfer.cpp, mail/engine (pmmain.c, pmepoc.cpp, pmnet.c, imap.c, smtp.c, store.c, http.c, pmupdate.c, webpics.c), mail/app (psimail.cpp, pmrecover.cpp, pmauto.cpp, pmstore.cpp). All paths are under /home/daniel/www/psion/psiterm/. Line numbers are from the current dev checkout.
+Scope: ssh/psiglue.cpp, ssh/psishim.c, ssh/sftp.c, ssh/tmuxq.c, ssh/tls13.c, ssh/pglinktest.cpp, ssh/psilink.h, app/psiterm.cpp, app/ptxfer.cpp, mail/engine (pmmain.c, pmepoc.cpp, pmnet.c, imap.c, smtp.c, store.c, http.c, pmupdate.c, webpics.c), mail/app (psimail.cpp, pmrecover.cpp, pmauto.cpp, pmstore.cpp). All paths are relative to the repository. Line numbers are from the current dev checkout.
 
 Severity scale: crash, data loss, hang, misleading, minor. "Needs device test" marks a code-verified path whose trigger timing I could not prove without hardware.
 

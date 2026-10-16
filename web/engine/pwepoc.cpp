@@ -115,6 +115,49 @@ extern "C" void pw_log(const char* aText)
 	gLog.Flush();
 	}
 
+// Tools > Send log to server (pwupdate.c pw_putlog_run): the size of a log
+// (aOld: PsiWeb.old), and a piece of it from aPos. The log is open for
+// writing with EFileShareAny, so it is read the same way.
+static TInt LogOpenRead(RFs& aFs, RFile& aFile, TInt aOld)
+	{
+	TInt err = aFs.Connect();
+	if (err == KErrNone)
+		{
+		err = aFile.Open(aFs, aOld ? KLogOld : KLogFile, EFileRead | EFileShareAny);
+		if (err != KErrNone)
+			aFs.Close();
+		}
+	return err;
+	}
+
+extern "C" long pw_log_size(int aOld)
+	{
+	RFs fs;
+	RFile f;
+	TInt size = 0;
+	if (LogOpenRead(fs, f, aOld) != KErrNone)
+		return 0;
+	if (f.Size(size) != KErrNone)
+		size = 0;
+	f.Close();
+	fs.Close();
+	return size;
+	}
+
+extern "C" long pw_log_read(int aOld, long aPos, void* aBuf, long aMax)
+	{
+	RFs fs;
+	RFile f;
+	if (aMax <= 0 || LogOpenRead(fs, f, aOld) != KErrNone)
+		return 0;
+	TPtr8 p((TUint8*)aBuf, 0, aMax);
+	TInt pos = aPos;
+	TInt err = f.Read(pos, p);
+	f.Close();
+	fs.Close();
+	return err == KErrNone ? p.Length() : 0;
+	}
+
 static void LogLink(const char* aText) { pw_log(aText); }
 
 static PwShared* gPw = 0;

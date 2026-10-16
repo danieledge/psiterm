@@ -95,7 +95,8 @@ enum
 	PM_CMD_DELFOLDER,        /* folder (not the Inbox or a standard folder) */
 	PM_CMD_PICTURES,         /* folder, uid, arg = part ids to fetch and decode ("1.2 1.3"; "!2" = however big): see engine/pictures.c */
 	PM_CMD_UNDO,             /* folder, uid: put back the message moved from there (Edit > Undo: engine/undo.c); last_file = its uid now */
-	PM_CMD_WEBPICS           /* folder, uid: fetch and set out the message's pictures from the web (engine/webpics.c) */
+	PM_CMD_WEBPICS,          /* folder, uid: fetch and set out the message's pictures from the web (engine/webpics.c) */
+	PM_CMD_PUTLOG            /* POST the engine's logs to the web proxy (0.86: Tools > Send log to server; webpics.c pm_send_log) */
 	};
 
 /* pictures in a message (engine/pictures.c, app/pmpict.cpp): a part this
@@ -159,7 +160,10 @@ typedef struct
 	char attach_dir[96];            /* where attachments are saved */
 	int offline;                    /* 1 = never dial: queue changes */
 	int prefetch;                   /* after a sync, download the text of the newest N (0 = off) */
-	int web_pic_proxy;              /* 1 = fetch web pictures via the "psiproxy" HTTP proxy (webpics.c) */
+	int web_pic_proxy;              /* 1 = fetch web pictures via the shared HTTP proxy (webpics.c) */
+	int use_proxy;                  /* (0.87) the shared proxy (PsiLink.ini): 1 = on, and it has a host */
+	char proxy_host[64];            /*   its host */
+	int proxy_port;                 /*   its port */
 	PmAccount acct[PM_MAX_ACCOUNTS];
 	volatile unsigned int acct_seq; /* app bumps after changing acct[] */
 	PmCalendar cal;

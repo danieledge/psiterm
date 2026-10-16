@@ -58,6 +58,7 @@ Liveness rules:
   - `RNif::DisableTimers` while online, re-enabled on close.
   - `NetworkActive()` is checked before a redial.
   - The last DNS answer is cached for 10 minutes.
+  - "Stay connected" (PsiLink.ini v4; the standard for a new Psion, while a file from before v4 loads as "Disconnects when idle" so upgraders keep the idle hang-up): the link stays up after use. NIFMAN undoes a session's `DisableTimers` when the session closes, so `psihold.exe` (`ssh/psihold.cpp`, shipped in every app's folder, one running per Psion) holds it once an app has brought it up, and ends when the link goes down or the setting changes. Disconnect (`PgLinkDisconnectL`, `RNif::Stop` in a bounded thread) takes it down. See `docs/epoc-comms-best-practices.md` 2.3.
 - **Common to both:**
   - Bounded timeouts: lookup 60 s, connect 30 s, CONNECT 25 s.
   - An async, bounded socket shutdown.
@@ -67,6 +68,8 @@ Liveness rules:
 - `ssh/pglinktest.cpp`: the **Test** button in each app's Connection settings, compiled into each app.
 - `ssh/tls13.c`: our TLS 1.3 client, used by PsiMail and PsiWeb.
 - Connection settings are **shared** by all three apps through `C:\System\Data\PsiLink.ini` (`ssh/psilink.h`).
+- The proxy (PsiLink.ini v2) is optional, off as standard, with **no address built in**. PsiProxy-only routes (Send log, `/_putlog`) use `TPsiLink::DevBox` / `pg_devbox` (`ssh/pgdevbox.h`): the proxy, unless it is the Atom's own (192.168.7.1 or `psiproxy`), when it is the optional `C:\System\Data\PsiDevBox.ini` (read-only here; written only by an optional dev tool), else not available. Never compile in a LAN address.
+- `proxy/` is the public PsiProxy (Python). Optional plug-ins (private modules) load only if present.
 
 ### PsiTerm (`app/`, `ssh/`)
 
@@ -84,7 +87,7 @@ Liveness rules:
 **Rules:**
 - Shortcuts are **Shift+Ctrl**: plain Ctrl+letter goes to the SSH host.
 - Settings live in `C:\System\Apps\PsiTerm\PsiTerm.ini`, a versioned stream to which new fields are appended.
-- Signed updates come from GitHub through the release **tag** (`…/v<ver>/dist/`).
+- Signed updates from GitHub: the updater reads `version.txt` from the branch (`main/dist/`, or `dev/dist/` for test builds), then fetches `PsiTerm.sis.sig` and `PsiTerm.sis` from the release **tag** (`…/v<ver>/dist/`), which never changes (`app/psiterm.cpp` `KGitHubPath`, `ssh/psishim.c` update code). So push the tag before, or with, the `version.txt` that names it.
 
 ### PsiMail (`mail/`)
 
@@ -174,7 +177,7 @@ The pins (G19 TX, G22 RX) are unconfirmed on hardware; `AT$SWAP=1` swaps them.
 3. Sign: `tools/release/sign.py [--product PsiMail|PsiWeb] dist/X.sis <ver>`. The key comes from `--key`, from `$PSITERM_RELEASE_KEY` (hex), or from `~/.psiterm-signing/release.key`. **Never commit the key.**
 4. Update `dist/version.txt` (PsiTerm), `dist/PsiMail-version.txt` and `dist/PsiWeb-version.txt`.
 5. Commit to **dev** and push. **Never push or merge to `main`**; the owner does that.
-6. **Tag PsiTerm releases** with `v<ver>`, because its updater reads the tag.
+6. **Tag PsiTerm releases** with `v<ver>`, because its updater fetches the `.sis` and `.sig` from the tag named by the branch's `version.txt`. Push the tag before, or with, the commit that changes `version.txt`.
 7. The combined `PsiApps.sis` (made with makesis from the three `.sis` files) and `CloseAll.sis` are local only: **never committed**.
 
 ## UI rules: the EIKON Application Style Guide

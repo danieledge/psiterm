@@ -15,6 +15,8 @@ REL=$EPOCROOT/epoc32/release/marm/rel
 
 echo "== libvterm";  "$HERE/build_vterm.sh"
 echo "== psissh";    make -C "$HERE/ssh" SDK="$PSION_SDK"
+echo "== psihold";   make -f "$HERE/ssh/psihold.mk" PSION_SDK="$PSION_SDK" > "$HERE/build/psihold.log" 2>&1 \
+  || { grep -E "error|undefined" "$HERE/build/psihold.log" | head -20; exit 1; }
 echo "== PsiTerm"
 # makmake works on projects inside the SDK tree: link the app folder there
 if [ -e "$EPOCROOT/ptproj/psiterm" ] && [ ! -L "$EPOCROOT/ptproj/psiterm" ]; then
@@ -33,7 +35,7 @@ python3 "$HERE/tools/mkicons.py" "$HERE/build/icons" "$HERE/app/pticons.h"
 ( cd "$HERE/build/icons" && wine "$EPOCROOT/epoc32/tools/bmconv.exe" /q psiterm.mbm $(tr '\n' ' ' < files.txt) > /dev/null 2>&1 )
 
 echo "== package"
-cp "$REL/psiterm.app" "$REL/psiterm.rsc" "$REL/psissh.exe" "$HERE/build/icons/psiterm.mbm" "$HERE/pkg/"
+cp "$REL/psiterm.app" "$REL/psiterm.rsc" "$REL/psissh.exe" "$HERE/build/icons/psiterm.mbm" "$HERE/build/psihold/psihold.exe" "$HERE/pkg/"
 # the EPOC C library (ESTLIB.DLL) is not in the 5mx ROM: embed the SDK's
 # redistributable stdlib.sis so a fresh Psion gets it too
 install -m 644 "$REL/stdlib.sis" "$HERE/pkg/STDLIB.SIS"   # (the SDK copy is read-only)

@@ -11,6 +11,7 @@
 #include <f32file.h>
 #include <eikdialg.h>
 #include <eiklbo.h>
+#include <coecntrl.h>
 
 class CTermView;
 class CPeriodic;
@@ -65,14 +66,50 @@ public:
 	// Scratch for one transfer at a time, here rather than on the stack: an
 	// EIKON app thread's stack is small (the SDK's default is 8 KB) and
 	// Send file -> BrowseL -> the folder dialog held about 4.7 KB of these
-	// at once. BrowseL uses iDir and iPath; its callers iPick, iRemote and
-	// iText - never the same one from both sides.
+	// at once. (0.91: the file view keeps its own folders, on the heap.)
 	TBuf8<512> iPick;                  // the chosen server file (Get) or folder (Send)
-	TBuf8<512> iDir;                   // the folder being browsed
-	TBuf8<512> iPath;                  // an entry's full name
 	TBuf8<512> iRemote;                // Send: the file's full name on the server
 	TBuf<512> iText;                   // a server name as Psion text
+	// 0.91: what the file view chose, for after it has closed
+	TInt iBrowseResult;                // EPtBrowse*
+	TUint iPickSize;                   // Get: the file's size
 	};
+
+enum { EPtBrowseNone, EPtBrowseGet, EPtBrowseSendHere };
+
+// ---------------------------------------------------------------------------
+// 0.91: Get file / Send file's file view. While browsing, the program's
+// window is the file view (not a dialog over the terminal): the app UI puts
+// it over the terminal (which goes on running under it), gives it the menus,
+// shortcuts and toolbar of its own, and passes it their commands. The
+// folders are listed in place: the view stays on screen while psissh lists
+// the next one.
+// ---------------------------------------------------------------------------
+class CEikMenuPane;
+
+class MPtBrowseHost
+	{
+public:
+	// the view has finished (its choice in CPtXferMemory): close it soon -
+	// not from inside the view's own code
+	virtual void BrowseCloseSoon() = 0;
+	// the toolbar's Favourite button: down while the folder shown is one
+	virtual void BrowseFavouriteShown(TBool aOn) = 0;
+	};
+
+class CPtBrowseView : public CCoeControl
+	{
+public:
+	virtual void CommandL(TInt aCommand) = 0;
+	virtual void InitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane) = 0;
+	virtual void SetViewRectL(const TRect& aRect) = 0;
+	virtual void StartL() = 0;              // the first listing (once it is on screen)
+	virtual TBool Sending() const = 0;
+	};
+
+CPtBrowseView* PtNewBrowseViewL(CTermView& aView, TBool aSend, MPtBrowseHost& aHost, const TRect& aRect);
+// after the view has gone: the Get or Send it chose, if any
+void PtBrowseFinishedL(CTermView& aView);
 
 // File menu commands
 void PtSendFileL(CTermView& aView);

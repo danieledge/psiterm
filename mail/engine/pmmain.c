@@ -407,6 +407,7 @@ static int run(PmCmd *c, char *why, int whymax)
 		s->trust_fp[0] = 0;
 		return PM_RES_OK;
 	}
+	if (c->op == PM_CMD_PUTLOG) return pm_send_log(why, whymax);
 	if (c->op == PM_CMD_CALSYNC) return cal_sync(!strcmp(c->arg, "list"), why, whymax);
 	if (c->op == PM_CMD_UPDATE) return pm_update(c->arg, c->folder, why, whymax);
 	if (a < 0 || a >= PM_MAX_ACCOUNTS || !s->acct[a].used) { snprintf(why, whymax, "No such account"); return PM_RES_FAILED; }

@@ -1,0 +1,7 @@
+# PsiProxy: required for full page slimming. Each is optional at run time
+# (the proxy degrades gracefully without it), but install them all.
+trafilatura>=1.8            # article extraction (Apache-2.0)
+readability-lxml>=0.8       # fallback extractor for galleries/listicles (Apache-2.0)
+lxml[html_clean]>=5.2       # HTML parsing and the tag allowlist (BSD-3-Clause)
+Pillow>=10                  # 16-grey GIF transcoding of pictures (MIT-CMU)
+textual>=0.50               # the dashboard (./psiproxy); not needed by the daemon (MIT)

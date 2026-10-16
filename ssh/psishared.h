@@ -131,7 +131,8 @@ typedef struct
 	volatile int xfer_list_len;        /* LIST: bytes in xfer_list */
 	volatile int xfer_list_more;       /* LIST: 1 = it did not all fit */
 	/* LIST: one line per entry: 'd' (folder), 'f' (file) or 'l' (other),
-	   the size in decimal, a tab, the name, '\n' */
+	   the size in decimal, a tab, the modified time (seconds since
+	   1970, 0 = not known), a tab, the name, '\n' (0.87) */
 	char xfer_list[PSI_XFER_LIST_SIZE];
 	/* tmux queries on a channel of their own (tmuxq.c): PsiTerm asks tmux
 	   itself for its windows - a command run on the server, not a guess
@@ -154,7 +155,28 @@ typedef struct
 	unsigned int bell_magic;
 	PsiBell app_bell;              /* the engine rings, the app waits */
 	PsiBell eng_bell;              /* the app rings, the engine waits */
+	/* (0.89) Tools > Send log to server (mode 6, psishim.c run_putlog):
+	   the proxy the app is set to use (PsiLink.ini), and how it went */
+	char proxy_host[64];
+	int proxy_port;
+	volatile int log_state;        /* PSI_LOG_* */
+	char log_msg[96];              /* the short reason, if it failed */
+	/* (0.88) modem route only: 1 = the Atom modem terminates TLS itself
+	   (AT$TLS), so the engine dials the TLS port in plain and speaks
+	   plaintext - no TLS 1.3 on the 36 MHz ARM. Ignored on the Psion
+	   Internet (PPP) route, where the engine always does its own TLS. Only
+	   PsiMail reads it (SSH is never wrapped, PsiWeb offloads via the proxy). */
+	int modem_tls;
 	} PsiShared;
+
+/* log_state (mode 6) */
+enum
+	{
+	PSI_LOG_IDLE = 0,
+	PSI_LOG_RUNNING,
+	PSI_LOG_SENT,
+	PSI_LOG_FAILED                 /* log_msg says why */
+	};
 
 /* tmux queries: what to do (tq_op) */
 enum

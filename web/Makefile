@@ -87,7 +87,7 @@ else
 $(O)/web/pwepoc.o: engine/pwepoc.cpp psiweb.h fb/pwback.h ../ssh/psishared.h
 	@mkdir -p $(dir $@)
 	$(TCC) -c $(CXXFLAGS) $< -o $@
-$(O)/web/psiglue.o: $(TOP)/ssh/psiglue.cpp $(TOP)/ssh/psishared.h $(TOP)/ssh/psibell.h
+$(O)/web/psiglue.o: $(TOP)/ssh/psiglue.cpp $(TOP)/ssh/psishared.h $(TOP)/ssh/psibell.h $(TOP)/ssh/psilink.h
 	@mkdir -p $(dir $@)
 	$(TCC) -c $(CXXFLAGS) '-DPSI_SHARED_NAME="PsiWebShared"' $< -o $@
 $(O)/web/%.o: compat/%.c

@@ -526,9 +526,9 @@ reason to minimise opening the case.
 
 Register-level and primary [well-sourced]:
 - Symbian `WINDMERE.INC` (1998-1999), in the emulator checkout:
-  `/home/daniel/www/psion/psionEmulators/tests/windmere.inc` (PWRCNT, PWRSR, MEMCFG,
+  `../psionEmulators/tests/windmere.inc` (PWRCNT, PWRSR, MEMCFG,
   LCD, UART, timers, SSI, GPIO definitions).
-- psionEmulators core: `/home/daniel/www/psion/psionEmulators/core/windermere.cpp`,
+- psionEmulators core: `../psionEmulators/core/windermere.cpp`,
   `wind_defs.h`, `etna.cpp`, `vcfcard.cpp`, `audio_codec.h`.
 - EPOC R5 SDK: `epoc32/include/e32svr.h` (RDebug, RMmu, UserSvr::ScreenInfo),
   `e32hal.h` (UserHal, TMachineInfoV1, TSupplyInfoV1), `d32comm.h` (TBps,

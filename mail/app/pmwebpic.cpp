@@ -85,6 +85,14 @@ TBool CPmView::WebPicturesOn() const
 	return WebPicturesPref() == 1 || (iWebUid && iWebUid == iMsgUid);
 	}
 
+// Tools > Troubleshooting > Send log to server: the engine posts psimail.old
+// and psimail.log to the proxy; the outcome comes back as an infoprint
+// (pmstatus.cpp OutcomeText)
+void CPmView::SendLog()
+	{
+	Cmd(PM_CMD_PUTLOG, KNullDesC8, 0, KNullDesC8);
+	}
+
 TBool CPmView::WebPicturesViaProxy() const
 	{
 	return (iSettings->iSpare[0] & KPmWebProxyBit) != 0;

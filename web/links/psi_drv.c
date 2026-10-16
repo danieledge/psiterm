@@ -1102,6 +1102,15 @@ static void run_command(int cmd, char *arg)
 		pwb_set_status("Hung up - the serial port is free");
 #endif
 		break;
+	case PW_CMD_PUTLOG:
+		/* Tools > Send log to server (web/engine/pwupdate.c): as Update,
+		   it runs to the end here and says how it went in log_state */
+		abort_all_connections();
+		{
+			extern int pw_putlog_run(void);
+			pw_putlog_run();
+		}
+		break;
 	case PW_CMD_UPDATE:
 		/* Tools > Update PsiWeb (web/engine/pwupdate.c): it needs the
 		   connection, and runs to the end here (it keeps the app told

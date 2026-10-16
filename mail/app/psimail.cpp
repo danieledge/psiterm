@@ -50,28 +50,54 @@ static TInt PrefetchCount(const TPmSettings& aSettings)
 static void UseSharedLink(RFs& aFs, TPmSettings& aSettings, TDes* aPppStart)
 	{
 	TPsiLink link;
+	link.SetDefaults();
 	if (!link.Load(aFs))
 		{
-		link.SetDefaults();
+		if (aSettings.iSpare[0] & KPmWebProxyBit)
+			{
+			// (0.87) no shared file yet, but web pictures went via the proxy:
+			// start it with the proxy on (the host and port are the box's)
+			link.iBaudIndex = aSettings.iBaudIndex;
+			link.iRtsCts = aSettings.iRtsCts ? 1 : 0;
+			link.iNetMode = aSettings.iNetMode ? 1 : 0;
+			link.iUseProxy = 1;
+			link.Save(aFs);
+			}
 		if (aPppStart)
 			*aPppStart = link.iPppStart;
 		return;
 		}
+	if (link.iLoadedVer < 2 && (aSettings.iSpare[0] & KPmWebProxyBit))
+		{
+		// (0.87) once: the shared file has no proxy yet and web pictures went
+		// via the proxy, so the shared proxy starts on
+		link.iUseProxy = 1;
+		link.Save(aFs);
+		}
 	aSettings.iBaudIndex = link.iBaudIndex;
 	aSettings.iRtsCts = link.iRtsCts;
 	aSettings.iNetMode = link.iNetMode;
+	if (link.iModemTls)
+		aSettings.iSpare[0] |= KPmModemTlsBit;
+	else
+		aSettings.iSpare[0] &= ~KPmModemTlsBit;
 	if (aPppStart)
 		*aPppStart = link.iPppStart;
 	}
 
+// Writes the link lines; the proxy in PsiLink.ini is left as it is (the
+// Connection settings dialog writes that itself)
 static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& aPppStart)
 	{
 	TPsiLink link, old;
+	link.SetDefaults();
+	TBool had = link.Load(aFs);
+	old = link;
 	link.iBaudIndex = aSettings.iBaudIndex;
 	link.iRtsCts = aSettings.iRtsCts ? 1 : 0;
 	link.iNetMode = aSettings.iNetMode ? 1 : 0;
 	link.iPppStart = aPppStart.Left(aPppStart.Length() < 40 ? aPppStart.Length() : 40);   // Left(n) panics if n > length
-	if (old.Load(aFs) && old.iBaudIndex == link.iBaudIndex && old.iRtsCts == link.iRtsCts
+	if (had && old.iBaudIndex == link.iBaudIndex && old.iRtsCts == link.iRtsCts
 		&& old.iNetMode == link.iNetMode && old.iPppStart == link.iPppStart)
 		return;
 	link.Save(aFs);
@@ -79,7 +105,7 @@ static void SaveSharedLink(RFs& aFs, const TPmSettings& aSettings, const TDesC& 
 
 _LIT(KEngineExe, "psimail.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiMail\\PsiMail.ini");
-_LIT(KVersion, "0.84");          // also pkg/psimail.pkg
+_LIT(KVersion, "0.92");          // also pkg/psimail.pkg
 const TInt KTick = 250000;       // look at the engine 4 times a second
 const TInt KTickQuiet = 2000000; // (0.81) ...or every 2 s when nothing is going on: the doorbell brings news
 const TInt KCalmTicks = 4;       // quick ticks with nothing going on before the slow pace (1 s)
@@ -409,6 +435,25 @@ void CPmView::StoreDir(TDes& aDir) const
 	FromC(aDir, iShared->store_dir);
 	}
 
+// (0.87) the proxy is the shared one (PsiLink.ini, set in Connection
+// settings): the engine reads it from the chunk. Read again here because
+// another app may have changed it.
+void CPmView::ProxyToShared()
+	{
+	TPsiLink link;
+	link.SetDefaults();
+	link.Load(iCoeEnv->FsSession());
+	iShared->use_proxy = link.ProxyUsable() ? 1 : 0;
+	CopyToC(iShared->proxy_host, sizeof(iShared->proxy_host), link.iProxyHost);
+	iShared->proxy_port = link.iProxyPort;
+	}
+
+TBool CPmView::ProxyUsable()
+	{
+	ProxyToShared();
+	return iShared->use_proxy != 0;
+	}
+
 void CPmView::CopySettingsToShared()
 	{
 	PmShared* s = iShared;
@@ -417,10 +462,12 @@ void CPmView::CopySettingsToShared()
 	s->net.baud_index = iSettings->iBaudIndex;
 	s->net.rtscts = iSettings->iRtsCts;
 	s->net.net_mode = iSettings->iNetMode;
+	s->net.modem_tls = (iSettings->iSpare[0] & KPmModemTlsBit) ? 1 : 0;
 	CopyToC(s->net.ppp_start, sizeof(s->net.ppp_start), ppp);
 	s->offline = iSettings->iOffline;
 	s->prefetch = PrefetchCount(*iSettings);
 	s->web_pic_proxy = (iSettings->iSpare[0] & KPmWebProxyBit) ? 1 : 0;
+	ProxyToShared();
 	CopyToC(s->net.version, sizeof(s->net.version), KVersion);
 	Mem::Copy(s->acct, iSettings->iAccounts, sizeof(s->acct));
 	Mem::Copy(&s->cal, &iCal->iCal, sizeof(s->cal));
@@ -3281,6 +3328,51 @@ void CPmConnDialog::PreLayoutDynInitL()
 	SetChoiceListCurrentItem(EPmDlgBaud, iSettings.iBaudIndex);
 	SetChoiceListCurrentItem(EPmDlgFlow, iSettings.iRtsCts ? 1 : 0);
 	SetEdwinTextL(EPmDlgPppStart, &iPppStart);
+	// the proxy, shared by all three apps (psilink.h)
+	TPsiLink link;
+	link.SetDefaults();
+	link.Load(iCoeEnv->FsSession());
+	SetChoiceListCurrentItem(EPmDlgUseProxy, link.iUseProxy ? 1 : 0);
+	SetEdwinTextL(EPmDlgProxyHost, &link.iProxyHost);
+	SetNumberEditorValue(EPmDlgProxyPort, link.iProxyPort);
+	SetChoiceListCurrentItem(EPmDlgModemTls, link.iModemTls ? 1 : 0);
+	SetChoiceListCurrentItem(EPmDlgKeepUp, link.iKeepUp ? 0 : 1);
+	DimProxyLines();
+	DimModemTlsLine();
+	DimKeepUpLine();
+	}
+
+// (0.89) staying connected after use is the Psion Internet route's only:
+// the modem route always hangs up (it holds the serial port)
+void CPmConnDialog::DimKeepUpLine()
+	{
+	SetLineDimmedNow(EPmDlgKeepUp, ChoiceListCurrentItem(EPmDlgLink) != 1);
+	}
+
+// modem TLS is the Atom's to do only on the modem route: on Psion Internet
+// the engine always does its own TLS, so dim the line there
+void CPmConnDialog::DimModemTlsLine()
+	{
+	SetLineDimmedNow(EPmDlgModemTls, ChoiceListCurrentItem(EPmDlgLink) == 1);
+	}
+
+// the host and port wait for "Use proxy" to be Yes: dimmed, not hidden
+void CPmConnDialog::DimProxyLines()
+	{
+	TBool off = ChoiceListCurrentItem(EPmDlgUseProxy) != 1;
+	SetLineDimmedNow(EPmDlgProxyHost, off);
+	SetLineDimmedNow(EPmDlgProxyPort, off);
+	}
+
+void CPmConnDialog::HandleControlStateChangeL(TInt aControlId)
+	{
+	if (aControlId == EPmDlgUseProxy)
+		DimProxyLines();
+	else if (aControlId == EPmDlgLink)
+		{
+		DimModemTlsLine();
+		DimKeepUpLine();
+		}
 	}
 
 // Test: tries the values shown (not yet saved). If the mail engine has the
@@ -3301,6 +3393,17 @@ TBool CPmConnDialog::OkToExitL(TInt aButtonId)
 		TestL();
 		return EFalse;
 		}
+	TInt proxy = ChoiceListCurrentItem(EPmDlgUseProxy) == 1;
+	TBuf<60> host;
+	GetEdwinText(host, EPmDlgProxyHost);
+	host.Trim();
+	TInt port = NumberEditorValue(EPmDlgProxyPort);
+	if (proxy && host.Length() == 0)
+		{
+		iEikonEnv->InfoMsg(_L("No proxy host entered"));
+		TryChangeFocusToL(EPmDlgProxyHost);
+		return EFalse;
+		}
 	iSettings.iNetMode = ChoiceListCurrentItem(EPmDlgLink) == 1;
 	iSettings.iBaudIndex = ChoiceListCurrentItem(EPmDlgBaud);
 	iSettings.iRtsCts = ChoiceListCurrentItem(EPmDlgFlow) == 1;
@@ -3308,6 +3411,31 @@ TBool CPmConnDialog::OkToExitL(TInt aButtonId)
 	GetEdwinText(ppp, EPmDlgPppStart);
 	ppp.TrimAll();
 	iPppStart = ppp;
+	// the proxy goes straight to the shared file; the link lines are saved by
+	// the caller (SaveSharedLink keeps the proxy as it finds it)
+	RFs& fs = iCoeEnv->FsSession();
+	TPsiLink link;
+	link.SetDefaults();
+	link.Load(fs);
+	link.iUseProxy = proxy;
+	if (host.Length())
+		link.iProxyHost = host;
+	if (port > 0 && port < 65536)
+		link.iProxyPort = port;
+	link.iModemTls = ChoiceListCurrentItem(EPmDlgModemTls) == 1;
+	link.iKeepUp = ChoiceListCurrentItem(EPmDlgKeepUp) == 0;
+	link.Save(fs);
+	// a link already up and now to stay up: hold it (psihold.exe ends by
+	// itself when the setting goes the other way)
+	if (link.iKeepUp && iSettings.iNetMode)
+		{
+		TFileName near(iEikonEnv->EikAppUi()->Application()->AppFullName());
+		PsiHoldStart(fs, near);
+		}
+	if (link.iModemTls)
+		iSettings.iSpare[0] |= KPmModemTlsBit;
+	else
+		iSettings.iSpare[0] &= ~KPmModemTlsBit;
 	return ETrue;
 	}
 
@@ -5019,9 +5147,16 @@ void CPmAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 	if (aMenuId == R_PM_FILE_MENU)
 		{
 		aMenuPane->SetItemButtonState(EPmCmdOffline, iSettings.iOffline ? EEikMenuItemSymbolOn : 0);
-		aMenuPane->SetItemDimmed(EPmCmdHangup, !iView->Shared()->online);
+		// (0.89) on Psion Internet, also while the link is up with no mail
+		// connection on it ("Stay connected" keeps it)
+		aMenuPane->SetItemDimmed(EPmCmdHangup, !iView->Shared()->online && !(iSettings.iNetMode && PgLinkUp()));
 		aMenuPane->SetItemDimmed(EPmCmdStop, !iView->Busy());
 		aMenuPane->SetItemDimmed(EPmCmdConnect, iView->Busy() || iSettings.iOffline);
+		}
+	else if (aMenuId == R_PM_TROUBLE_MENU)
+		{
+		// (dimmed, not gone, until a proxy is set in Connection settings: the log goes to it)
+		aMenuPane->SetItemDimmed(EPmCmdSendLog, !iView->ProxyUsable() || iView->OpInFlight(PM_CMD_PUTLOG));
 		}
 	else if (aMenuId == R_PM_PRINT_MENU)
 		{
@@ -5132,7 +5267,7 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		aCommand != EPmCmdToggleToolbar && aCommand != EPmCmdToggleTitle && aCommand != EPmCmdToggleFolders &&
 		aCommand != EPmCmdStatusInfo && aCommand != EPmCmdStop && aCommand != EPmCmdPrefs &&
 		aCommand != EPmCmdZoomIn && aCommand != EPmCmdZoomOut && aCommand != EPmCmdCalSettings &&
-		aCommand != EPmCmdRestart && aCommand != EPmCmdHelp)
+		aCommand != EPmCmdRestart && aCommand != EPmCmdHelp && aCommand != EPmCmdSendLog)
 		{
 		iView->Toast(_L("No account - add one with Tools > Accounts"));
 		return;
@@ -5189,8 +5324,15 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		break;
 		}
 	case EPmCmdHangup:
-		iView->Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
-		iView->Working(_L("Disconnecting..."));
+		if (iView->Shared()->online || !iSettings.iNetMode)
+			{
+			iView->Cmd(PM_CMD_HANGUP, KNullDesC8, 0, KNullDesC8);
+			iView->Working(_L("Disconnecting..."));
+			}
+		// (0.89) Psion Internet: the link itself goes too, even when "Stay
+		// connected" holds it (pglinktest.cpp; ends psihold.exe)
+		if (iSettings.iNetMode)
+			PgLinkDisconnectL();
 		break;
 	case EPmCmdAbout:
 		AboutL();
@@ -5462,6 +5604,13 @@ void CPmAppUi::HandleCommandL(TInt aCommand)
 		}
 	case EPmCmdRestart:
 		iView->RestartEngineL();
+		break;
+	case EPmCmdSendLog:
+		// no dialog: the engine posts its logs to the web proxy (engine/webpics.c pm_send_log)
+		if (!iView->ProxyUsable())
+			iView->Toast(_L("Not available - set a proxy in Connection settings"));
+		else
+			iView->SendLog();
 		break;
 	case EPmCmdBack:
 		break;

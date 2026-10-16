@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Open the PsiProxy dashboard (the Textual TUI).
+set -e
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$DIR/psiproxytui.py" "$@"

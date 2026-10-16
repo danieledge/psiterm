@@ -1,7 +1,7 @@
 # Fix log: PsiTerm app (app/*, pkg/, tools/) - 3 October 2026
 
 Scope: every finding of recovery.md, bestpractice.md and eikon.md whose code is in `app/`.
-Repository `/home/daniel/www/psion/psiterm`, branch `dev`. Nothing committed; versions not bumped.
+This repository, branch `dev`. Nothing committed; versions not bumped.
 Line numbers below are in the edited files.
 
 Files changed: `app/psiterm.cpp`, `app/psiterm.h`, `app/psiterm.rss`, `app/psiterm.hrh` (comment),

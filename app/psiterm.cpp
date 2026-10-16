@@ -28,6 +28,7 @@
 #include <apgtask.h>        // TApaSystemEvent: a backup starting
 #include "psiterm.h"
 #include "ptxfer.h"
+#include <eikmenub.h>
 #include "pticons.h"
 #include "psilink.h"
 #include "pglinktest.h"
@@ -87,7 +88,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.86");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.95");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -1179,6 +1180,7 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 		else if (iLaunchMode == 3) aText.Append(_L("Sending screenshots..."));
 		else if (iLaunchMode == 4) aText.Append(_L("Making an SSH key..."));
 		else if (iLaunchMode == 5) aText.Append(_L("Importing an SSH key..."));
+		else if (iLaunchMode == 6) aText.Append(_L("Sending log..."));
 		else if (state == PSI_STATE_DIALING || state == PSI_STATE_KEYEX || state == PSI_STATE_AUTH)
 			{
 			// something that moves, so a slow 36 MHz handshake never looks stuck
@@ -3533,6 +3535,33 @@ void CTermView::StartUpdateL()
 	LaunchSshL(2);
 	}
 
+// Tools > Send log to server (0.89): psissh in mode 6 POSTs PsiTerm.old and
+// PsiTerm.log to the proxy set in Connection settings (shared in PsiLink.ini).
+// Nothing blocks: "Sending log..." is shown bottom left while it runs, and
+// the exit handler says how it went with an infoprint.
+void CTermView::StartSendLogL()
+	{
+	if (iSshActive || iGatheringEntropy)
+		{
+		iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
+		return;
+		}
+	TPsiLink link;
+	// (not the Atom's own proxy: it has no /_putlog; then PsiDevBox.ini, if set)
+	if (!link.Load(iCoeEnv->FsSession()) || !link.ProxyUsable() ||
+		!link.DevBox(iCoeEnv->FsSession(), iLogHost, iLogPort))
+		{
+		iEikonEnv->InfoMsg(_L("Not available - set a proxy in Connection settings"));
+		return;
+		}
+	LaunchSshL(6);
+	if (iSshActive && iLaunchMode == 6)
+		{
+		iLogBusy = ETrue;
+		TRAP_IGNORE(iEikonEnv->BusyMsgL(_L("Sending log..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
+		}
+	}
+
 // ----- screenshots -------------------------------------------------------------
 // A screenshot (.psi) holds the screen pixels (16 greys) plus every cell's
 // character and colours, so problems can be seen and decoded exactly.
@@ -3750,7 +3779,7 @@ void CTermView::LaunchSshL(TInt aMode)
 	UseSharedLink(iCoeEnv->FsSession(), iSettings);   // PsiMail/PsiWeb may have changed it
 	iShared->baud_index = iSettings.iBaudIndex;
 	iShared->rtscts = iSettings.iRtsCts;
-	iShared->net_mode = (aMode != 1 && aMode < 4 && iSettings.iNetMode) ? 1 : 0;
+	iShared->net_mode = (aMode != 1 && (aMode < 4 || aMode == 6) && iSettings.iNetMode) ? 1 : 0;
 	{
 	TPtr8 ps((TUint8*)iShared->ppp_start, sizeof(iShared->ppp_start) - 1);
 	ps.Copy(iSettings.iPppStart);
@@ -3789,6 +3818,18 @@ void CTermView::LaunchSshL(TInt aMode)
 		TPtr8 save((TUint8*)iShared->save_as, sizeof(iShared->save_as) - 1);
 		save.Copy(iUpdateFile);
 		save.ZeroTerminate();
+		}
+	if (aMode == 6)
+		{
+		// Send log (0.89): where to POST it - the shared proxy - and our version
+		TPtr8 ph((TUint8*)iShared->proxy_host, sizeof(iShared->proxy_host) - 1);
+		ph.Copy(iLogHost);
+		ph.ZeroTerminate();
+		iShared->proxy_port = iLogPort;
+		TPtr8 ver((TUint8*)iShared->version, sizeof(iShared->version) - 1);
+		ver.Copy(KPsiTermVersion);
+		ver.ZeroTerminate();
+		iShared->log_state = PSI_LOG_RUNNING;
 		}
 	if (aMode == 0)
 		{
@@ -4115,6 +4156,18 @@ void CTermView::SshProcessEnded()
 	TInt stage = iShared ? iShared->state : -1;
 	TInt exitCode = iShared ? iShared->exit_code : -1;
 	TInt lost = iShared ? iShared->lost_link : 0;
+	TInt logState = (iShared && iLaunchMode == 6) ? iShared->log_state : 0;
+	TBuf<96> logWhy;
+	if (iShared && iLaunchMode == 6)
+		{
+		iShared->log_msg[sizeof(iShared->log_msg) - 1] = 0;
+		TInt wl = 0;
+		while (wl < (TInt)sizeof(iShared->log_msg) - 1 && iShared->log_msg[wl] != 0)
+			wl++;
+		if (wl > logWhy.MaxLength())
+			wl = logWhy.MaxLength();
+		logWhy.Copy((const TUint8*)iShared->log_msg, wl);
+		}
 	TBool killed = iKilled;
 	iKilled = EFalse;
 	iQuitAsked = EFalse;
@@ -4154,6 +4207,27 @@ void CTermView::SshProcessEnded()
 		msg.Format(_L8("\r\n[SSH program finished]\r\n"));
 	LocalMessage(msg);
 	ApplySerialSettings();
+	if (iLaunchMode == 6)
+		{
+		// how Send log went: an infoprint (the busy message goes first)
+		if (iLogBusy)
+			iEikonEnv->BusyMsgCancel();
+		iLogBusy = EFalse;
+		TBuf<128> m;
+		if (type != EExitPanic && !killed && logState == PSI_LOG_SENT)
+			m.Copy(_L("Log sent"));
+		else
+			{
+			m.Copy(_L("Could not send log - "));
+			if (type == EExitPanic || killed)
+				m.Append(_L("the program stopped"));
+			else if (logWhy.Length() > 0)
+				m.Append(logWhy);
+			else
+				m.Append(_L("no reply"));
+			}
+		iEikonEnv->InfoMsg(m);
+		}
 	if (iLaunchMode == 2 && type != EExitPanic && exitCode == 10)
 		{
 		LocalMessage(_L8("\r\nStarting the installer - PsiTerm will close.\r\n"));
@@ -5173,6 +5247,16 @@ void CConnDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPtDlgLink))->SetCurrentItem(iSettings.iNetMode ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgReconnect))->SetCurrentItem(iSettings.iAutoReconnect ? 1 : 0);
 	SetEdwinTextL(EPtDlgPppStart, &iSettings.iPppStart);
+	// the proxy, shared by all three apps (psilink.h)
+	TPsiLink link;
+	link.SetDefaults();
+	link.Load(iCoeEnv->FsSession());
+	SetChoiceListCurrentItem(EPtDlgProxy, link.iUseProxy ? 1 : 0);
+	SetEdwinTextL(EPtDlgProxyHost, &link.iProxyHost);
+	SetNumberEditorValue(EPtDlgProxyPort, link.iProxyPort);
+	SetChoiceListCurrentItem(EPtDlgKeepUp, link.iKeepUp ? 0 : 1);   // (link keep-up)
+	DimProxyLines();
+	DimKeepUpLine();
 	// Test is dimmed while SSH runs (see TestL); the dialog's other lines
 	// stay, as the settings apply when SSH ends
 	if (iView && iView->SshActive())
@@ -5181,6 +5265,29 @@ void CConnDialog::PreLayoutDynInitL()
 		if (b)
 			b->SetDimmed(ETrue);
 		}
+	}
+
+// the host and port wait for "Use proxy" to be Yes: dimmed, not hidden
+void CConnDialog::DimProxyLines()
+	{
+	TBool off = ChoiceListCurrentItem(EPtDlgProxy) != 1;
+	SetLineDimmedNow(EPtDlgProxyHost, off);
+	SetLineDimmedNow(EPtDlgProxyPort, off);
+	}
+
+// (link keep-up) staying connected after use is the Psion Internet
+// route's only: the modem route always hangs up (it holds the serial port)
+void CConnDialog::DimKeepUpLine()
+	{
+	SetLineDimmedNow(EPtDlgKeepUp, ChoiceListCurrentItem(EPtDlgLink) != 1);
+	}
+
+void CConnDialog::HandleControlStateChangeL(TInt aControlId)
+	{
+	if (aControlId == EPtDlgProxy)
+		DimProxyLines();
+	else if (aControlId == EPtDlgLink)
+		DimKeepUpLine();
 	}
 
 // Test: tries the values shown (not yet saved). PsiTerm's own terminal
@@ -5219,6 +5326,17 @@ TBool CConnDialog::OkToExitL(TInt aButtonId)
 		TestL();
 		return EFalse;
 		}
+	TInt proxy = ChoiceListCurrentItem(EPtDlgProxy) == 1;
+	TBuf<60> host;
+	GetEdwinText(host, EPtDlgProxyHost);
+	host.Trim();
+	TInt port = NumberEditorValue(EPtDlgProxyPort);
+	if (proxy && host.Length() == 0)
+		{
+		iEikonEnv->InfoMsg(_L("No proxy host entered"));
+		TryChangeFocusToL(EPtDlgProxyHost);
+		return EFalse;
+		}
 	iSettings.iBaudIndex = ((CEikChoiceList*)Control(EPtDlgBaud))->CurrentItem();
 	iSettings.iRtsCts = ((CEikChoiceList*)Control(EPtDlgFlow))->CurrentItem() == 1;
 	iSettings.iNetMode = ((CEikChoiceList*)Control(EPtDlgLink))->CurrentItem() == 1;
@@ -5227,6 +5345,26 @@ TBool CConnDialog::OkToExitL(TInt aButtonId)
 	GetEdwinText(ppp, EPtDlgPppStart);
 	ppp.TrimAll();
 	iSettings.iPppStart = ppp;
+	// the proxy goes straight to the shared file; the link lines are saved by
+	// the caller (SaveSharedLink keeps the proxy as it finds it)
+	RFs& fs = iCoeEnv->FsSession();
+	TPsiLink link;
+	link.SetDefaults();
+	link.Load(fs);
+	link.iUseProxy = proxy;
+	if (host.Length())
+		link.iProxyHost = host;
+	if (port > 0 && port < 65536)
+		link.iProxyPort = port;
+	link.iKeepUp = ChoiceListCurrentItem(EPtDlgKeepUp) == 0;   // (link keep-up)
+	link.Save(fs);
+	// (link keep-up) a link already up and now to stay up: hold it
+	// (psihold.exe ends by itself when the setting goes the other way)
+	if (link.iKeepUp && iSettings.iNetMode)
+		{
+		TFileName near(iEikonEnv->EikAppUi()->Application()->AppFullName());
+		PsiHoldStart(fs, near);
+		}
 	return ETrue;
 	}
 
@@ -5476,9 +5614,9 @@ void CPsiTermAppUi::ScreenGreysL()
 // a toolbar button's picture, from PsiTerm.mbm (made by tools/mkicons.py):
 // 24x20, in the middle of its side, the words beside it as the built-in
 // programs' buttons have them
-void CPsiTermAppUi::ButtonPictureL(TInt aId, TInt aIcon, const TDesC* aText)
+void CPsiTermAppUi::ButtonPictureL(CEikToolBar* aBar, TInt aId, TInt aIcon, const TDesC* aText)
 	{
-	CEikCommandButton* b = iToolBar ? (CEikCommandButton*)iToolBar->ControlById(aId) : NULL;
+	CEikCommandButton* b = aBar ? (CEikCommandButton*)aBar->ControlById(aId) : NULL;
 	if (!b)
 		return;
 	if (aText)
@@ -5506,10 +5644,10 @@ void CPsiTermAppUi::ToolbarPicturesL()
 	{
 	if (!iToolBar)
 		return;
-	ButtonPictureL(EPtCmdTbConnect, EMbmToolSsh);
-	ButtonPictureL(EPtCmdTbSnippets, EMbmToolSnippets);
-	ButtonPictureL(EPtCmdTbKeys, EMbmToolKeys);
-	ButtonPictureL(EPtCmdTbFiles, EMbmToolFiles);
+	ButtonPictureL(iToolBar, EPtCmdTbConnect, EMbmToolSsh);
+	ButtonPictureL(iToolBar, EPtCmdTbSnippets, EMbmToolSnippets);
+	ButtonPictureL(iToolBar, EPtCmdTbKeys, EMbmToolKeys);
+	ButtonPictureL(iToolBar, EPtCmdTbFiles, EMbmToolFiles);
 	}
 
 // the first button: SSH to... when idle, End SSH while a session is up (as
@@ -5521,7 +5659,7 @@ void CPsiTermAppUi::SetConnectButton(TBool aBusy)
 	if (!iToolBar)
 		return;
 	TPtrC text(aBusy ? _L("End\nSSH") : _L("SSH to"));
-	TRAPD(err, ButtonPictureL(EPtCmdTbConnect, aBusy ? EMbmToolDisconnect : EMbmToolSsh, &text));
+	TRAPD(err, ButtonPictureL(iToolBar, EPtCmdTbConnect, aBusy ? EMbmToolDisconnect : EMbmToolSsh, &text));
 	if (err != KErrNone)
 		{
 		CEikCommandButton* b = (CEikCommandButton*)iToolBar->ControlById(EPtCmdTbConnect);
@@ -5538,8 +5676,12 @@ void CPsiTermAppUi::SetConnectButton(TBool aBusy)
 TRect CPsiTermAppUi::TermRect(TBool aToolbar) const
 	{
 	TRect r = ClientRect();
-	if (!aToolbar || !iToolBar)
-		r.iBr.iX = iEikonEnv->ScreenDevice()->SizeInPixels().iWidth;
+	r.iBr.iX = iEikonEnv->ScreenDevice()->SizeInPixels().iWidth;
+	// (0.91) up to the toolbar's left edge: ClientRect() gives the room back
+	// while the terminal's toolbar is hidden, as it is under the file view
+	// (whose own toolbar is in the same place)
+	if (aToolbar && iToolBar && iToolBar->Position().iX > r.iTl.iX)
+		r.iBr.iX = iToolBar->Position().iX;
 	return r;
 	}
 
@@ -5548,16 +5690,143 @@ TRect CPsiTermAppUi::TermRect(TBool aToolbar) const
 // change) in SetTermRectL.
 void CPsiTermAppUi::ShowToolBarL(TBool aShow)
 	{
-	if (!iToolBar || !iView)
+	CEikToolBar* bar = iBrowse ? iBrowseBar : iToolBar;   // (0.91: the file view has its own)
+	if (!bar || !iView)
 		return;
-	if (iToolBar->IsVisible() != aShow)
-		iToolBar->MakeVisible(aShow);
+	if (bar->IsVisible() != aShow)
+		bar->MakeVisible(aShow);
 	if (aShow)
 		{
-		iToolBar->DrawNow();
+		bar->DrawNow();
 		iCoeEnv->WsSession().Flush();
 		}
 	iView->SetTermRectL(TermRect(aShow));
+	if (iBrowse)
+		iBrowse->SetViewRectL(TermRect(aShow));
+	}
+
+// ----- 0.91: the file view (Get file / Send file; ptxfer.cpp) ----------------------
+// While browsing the server's folders the program's window is the file view,
+// not a dialog over the terminal: it goes over the terminal (which goes on
+// running under it, taking no keys), the menu bar and shortcuts become the
+// file view's, and so does the toolbar (Up, Favourite, Get or Send here,
+// Close). Closing it puts all of that back.
+
+void CPsiTermAppUi::OpenBrowseL(TBool aSend)
+	{
+	if (iBrowse)
+		return;
+	if (!iBrowseIdle)
+		iBrowseIdle = CIdle::NewL(CActive::EPriorityStandard);
+	if (!iBrowseBar && iToolBar)
+		{
+		CEikToolBar* bar = new(ELeave) CEikToolBar;
+		CleanupStack::PushL(bar);
+		bar->ConstructL(this, R_PT_BROWSE_TOOLBAR, TRect(TPoint(0, 0), iEikonEnv->ScreenDevice()->SizeInPixels()));
+		CleanupStack::Pop();
+		iBrowseBar = bar;
+		iBrowseBar->MakeVisible(EFalse);
+		TRAP_IGNORE(
+			ButtonPictureL(iBrowseBar, EPtCmdBrUp, EMbmToolUp);
+			ButtonPictureL(iBrowseBar, EPtCmdBrFavourite, EMbmToolFav);
+			ButtonPictureL(iBrowseBar, EPtCmdBrClose, EMbmToolClose);
+			);
+		}
+	if (iBrowseBar)
+		{
+		// the third button: Get, or Send here
+		TPtrC act(aSend ? _L("Send\nhere") : _L("Get"));
+		TRAPD(perr, ButtonPictureL(iBrowseBar, EPtCmdBrAct, aSend ? EMbmToolSendHere : EMbmToolGet, &act));
+		if (perr != KErrNone)
+			{
+			CEikCommandButton* b = (CEikCommandButton*)iBrowseBar->ControlById(EPtCmdBrAct);
+			if (b)
+				TRAP_IGNORE(b->SetTextL(act));
+			}
+		iBrowseBar->SetButtonStateOn(EPtCmdBrFavourite, EFalse);
+		}
+	iBrowse = PtNewBrowseViewL(*iView, aSend, *this, TermRect(iView->Settings().iToolbar));
+	TRAPD(err, ShowBrowseL(aSend));
+	if (err != KErrNone)
+		{
+		CloseBrowse();
+		User::Leave(err);
+		}
+	}
+
+void CPsiTermAppUi::ShowBrowseL(TBool aSend)
+	{
+	AddToStackL(iBrowse);
+	iBrowseStacked = ETrue;
+	UpdateStackedControlFlags(iView, ECoeStackFlagRefusesAllKeys | ECoeStackFlagRefusesFocus,
+		ECoeStackFlagRefusesAllKeys | ECoeStackFlagRefusesFocus);
+	iMenuBar->ChangeMenuBarL(aSend ? R_PT_BROWSE_SEND_HOTKEYS : R_PT_BROWSE_GET_HOTKEYS,
+		aSend ? R_PT_BROWSE_SEND_MENUBAR : R_PT_BROWSE_GET_MENUBAR, EFalse);
+	iBrowse->ActivateL();
+	if (iToolBar && iBrowseBar && iView->Settings().iToolbar)
+		{
+		iToolBar->MakeVisible(EFalse);
+		iBrowseBar->MakeVisible(ETrue);
+		iBrowseBar->DrawNow();
+		}
+	iView->SetFocus(EFalse);
+	iBrowse->SetFocus(ETrue);
+	iBrowse->DrawNow();
+	iCoeEnv->WsSession().Flush();
+	iBrowse->StartL();
+	}
+
+// the terminal back, with its menus and toolbar
+void CPsiTermAppUi::CloseBrowse()
+	{
+	if (!iBrowse)
+		return;
+	if (iBrowseIdle)
+		iBrowseIdle->Cancel();
+	if (iBrowseStacked)
+		RemoveFromStack(iBrowse);
+	iBrowseStacked = EFalse;
+	delete iBrowse;
+	iBrowse = NULL;
+	UpdateStackedControlFlags(iView, 0, ECoeStackFlagRefusesAllKeys | ECoeStackFlagRefusesFocus);
+	TRAP_IGNORE(iMenuBar->ChangeMenuBarL(R_PT_HOTKEYS, R_PT_MENUBAR, EFalse));
+	if (iBrowseBar)
+		iBrowseBar->MakeVisible(EFalse);
+	if (iToolBar && iView->Settings().iToolbar)
+		{
+		iToolBar->MakeVisible(ETrue);
+		iToolBar->DrawNow();
+		}
+	iView->SetFocus(ETrue);
+	iView->DrawNow();
+	}
+
+void CPsiTermAppUi::BrowseCloseSoon()
+	{
+	if (iBrowseIdle && !iBrowseIdle->IsActive())
+		iBrowseIdle->Start(TCallBack(BrowseCloseCallback, this));
+	}
+
+// (from the idle object: none of the file view's code is running) the view
+// closed, then the Get or Send it chose
+TInt CPsiTermAppUi::BrowseCloseCallback(TAny* aSelf)
+	{
+	CPsiTermAppUi* ui = (CPsiTermAppUi*)aSelf;
+	ui->CloseBrowse();
+	TRAPD(err, PtBrowseFinishedL(*ui->iView));
+	if (err != KErrNone)
+		CEikonEnv::Static()->HandleError(err);
+	return 0;
+	}
+
+void CPsiTermAppUi::BrowseFavouriteShown(TBool aOn)
+	{
+	if (!iBrowseBar)
+		return;
+	iBrowseBar->SetButtonStateOn(EPtCmdBrFavourite, aOn);
+	CCoeControl* b = iBrowseBar->ControlById(EPtCmdBrFavourite);
+	if (b && iBrowseBar->IsVisible())
+		b->DrawNow();
 	}
 
 // the Snippets, Keys and Files buttons pop their menu up beside the button
@@ -5590,6 +5859,14 @@ void CPsiTermAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
 CPsiTermAppUi::~CPsiTermAppUi()
 	{
 	iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);   // the user's contrast and backlight back
+	if (iBrowse)
+		{
+		if (iBrowseStacked)
+			RemoveFromStack(iBrowse);
+		delete iBrowse;                  // (a listing still going is told to stop)
+		}
+	delete iBrowseIdle;
+	delete iBrowseBar;
 	if (iView)
 		{
 		RemoveFromStack(iView);
@@ -5721,11 +5998,14 @@ static void UseSharedLink(RFs& aFs, TPsiSettings& aSettings)
 static void SaveSharedLink(RFs& aFs, const TPsiSettings& aSettings)
 	{
 	TPsiLink link, old;
+	link.SetDefaults();
+	TBool had = link.Load(aFs);               // (keeps the shared proxy as it is)
+	old = link;
 	link.iBaudIndex = aSettings.iBaudIndex;
 	link.iRtsCts = aSettings.iRtsCts ? 1 : 0;
 	link.iNetMode = aSettings.iNetMode ? 1 : 0;
 	link.iPppStart = aSettings.iPppStart;
-	if (old.Load(aFs) && old.iBaudIndex == link.iBaudIndex && old.iRtsCts == link.iRtsCts
+	if (had && old.iBaudIndex == link.iBaudIndex && old.iRtsCts == link.iRtsCts
 		&& old.iNetMode == link.iNetMode && old.iPppStart == link.iPppStart)
 		return;                              // unchanged: don't rewrite it
 	link.Save(aFs);
@@ -6063,14 +6343,36 @@ TBool CPsiTermAppUi::EditSnippetL(TSnippet& aEntry, TInt aSelf)
 
 void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 	{
+	// 0.91: the file view's menus
+	if (aMenuId == R_PT_BROWSE_GET_FILE_MENU || aMenuId == R_PT_BROWSE_SEND_FILE_MENU
+		|| aMenuId == R_PT_BROWSE_FAV_MENU)
+		{
+		if (iBrowse)
+			iBrowse->InitMenuPaneL(aMenuId, aMenuPane);
+		return;
+		}
+	if (aMenuId == R_PT_BROWSE_VIEW_MENU)
+		{
+		aMenuPane->SetItemButtonState(EPtCmdToolbar, iView->Settings().iToolbar ? EEikMenuItemSymbolOn : 0);
+		return;
+		}
 	if (aMenuId == R_PT_TERM_MENU)
 		{
 		TBool ssh = iView->SshActive();
 		aMenuPane->SetItemDimmed(EPtCmdSsh, ssh);
 		aMenuPane->SetItemDimmed(EPtCmdSshDisconnect, !ssh);
 		aMenuPane->SetItemDimmed(EPtCmdConnect, ssh);
-		aMenuPane->SetItemDimmed(EPtCmdHangup, ssh || !iView->ModemOnline());
+		// (link keep-up) Disconnect: the modem's call, or the Psion Internet
+		// connection while it is up ("Stay connected" keeps it after use)
+		aMenuPane->SetItemDimmed(EPtCmdHangup, ssh || !(iView->ModemOnline() || (iView->Settings().iNetMode && PgLinkUp())));
 		aMenuPane->SetItemDimmed(EPtCmdInstallKey, !iView->SshLoggedIn() || iKeys->Count() == 0);
+		return;
+		}
+	if (aMenuId == R_PT_DEBUG_MENU)           // (0.89) Send log needs the shared proxy
+		{
+		TPsiLink link;
+		aMenuPane->SetItemDimmed(EPtCmdSendLog,
+			!link.Load(iCoeEnv->FsSession()) || !link.ProxyUsable() || iView->SendingLog());
 		return;
 		}
 	if (aMenuId == R_PT_FILES_POPUP)          // the toolbar's Files: as the File menu
@@ -6228,6 +6530,26 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	{
 	TPsiSettings& s = iView->Settings();
+	// 0.91: while the file view is up, its own commands go to it; of the
+	// rest only those its menus have (and Close from the system) do anything
+	TBool browseCmd = (aCommand >= EPtCmdBrOpen && aCommand <= EPtCmdBrLast)
+		|| (aCommand >= EPtCmdBrFav0 && aCommand < EPtCmdBrFav0 + 8);
+	if (iBrowse)
+		{
+		if (browseCmd)
+			{
+			iBrowse->CommandL(aCommand);
+			return;
+			}
+		if (aCommand != EPtCmdToolbar && aCommand != EPtCmdHelp && aCommand != EPtCmdAbout
+			&& aCommand != EEikCmdExit)
+			{
+			iEikonEnv->InfoMsg(_L("Not available in the file view"));
+			return;
+			}
+		}
+	else if (browseCmd)
+		return;
 	if (aCommand >= EPtCmdHost0 && aCommand < EPtCmdHost0 + KMaxHosts)
 		{
 		ConnectHostL(aCommand - EPtCmdHost0);
@@ -6324,6 +6646,13 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
 			break;
 			}
+		// (link keep-up) Psion Internet: the link itself goes (it may be
+		// held up after use: pglinktest.cpp ends psihold.exe with it)
+		if (s.iNetMode && !iView->ModemOnline())
+			{
+			PgLinkDisconnectL();
+			break;
+			}
 		// the Hayes escape takes a couple of seconds: say so, bottom left
 		iEikonEnv->BusyMsgL(_L("Hanging up..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0));
 		iView->HangUp();
@@ -6370,6 +6699,11 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		iView->RunToolDialogL();
 		break;
 		}
+	case EPtCmdSendLog:
+		if (!ConfirmDisconnectL(aCommand))
+			break;
+		iView->StartSendLogL();
+		break;
 	case EPtCmdScreenshot: iView->ScreenshotL(); break;
 	case EPtCmdCopy:     iView->CopySelectionL(); break;
 	case EPtCmdPaste:    iView->PasteL(); break;

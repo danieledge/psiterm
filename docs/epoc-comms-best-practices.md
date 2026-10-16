@@ -66,7 +66,7 @@ Each rule gives its source and how the code complies.
 | N8 | An empty host name "resolves" to the Psion's own address. Reject it. | tcpip/tcpdns | **fixed:** `NetConnect` now refuses an empty name |
 | N9 | The first lookup or connect can start a dial-up and NetDial's dialogs. Handle `KErrCancel` (the user cancelled), `KErrNetUnreach` (-190), `KErrAccessDenied` (port reserved), and the NetDial codes -3001 to -3006 and -3050 to -3057. | tcpsock; nd_err.h; in_iface.h | ✓ mostly: errors are reported with their number. A friendlier message per code would help (see 3.4). |
 | N10 | Check whether a link is already up before dialling: `RNif::NetworkActive`, or enumerate interfaces with `KSoInetEnumInterfaces`. | nifman.h; tcputils | ✓ `NifActive`, then `LinkUp` |
-| N11 | If you call `RNif::DisableTimers(ETrue)`, undo it on every exit path, including crashes. Otherwise the link never idles out. | nifman.h **[inferred]** | ✓ `NifRelease`; the apps call `PsiLinkTimersBack()` when an engine has crashed. By design, on the Psion Internet route `pg_hangup` only closes the TCP connection: the timers stay off until `NetClose` (the engine's own idle release, `IDLE_RELEASE_NET_MS` = 20 min in PsiMail), so a sync's several connections do not each risk the idle hang-up |
+| N11 | `RNif::DisableTimers(ETrue)` lasts only as long as the RNif session: NIFMAN undoes a session's request when the session closes, a crash included. So it cannot leak, and it cannot hold a link up after the program that asked has let go. | nifman.dll (SDK, WINS build: see 2.3) | ✓ `NifRelease` still gives the timers back explicitly, and `PsiLinkTimersBack()` is harmless. On the Psion Internet route `pg_hangup` only closes the TCP connection, and with "Stay connected" the engines' idle release (`pg_link_keep`) keeps the session too, so the link stays up while an engine runs; `psihold.exe` holds it after that (2.3) |
 | N12 | Keep long, quiet sessions alive. Either set `KSoTcpKeepAlive` (interval undocumented) or run an application keepalive. | tcputils | ✓ SSH uses `-K` (about 30 s). PsiMail and PsiWeb connections are short. |
 | N13 | Use one `RSocketServ` with enough message slots. The default of 8 covers one socket plus a resolver. | esserv | ✓ |
 | N14 | Make every ESOCK call from the thread that opened the session. | e32/euasyn | ✓ the engine's main thread |
@@ -80,9 +80,17 @@ Each rule gives its source and how the code complies.
   - When the link drops after the last client closes is undocumented. It is the user's "If idle, stay online for" setting, together with the CommDb timeouts, whose units are not stated.
   - Nothing says when PPP hands the serial port back.
   - Nothing describes the behaviour across switch-off.
-- **What our apps rely on [inferred, observed on the device].**
-  - Once `RSocketServ` is closed, the link stays up until the idle time runs out.
-  - File > Connect (new in PsiTerm 0.76) depends on this: it dials, then lets go, so later SSH sessions, updates, mail checks and page loads find the link already up.
+- **What NIFMAN does with its idle timers (October 2026).** The documentation is silent, so this was read from the SDK's own `epoc32/release/wins/rel/nifman.dll` and `netdial.agt` (x86, disassembled). The ARM ROM is assumed to be built from the same source: **check on the device**.
+  - NetDial answers NIFMAN's `Timeout\Client` and `Timeout\Route` from CommDb's Timeout table (`CCommsDatabase::GetClientTimeoutL` / `GetRouteTimeoutL`), in seconds. 0 is taken as 1 s; a negative value means never.
+  - Once the link is up (agent state 6), NIFMAN picks a timer whenever something changes. If no network layer is active on the link (TCP/IP with nothing open on it), it runs the **Client** timer. If one is active but has no routes, it runs the **Route** timer. With routes, no timer.
+  - `RNif::DisableTimers(ETrue)` sets a flag on that session and adds one to a count on the link; `EFalse` takes it off. While the count is above 0 neither timer runs. **The session's destructor takes its one off**, so closing the RNif session (or the process ending) gives the timers back.
+  - On a link-layer drop with a network layer still active, NIFMAN asks the agent to **reconnect**; with none active it reads `Timeout\ReconnectIfNoClient` first.
+- **What this means for our apps.**
+  - An engine that closes its sockets, `RSocketServ` and `RNif` leaves the link to the Client timer, which ends PPP within moments. That is why the link dropped between transfers when an engine's idle release (`pwn_idle_tick`, after 60 s with nothing to send) closed everything, or the app stopped an idle engine.
+  - **"Stay connected"** (PsiLink.ini v4, the standard for a new Psion; a file from before v4 loads as "Disconnects when idle"; Connection settings > Network, PsiTerm's own page): while an engine runs on the Psion Internet route, its idle release closes only the idle TCP connection (`pg_link_keep`). Once the link is up, `psihold.exe` (`ssh/psihold.cpp`, about 5 KB, one per Psion: a global semaphore) holds an RNif session with the timers off. It opens no socket, so NIFMAN does not count it as a user and will not redial on a drop because of it. It ends as soon as NIFMAN's progress shows a hang-up or link down, `NetworkActive` says down (checked each minute), or the setting changes to "Disconnects when idle" or the modem route. A dead link it was holding is still stopped by `NetFailDead` the next time a program uses it, and then psihold ends.
+  - **Disconnect** (Ctrl+U; Shift+Ctrl+U in PsiTerm; File menu) calls `RNif::Stop` in a thread of its own, bounded at 20 s (`PsiLinkDisconnect`), which also ends psihold.
+  - "Disconnects when idle" is the old behaviour: the Psion's own idle time (CommDb) ends the link.
+  - The modem route is unchanged: it hangs up after use, because it holds the serial port. If PPP still holds the port when a program wants the modem route, psiglue says so ("disconnect it first").
 
 ## 3. Recommendations
 
@@ -128,6 +136,8 @@ All four were approved. What was done: `ATNET0` is sent before every `ATDT` and 
 - What closing a socket does to a pending `Shutdown`.
 - `KErrRoutePending` is documented but defined in no header.
 - No default TCP or DNS timeouts are given, and no keepalive interval.
+- That the 5mx ROM's NIFMAN keeps the timer rules read from the SDK's WINS build (2.3), and that psihold's RNif session, opened after the link is up, attaches to that link.
+- What the Psion's own "Disconnect" (and a switch-off) does with psihold running: it should see the hang-up and end.
 
 ## Sources
 
@@ -137,7 +147,8 @@ All four were approved. What was done: `ATNET0` is sent before every `ATDT` and 
 - `sysdoc/cpp/tcpip/`: tcpsock, tcpdns, tcputils.
 - `sysdoc/cpp/e32/`: euasyn, eutimer.
 - `sysdoc/er5supp/proginfo/`: NIFMAN progress.
-- Headers: `c32comm.h`, `d32comm.h`, `es_sock.h`, `in_sock.h`, `nifman.h`, `netdial.h`, `nd_err.h`, `in_iface.h`.
+- Headers: `c32comm.h`, `d32comm.h`, `es_sock.h`, `in_sock.h`, `nifman.h`, `nifvar.h`, `commdb.h`, `netdial.h`, `nd_err.h`, `in_iface.h`.
+- Binaries (read for NIFMAN's timer rules, 2.3): `epoc32/release/wins/rel/nifman.dll`, `netdial.agt`, `commdb.dll`.
 - Examples: `epoc32ex/comms/cmterm.cpp`, `echoeng.cpp`.
 
 **Later Symbian docs (same APIs)**

@@ -18,9 +18,10 @@ palmtop.
 
 | App | What it is | Version | More |
 |---|---|---|---|
-| **PsiTerm** | An SSH terminal (xterm-256color) on a port of Dropbear: tmux, vim, htop and Claude Code on a palmtop, with file transfer | 0.86 | [below](#psiterm) |
-| **PsiMail** | Email for any IMAP/SMTP server with TLS (made for Fastmail), and a calendar that keeps the Agenda in step with CalDAV | 0.83 | [mail/README.md](mail/README.md) |
-| **PsiWeb** | A web browser (Links 2): HTML and CSS, no JavaScript | 0.67 | [web/README.md](web/README.md) |
+| **PsiTerm** | An SSH terminal (xterm-256color) on a port of Dropbear: tmux, vim, htop and Claude Code on a palmtop, with file transfer | 0.95 | [below](#psiterm) |
+| **PsiMail** | Email for any IMAP/SMTP server with TLS (made for Fastmail), and a calendar that keeps the Agenda in step with CalDAV | 0.92 | [mail/README.md](mail/README.md) |
+| **PsiWeb** | A web browser (Links 2): HTML and CSS, no JavaScript | 0.76 | [web/README.md](web/README.md) |
+| **PsiProxy** (optional) | A small web proxy for a computer on your network: fetches https pages for PsiWeb, slims them and converts pictures to 16 greys | - | [proxy/README.md](proxy/README.md) |
 | **Atom modem** | Firmware that turns an M5Stack Atom into a Wi-Fi modem tuned for the Psion | - | [firmware/atom-modem](firmware/atom-modem/README.md) |
 
 All three apps look and behave like the Psion's own programs - EIKON toolbars,
@@ -88,6 +89,24 @@ More PsiMail screenshots are in [mail/README.md](mail/README.md).
 
 ## What's new
 
+**PsiTerm 0.95, PsiMail 0.92, PsiWeb 0.76**
+- **One shared proxy**, set once in Connection settings > Network > Use
+  proxy, for PsiWeb's pages, PsiMail's web pictures (if asked for) and Send
+  log. It is optional and off as standard, with no address built in.
+  [PsiProxy](proxy/README.md), the proxy made for these apps, is now in this
+  repository.
+- **Send log to server** in all three apps (PsiTerm: Tools > Debug; PsiMail:
+  Tools > Troubleshooting; PsiWeb: Tools) sends the app's log to your
+  PsiProxy when something goes wrong. PsiTerm now keeps a log too.
+- **Psion Internet can stay connected** after use, until you disconnect
+  (Connection settings > Network > After use, Psion Internet). It is the
+  standard on a new Psion; anyone updating keeps the old idle hang-up until
+  they change it.
+- Steadier dial-up: a connection the Psion only thinks is up is noticed and
+  dialled again, and a second app shares the link instead of re-dialling.
+- PsiTerm's Get file and Send file browse in a file view of their own;
+  PsiWeb has Favourites and History.
+
 **PsiTerm 0.86**
 - **Snippets now have folders.** Each folder is a menu cascade, and a
   ready-made **Claude Code** folder holds that program's keys (Interrupt,
@@ -147,6 +166,9 @@ and Claude Code - on a 1999 palmtop.
   File > Send file picks a Psion file with the standard Open file dialog,
   then a folder on the server; File > Get file browses the server's
   folders (names and sizes) and saves with the standard Save as dialog.
+  The folders are a file view of PsiTerm's own (0.91), with its own menus and
+  toolbar (Up, Favourite, Get or Send here, Close): it opens folders in place,
+  and keeps favourite folders per server at the top of its Location pane.
   Progress with Stop; works over a 57600 baud modem; a stopped or failed
   download leaves no half file. Servers without SFTP are told apart
 - Session log (File > Log to file): everything received, as plain text
@@ -209,12 +231,13 @@ feature list, keys and settings are in [mail/README.md](mail/README.md).
 
 ## PsiWeb
 
-[NetSurf](https://www.netsurf-browser.org/) built with the 1999 EPOC R5
-toolchain: an HTML5 parser, CSS 2.1 and parts of CSS 3, GIF and BMP pictures,
+[Links 2](http://links.twibright.com/) built with the 1999 EPOC R5
+toolchain: HTML and some CSS, JPEG, PNG and GIF pictures (only when asked),
 no JavaScript. Light sites suit it best (68k.news, FrogFind, DuckDuckGo Lite,
-text.npr.org); a [WebOne](https://github.com/atauenis/webone) proxy on your
-network is recommended for https sites. PsiMail opens links and "View as web
-page" in it. See [web/README.md](web/README.md).
+text.npr.org); a proxy on your network - [PsiProxy](proxy/README.md) or
+[WebOne](https://github.com/atauenis/webone) - is recommended for https
+sites, but optional. PsiMail opens links and "View as web page" in it. See
+[web/README.md](web/README.md).
 
 ## Installing
 
@@ -270,11 +293,42 @@ connection is up and names can be looked up (it asks before dialling).
   is never overrun even on a three-wire cable without RTS/CTS. Its README has
   the wiring, flashing, Wi-Fi set-up and the settings to use.
 
+- **After use, Psion Internet** (Connection settings > Network): *Stays
+  connected* (the standard on a new Psion) keeps the dial-up connection up
+  after use, for all three apps, until you disconnect; *Disconnects when
+  idle* leaves it to the Psion's own idle time, as before. Anyone updating
+  from an older version keeps *Disconnects when idle* until they change it.
+  The modem route always hangs up after use.
+
+### The proxy (optional)
+
+Connection settings > Network > **Use proxy** is one setting for all three
+apps, off as standard, with no address built in. Everything works without
+it. With it on:
+- **PsiWeb** fetches pages through it, so https costs the Psion no TLS
+  handshake and the modem dials once.
+- **PsiMail** fetches web pictures through it, if Preferences > Web pictures
+  via proxy is Yes (and directly if the proxy does not answer).
+- **Send log to server** (PsiTerm: Tools > Debug; PsiMail: Tools >
+  Troubleshooting; PsiWeb: Tools) sends that app's log to it, to help find a
+  fault. It is dimmed until a proxy is set. Logs go as plain HTTP and can
+  hold host, account and site names, so send them only to your own
+  PsiProxy.
+
+[PsiProxy](proxy/README.md) is the proxy made for these apps (Python, on any
+computer on your network; port 8081 by default). It slims pages, converts
+pictures to 16 greys and saves the logs Send log sends. Any plain HTTP proxy,
+such as [WebOne](https://github.com/atauenis/webone), also works for PsiWeb
+and web pictures, but not for Send log.
+
 ## Updates
 
 Tools > Update PsiTerm, Update PsiMail and Update PsiWeb ask where to look
 (GitHub, its test builds, or a local server), download the newest release
 over the same modem or dial-up link, check it and offer to install it.
+From GitHub, each reads the version file in `dist/` on `main` (or `dev` for
+test builds); PsiTerm then fetches the release itself from that version's
+tag (`v0.95/dist/`), which never changes.
 
 The Psion speaks a minimal TLS 1.3 client (`ssh/tls13.c`: X25519,
 ChaCha20-Poly1305). Every release is signed with Ed25519, and each app checks
@@ -307,10 +361,10 @@ you can [buy me a coffee](https://buymeacoffee.com/danedge).
 
 ## Licence and credits
 
-MIT for the project's own code - see `LICENSE`. Bundled components keep their
-own licences - see [`THIRD-PARTY.md`](THIRD-PARTY.md): Dropbear SSH (with
-LibTomCrypt, LibTomMath and TweetNaCl), libvterm, zlib, picojpeg, the
-Terminus font, and - for PsiWeb only - NetSurf and its libraries, which make
-`psiweb.exe` GPL v2.
+MIT for the project's own code, PsiProxy included - see `LICENSE`. Bundled
+components keep their own licences - see [`THIRD-PARTY.md`](THIRD-PARTY.md):
+Dropbear SSH (with LibTomCrypt, LibTomMath and TweetNaCl), libvterm, zlib,
+picojpeg, the Terminus font, and - for PsiWeb only - Links 2 (GPL v2) with
+IJG libjpeg and libpng, which make `psiweb.exe` and `PsiWeb.sis` GPL v2.
 
 (c) Dan Edge

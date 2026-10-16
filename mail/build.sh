@@ -49,10 +49,15 @@ for t in pmbutton pmbtnrec; do
 done
 )
 
+# psihold.exe: holds the Psion Internet connection up after use (ssh/psihold.cpp)
+echo "== psihold.exe"
+make -f "$TOP/ssh/psihold.mk" PSION_SDK="$PSION_SDK" > "$TOP/build/psihold.log" 2>&1 \
+	|| { grep -E "error|undefined" "$TOP/build/psihold.log" | head -20; exit 1; }
+
 echo "== package"
 P=$TOP/build/mail-pkg
 rm -rf "$P"; mkdir -p "$P" "$TOP/dist"
-cp "$REL/psimail.app" "$REL/psimail.rsc" "$REL/psimail.exe" "$REL/pmbutton.exe" "$HERE/pkg/psimail.pkg" "$TOP/build/mail-icons/psimail.mbm" "$P/"
+cp "$REL/psimail.app" "$REL/psimail.rsc" "$REL/psimail.exe" "$REL/pmbutton.exe" "$HERE/pkg/psimail.pkg" "$TOP/build/mail-icons/psimail.mbm" "$TOP/build/psihold/psihold.exe" "$P/"
 # psimail.exe needs the EPOC C library (ESTLIB.DLL), which the 5mx ROM
 # lacks: embed the SDK's redistributable stdlib.sis, as PsiTerm does
 install -m 644 "$REL/stdlib.sis" "$P/STDLIB.SIS"

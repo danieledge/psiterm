@@ -126,6 +126,13 @@ void PgLinkTestL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppSt
  * modem, and says what it found in the result dialog, titled aTitle. */
 void PgLinkConnectL(int aBaudIndex, int aRtsCts, int aNetMode, const TDesC8& aPppStart,
 	int aResultDialog, int aFirstLineId, const TDesC8& aTitle);
+/* Disconnect on the Psion Internet route: takes the connection down
+ * (RNif::Stop, in a thread of its own so the app never hangs on it), which
+ * also ends psihold.exe; a busy message meanwhile, the outcome as an
+ * infoprint. The modem route is each app's own (its engine hangs up). */
+void PgLinkDisconnectL();
+/* For dimming Disconnect: 1 if the Psion's Internet connection is up */
+int PgLinkUp();
 #endif
 
 #endif

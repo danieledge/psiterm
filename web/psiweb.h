@@ -145,6 +145,10 @@ typedef struct
 	volatile int page_vh;              /* the view's height */
 	volatile int page_pics;            /* its pictures are shown (View > Show pictures) */
 
+	/* Tools > Send log to server (PW_CMD_PUTLOG, engine/pwupdate.c) */
+	volatile int log_state;            /* PW_LOG_* (psiweb) */
+	char log_msg[96];                  /* the reason, if it failed */
+
 	unsigned char fb[PW_MAX_H * PW_STRIDE];
 	} PwShared;
 

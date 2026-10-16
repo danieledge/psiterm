@@ -25,26 +25,58 @@
 #include "pglinktest.h"
 #include "psigreyui.h"
 
-// The link settings are shared with PsiTerm and PsiMail (psilink.h)
+// The link settings, proxy included, are shared with PsiTerm and PsiMail
+// (psilink.h). The proxy fields of TPwSettings are only a copy of the shared
+// ones, kept for the code that shows them; the old own proxy (0.71 and
+// before) is carried over once, into a PsiLink.ini that has no proxy yet.
 static void UseSharedLink(RFs& aFs, TPwSettings& aSettings)
 	{
 	TPsiLink link;
-	if (!link.Load(aFs))
-		return;
+	link.SetDefaults();
+	if (!link.Load(aFs) || link.iLoadedVer < 2)
+		{
+		// no shared proxy yet: seed it once from PsiWeb's own (0.71)
+		if (aSettings.iUseProxy || aSettings.iProxyHost.Length())
+			{
+			TBool had = link.iLoadedVer > 0;     // (a version 1 file: its other lines stand)
+			if (!had)
+				{
+				link.iBaudIndex = aSettings.iBaudIndex;
+				link.iRtsCts = aSettings.iRtsCts ? 1 : 0;
+				link.iNetMode = aSettings.iNetMode ? 1 : 0;
+				link.iPppStart = aSettings.iPppStart;
+				}
+			link.iUseProxy = aSettings.iUseProxy ? 1 : 0;
+			link.iProxyHost = aSettings.iProxyHost;
+			link.iProxyPort = aSettings.iProxyPort > 0 ? aSettings.iProxyPort : 8081;
+			link.Save(aFs);
+			link.iLoadedVer = 2;
+			}
+		else if (link.iLoadedVer == 0)
+			return;                              // no file, nothing to carry over
+		}
 	aSettings.iBaudIndex = link.iBaudIndex;
 	aSettings.iRtsCts = link.iRtsCts;
 	aSettings.iNetMode = link.iNetMode;
 	aSettings.iPppStart = link.iPppStart;
+	aSettings.iUseProxy = link.iUseProxy;
+	aSettings.iProxyHost = link.iProxyHost;
+	aSettings.iProxyPort = link.iProxyPort;
 	}
 
+// Writes the link lines; the proxy in PsiLink.ini is left as it is (the
+// Connection settings dialog writes that itself)
 static void SaveSharedLink(RFs& aFs, const TPwSettings& aSettings)
 	{
 	TPsiLink link, old;
+	link.SetDefaults();
+	TBool had = link.Load(aFs);
+	old = link;
 	link.iBaudIndex = aSettings.iBaudIndex;
 	link.iRtsCts = aSettings.iRtsCts ? 1 : 0;
 	link.iNetMode = aSettings.iNetMode ? 1 : 0;
 	link.iPppStart = aSettings.iPppStart;
-	if (old.Load(aFs) && old.iBaudIndex == link.iBaudIndex && old.iRtsCts == link.iRtsCts
+	if (had && old.iBaudIndex == link.iBaudIndex && old.iRtsCts == link.iRtsCts
 		&& old.iNetMode == link.iNetMode && old.iPppStart == link.iPppStart)
 		return;
 	link.Save(aFs);
@@ -52,7 +84,7 @@ static void SaveSharedLink(RFs& aFs, const TPwSettings& aSettings)
 
 _LIT(KEngineExe, "psiweb.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiWeb\\PsiWeb.ini");
-_LIT(KVersion, "0.68");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
+_LIT(KVersion, "0.76");           // also web/pkg/psiweb.pkg and dist/PsiWeb-version.txt (two digits from 0.54: see the .pkg)
 _LIT(KDefaultHome, "http://68k.news/");
 const TInt KZoomSteps[] = { 50, 60, 70, 80, 90, 100, 110, 125, 150, 175, 200 };
 const TInt KZoomCount = 11;
@@ -68,7 +100,7 @@ static void CopyToC(char* aDst, TInt aMax, const TDesC& aSrc)
 	}
 
 // UTF-8 from the engine -> text for the Psion's 8-bit (Windows-1252) UI
-static void FromUtf8(TDes& aDst, const char* aSrc)
+void FromUtf8(TDes& aDst, const char* aSrc)
 	{
 	aDst.Zero();
 	const TUint8* s = (const TUint8*)aSrc;
@@ -172,6 +204,7 @@ void CPwView::ConstructL(const TRect& aRect, const TPwSettings& aSettings)
 	SetRectL(aRect);
 	EnableDragEvents();
 	iPics = -1;
+	iLastBusy = EFalse;
 	// the page's scroll bar, as the built-in programs have it: always there
 	// (dimmed when the page fits), beside the page
 	iSBFrame = new(ELeave) CEikScrollBarFrame(this, this);
@@ -250,6 +283,7 @@ void CPwView::StartEngineL()
 	s->net.port = 80;
 	CopyToC(s->net.dial_prefix, sizeof(s->net.dial_prefix), _L("ATDT"));
 	CopyToC(s->net.home, sizeof(s->net.home), _L("C:\\System\\Apps\\PsiWeb"));
+	// the proxy is the shared one (PsiLink.ini, just read above)
 	s->use_proxy = iSettings.iUseProxy;
 	CopyToC(s->proxy_host, sizeof(s->proxy_host), iSettings.iProxyHost);
 	s->proxy_port = iSettings.iProxyPort;
@@ -530,6 +564,13 @@ void CPwView::EngineEnded()
 	iProcess.Close();
 	iRunning = EFalse;
 	StartBusyCancel();
+	if (iLogState == PW_LOG_RUNNING)
+		{
+		// the engine went while sending the log
+		iLogState = PW_LOG_IDLE;
+		iEikonEnv->BusyMsgCancel();
+		iEikonEnv->InfoMsg(_L("Could not send log - the browser engine stopped"));
+		}
 	if (iUpdState == PW_UPD_RUNNING || iUpdState == -1)
 		{
 		// the engine went while updating: the progress window must not wait for it
@@ -596,13 +637,13 @@ void CPwView::RingEngine()
 TBool CPwView::TickWanted() const
 	{
 	PwShared* s = iShared;
-	if (!s || iStartBusy || iLinkBusy || iAsking || iUpdState == PW_UPD_RUNNING)
+	if (!s || iStartBusy || iLinkBusy || iAsking || iUpdState == PW_UPD_RUNNING || iLogState == PW_LOG_RUNNING)
 		return ETrue;
 	if (!iRunning)
 		return EFalse;                       // (the engine has stopped: nothing to follow)
 	if (s->busy || s->state != PW_STATE_READY || s->ev_tail != s->ev_head || s->cmd != PW_CMD_NONE)
 		return ETrue;
-	if (s->frame_seq != iLastFrame || s->net.link_seq != iLinkSeq || s->update_state != iUpdState)
+	if (s->frame_seq != iLastFrame || s->net.link_seq != iLinkSeq || s->update_state != iUpdState || s->log_state != iLogState)
 		return ETrue;
 	if (s->auth_state == PW_ASK_ASKING || s->save_state == PW_ASK_ASKING)
 		return ETrue;
@@ -708,7 +749,9 @@ void CPwView::Tick()
 			iEikonEnv->InfoMsg(m);
 			}
 		}
-	if (s && iLinkBusy && !s->busy)
+	if (s && (iLogState == PW_LOG_RUNNING || s->log_state != iLogState))
+		LogTick();
+	if (s && iLinkBusy && !s->busy && iLogState != PW_LOG_RUNNING)
 		{
 		iEikonEnv->BusyMsgCancel();
 		iLinkBusy = EFalse;
@@ -722,6 +765,17 @@ void CPwView::Tick()
 		{
 		TRAPD(err, UpdateTickL());
 		(void)err;
+		}
+	// (0.69) a page has loaded when the engine stops being busy: History
+	if (s && iRunning)
+		{
+		TBool busy = s->busy != 0;
+		CPwAppUi* ui = (CPwAppUi*)iEikonEnv->EikAppUi();
+		if (iLastBusy && !busy)
+			ui->PageLoaded();
+		else if (!busy)
+			ui->PageTick();
+		iLastBusy = busy;
 		}
 	if (s && iRunning && s->page_pics != iPics)
 		{
@@ -910,6 +964,75 @@ void CPwView::AskSaveL()
 	fs.MkDirAll(TParsePtrC(path).DriveAndPath());
 	ToUtf8(s->save_path, sizeof(s->save_path), path);
 	s->save_state = PW_ASK_OK;
+	}
+
+// ----- Send log to server -------------------------------------------------------
+// Tools > Send log to server: the engine POSTs PsiWeb.old and PsiWeb.log to
+// the proxy (pwupdate.c pw_putlog_run). The busy message is bottom left, the
+// outcome an infoprint.
+
+void CPwView::SendLog()
+	{
+	if (iLogState == PW_LOG_RUNNING)
+		{
+		iEikonEnv->InfoMsg(_L("Not available while sending the log"));
+		return;
+		}
+	if (!iRunning)
+		{
+		iEikonEnv->InfoMsg(_L("Not available - the browser engine has stopped"));
+		return;
+		}
+	UseSharedLink(iCoeEnv->FsSession(), iSettings);   // the proxy may have been set in another app
+	if (!iSettings.iUseProxy || iSettings.iProxyHost.Length() == 0)
+		{
+		iEikonEnv->InfoMsg(_L("Not available - set a proxy in Connection settings"));
+		return;
+		}
+	iShared->use_proxy = iSettings.iUseProxy;
+	CopyToC(iShared->proxy_host, sizeof(iShared->proxy_host), iSettings.iProxyHost);
+	iShared->proxy_port = iSettings.iProxyPort;
+	iShared->log_state = PW_LOG_RUNNING;
+	iShared->log_msg[0] = 0;
+	iLogState = PW_LOG_RUNNING;
+	TRAPD(err, iEikonEnv->BusyMsgL(_L("Sending log..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
+	(void)err;
+	Command(PW_CMD_PUTLOG, KNullDesC);
+	}
+
+void CPwView::LogTick()
+	{
+	PwShared* s = iShared;
+	TInt st = s->log_state;
+	if (st == PW_LOG_RUNNING)
+		{
+		iLogState = st;
+		return;
+		}
+	if (iLogState != PW_LOG_RUNNING)
+		{
+		iLogState = st;                      // (not ours: a stale value)
+		return;
+		}
+	iLogState = st;
+	iEikonEnv->BusyMsgCancel();
+	iLinkBusy = EFalse;
+	if (st == PW_LOG_SENT)
+		iEikonEnv->InfoMsg(_L("Log sent"));
+	else
+		{
+		TBuf<96> why;
+		TBuf<128> msg;
+		FromUtf8(why, s->log_msg);
+		if (why.Length() >= 2 && why.Left(2) == _L("No"))
+			msg = why;                       // "Not available ...", "No log to send"
+		else
+			{
+			msg = _L("Could not send log - ");
+			msg.Append(why);
+			}
+		iEikonEnv->InfoMsg(msg);
+		}
 	}
 
 // ----- Update PsiWeb ------------------------------------------------------------
@@ -1257,32 +1380,45 @@ void CPwInfoDialog::PreLayoutDynInitL()
 		}
 	}
 
-void CPwOpenDialog::PreLayoutDynInitL()
-	{
-	CEikEdwin* ed = (CEikEdwin*)Control(EPwDlgUrl);
-	ed->SetTextL(&iUrl);
-	ed->SelectAllL();
-	}
-
-TBool CPwOpenDialog::OkToExitL(TInt /*aButtonId*/)
-	{
-	((CEikEdwin*)Control(EPwDlgUrl))->GetText(iUrl);
-	iUrl.Trim();
-	if (iUrl.Length() == 0)
-		{
-		iEikonEnv->InfoMsg(_L("No address entered"));
-		TryChangeFocusToL(EPwDlgUrl);
-		return EFalse;
-		}
-	return ETrue;
-	}
-
 void CPwConnDialog::PreLayoutDynInitL()
 	{
 	((CEikChoiceList*)Control(EPwDlgLink))->SetCurrentItem(iSettings.iNetMode ? 1 : 0);
 	((CEikChoiceList*)Control(EPwDlgBaud))->SetCurrentItem(iSettings.iBaudIndex);
 	((CEikChoiceList*)Control(EPwDlgFlow))->SetCurrentItem(iSettings.iRtsCts ? 1 : 0);
 	SetEdwinTextL(EPwDlgPppStart, &iSettings.iPppStart);
+	// the proxy, shared by all three apps (psilink.h)
+	TPsiLink link;
+	link.SetDefaults();
+	link.Load(iCoeEnv->FsSession());
+	SetChoiceListCurrentItem(EPwDlgProxy, link.iUseProxy ? 1 : 0);
+	SetEdwinTextL(EPwDlgProxyHost, &link.iProxyHost);
+	SetNumberEditorValue(EPwDlgProxyPort, link.iProxyPort);
+	SetChoiceListCurrentItem(EPwDlgKeepUp, link.iKeepUp ? 0 : 1);
+	DimProxyLines();
+	DimKeepUpLine();
+	}
+
+// (0.73) staying connected after use is the Psion Internet route's only:
+// the modem route always hangs up (it holds the serial port)
+void CPwConnDialog::DimKeepUpLine()
+	{
+	SetLineDimmedNow(EPwDlgKeepUp, ChoiceListCurrentItem(EPwDlgLink) != 1);
+	}
+
+// the host and port wait for "Use proxy" to be Yes: dimmed, not hidden
+void CPwConnDialog::DimProxyLines()
+	{
+	TBool off = ChoiceListCurrentItem(EPwDlgProxy) != 1;
+	SetLineDimmedNow(EPwDlgProxyHost, off);
+	SetLineDimmedNow(EPwDlgProxyPort, off);
+	}
+
+void CPwConnDialog::HandleControlStateChangeL(TInt aControlId)
+	{
+	if (aControlId == EPwDlgProxy)
+		DimProxyLines();
+	else if (aControlId == EPwDlgLink)
+		DimKeepUpLine();
 	}
 
 // Test: tries the values shown (not yet saved). If the browser engine has
@@ -1305,6 +1441,17 @@ TBool CPwConnDialog::OkToExitL(TInt aButtonId)
 		TestL();
 		return EFalse;
 		}
+	TInt proxy = ChoiceListCurrentItem(EPwDlgProxy) == 1;
+	TBuf<60> host;
+	GetEdwinText(host, EPwDlgProxyHost);
+	host.Trim();
+	TInt port = NumberEditorValue(EPwDlgProxyPort);
+	if (proxy && host.Length() == 0)
+		{
+		iEikonEnv->InfoMsg(_L("No proxy host entered"));
+		TryChangeFocusToL(EPwDlgProxyHost);
+		return EFalse;
+		}
 	iSettings.iNetMode = ((CEikChoiceList*)Control(EPwDlgLink))->CurrentItem() == 1;
 	iSettings.iBaudIndex = ((CEikChoiceList*)Control(EPwDlgBaud))->CurrentItem();
 	iSettings.iRtsCts = ((CEikChoiceList*)Control(EPwDlgFlow))->CurrentItem() == 1;
@@ -1312,6 +1459,26 @@ TBool CPwConnDialog::OkToExitL(TInt aButtonId)
 	GetEdwinText(ppp, EPwDlgPppStart);
 	ppp.TrimAll();
 	iSettings.iPppStart = ppp;
+	// the proxy goes straight to the shared file; the app's own link lines
+	// are saved by the caller (SaveSharedLink keeps the proxy as it finds it)
+	RFs& fs = iCoeEnv->FsSession();
+	TPsiLink link;
+	link.SetDefaults();
+	link.Load(fs);
+	link.iUseProxy = proxy;
+	if (host.Length())
+		link.iProxyHost = host;
+	if (port > 0 && port < 65536)
+		link.iProxyPort = port;
+	link.iKeepUp = ChoiceListCurrentItem(EPwDlgKeepUp) == 0;
+	link.Save(fs);
+	// a link already up and now to stay up: hold it (psihold.exe ends by
+	// itself when the setting goes the other way)
+	if (link.iKeepUp && iSettings.iNetMode)
+		{
+		TFileName near(iEikonEnv->EikAppUi()->Application()->AppFullName());
+		PsiHoldStart(fs, near);
+		}
 	return ETrue;
 	}
 
@@ -1350,9 +1517,6 @@ TBool CPwUpdateDialog::OkToExitL(TInt /*aButtonId*/)
 
 void CPwPrefsDialog::PreLayoutDynInitL()
 	{
-	((CEikChoiceList*)Control(EPwDlgProxy))->SetCurrentItem(iSettings.iUseProxy ? 1 : 0);
-	SetEdwinTextL(EPwDlgProxyHost, &iSettings.iProxyHost);
-	SetNumberEditorValue(EPwDlgProxyPort, iSettings.iProxyPort);
 	SetEdwinTextL(EPwDlgHome, &iSettings.iHome);
 	((CEikChoiceList*)Control(EPwDlgPictures))->SetCurrentItem(iSettings.iImages ? 1 : 0);
 	((CEikChoiceList*)Control(EPwDlgText))->SetCurrentItem((iSettings.iDisplay & KPwDisplayScaledText) ? 1 : 0);
@@ -1372,19 +1536,6 @@ TBool CPwPrefsDialog::OkToExitL(TInt aButtonId)
 			iEikonEnv->InfoMsg(_L("Not saved - the internal disk is full or in use"));
 		return EFalse;                        // (the dialog stays open)
 		}
-	TInt proxy = ((CEikChoiceList*)Control(EPwDlgProxy))->CurrentItem() == 1;
-	TBuf<60> host;
-	GetEdwinText(host, EPwDlgProxyHost);
-	host.Trim();
-	if (proxy && host.Length() == 0)
-		{
-		iEikonEnv->InfoMsg(_L("No proxy host entered"));
-		TryChangeFocusToL(EPwDlgProxyHost);
-		return EFalse;
-		}
-	iSettings.iUseProxy = proxy;
-	iSettings.iProxyHost = host;
-	iSettings.iProxyPort = NumberEditorValue(EPwDlgProxyPort);
 	GetEdwinText(iSettings.iHome, EPwDlgHome);
 	iSettings.iHome.Trim();
 	iSettings.iImages = ((CEikChoiceList*)Control(EPwDlgPictures))->CurrentItem() == 1;
@@ -1413,6 +1564,8 @@ void CPwAppUi::ConstructL()
 	ShowPicturesState(settings.iImages);
 	if (iToolBar && !settings.iToolbar)
 		iToolBar->MakeVisible(EFalse);       // remembered from last time
+	iFavs = CPwList::NewL(iCoeEnv->FsSession(), _L("C:\\System\\Apps\\PsiWeb\\Favourites.dat"), KPwMaxFavs);
+	iHist = CPwList::NewL(iCoeEnv->FsSession(), _L("C:\\System\\Apps\\PsiWeb\\History.dat"), KPwMaxHist);
 	iView = new(ELeave) CPwView;
 	iView->ConstructL(PageRect(settings.iToolbar), settings);
 	AddToStackL(iView);
@@ -1544,6 +1697,8 @@ CPwAppUi::~CPwAppUi()
 		RemoveFromStack(iView);
 		delete iView;
 		}
+	delete iFavs;
+	delete iHist;
 	}
 
 void CPwAppUi::LoadSettings(TPwSettings& aSettings)
@@ -1651,7 +1806,11 @@ void CPwAppUi::SaveSettings(const TPwSettings& aSettings)
 void CPwAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 	{
 	PwShared* s = iView->Shared();
-	if (aMenuId == R_PW_GO_MENU)
+	if (aMenuId == R_PW_FAVS_MENU)
+		FavsMenuL(aMenuPane);
+	else if (aMenuId == R_PW_HISTORY_MENU)
+		HistoryMenuL(aMenuPane);
+	else if (aMenuId == R_PW_GO_MENU)
 		{
 		aMenuPane->SetItemDimmed(EPwCmdBack, !s->can_back);
 		aMenuPane->SetItemDimmed(EPwCmdForward, !s->can_forward);
@@ -1660,6 +1819,15 @@ void CPwAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		{
 		aMenuPane->SetItemDimmed(EPwCmdStop, !s->busy);
 		aMenuPane->SetItemDimmed(EPwCmdConnect, s->busy);   // (a page is using the link)
+		// (0.73) Psion Internet: Disconnect while the link is up (the modem
+		// route's stays as it was: the engine frees the port)
+		aMenuPane->SetItemDimmed(EPwCmdHangup, iView->Settings().iNetMode && !PgLinkUp());
+		}
+	else if (aMenuId == R_PW_TOOLS_MENU)
+		{
+		// dimmed, not gone, until a proxy is set: the log goes to it
+		aMenuPane->SetItemDimmed(EPwCmdSendLog,
+			!iView->Settings().iUseProxy || iView->Settings().iProxyHost.Length() == 0);
 		}
 	else if (aMenuId == R_PW_VIEW_MENU)
 		{
@@ -1831,7 +1999,7 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 		FromUtf8(url, sh->url);
 		if (url.Compare(_L("about:blank")) == 0)
 			url.Zero();
-		CPwOpenDialog* dlg = new(ELeave) CPwOpenDialog(url);
+		CPwOpenDialog* dlg = new(ELeave) CPwOpenDialog(url, *iHist);
 		if (dlg->ExecuteLD(R_PW_OPEN_DIALOG) && url.Length() > 0)
 			iView->Command(PW_CMD_OPEN, url);
 		break;
@@ -1933,6 +2101,24 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 	case EPwCmdPageInfo:
 		PageInfoL();
 		break;
+	case EPwCmdAddFav:
+		AddFavouriteL();
+		break;
+	case EPwCmdOrganiseFav:
+		OrganiseL();
+		break;
+	case EPwCmdFavMore:
+		PickAndOpenL(*iFavs);
+		break;
+	case EPwCmdHistoryFull:
+		PickAndOpenL(*iHist);
+		break;
+	case EPwCmdClearHistory:
+		ClearHistoryL();
+		break;
+	case EPwCmdHistNone:
+	case EPwCmdHistory:
+		break;
 	case EPwCmdConnSettings:
 		{
 		CPwConnDialog* dlg = new(ELeave) CPwConnDialog(st);
@@ -1968,7 +2154,9 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 		}
 	case EPwCmdHangup:
 		iView->Command(PW_CMD_HANGUP, KNullDesC);
-		if (iView->EngineRunning())
+		if (iView->Settings().iNetMode)
+			PgLinkDisconnectL();             // (0.73) the link itself too, even when "Stay connected" holds it
+		else if (iView->EngineRunning())
 			iEikonEnv->InfoMsg(_L("Disconnecting - the serial port will be free"));
 		break;
 	case EPwCmdUpdate:
@@ -1977,6 +2165,9 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 	case EPwCmdRestart:
 		RestartEngineL();
 		break;
+	case EPwCmdSendLog:
+		iView->SendLog();
+		break;
 	case EPwCmdAbout:
 		AboutL();
 		break;
@@ -1984,6 +2175,10 @@ void CPwAppUi::HandleCommandL(TInt aCommand)
 		HelpL();
 		break;
 	default:
+		if (aCommand >= EPwCmdFav0 && aCommand < EPwCmdFav0 + KPwCmdSlots)
+			OpenFromListL(*iFavs, aCommand - EPwCmdFav0);
+		else if (aCommand >= EPwCmdHist0 && aCommand < EPwCmdHist0 + KPwCmdSlots)
+			OpenFromListL(*iHist, aCommand - EPwCmdHist0);
 		break;
 		}
 	}

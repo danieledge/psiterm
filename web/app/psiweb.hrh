@@ -20,11 +20,22 @@ enum TPwCommands
 	EPwCmdRestart,
 	EPwCmdAbout,
 	EPwCmdUpdate,
+	EPwCmdSendLog,           // Tools > Send log to server (0.71)
 	EPwCmdHangup,
 	EPwCmdConnect,           // File > Connect (as PsiTerm's)
 	EPwCmdToggleToolbar,
 	EPwCmdHelp,              // Tools > Help on PsiWeb
-	EPwCmdReading            // View > Reading mode (docs/display.md)
+	EPwCmdReading,           // View > Reading mode (docs/display.md)
+	// Favourites and History (0.69)
+	EPwCmdAddFav,            // Favourites > Add to favourites... (Shift+Ctrl+D)
+	EPwCmdOrganiseFav,       // Favourites > Organise favourites...
+	EPwCmdFavMore,           // Favourites > More favourites...
+	EPwCmdHistory,           // Go > History (the cascade's own id)
+	EPwCmdHistoryFull,       // History > Full history...
+	EPwCmdClearHistory,      // History > Clear history
+	EPwCmdHistNone,          // History > (No history), dimmed
+	EPwCmdFav0 = 0x1100,     // the favourites on the menu: 16 slots
+	EPwCmdHist0 = 0x1120     // the History cascade's pages: 16 slots
 	};
 
 enum TPwDialogControls
@@ -37,6 +48,7 @@ enum TPwDialogControls
 	EPwDlgProxy,
 	EPwDlgProxyHost,
 	EPwDlgProxyPort,
+	EPwDlgKeepUp,            // (0.73) Psion Internet after use: Stays connected / Disconnects when idle
 	EPwDlgHome,
 	EPwDlgInfo1,
 	EPwDlgInfo2,
@@ -60,7 +72,18 @@ enum TPwDialogControls
 	EPwDlgAuthRealm,
 	EPwDlgAuthUser,
 	EPwDlgAuthPass,
-	EPwDlgText               // Preferences > Text: sharp or scaled (docs/display.md)
+	EPwDlgText,              // Preferences > Text: sharp or scaled (docs/display.md)
+	EPwDlgFavName,           // Add to favourites: Name
+	EPwDlgFavUrl,            // ...and Address
+	EPwDlgRecent,            // Open address: Recent
+	EPwDlgOrgList            // Favourites / History lists
+	};
+
+// Organise favourites: its buttons
+enum TPwOrganiseButtons
+	{
+	EPwBidEdit = 0x7500,
+	EPwBidDelete
 	};
 
 // Connection settings > Test (0.74): the button, and the result dialog's lines
@@ -75,4 +98,10 @@ enum TPwLinkTest
 enum TPwGreyButton
 	{
 	EPwBidGreys = 0x7480
+};
+
+enum TPwConnPages
+	{
+	EPwPageLink = 0x300,
+	EPwPageProxy
 	};

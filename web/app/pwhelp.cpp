@@ -22,7 +22,7 @@ static const TPwHelpTopic KHelpTopics[] =
 	  "connection, as PsiTerm and PsiMail do.\n"
 	  "\n"
 	  "File > Open address (Ctrl+O, or the Open button) asks for an address; words instead of an "
-	  "address are searched for. File > Home page (Ctrl+H) opens your home page, which is set in "
+	  "address are searched for, and Recent offers the pages you have seen. File > Home page (Ctrl+H) opens your home page, which is set in "
 	  "Tools > Preferences. PsiWeb starts on its own welcome page, which needs no connection.\n"
 	  "\n"
 	  "PsiWeb starts its browser engine when it opens; the engine then dials or connects when a page "
@@ -61,6 +61,23 @@ static const TPwHelpTopic KHelpTopics[] =
 	  "again from memory when you come back to them; a page that still does not fit says \"Page too "
 	  "big\" and shows what fits." },
 
+	{ "Favourites & history",
+	  "Favourites keep the pages you go back to. Favourites > Add to favourites (Shift+Ctrl+D) "
+	  "saves the page showing: the name is the page's title and can be changed. The first five "
+	  "favourites are on the Favourites menu itself; choose one to open it. More favourites lists "
+	  "them all when there are over five. Organise favourites shows the list with Edit, to change "
+	  "a name or address, and Delete; both act at once, and Close ends. PsiWeb keeps up to 40.\n"
+	  "\n"
+	  "History is on the Go menu. It lists the last five pages you have seen, newest first; Full "
+	  "history lists the last 50, and Clear history removes them all. A page is added when it has "
+	  "loaded, and a page seen again moves to the top. PsiWeb's own welcome page is not kept.\n"
+	  "\n"
+	  "File > Open address has a Recent line: choose one of the last twelve pages with Left and "
+	  "Right to put its address in the Address line.\n"
+	  "\n"
+	  "Favourites and History are kept in Favourites.dat and History.dat, in PsiWeb's folder on "
+	  "C:, and stay when PsiWeb closes." },
+
 	{ "Screen & greys",
 	  "View > Reading mode (Shift+Ctrl+R) raises the screen's contrast and keeps the backlight on "
 	  "while PsiWeb is in front; your own settings come back when it goes to the background or "
@@ -91,14 +108,23 @@ static const TPwHelpTopic KHelpTopics[] =
 	  "\n"
 	  "Psion TCP/IP: the Psion's own dial-up (PPP) connection, set up in the Control panel's Internet "
 	  "and Modems settings. PsiWeb starts it when it needs to and the Psion's connection dialogs "
-	  "appear.\n"
+	  "appear. Connection settings > Network > After use, Psion Internet chooses what happens "
+	  "next, for PsiTerm and PsiMail too: Stays connected (the standard on a new Psion) keeps it "
+	  "up until you disconnect; Disconnects when idle leaves it to the Psion's own idle time, as "
+	  "before (kept for anyone updating from an older version).\n"
 	  "\n"
-	  "A proxy (Tools > Preferences > Use a proxy), such as WebOne on a computer on your network, is "
-	  "strongly recommended: it fetches https pages for the Psion, which has no time for a TLS "
-	  "handshake on every page, and keeps one connection open so the modem dials once. Without one, "
-	  "http pages go direct and https pages use PsiWeb's own TLS 1.3.\n"
+	  "A proxy (Tools > Connection settings > Network > Use proxy, shared with PsiTerm and PsiMail), "
+	  "such as PsiProxy (in the proxy folder of PsiWeb's source) or WebOne on a computer on your "
+	  "network, is recommended but optional: it fetches https pages for the Psion, which has no "
+	  "time for a TLS handshake on every page, and keeps one connection open so the modem dials "
+	  "once. Without one, http pages go direct and https pages use PsiWeb's own TLS 1.3.\n"
 	  "\n"
-	  "File > Disconnect (Ctrl+U) hangs up and frees the serial port for PsiTerm or PsiMail. The "
+	  "Tools > Send log to server sends PsiWeb's log to PsiProxy (not WebOne), to help find a "
+	  "fault. It is dimmed until a proxy is set. The log goes as plain HTTP and can hold the "
+	  "names of the sites you visited.\n"
+	  "\n"
+	  "File > Disconnect (Ctrl+U) hangs up the modem and frees the serial port for PsiTerm or "
+	  "PsiMail, or takes the Psion Internet connection down. The "
 	  "port can be used by one program at a time; the Remote link must be off too." },
 
 	{ "If the engine stops",

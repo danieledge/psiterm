@@ -214,6 +214,7 @@ save the upload time).
 | | Keep mail on | the memory disk (CF card) if there is one, or the internal disk |
 | | Show pictures | Yes, Only attached files, No |
 | | Web pictures | Ask, Always, Never (see [Privacy](#privacy)) |
+| | Web pictures via proxy | No (the standard) or Yes: fetch them through the shared proxy, which converts them for the Psion; if it does not answer, they come direct |
 | | Email icon opens | PsiMail or Built-in Email |
 | New mail | Alert for new mail | Sound & message, Message only, Off |
 | | Check for new mail | Off, every 10, 15 or 30 minutes, every hour |
@@ -242,6 +243,23 @@ settings are shared with PsiTerm and PsiWeb.
   answers and at what speed, CTS and DCD, the modem's name, and whether
   RTS/CTS will work; for Psion Internet, whether the connection is up and
   names can be looked up (it asks before dialling).
+
+* **After use, Psion Internet** (Network page): *Stays connected* (the
+  standard on a new Psion) keeps the dial-up connection up after use, for
+  PsiTerm and PsiWeb too, until File > Disconnect (Ctrl+U); *Disconnects when
+  idle* leaves it to the Psion's own idle time, as before. Anyone updating
+  from an older version keeps *Disconnects when idle* until they change it.
+  The modem route always hangs up after use.
+* **Use proxy** (Network page), shared with PsiTerm and PsiWeb, is optional
+  and off as standard; no address is built in. PsiMail uses it only for web
+  pictures (if Preferences > Web pictures via proxy is Yes) and for *Send log
+  to server*. [PsiProxy](../proxy/README.md), in this repository, is the
+  proxy made for it (port 8081 by default).
+* **Modem provides TLS** (Link page) is only for a modem whose firmware does
+  the TLS itself (the Atom modem's); leave it at No for a WiRSa or a WiFi232.
+  If it is Yes and the modem does not, PsiMail notices on the first IMAP or
+  SMTP connection (no plain greeting within 12 seconds), does the TLS itself
+  on that same connection, and says so in `psimail.log`.
 
 The serial port can be used by one program at a time, and the Remote link
 must be off. Everything goes over TLS 1.3 (or STARTTLS, if the account says
@@ -380,7 +398,10 @@ without the `cryptography` package too). The version must go up each time.
   disk PsiMail is installed on), records what the mail engine did, each line
   timed; after a crash or a restart the previous engine's log is kept as
   `psimail.old`, with the reason it ended at the top of the new log. They
-  are the files to send with a bug report.
+  are the files to send with a bug report. Tools > Troubleshooting > Send
+  log to server sends them to your PsiProxy, if the shared proxy is one (it
+  is dimmed until a proxy is set). They go as plain HTTP and hold server and
+  account names, so send them only to your own PsiProxy.
 * **"The mail engine is not running"**: the engine is a separate program;
   PsiMail starts it again by itself if it stops (not after three stops in
   10 minutes). Tools > Restart mail engine starts it by hand.

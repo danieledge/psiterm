@@ -28,3 +28,16 @@ hobj/bench.o: bench/bench.c
 # Connection settings > Test: the pure part of pg_link_test (no EPOC calls)
 linktest: test/linktest.cpp psiglue.cpp pglinktest.h
 	g++ -Wall -O1 -g -DPG_LINK_TEST_ONLY -DPG_LINK_TEST_HOST -I test/stubinc -I . test/linktest.cpp -o $@
+
+# The shared link's last sign of life: when a failed probe may hang up the
+# link every program shares (pglinkseen.h)
+linkseentest: test/linkseentest.cpp pglinkseen.h
+	g++ -Wall -O1 -g test/linkseentest.cpp -o $@
+
+# PsiLink.ini, the shared connection settings: every version loads (psilink.h)
+psilinktest: test/psilinktest.cpp psilink.h
+	g++ -Wall -O1 -g test/psilinktest.cpp -o $@
+
+# psihold.exe found by reading \System\Apps\, not by program names (psilink.h)
+psiholdtest: test/psiholdtest.cpp psilink.h
+	g++ -Wall -O1 -g -fsanitize=address,undefined test/psiholdtest.cpp -o $@
