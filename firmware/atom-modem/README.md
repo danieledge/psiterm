@@ -993,3 +993,8 @@ button. `src/cabundle.h` holds the root certificates, made by
   Use the iPhone's WiFi hotspot. See `docs/UPGRADE.md`, section 12.
 - RNDIS (older Android tethering); NCM and ECM are what is implemented.
 - The USB host code has not yet run on hardware: see `docs/UPGRADE.md`.
+
+## Support
+
+If PsiConnect gets your Psion online and you'd like to say thanks,
+you can [buy me a coffee](https://buymeacoffee.com/danedge).

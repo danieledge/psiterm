@@ -530,3 +530,8 @@ it is the user's.
 * Server-side drafts (drafts stay in the Outbox).
 * Repeating entries made on the Psion, to-do lists and anniversaries in the
   calendar sync.
+
+## Support
+
+If PsiMail brings email back to your Psion and you'd like to say thanks,
+you can [buy me a coffee](https://buymeacoffee.com/danedge).

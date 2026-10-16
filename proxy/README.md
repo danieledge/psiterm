@@ -234,6 +234,11 @@ This needs `requirements-optional.txt`, the Chromium download, and
 | `psiproxy.service.example` | A systemd user unit to copy |
 | `requirements.txt`, `requirements-optional.txt` | Python packages |
 
+## Support
+
+If PsiProxy helps your Psion and you'd like to say thanks,
+you can [buy me a coffee](https://buymeacoffee.com/danedge).
+
 ## Licence
 
 PsiProxy is part of this repository and is under its MIT licence (see
