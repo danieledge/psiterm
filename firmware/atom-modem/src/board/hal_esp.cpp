@@ -563,9 +563,9 @@ void AtomHal::WebInfo(char* aOut, size_t aMax)
 		aOut[0] = 0;
 	}
 
-// PsiCast's big buffers: PSRAM where there is some; else only while the
-// internal heap keeps enough for WiFi and a TLS connection
-static const size_t kCastKeepFree = 40 * 1024;
+// big buffers for extension modules (ext.h): PSRAM where there is some;
+// else only while the internal heap keeps enough for WiFi and a TLS connection
+static const size_t kBigKeepFree = 40 * 1024;
 
 void AtomHal::Random(uint8_t* aOut, size_t aLen)
 	{
@@ -580,7 +580,7 @@ bool AtomHal::BigRoom(size_t aLen)
 #endif
 	size_t free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 	size_t big = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-	return free >= aLen + kCastKeepFree && big >= (aLen < 80 * 1024 ? aLen : 80 * 1024);
+	return free >= aLen + kBigKeepFree && big >= (aLen < 80 * 1024 ? aLen : 80 * 1024);
 	}
 
 void* AtomHal::BigAlloc(size_t aLen)

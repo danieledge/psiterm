@@ -2323,7 +2323,7 @@ extern "C" void pg_net_set_closed()
 
 // Psion Internet: send small writes at once, without waiting for the ACK of
 // what went before (Nagle off, KSoTcpNoDelay). For a program whose small
-// messages are what the user waits for (PsiCast's updates and STATUS):
+// messages are what the user waits for (a screen update, a status line):
 // Nagle against the other end's delayed ACK stalls them by up to 250 ms.
 // 0 done, else ESOCK's error; -1 on the modem route (no socket here)
 extern "C" int pg_net_nodelay()

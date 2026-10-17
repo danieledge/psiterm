@@ -8,9 +8,6 @@
 #include <esp_core_dump.h>
 #include <esp_flash.h>
 #include "fwsafe.h"
-#include "../cast/cast.h"
-#include "../cast/castpage.h"
-#include "../cast/casticons.h"
 #if defined(AM_HAS_LCD)
 #include "screen.h"
 #include "../canvas.h"
@@ -30,7 +27,7 @@ static const char kCss[] PROGMEM =
 	".warn{background:#fff3cd;border:1px solid #e0c060;padding:8px 10px;margin:8px 0}</style>";
 
 WebUi::WebUi()
-	: iModem(0), iHal(0), iCast(0), iServer(80), iApUp(false), iStarted(false), iDnsUp(false), iLastScanMs(0),
+	: iModem(0), iHal(0), iServer(80), iApUp(false), iStarted(false), iDnsUp(false), iLastScanMs(0),
 	  iOtaAllowed(false), iOtaBegun(false)
 	{
 	iApName[0] = 0;
@@ -50,35 +47,13 @@ void WebUi::Begin(Modem& aModem, AtomHal& aHal)
 	iServer.on("/log", HTTP_GET, [this]() { PageLog(); });
 	iServer.on("/crash", HTTP_GET, [this]() { PageCrash(); });
 	iServer.on("/screen.bmp", HTTP_GET, [this]() { ScreenBmp(); });
-	// PsiCast: the viewer (behind the password), its token, and the Home
-	// Screen files (not secret, and fetched without the password by iOS)
-	iServer.on("/screen", HTTP_GET, [this]() { PageScreen(); });
-	iServer.on("/screen/token", HTTP_GET, [this]() { ScreenToken(); });
-	iServer.on("/screen/manifest.json", HTTP_GET, [this]()
+	// the extension modules' routes (ext.h)
+	for (int i = 0; i < iModem->ExtensionCount(); i++)
 		{
-		iServer.sendHeader("Cache-Control", "max-age=86400");
-		iServer.send_P(200, "application/manifest+json", kCastManifest, sizeof(kCastManifest) - 1);
-		});
-	iServer.on("/screen/icon.png", HTTP_GET, [this]()
-		{
-		iServer.sendHeader("Cache-Control", "max-age=86400");
-		iServer.send_P(200, "image/png", (const char*)kCastIcon180, kCastIcon180Len);
-		});
-	iServer.on("/screen/icon-512.png", HTTP_GET, [this]()
-		{
-		iServer.sendHeader("Cache-Control", "max-age=86400");
-		iServer.send_P(200, "image/png", (const char*)kCastIcon512, kCastIcon512Len);
-		});
-	// the Series 7 and Modern themes' colour pictures (and their matcher), fetched only when one is chosen
-	iServer.on("/screen/iconmatch.js", HTTP_GET, [this]() { CastAsset("text/javascript", kCastIconMatchGz, kCastIconMatchGzLen); });
-	iServer.on("/screen/s7icons.json", HTTP_GET, [this]() { CastAsset("application/json", kCastS7IconsGz, kCastS7IconsGzLen); });
-	iServer.on("/screen/modicons.json", HTTP_GET, [this]() { CastAsset("application/json", kCastModIconsGz, kCastModIconsGzLen); });
-	iServer.on("/screen/silk5mx.jpg", HTTP_GET, [this]()          // (the 5mx's face, for full screen: not gzipped)
-		{
-		if (!Allowed()) return;
-		iServer.sendHeader("Cache-Control", "max-age=604800");
-		iServer.send_P(200, "image/jpeg", (const char*)kCastSilk5mx, kCastSilk5mxLen);
-		});
+		Extension* x = iModem->ExtensionAt(i);
+		for (const ExtRoute* r = x->Routes(); r && r->path; r++)
+			iServer.on(r->path, HTTP_GET, [this, x, r]() { ExtGet(*x, *r); });
+		}
 	iServer.on("/system", HTTP_GET, [this]() { PageSystem(); });
 	iServer.on("/vpn", HTTP_GET, [this]() { PageVpn(); });
 	iServer.on("/wg", HTTP_POST, [this]() { PostWg(); });
@@ -261,19 +236,31 @@ bool WebUi::OtaAuth()
 	return ok;
 	}
 
-// a gzipped file of the viewer's, behind the password like the page itself
-void WebUi::CastAsset(const char* aType, const unsigned char* aData, unsigned aLen)
+// an extension module's route: behind the password unless it is open
+namespace {
+class WebQuery : public ExtQuery
 	{
-	if (!Allowed())
+public:
+	explicit WebQuery(WebServer& aServer) : iServer(aServer) {}
+	const char* Arg(const char* aName) const override { iLast = iServer.arg(aName); return iLast.c_str(); }   // (until the next call)
+private:
+	WebServer& iServer;
+	mutable String iLast;
+	};
+}
+
+void WebUi::ExtGet(Extension& aExt, const ExtRoute& aRoute)
+	{
+	if (!aRoute.open && !Allowed())
 		return;
-	if (!aLen)                                   // (a pack this build was made without)
-		{
-		iServer.send(404, "text/plain", "Not found\n");
-		return;
-		}
-	iServer.sendHeader("Content-Encoding", "gzip");
-	iServer.sendHeader("Cache-Control", "max-age=604800");
-	iServer.send_P(200, aType, (const char*)aData, aLen);
+	WebQuery q(iServer);
+	ExtReply r;
+	aExt.Get(aRoute.path, q, r);
+	if (r.gzip)
+		iServer.sendHeader("Content-Encoding", "gzip");
+	if (r.cache)
+		iServer.sendHeader("Cache-Control", r.cache);
+	iServer.send_P(r.status, r.type, (const char*)r.body, r.len);
 	}
 
 // ----- the crash report ---------------------------------------------------------------------------
@@ -473,7 +460,7 @@ void WebUi::PageStatus()
 	if (iModem->Connected())
 		{
 		snprintf(w, sizeof(w), "%s, %lu bytes to the Psion, %lu to the server", iModem->ProxyCall() ? "the web proxy"
-			: iModem->ExecCall() ? "psiexec" : iModem->CastCall() ? "PsiCast" : "a connection", (unsigned long)iModem->ToPsion(), (unsigned long)iModem->ToServer());
+			: iModem->ExecCall() ? "psiexec" : iModem->ExtCall() ? iModem->ExtCall()->Name() : "a connection", (unsigned long)iModem->ToPsion(), (unsigned long)iModem->ToServer());
 		Send(w);
 		}
 	else
@@ -494,13 +481,21 @@ void WebUi::PageStatus()
 		Send(kModes[i]); Send("</button>");
 		}
 	Send("</form></td></tr>");
-	if (iCast)
+	for (int i = 0; i < iModem->ExtensionCount(); i++)
 		{
+		const Extension* x = iModem->ExtensionAt(i);
 		char c[100];
-		iCast->StateText(c, sizeof(c));
-		Send("<tr><td><a href=\"/screen\">PsiCast</a></td><td>"); SendEsc(c);
-		if (iCast->Enabled())
-			Send(" &middot; <a href=\"/screen\">show the screen</a>");
+		x->StateText(c, sizeof(c));
+		const char* home = x->WebHome();
+		Send("<tr><td>");
+		if (home) { Send("<a href=\""); Send(home); Send("\">"); }
+		SendEsc(x->Name());
+		if (home) Send("</a>");
+		Send("</td><td>"); SendEsc(c);
+		if (home && x->WebAction())
+			{
+			Send(" &middot; <a href=\""); Send(home); Send("\">"); SendEsc(x->WebAction()); Send("</a>");
+			}
 		Send("</td></tr>");
 		}
 	int dns = iHal->DnsOk();
@@ -605,35 +600,48 @@ void WebUi::PageSettings()
 	Send("<div class=\"warn\"><b>Serial safety:</b> the Psion's port is RS-232 (up to ±12 V). Every serial pin below must reach it "
 		"through an RS-232 transceiver (a MAX3232, or the Atomic RS232 Base). Never wire a pin straight to the Psion.</div>");
 	// every group with a setting on this page (SchemaWebPage), in the table's order
-	static const TSchemaGroup kGroups[] = { SGUplink, SGSerial, SGProxy, SGTls, SGMail, SGPictures, SGExec, SGCast, SGSystem, SGWifi, SGWg };
+	static const TSchemaGroup kGroups[] = { SGUplink, SGSerial, SGProxy, SGTls, SGMail, SGPictures, SGExec, SGExt, SGSystem, SGWifi, SGWg };
+	// (SGExt: a group for each extension module, under its name)
+	const Extension* mod = 0;
 	for (size_t g = 0; g < sizeof(kGroups) / sizeof(kGroups[0]); g++)
 		{
+		const TSchemaGroup grp = kGroups[g];
+		if (grp == SGExt)
+			{
+			mod = mod ? mod->iNextModule : ExtModules();
+			if (!mod)
+				continue;
+			if (mod->iNextModule)
+				g--;                                // (this group again after, for the next module)
+			}
 		bool any = false;
 		for (int i = 0; i < SchemaCount(); i++)
-			if (SchemaAt(i).group == kGroups[g] && strcmp(SchemaWebPage(SchemaAt(i)), "/settings") == 0)
+			if (SchemaAt(i).group == grp && strcmp(SchemaWebPage(SchemaAt(i)), "/settings") == 0
+				&& (grp != SGExt || ExtSchemaOwner(SchemaAt(i)) == mod))
 				any = true;
 		if (!any)
 			continue;
-		Send("<h2>"); Send(SchemaGroupName(kGroups[g])); Send("</h2>");
+		Send("<h2>"); Send(grp == SGExt ? mod->Name() : SchemaGroupName(grp)); Send("</h2>");
 		Send("<form method=\"post\" action=\"/set\"><input type=\"hidden\" name=\"back\" value=\"/settings\"><table>");
 		for (int i = 0; i < SchemaCount(); i++)
 			{
 			const SchemaEntry& e = SchemaAt(i);
-			if (e.group != kGroups[g] || strcmp(SchemaWebPage(e), "/settings") != 0)
+			if (e.group != grp || strcmp(SchemaWebPage(e), "/settings") != 0
+				|| (grp == SGExt && ExtSchemaOwner(e) != mod))
 				continue;
 			Field(e);
 			}
 		Send("</table><button class=\"go\">Apply</button></form>");
-		if (kGroups[g] == SGTls)
+		if (grp == SGTls)
 			Send("<p><small>With TLS termination the modem sees your mail and pages in plain text, and so does the serial cable. "
 				"For your own modem on your own network only. Set the account's TLS to <i>none</i> in PsiMail, keeping port 993 or 465.</small></p>");
-		if (kGroups[g] == SGMail)
+		if (grp == SGMail)
 			Send("<p><small>Only for the PPP route. Set a host and the modem accepts plaintext mail on 192.168.7.1 (993/465/995) and does the TLS to it, "
 				"checking the certificate (AT$TLSV). In PsiMail point IMAP/SMTP at <code>192.168.7.1</code> with security <i>None</i>. Empty = off.</small></p>");
-		if (kGroups[g] == SGExec)
+		if (grp == SGExec)
 			Send("<p><small>Runs commands on a PC through <code>tools/psiexecd.py</code>, which allows only the commands it is started with. "
 				"The token is kept in the modem's flash only.</small></p>");
-		if (kGroups[g] == SGUplink)
+		if (grp == SGUplink)
 			Send("<p><small>USB host mode takes the USB-C port: the console and programming need it back (hold the button through a reset "
 				"for the download mode). An iPhone enumerates but reports no carrier until Apple's pairing is implemented; use its WiFi hotspot.</small></p>");
 		}
@@ -655,37 +663,6 @@ void WebUi::PageLog()
 		}
 	Send("</pre>");
 	Tail();
-	}
-
-// PsiCast's viewer: one page, gzipped (cast/viewer.html, tools/mkcastpage.py)
-void WebUi::PageScreen()
-	{
-	if (!Allowed()) return;
-	if (!iCast)
-		{
-		iServer.send(404, "text/plain", "No PsiCast in this firmware");
-		return;
-		}
-	iServer.sendHeader("Content-Encoding", "gzip");
-	iServer.sendHeader("Cache-Control", "no-cache");
-	iServer.send_P(200, "text/html; charset=utf-8", (const char*)kCastPageGz, kCastPageGzLen);
-	}
-
-// {"t":"<token>","port":5962,"control":true}: single use, for 60 s; ?control=1 asks for control
-void WebUi::ScreenToken()
-	{
-	if (!Allowed()) return;
-	iServer.sendHeader("Cache-Control", "no-store");
-	char t[32];
-	if (!iCast || !iCast->NewToken(iServer.arg("control") == "1", t, sizeof(t)))
-		{
-		iServer.send(403, "application/json", iCast ? "{\"error\":\"PsiCast is off\"}" : "{\"error\":\"No PsiCast in this firmware\"}");
-		return;
-		}
-	char m[96];
-	snprintf(m, sizeof(m), "{\"t\":\"%s\",\"port\":%u,\"control\":%s}", t, (unsigned)kCastViewPort,
-		iServer.arg("control") == "1" ? "true" : "false");
-	iServer.send(200, "application/json", m);
 	}
 
 // the LCD as it is now: the frame buffer pushed to the panel, as a 24-bit

@@ -1,7 +1,6 @@
 // modem.cpp - see modem.h. MIT licence (see LICENSE at the top of the repository).
 #include "modem.h"
 #include "atremote.h"
-#include "cast/cast.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -389,7 +388,7 @@ Modem::Modem(Hal& aHal, uint8_t* aRing, size_t aRingSize)
 	: iHal(aHal), iLineLen(0), iOnline(false), iConnected(false), iClosing(false), iWifiWasUp(false),
 	  iLastSerialMs(0), iPluses(0), iLastPlusMs(0), iToPsion(0), iToServer(0), iLastDataMs(0),
 	  iPendingBaud(0), iTrialFrom(0), iTrialStartMs(0), iTrialArmed(false), iTrialGen(0), iLed(-1), iProxy(aHal),
-	  iProxyCall(false), iPppCall(false), iExecCall(false), iCast(0), iCastCall(false), iCastId(0), iExecOneShot(false), iTlsCall(false), iConfigMode(false),
+	  iProxyCall(false), iPppCall(false), iExecCall(false), iExtCount(0), iExtCall(0), iExtId(0), iExecOneShot(false), iTlsCall(false), iConfigMode(false),
 	  iConfigUntilMs(0), iLastTickMs(0), iJoinMs(0), iJoinFail(0), iWifiDownMs(0), iWifiRetryMs(0), iWifiRetries(0), iProbeDueMs(0), iLastWifiState(-1),
 	  iLastActive(-1), iNetSkip(0), iNetTrying(-1), iWgWant(EWgWantOff), iWgApplied(false), iWgGen(1), iWgAppliedGen(0),
 	  iWgIp(0), iWgLastState(-1), iWgTickMs(0), iLastDnsOk(-1), iDnsUp(0), iWgTextLen(0), iWgTextBad(false), iPendingPins(false),
@@ -569,9 +568,9 @@ void Modem::Loop()
 		if (iConfigMode && (int32_t)(now - iConfigUntilMs) >= 0)
 			ConfigMode(false);
 		}
-	// PsiCast follows its setting (AT$CAST, the pages, ATZ, AT&F: whichever changed it)
-	if (iCast && iCast->Enabled() != (iS2.castOff == 0))
-		iCast->SetEnabled(iS2.castOff == 0);
+	// the extension modules follow their settings (AT$, the pages, ATZ, AT&F: whichever changed them)
+	for (int i = 0; i < iExtCount; i++)
+		iExt[i]->Apply(iS2);
 	UpdateDcd();
 	UpdateLed(now);
 	}
@@ -712,10 +711,11 @@ void Modem::SerialIn(uint8_t aC)
 void Modem::OnlineChar(uint8_t aC)
 	{
 	uint32_t now = iHal.Millis();
-	// (a PsiCast call: "+++" in the middle of one of the Psion's messages is
-	// data, whatever the pauses round it; the guard times apply as ever)
-	bool castData = iCastCall && iCast->LinkMidMessage(iCastId);
-	if (aC == iS.s2 && iS.s2 < 128 && !castData)
+	// (an extension module's call: "+++" in the middle of one of the
+	// Psion's messages is data, whatever the pauses round it; the guard
+	// times apply as ever)
+	bool extData = iExtCall && iExtCall->CallHoldsEscape(iExtId);
+	if (aC == iS.s2 && iS.s2 < 128 && !extData)
 		{
 		if (iPluses == 0 && now - iLastSerialMs >= GuardMs())
 			{
@@ -775,7 +775,7 @@ void Modem::FlushUp()
 		}
 	size_t n = iPppCall ? iPpp.Input(iHal, iUpBuf, iUpLen)
 	         : iProxyCall ? iProxy.FromPsion(iUpBuf, iUpLen)
-	         : iCastCall ? iCast->LinkIn(iCastId, iUpBuf, iUpLen)
+	         : iExtCall ? iExtCall->CallIn(iExtId, iUpBuf, iUpLen)
 	         : iHal.TcpWrite(iUpBuf, iUpLen);
 	iToServer += n;
 	if (n)
@@ -1754,17 +1754,22 @@ Modem::TResult Modem::DialTo(const char* aArgs)
 			return RNone;
 			}
 		}
-	// "192.168.7.1:5961", the modem's own address: PsiCast (cast/cast.h), here
-	// in the modem, needing no uplink. (Nothing else answers there.)
-	if (colon && strcmp(target, kPppLocalIp) == 0 && port == kCastPort && !tls)
-		{
-		if (!iCast || !iCast->Enabled())
-			{
-			iHal.Log(iCast ? "PsiCast: dialled, but it is off (AT$CAST=1)" : "PsiCast: dialled, but this firmware has no PsiCast");
-			return RNoCarrier;
-			}
-		return DialCast();
-		}
+	// "192.168.7.1:<port>", the modem's own address, on a port an extension
+	// module answers (ext.h): a call to it, here in the modem, needing no uplink
+	if (colon && strcmp(target, kPppLocalIp) == 0 && !tls)
+		for (int i = 0; i < iExtCount; i++)
+			if (iExt[i]->Answers((uint16_t)port))
+				{
+				char why[120];
+				why[0] = 0;
+				if (iExt[i]->CallRefused((uint16_t)port, why, sizeof(why)))
+					{
+					if (why[0])
+						iHal.Log(why);
+					return RNoCarrier;
+					}
+				return DialExt(*iExt[i], (uint16_t)port);
+				}
 	// "psiexec": the text channel to the helper on the LAN
 	if (StartsNoCase(target, "psiexec") && target[7] == 0)
 		return DialExec(0);
@@ -1912,16 +1917,24 @@ Modem::TResult Modem::DialExec(const char* aCommand)
 	return RNone;
 	}
 
-// ATDT192.168.7.1:5961: the call is PsiCast's link A
-Modem::TResult Modem::DialCast()
+bool Modem::AddExtension(Extension& aExt)
+	{
+	if (iExtCount >= kMaxExt)
+		return false;
+	iExt[iExtCount++] = &aExt;
+	return true;
+	}
+
+// ATDT192.168.7.1:<port>: the call is an extension module's
+Modem::TResult Modem::DialExt(Extension& aExt, uint16_t aPort)
 	{
 	if (iConnected || iClosing)
 		Hangup(false);
-	uint32_t id = iCast->LinkOpen(Cast::ERouteModem);
+	uint32_t id = aExt.CallOpen(aPort);
 	if (!id)
 		return RNoCarrier;
-	iCastCall = true;
-	iCastId = id;
+	iExtCall = &aExt;
+	iExtId = id;
 	iProxyCall = false;
 	iExecCall = false;
 	iExecOneShot = false;
@@ -1945,12 +1958,12 @@ void Modem::EndCall()
 		iPpp.Stop(iHal);                     // (tears the PPP link down, NAT off)
 	else if (iProxyCall)
 		iProxy.Stop();                       // (closes its server connection)
-	else if (iCastCall)
-		iCast->LinkClose(iCastId);           // (the screen stays for the viewers)
+	else if (iExtCall)
+		iExtCall->CallClose(iExtId);
 	else
 		iHal.TcpClose();
-	iCastCall = false;
-	iCastId = 0;
+	iExtCall = 0;
+	iExtId = 0;
 	iProxyCall = false;
 	iPppCall = false;
 	iExecCall = false;
@@ -2039,11 +2052,11 @@ void Modem::Info()
 	iHal.MemInfo(w, sizeof(w));
 	if (w[0])
 		SayLine(w);
-	if (iCast)
+	for (int i = 0; i < iExtCount; i++)
 		{
 		char c[100];
-		iCast->StateText(c, sizeof(c));
-		snprintf(m, sizeof(m), "PsiCast: %s", c);
+		iExt[i]->StateText(c, sizeof(c));
+		snprintf(m, sizeof(m), "%s: %s", iExt[i]->Name(), c);
 		SayLine(m);
 		}
 	if (iHal.FirmwareInfo(m, sizeof(m)) && m[0])
@@ -2245,8 +2258,7 @@ Modem::TResult Modem::Join(const char* aArgs)
 //   WGHS         seconds since the last handshake, -1 none
 //   WGRX, WGTX   bytes through the tunnel since it started
 // and then:
-//   CAST         PsiCast: OFF, WAIT (on, no Psion sharing) or SHARING
-//   CASTV        how many browsers are watching
+//   ...          each extension module's own lines (ext.h)
 //   FW           OK; TRIAL (a firmware just written over the web, not yet
 //                seen to start properly); PREVIOUS (an update failed to start
 //                three times, and the modem went back to the firmware before it)
@@ -2343,11 +2355,15 @@ void Modem::Status()
 	SayLine(m);
 	snprintf(m, sizeof(m), "+STAT:WGTX=%lu", (unsigned long)iWgStatus.tx);
 	SayLine(m);
-	// PsiCast: OFF, WAIT (on, no Psion), SHARING; and how many viewers
-	snprintf(m, sizeof(m), "+STAT:CAST=%s", !iCast || !iCast->Enabled() ? "OFF" : iCast->LinkUp() ? "SHARING" : "WAIT");
-	SayLine(m);
-	snprintf(m, sizeof(m), "+STAT:CASTV=%d", iCast ? iCast->Viewers() : 0);
-	SayLine(m);
+	// the extension modules' own lines
+	for (int i = 0; i < iExtCount; i++)
+		for (int k = 0; k < iExt[i]->StatCount(); k++)
+			{
+			char c[100];
+			iExt[i]->StatLine(k, c, sizeof(c));
+			snprintf(m, sizeof(m), "+STAT:%s", c);
+			SayLine(m);
+			}
 	static const char* const kFw[] = { "OK", "TRIAL", "PREVIOUS" };
 	int fw = iHal.FirmwareInfo(q, sizeof(q));
 	snprintf(m, sizeof(m), "+STAT:FW=%s", kFw[fw >= 0 && fw <= 2 ? fw : 0]);
@@ -2792,26 +2808,25 @@ void Modem::PumpServer(uint32_t aNow)
 			iClosing = true;
 			}
 		}
-	else if (iConnected && iCastCall)
+	else if (iConnected && iExtCall)
 		{
-		// PsiCast's messages to the Psion (small: ACKs, PINGs, input) into the
-		// ring, paced like any other call's; the call ends when the service is
-		// done with the link (BYE, 20 s of silence, replaced, turned off)
+		// an extension module's bytes to the Psion into the ring, paced like
+		// any other call's; the call ends when the module is done with it
 		for (int i = 0; i < 4; i++)
 			{
 			size_t room = iRing.Free();
 			if (room < 64)
 				break;
-			size_t n = iCast->LinkOut(iCastId, iTcpBuf, room < sizeof(iTcpBuf) ? room : sizeof(iTcpBuf));
+			size_t n = iExtCall->CallOut(iExtId, iTcpBuf, room < sizeof(iTcpBuf) ? room : sizeof(iTcpBuf));
 			if (!n)
 				break;
 			iRing.Put(iTcpBuf, n);
 			}
-		if (!iCast->LinkAlive(iCastId))
+		if (!iExtCall->CallAlive(iExtId))
 			{
-			iCast->LinkClose(iCastId);
-			iCastCall = false;
-			iCastId = 0;
+			iExtCall->CallClose(iExtId);
+			iExtCall = 0;
+			iExtId = 0;
 			iConnected = false;
 			iClosing = true;                     // (NO CARRIER once the last bytes are out)
 			}

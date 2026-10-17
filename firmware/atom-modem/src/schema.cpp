@@ -1,5 +1,6 @@
 // schema.cpp - see schema.h. MIT licence (see LICENSE at the top of the repository).
 #include "schema.h"
+#include "ext.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,12 +62,11 @@ static const SchemaEntry kSchema[] =
 	{ "LOGL", STInt, F2(logLevel), 0, 2, 0, SANone, SGSystem, "Log level", "0 quiet, 1 normal, 2 verbose" },
 	// WireGuard (2.2): the tunnel home. Its config is pasted on the web page (or AT$WGL)
 	{ "WG", STEnum, F2(wgMode), 0, 2, kWgNames, SAWg, SGWg, "WireGuard", "OFF; ON (always, when a config is set); AUTO (on unless the Atom is already on the home network). Only AllowedIPs go through it" },
-	// PsiCast: the Psion's screen in a browser (cast/cast.h)
-	{ "CAST", STBoolInv, F2(castOff), 0, 1, 0, SANone, SGCast, "PsiCast", "1: PsiCast on the Psion can show its screen in a browser, at /screen on these pages (port 5962), and let the viewer tap and type if the Psion allows it" },
 	};
 
-int SchemaCount() { return (int)(sizeof(kSchema) / sizeof(kSchema[0])); }
-const SchemaEntry& SchemaAt(int aIndex) { return kSchema[aIndex]; }
+static const int kOwn = (int)(sizeof(kSchema) / sizeof(kSchema[0]));
+int SchemaCount() { return kOwn + ExtSchemaCount(); }
+const SchemaEntry& SchemaAt(int aIndex) { return aIndex < kOwn ? kSchema[aIndex] : ExtSchemaAt(aIndex - kOwn); }
 
 const char* SchemaGroupName(TSchemaGroup aG)
 	{
@@ -81,9 +81,15 @@ const char* SchemaGroupName(TSchemaGroup aG)
 	case SGPictures: return "Pictures";
 	case SGExec: return "Remote compute";
 	case SGWg: return "WireGuard";
-	case SGCast: return "PsiCast";
+	case SGExt: return "Extensions";
 	default: return "System";
 		}
+	}
+
+const char* SchemaGroupNameOf(const SchemaEntry& aE)
+	{
+	const Extension* x = aE.group == SGExt ? ExtSchemaOwner(aE) : 0;
+	return x ? x->Name() : SchemaGroupName(aE.group);
 	}
 
 static int Upper(int aC) { return (aC >= 'a' && aC <= 'z') ? aC - 32 : aC; }
@@ -99,8 +105,8 @@ static bool EqNoCase(const char* aA, const char* aB)
 const SchemaEntry* SchemaFind(const char* aName)
 	{
 	for (int i = 0; i < SchemaCount(); i++)
-		if (EqNoCase(kSchema[i].name, aName))
-			return &kSchema[i];
+		if (EqNoCase(SchemaAt(i).name, aName))
+			return &SchemaAt(i);
 	return 0;
 	}
 
@@ -325,7 +331,7 @@ void SchemaLine(int aIndex, char* aOut, size_t aMax)
 	SchemaTypeText(e, type, sizeof(type));
 	SchemaFlags(e, flags, sizeof(flags));
 	snprintf(aOut, aMax, "+SCHEMA:%s,%s,%ld,%ld,%d,%s,\"%s\",\"%s\"", e.name, type, (long)e.min, (long)e.max,
-		(int)e.group, flags, SchemaGroupName(e.group), e.label);
+		(int)e.group, flags, SchemaGroupNameOf(e), e.label);
 	}
 
 } // namespace am

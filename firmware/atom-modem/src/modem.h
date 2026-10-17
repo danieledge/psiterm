@@ -32,10 +32,9 @@
 #include "wgconf.h"
 #include "netlist.h"
 #include "dnsrelay.h"
+#include "ext.h"
 
 namespace am {
-
-class Cast;
 
 // ----- the ring buffer (server -> Psion) -----------------------------------
 class Ring
@@ -239,10 +238,9 @@ public:
 	// on trial, 2 running the previous one after an update failed), and a line
 	// for ATI ("" when all is well)
 	virtual int FirmwareInfo(char* aOut, size_t aMax) { if (aMax) aOut[0] = 0; return 0; }
-	// PsiCast (cast/cast.h): random bytes for its tokens, and its big buffers
-	// (link A's 64 KB receive buffer; PSRAM where there is some). BigRoom:
-	// could aLen more be taken now (the screen copy, which the codec mallocs)
-	// and still leave the heap enough for WiFi and TLS
+	// for extension modules (ext.h): random bytes (for tokens), and big
+	// buffers (PSRAM where there is some). BigRoom: could aLen more be taken
+	// now (by malloc) and still leave the heap enough for WiFi and TLS
 	virtual void Random(uint8_t* aOut, size_t aLen);
 	virtual void* BigAlloc(size_t aLen);
 	virtual void BigFree(void* aP);
@@ -273,11 +271,14 @@ public:
 	bool ProxyCall() const { return iProxyCall; }
 	bool ExecCall() const { return iExecCall; }
 	bool PppCall() const { return iPppCall; }
-	// PsiCast (cast/cast.h): the service, given by main.cpp (or a test); a
-	// dial to ATDT192.168.7.1:5961 is then a call to it, here in the modem
-	void SetCast(Cast* aCast) { iCast = aCast; }
-	Cast* CastService() const { return iCast; }
-	bool CastCall() const { return iCastCall; }
+	// extension modules (ext.h), given by main.cpp (or a test): a dial to
+	// ATDT192.168.7.1:<port> that one answers is then a call to it, here
+	// in the modem. ExtCall: the module whose call is up (0: none)
+	static const int kMaxExt = 4;
+	bool AddExtension(Extension& aExt);
+	int ExtensionCount() const { return iExtCount; }
+	Extension* ExtensionAt(int aIndex) const { return iExt[aIndex]; }
+	Extension* ExtCall() const { return iExtCall; }
 	const PppLink& Ppp() const { return iPpp; }
 	bool Closing() const { return iClosing; }
 	int LedNow() const { return iLed; }             // the LED state last shown (the status screen's bar too)
@@ -347,7 +348,7 @@ private:
 	TResult Dial(const char* aArgs);
 	TResult DialTo(const char* aArgs);
 	TResult DialExec(const char* aCommand);
-	TResult DialCast();
+	TResult DialExt(Extension& aExt, uint16_t aPort);
 	bool ExecHandshake(const char* aCommand);
 	TResult SetCommand(const char* aCmd, const char*& aP, bool& aHandled);
 	void Apply(TSchemaApply aWhat, uint32_t aOldBaud, bool aFromPsion = false);
@@ -419,9 +420,10 @@ private:
 	PppLink iPpp;                       // PPP-over-serial (a numeric dial, AT$PPP=1)
 	bool iPppCall;                      // the current call is a PPP link
 	bool iExecCall;                     // a psiexec call (a text channel to the helper)
-	Cast* iCast;                        // PsiCast, if this firmware has it
-	bool iCastCall;                     // the call is PsiCast's link A (ATDT192.168.7.1:5961)
-	uint32_t iCastId;
+	Extension* iExt[kMaxExt];           // the extension modules taking part
+	int iExtCount;
+	Extension* iExtCall;                // the call is this module's (ATDT192.168.7.1:<port>)
+	uint32_t iExtId;
 	bool iExecOneShot;                  // ... from AT$EXEC=: ends with OK, not NO CARRIER
 	bool iTlsCall;                      // the call is TLS-terminated here
 	bool iConfigMode;

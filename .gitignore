@@ -55,6 +55,8 @@ tools/shot/host.screen
 # other projects checked out here (list those in .git/info/exclude)
 /tools/emu/local/
 /tools/docker/psibuild.local
+# the Atom firmware's extension modules, linked in for a build (firmware/atom-modem/src/ext.h)
+/firmware/atom-modem/ext/
 # packages other than the released apps', and the local-only combined suite
 # (only the three released apps' packages are published)
 dist/*.sis

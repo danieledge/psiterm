@@ -1,6 +1,5 @@
 // status.cpp - see status.h. MIT licence (see LICENSE at the top of the repository).
 #include "status.h"
-#include "cast/cast.h"
 #include "fontmetrics.h"
 #include <string.h>
 #include <stdio.h>
@@ -576,8 +575,9 @@ void PageCall(const Modem& m, Hal&, ScreenPage& p)
 		Row(p, "Last", m.LastDial()[0] ? m.LastDial() : "none yet");
 		if (m.LastDialResult()[0])
 			Row(p, "Result", m.LastDialResult());
-		if (m.CastService())
-			Row(p, "PsiCast", m.CastService()->Enabled() ? "On, no Psion" : "Off");
+		for (int i = 0; i < m.ExtensionCount(); i++)
+			if (m.ExtensionAt(i)->CallPageRow(true, b, sizeof(b)))
+				Row(p, m.ExtensionAt(i)->Name(), b);
 		return;
 		}
 	if (m.PppCall())
@@ -590,8 +590,8 @@ void PageCall(const Modem& m, Hal&, ScreenPage& p)
 		}
 	else if (m.ExecCall())
 		Key(p, "Command");
-	else if (m.CastCall())
-		Key(p, "PsiCast");
+	else if (m.ExtCall())
+		Key(p, m.ExtCall()->Name());
 	else
 		{
 		Key(p, "TCP");
@@ -602,12 +602,10 @@ void PageCall(const Modem& m, Hal&, ScreenPage& p)
 	Row(p, "To Psion", n);
 	StatusModel::Count(m.ToServer(), n, sizeof(n));
 	Row(p, "To server", n);
-	// PsiCast sharing (over this call, or over PPP): how many are watching
-	if (m.CastService() && m.CastService()->LinkUp())
-		{
-		snprintf(b, sizeof(b), "%d watching", m.CastService()->Viewers());
-		Row(p, "PsiCast", b);
-		}
+	// the extension modules' rows (over this call, or over PPP)
+	for (int i = 0; i < m.ExtensionCount(); i++)
+		if (m.ExtensionAt(i)->CallPageRow(false, b, sizeof(b)))
+			Row(p, m.ExtensionAt(i)->Name(), b);
 	if (!m.Online())
 		Line(p, "Command mode: ATO", EToneAmber);
 	}

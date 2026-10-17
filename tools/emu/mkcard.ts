@@ -1,10 +1,10 @@
 // tools/emu/mkcard.ts - builds a CF card image for the emulator from this
 // checkout's build output.
 //   node --experimental-strip-types tools/emu/mkcard.ts psimail [--seed] [out.img]
-//   node --experimental-strip-types tools/emu/mkcard.ts psiterm|psiweb|psicast [out.img]
+//   node --experimental-strip-types tools/emu/mkcard.ts psiterm|psiweb [out.img]
 // Options: --file CARDPATH=HOSTFILE adds a file, 8.3 names only (e.g. --file
 // PSIKEY=id_ed25519 for PsiTerm's key Import); EMU_PKG=DIR takes the app's
-// files from DIR instead of pkg/, build/mail-pkg/, build/web-pkg/ or build/cast-pkg/.
+// files from DIR instead of pkg/, build/mail-pkg/ or build/web-pkg/.
 // Default output: build/emu/card.img. Needs $PSION_EMU (the psionEmulators
 // checkout; default ../psionEmulators next to this repo) for its FAT16 writer.
 // --seed adds a mailbox and calendar for PsiMail's TESTSEED (tools/emu/seed.py).
@@ -48,10 +48,6 @@ if (app === 'psimail') {
 	const P = pkg(REPO + 'build/web-pkg/');
 	for (const n of ['psiweb.app','psiweb.rsc','psiweb.exe','psiweb.aif','psiweb.mbm'])
 		w('SYSTEM/APPS/PSIWEB/' + n.toUpperCase(), f(P + n));
-} else if (app === 'psicast') {
-	const P = pkg(REPO + 'build/cast-pkg/');
-	for (const n of ['psicast.app','psicast.rsc','psicast.exe','psicast.aif','psicast.mbm'])
-		w('SYSTEM/APPS/PSICAST/' + n.toUpperCase(), f(P + n));
 } else if (app === 'psikern') {
 	// experimental/kernel: the test harness and the driver (never released)
 	const P = pkg(REPO + 'build/kernel-pkg/');
@@ -61,7 +57,7 @@ if (app === 'psimail') {
 } else if (local[app]) {
 	local[app]({ w, f, t, pkg, REPO });
 } else {
-	console.error('usage: mkcard.ts ' + ['psimail', 'psiterm', 'psiweb', 'psicast', 'psikern', ...Object.keys(local)].join('|') + ' [--seed] [out.img]'); process.exit(1);
+	console.error('usage: mkcard.ts ' + ['psimail', 'psiterm', 'psiweb', 'psikern', ...Object.keys(local)].join('|') + ' [--seed] [out.img]'); process.exit(1);
 }
 if (seedOn) {
 	const A = 'SEEDA0/';    // (TESTSEED copies it to C:\PsiMail\A0)

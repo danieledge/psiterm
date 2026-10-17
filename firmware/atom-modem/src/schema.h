@@ -45,7 +45,8 @@ enum TSchemaApply
 	SAWg             // the WireGuard tunnel decides again (2.2)
 	};
 
-enum TSchemaGroup { SGWifi, SGUplink, SGSerial, SGProxy, SGTls, SGMail, SGPictures, SGExec, SGSystem, SGWg, SGCast };
+// SGExt: an extension module's own settings (ext.h), shown under its name
+enum TSchemaGroup { SGWifi, SGUplink, SGSerial, SGProxy, SGTls, SGMail, SGPictures, SGExec, SGSystem, SGWg, SGExt };
 static const int kSchemaGroups = 11;
 
 struct SchemaEntry
@@ -63,6 +64,7 @@ struct SchemaEntry
 	const char* help;        // one line
 	};
 
+// the modem's own settings, then any extension modules' (ext.h)
 int SchemaCount();
 const SchemaEntry& SchemaAt(int aIndex);
 // by AT name, case-insensitive; 0 if unknown
@@ -74,6 +76,8 @@ bool SchemaSet(Config& aC, const SchemaEntry& aE, const char* aValue);
 // STSecret: whether one is set
 bool SchemaSecretSet(const Config& aC, const SchemaEntry& aE);
 const char* SchemaGroupName(TSchemaGroup aG);
+// an entry's group name (an extension module's: its name)
+const char* SchemaGroupNameOf(const SchemaEntry& aE);
 
 // AT$SCHEMA? (2.2): the table for a program (PsiConnect builds its settings
 // pages from it). Flags: 'L' a serial line setting (a wrong value can cut
