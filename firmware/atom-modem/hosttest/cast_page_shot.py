@@ -133,7 +133,7 @@ def main():
             page.wait_for_timeout(300)
             page.screenshot(path=os.path.join(out, "4-settings.png"))
             shots.append("4-settings.png")
-            for t in ("amber", "green", "dark", "paper"):
+            for t in ("amber", "green", "dark", "s7", "warm", "mint", "paper"):
                 page.click('.sw[data-id="%s"]' % t)
                 page.wait_for_timeout(150)
                 page.locator("#frame").screenshot(path=os.path.join(out, "5-theme-%s.png" % t))

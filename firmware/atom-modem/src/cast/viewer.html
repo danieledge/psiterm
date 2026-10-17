@@ -251,14 +251,34 @@ const THEMES = [
   { id: "lcd", name: "5mx LCD", ink: [27, 36, 26], paper: [186, 196, 164], frame: "#bac4a4" },
   { id: "amber", name: "Amber", ink: [255, 176, 32], paper: [22, 13, 2], frame: "#160d02" },
   { id: "green", name: "Green screen", ink: [92, 255, 120], paper: [3, 22, 8], frame: "#031608" },
-  { id: "dark", name: "Dark", ink: [232, 234, 236], paper: [24, 26, 28], frame: "#181a1c" }
+  { id: "dark", name: "Dark", ink: [232, 234, 236], paper: [24, 26, 28], frame: "#181a1c" },
+  // colour: EPOC draws its interface in four greys - black text (0), dark
+  // grey borders, title bars and dimmed items (5), light grey toolbars, menus
+  // and dialogs (10), the white page (15) - so a colour for each makes the
+  // screens look made in colour; the greys between blend, so pictures come
+  // out as a tint. "Series 7" is the colour EPOC R5 had on the Psion Series 7
+  // and netBook (sampled from screenshots of the real machine): the greyish
+  // blue #9999cc of its buttons, dialogs and scroll bars (what the 5mx draws
+  // in light grey), and a muted navy for the dark grey
+  { id: "s7", name: "Series 7", stops: [[0, [0, 0, 0]], [5, [51, 51, 102]], [10, [153, 153, 204]], [15, [255, 255, 255]]], frame: "#fff" },
+  { id: "warm", name: "Warm", stops: [[0, [48, 30, 22]], [5, [182, 84, 46]], [10, [240, 226, 200]], [15, [255, 251, 243]]], frame: "#fffbf3" },
+  { id: "mint", name: "Mint", stops: [[0, [14, 42, 40]], [5, [20, 130, 112]], [10, [206, 236, 224]], [15, [250, 255, 252]]], frame: "#fafffc" }
 ];
+// a theme's colour for grey g (0 ink .. 15 paper): between ink and paper, or along its stops
+function themeRgb(th, g) {
+  if (!th.stops) return [0, 1, 2].map(i => Math.round(th.ink[i] + (th.paper[i] - th.ink[i]) * g / 15));
+  let a = th.stops[0], b = th.stops[th.stops.length - 1];
+  for (let k = 0; k + 1 < th.stops.length; k++)
+    if (g >= th.stops[k][0] && g <= th.stops[k + 1][0]) { a = th.stops[k]; b = th.stops[k + 1]; break; }
+  const f = b[0] === a[0] ? 0 : (g - a[0]) / (b[0] - a[0]);
+  return [0, 1, 2].map(i => Math.round(a[1][i] + (b[1][i] - a[1][i]) * f));
+}
 let theme = THEMES.find(t => t.id === store.get("theme", "lcd")) || THEMES[1];
 let lut = new Uint32Array(16);
 const little = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
 function makeLut() {
   for (let g = 0; g < 16; g++) {
-    const f = g / 15, c = [0, 1, 2].map(i => Math.round(theme.ink[i] + (theme.paper[i] - theme.ink[i]) * f));
+    const c = themeRgb(theme, g);
     lut[g] = little ? (255 << 24 | c[2] << 16 | c[1] << 8 | c[0]) >>> 0 : (c[0] << 24 | c[1] << 16 | c[2] << 8 | 255) >>> 0;
   }
 }
@@ -919,8 +939,9 @@ $("#bMore").onclick = () => openSheet("shMore");
 $("#bClose").onclick = closeSheets;
 $("#bRefresh").onclick = () => { send({ t: "full" }); closeSheets(); toast("Repainting"); };
 $("#themes").innerHTML = THEMES.map(t => {
-  const ink = "rgb(" + t.ink.join(",") + ")", paper = "rgb(" + t.paper.join(",") + ")";
-  return '<button class="sw" data-id="' + t.id + '"><i style="background:' + paper + ";color:" + ink + '">Psion</i>' + esc(t.name) + "</button>";
+  const c = g => "rgb(" + themeRgb(t, g).join(",") + ")";
+  const bg = t.stops ? "linear-gradient(90deg," + c(10) + " 0 28%," + c(15) + " 28%)" : c(15);
+  return '<button class="sw" data-id="' + t.id + '"><i style="background:' + bg + ";color:" + c(t.stops ? 5 : 0) + '">Psion</i>' + esc(t.name) + "</button>";
 }).join("");
 document.querySelectorAll(".sw").forEach(b => b.onclick = () => {
   theme = THEMES.find(t => t.id === b.dataset.id);
