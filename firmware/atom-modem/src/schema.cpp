@@ -61,6 +61,8 @@ static const SchemaEntry kSchema[] =
 	{ "LOGL", STInt, F2(logLevel), 0, 2, 0, SANone, SGSystem, "Log level", "0 quiet, 1 normal, 2 verbose" },
 	// WireGuard (2.2): the tunnel home. Its config is pasted on the web page (or AT$WGL)
 	{ "WG", STEnum, F2(wgMode), 0, 2, kWgNames, SAWg, SGWg, "WireGuard", "OFF; ON (always, when a config is set); AUTO (on unless the Atom is already on the home network). Only AllowedIPs go through it" },
+	// PsiCast: the Psion's screen in a browser (cast/cast.h)
+	{ "CAST", STBoolInv, F2(castOff), 0, 1, 0, SANone, SGCast, "PsiCast", "1: PsiCast on the Psion can show its screen in a browser, at /screen on these pages (port 5962), and let the viewer tap and type if the Psion allows it" },
 	};
 
 int SchemaCount() { return (int)(sizeof(kSchema) / sizeof(kSchema[0])); }
@@ -79,6 +81,7 @@ const char* SchemaGroupName(TSchemaGroup aG)
 	case SGPictures: return "Pictures";
 	case SGExec: return "Remote compute";
 	case SGWg: return "WireGuard";
+	case SGCast: return "PsiCast";
 	default: return "System";
 		}
 	}

@@ -139,6 +139,7 @@ bool AcceptSettings2(Settings2& aS, size_t aLength)
 	if (aS.imgWidth < 64 || aS.imgWidth > 640) aS.imgWidth = 300;
 	if (aS.imgMaxKB < 16 || aS.imgMaxKB > 512) aS.imgMaxKB = 64;
 	if (aS.wgMode > EWgModeAuto) aS.wgMode = EWgModeOff;
+	if (aS.castOff > 1) aS.castOff = 0;
 	return true;
 	}
 

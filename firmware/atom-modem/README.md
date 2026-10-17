@@ -42,6 +42,14 @@ the terminal, PsiConnect and the web pages alike. See
 [WireGuard](#wireguard-the-home-network-from-anywhere-22) and
 [Saved networks](#saved-networks-22).
 
+Version 2.3 adds: **PsiCast**, the Psion's screen live in a phone's
+browser, with taps and typing back to the Psion if it allows them (see
+[PsiCast](#psicast-the-psions-screen-in-a-browser)); and a **safety net
+for web updates**: a new firmware that fails to start three times gives
+way to the previous one by itself, so an update sent over WiFi can't
+leave the Atom needing a USB cable. 2.3 has been tested on the PC (host
+tests, and the viewer in a browser) but not yet on an Atom.
+
 MIT licence, as the rest of the repository (see `LICENSE` at the top).
 
 ## Safety first
@@ -68,6 +76,7 @@ been gone through. The Psion's own cable is never cut or altered.
 - [WireGuard: the home network from anywhere (2.2)](#wireguard-the-home-network-from-anywhere-22)
 - [AT command reference](#at-command-reference)
 - [PPP: the Psion's own Internet](#ppp-the-psions-own-internet)
+- [PsiCast: the Psion's screen in a browser](#psicast-the-psions-screen-in-a-browser)
 - [Status screen (AtomS3R)](#status-screen-atoms3r)
 - [Pacing in detail](#pacing-in-detail)
 - [Status LED and button](#status-led-and-button)
@@ -629,6 +638,7 @@ The full reference is in [`docs/UPGRADE.md`, section 6](docs/UPGRADE.md#6-at-com
 | `AT$WGCONF?` | (2.2) The tunnel's config as far as it may be shown: `+WGCONF:Address: ...`, `DNS`, `AllowedIPs`, `Endpoint`, `Keepalive`, and `Private key: set` |
 | `AT$WGL=line` ... `AT$WGL=END` | (2.2) A config sent line by line from a terminal (`AT$WGL=CLEAR` starts again). Send each line quoted with `\/` for a `/` (a key can hold an `a/`, which would otherwise be the `A/` repeat). `END` parses and saves it, or answers `+WGERR:<why>` and `ERROR`. Never logged. The web page is easier |
 | `AT$WGCLR=YES` | (2.2) Deletes the WireGuard config |
+| `AT$CAST=0/1` | PsiCast: the Psion's screen in a browser (on as standard). `AT$STAT?` adds `CAST=OFF/WAIT/SHARING` and `CASTV=` (viewers), and `FW=OK/TRIAL/PREVIOUS` for a firmware update on trial |
 
 Secrets (`$PASS`, `$APPASS`, `$WEBPASS`, `$XK`, the WireGuard keys) are never
 printed: `?` says *(set)* or *(none)*, and the log leaves them out.
@@ -782,6 +792,48 @@ call), the saved networks, the VPN, the settings, `AT&W`, `AT$STAT?`,
 `AT$SCHEMA?`, `AT$LOG?`. A line longer than 255 characters is answered
 `+TOOLONG`, `ERROR`; an answer longer than 8 KB ends with `+TRUNCATED`
 before its result.
+
+## PsiCast: the Psion's screen in a browser
+
+PsiCast on the Psion sends its screen to the Atom, and the Atom shows it,
+live, in a web browser: an iPhone in Safari first, any modern browser in
+fact. If the Psion allows it, the viewer can also tap and type on the
+Psion. The protocol is in `cast/docs/PROTOCOL.md`; the code is `src/cast/`.
+
+- **The Psion's side** connects to `192.168.7.1:5961`, the Atom's own
+  address: over the PPP link (an ordinary socket; other apps keep sharing the
+  link), or on the modem route by dialling `ATDT192.168.7.1:5961`, which the
+  Atom answers itself with no uplink needed (the line is then PsiCast's).
+  Hang-up is `+++` and `ATH` as for any call. With PsiCast off the dial gives
+  `NO CARRIER`; any other address or port is an ordinary call, as before.
+- **The viewer** is the web page `http://<atom>/screen` (the *Screen* link on
+  the pages, behind the web password). It asks `/screen/token` for a token
+  (single use, for 60 s) and opens a WebSocket on port **5962** with it. Up
+  to four browsers can watch at once; each is sent only what changed, at its
+  own pace, so a slow phone never slows the Psion or the other viewers. The
+  page has five looks (Paper, 5mx LCD, Amber, Green screen, Dark),
+  screenshots at the exact 640 x 240 or three times that, video recording
+  (MP4 on an iPhone) with the taps and keys drawn on it if wanted, a full
+  screen view, and a status line: updates a second, data, latency, the
+  Psion's battery and free memory. It reconnects by itself. **Add to Home
+  Screen** makes it an app.
+- **Control** (the hand button): taps on the picture are pen taps on the
+  Psion, the phone's keyboard types (the Psion finds the keys for each
+  character), and a key bar has Menu, Esc, Tab, Ctrl, Shift and Fn (a tap
+  holds one for the next key, a second locks it), Del, Enter, the arrows,
+  Home/End/PgUp/PgDn (as Fn with an arrow) and the 5mx's silkscreen icons.
+  Input is passed on only when the viewer asked for control *and* the Psion
+  has "Allow control from the viewer" on. The silkscreen positions (System,
+  Word, Sheet, Contacts, Agenda, Email, Calc, Jotter, Extras below the
+  screen; Clipboard, Infrared, Zoom in and out to its left) are placed in
+  the digitiser's margins as the Psion reports them (DEVINFO: 695 x 280 on
+  the 5mx), along the 5mx's layout; they are still to be checked on a real one.
+- **Memory**: about 90 KB for the screen copy and its decoder, and 64 KB for
+  link A's buffer, taken when the Psion connects (PSRAM on the AtomS3R).
+  A board without PSRAM takes a smaller buffer if it must, or refuses the
+  connection and logs why, rather than leave WiFi and TLS short.
+- `AT$CAST=0` turns it off (the web *Settings* page too). The LCD's Call
+  page says whether PsiCast is on and how many are watching.
 
 ## Status screen (AtomS3R)
 
@@ -967,6 +1019,24 @@ DCD on all the time.
 - `hosttest/hostmodem --tcp 8080` is the web proxy alone on
   `127.0.0.1:8080`: each TCP connection is a `psiproxy` call. Point a browser,
   `curl -x`, or PsiWeb's ARM harness at it.
+- PsiCast: `test_cast` (with the sanitizers) covers link A's framing (the
+  CRC, resync after rubbish and a damaged message, a message too long for the
+  buffer), the session against a Psion played with the real encoder (WELCOME
+  with the viewer's address, an ACK for every update, KEYREQ after a damaged
+  update, a missing one or one that does not decode, PING, the 20 s silence,
+  BYE, a replaced connection), the tokens, the WebSocket handshake (RFC 6455's
+  example) and frames, per-viewer tracking (a fast and a slow viewer through
+  300 random changes and scrolls, both pixel-exact, the slow one sent far
+  less), the input rules and the modem route. `make -C hosttest cast-e2e`
+  runs `test_cast_e2e.py`: hostmodem with `HOSTMODEM_CAST=1`, a fake Psion on
+  both routes and Python WebSocket viewers, pixel for pixel.
+  `python3 hosttest/cast_page_shot.py` loads the real viewer page in
+  headless Chromium (Playwright) at iPhone sizes against the same set-up,
+  checks its canvas pixel for pixel and a tap reaching the Psion, and saves
+  screenshots in `hosttest/screens/cast/`. `HOSTMODEM_CAST=1` also lets the
+  Psion emulator's PsiCast use hostmodem (see `hosttest/hostmodem.cpp`).
+- `test_fwtrial`: a firmware update on trial and the way back (see
+  `docs/UPGRADE.md`), against a model of the bootloader's otadata.
 - `python3 tools/emu/net.py proxy` (from the top of the repository) is the
   end-to-end test in the Psion emulator. PsiWeb sets *Use a proxy* to
   `psiproxy`, 8080, and opens a real site (`EMU_PROXY_URL`, by default

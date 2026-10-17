@@ -579,7 +579,7 @@ static void TestWgModem()
 		&& Has(g, "+STAT:WGRX=1234\r\n") && Has(g, "+STAT:WGTX=567\r\n") && Has(g, "+STAT:WGEP=\"vpn.example.org:51820\"")
 		&& Has(g, "+STAT:NETS=") && Has(g, "+STAT:DNS=-1"));
 	// the 2.1 lines are all still there, before the new ones
-	CHECK(g.find("+STAT:FC=") < g.find("+STAT:DNS=") && Has(g, "+STAT:VER=2.2") && Has(g, "+STAT:WIFI="));
+	CHECK(g.find("+STAT:FC=") < g.find("+STAT:DNS=") && Has(g, "+STAT:VER=2.3") && Has(g, "+STAT:WIFI="));
 	// home: Auto takes it down
 	r.hal.upIp = am::Ip4(192, 168, 10, 50); r.hal.upMask = am::Ip4(255, 255, 255, 0);
 	r.Run(1100);

@@ -65,7 +65,7 @@ static void TestBasics()
 	CHECK(Has(r.Got(), "ERROR"));
 	r.TypeRun("ATI\r");
 	g = r.Got();
-	CHECK(g.find("\r\nPsiConnect 2.2 (Psion-tuned)") == 0);     // the first line: the name
+	CHECK(g.find("\r\nPsiConnect 2.3 (Psion-tuned)") == 0);     // the first line: the name
 	CHECK(Has(g, "IP 192.168.1.50"));
 	CHECK(Has(g, "pacing 5500 bytes/s"));
 	CHECK(g.size() >= 6 && g.substr(g.size() - 6) == "\r\nOK\r\n");
@@ -1329,7 +1329,7 @@ static void TestStatusModel()
 		&& OnBlocks(p, "192.168.1.50"));
 	// the system page: version, board, uplink, memory
 	FillLay(r, am::EPageSystem, p);
-	CHECK(OnBlocks(p, "Version 2.2") && OnBlocks(p, "FakeBoard") && OnBlocks(p, "Uplink Wi-Fi"));
+	CHECK(OnBlocks(p, "Version 2.3") && OnBlocks(p, "FakeBoard") && OnBlocks(p, "Uplink Wi-Fi"));
 	// the log page: the newest line at the bottom, wrapped to the width
 	r.hal.Log("a log line that is longer than the screen is wide, for sure");
 	r.hal.Log("last line");
@@ -1681,7 +1681,7 @@ static void TestWifiFromPsion()
 	r.Run(50);
 	r.TypeRun("AT$STAT?\r", 100);
 	g = r.Got();
-	CHECK(Has(g, "\r\n+STAT:VER=2.2\r\n") && Has(g, "+STAT:BOARD=FakeBoard") && Has(g, "+STAT:SSID=\"Home\"")
+	CHECK(Has(g, "\r\n+STAT:VER=2.3\r\n") && Has(g, "+STAT:BOARD=FakeBoard") && Has(g, "+STAT:SSID=\"Home\"")
 		&& Has(g, "+STAT:WIFI=INTERNET") && Has(g, "+STAT:CUR=\"Home\"") && Has(g, "+STAT:IP=192.168.1.50")
 		&& Has(g, "+STAT:RSSI=-60") && Has(g, "+STAT:NET=1") && Has(g, "+STAT:FAIL=NONE") && Has(g, "+STAT:UP=WIFI")
 		&& Has(g, "+STAT:CALL=0") && Has(g, "+STAT:BAUD=115200") && Has(g, "+STAT:FC=0") && Has(g, "+STAT:CHK=\""));

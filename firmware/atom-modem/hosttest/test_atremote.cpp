@@ -94,7 +94,7 @@ static void TestRemoteLine()
 	std::string g = r.Remote("AT");
 	CHECK(g == "\r\nOK\r\n");
 	CHECK(r.Remote("hello") == "");                                      // no AT: no answer
-	CHECK(r.Remote("noise ATI").find("\r\nPsiConnect 2.2") == 0);
+	CHECK(r.Remote("noise ATI").find("\r\nPsiConnect 2.3") == 0);
 	// always in words, even after Q1 V0, which are the serial line's and stay as they were
 	CHECK(r.Remote("ATQ1V0") == "\r\nOK\r\n");
 	CHECK(r.Remote("AT") == "\r\nOK\r\n");
@@ -194,7 +194,7 @@ static void TestSession()
 	CHECK(s.Input(*r.modem, b + took, sizeof(b) - took, 1100) == 0);  // back-pressure: nothing taken
 	size_t n = s.Pending(p);
 	std::string ans((const char*)p, n);
-	CHECK(ans.find("\r\nPsiConnect 2.2") == 0 && ans.substr(ans.size() - 6) == "\r\nOK\r\n");
+	CHECK(ans.find("\r\nPsiConnect 2.3") == 0 && ans.substr(ans.size() - 6) == "\r\nOK\r\n");
 	s.Sent(10);
 	CHECK(!s.CanTake() && s.Pending(p) == n - 10);
 	s.Sent(n - 10);

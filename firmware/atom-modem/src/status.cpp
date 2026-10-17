@@ -1,5 +1,6 @@
 // status.cpp - see status.h. MIT licence (see LICENSE at the top of the repository).
 #include "status.h"
+#include "cast/cast.h"
 #include "fontmetrics.h"
 #include <string.h>
 #include <stdio.h>
@@ -575,6 +576,8 @@ void PageCall(const Modem& m, Hal&, ScreenPage& p)
 		Row(p, "Last", m.LastDial()[0] ? m.LastDial() : "none yet");
 		if (m.LastDialResult()[0])
 			Row(p, "Result", m.LastDialResult());
+		if (m.CastService())
+			Row(p, "PsiCast", m.CastService()->Enabled() ? "On, no Psion" : "Off");
 		return;
 		}
 	if (m.PppCall())
@@ -587,6 +590,8 @@ void PageCall(const Modem& m, Hal&, ScreenPage& p)
 		}
 	else if (m.ExecCall())
 		Key(p, "Command");
+	else if (m.CastCall())
+		Key(p, "PsiCast");
 	else
 		{
 		Key(p, "TCP");
@@ -597,6 +602,12 @@ void PageCall(const Modem& m, Hal&, ScreenPage& p)
 	Row(p, "To Psion", n);
 	StatusModel::Count(m.ToServer(), n, sizeof(n));
 	Row(p, "To server", n);
+	// PsiCast sharing (over this call, or over PPP): how many are watching
+	if (m.CastService() && m.CastService()->LinkUp())
+		{
+		snprintf(b, sizeof(b), "%d watching", m.CastService()->Viewers());
+		Row(p, "PsiCast", b);
+		}
 	if (!m.Online())
 		Line(p, "Command mode: ATO", EToneAmber);
 	}
@@ -616,6 +627,7 @@ void PageModes(const Modem& m, Hal&, ScreenPage& p)
 		}
 	Row(p, "PPP", m.Config2().ppp ? "On" : "Off");
 	Row(p, "TLS", m.Config2().tls ? "On" : "Off");
+
 	snprintf(b, sizeof(b), "%lu", (unsigned long)m.Config().baud);
 	Row(p, "Baud", b);
 	Row(p, "RTS/CTS", m.Config2().flow ? "On" : "Off");

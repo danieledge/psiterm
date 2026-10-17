@@ -6,6 +6,8 @@
 #include <esp_system.h>
 #include <Update.h>
 #include "fwsafe.h"
+#include "../cast/cast.h"
+#include "../cast/castpage.h"
 #if defined(AM_HAS_LCD)
 #include "screen.h"
 #include "../canvas.h"
@@ -25,7 +27,7 @@ static const char kCss[] PROGMEM =
 	".warn{background:#fff3cd;border:1px solid #e0c060;padding:8px 10px;margin:8px 0}</style>";
 
 WebUi::WebUi()
-	: iModem(0), iHal(0), iServer(80), iApUp(false), iStarted(false), iDnsUp(false), iLastScanMs(0),
+	: iModem(0), iHal(0), iCast(0), iServer(80), iApUp(false), iStarted(false), iDnsUp(false), iLastScanMs(0),
 	  iOtaAllowed(false), iOtaBegun(false)
 	{
 	iApName[0] = 0;
@@ -44,6 +46,25 @@ void WebUi::Begin(Modem& aModem, AtomHal& aHal)
 	iServer.on("/settings", HTTP_GET, [this]() { PageSettings(); });
 	iServer.on("/log", HTTP_GET, [this]() { PageLog(); });
 	iServer.on("/screen.bmp", HTTP_GET, [this]() { ScreenBmp(); });
+	// PsiCast: the viewer (behind the password), its token, and the Home
+	// Screen files (not secret, and fetched without the password by iOS)
+	iServer.on("/screen", HTTP_GET, [this]() { PageScreen(); });
+	iServer.on("/screen/token", HTTP_GET, [this]() { ScreenToken(); });
+	iServer.on("/screen/manifest.json", HTTP_GET, [this]()
+		{
+		iServer.sendHeader("Cache-Control", "max-age=86400");
+		iServer.send_P(200, "application/manifest+json", kCastManifest, sizeof(kCastManifest) - 1);
+		});
+	iServer.on("/screen/icon.png", HTTP_GET, [this]()
+		{
+		iServer.sendHeader("Cache-Control", "max-age=86400");
+		iServer.send_P(200, "image/png", (const char*)kCastIcon180, kCastIcon180Len);
+		});
+	iServer.on("/screen/icon-512.png", HTTP_GET, [this]()
+		{
+		iServer.sendHeader("Cache-Control", "max-age=86400");
+		iServer.send_P(200, "image/png", (const char*)kCastIcon512, kCastIcon512Len);
+		});
 	iServer.on("/system", HTTP_GET, [this]() { PageSystem(); });
 	iServer.on("/vpn", HTTP_GET, [this]() { PageVpn(); });
 	iServer.on("/wg", HTTP_POST, [this]() { PostWg(); });
@@ -257,7 +278,7 @@ void WebUi::Head(const char* aTitle)
 	Send("</title>");
 	SendP(FPSTR(kCss));
 	Send("</head><body><header><h1>PsiConnect</h1><a href=\"/\">Status</a><a href=\"/wifi\">WiFi</a><a href=\"/vpn\">VPN</a>"
-		"<a href=\"/settings\">Settings</a><a href=\"/log\">Log</a><a href=\"/system\">System</a></header><main>");
+		"<a href=\"/settings\">Settings</a><a href=\"/log\">Log</a><a href=\"/system\">System</a><a href=\"/screen\">Screen</a></header><main>");
 	}
 
 void WebUi::Tail()
@@ -365,7 +386,7 @@ void WebUi::PageStatus()
 	if (iModem->Connected())
 		{
 		snprintf(w, sizeof(w), "%s, %lu bytes to the Psion, %lu to the server", iModem->ProxyCall() ? "the web proxy"
-			: iModem->ExecCall() ? "psiexec" : "a connection", (unsigned long)iModem->ToPsion(), (unsigned long)iModem->ToServer());
+			: iModem->ExecCall() ? "psiexec" : iModem->CastCall() ? "PsiCast" : "a connection", (unsigned long)iModem->ToPsion(), (unsigned long)iModem->ToServer());
 		Send(w);
 		}
 	else
@@ -386,6 +407,15 @@ void WebUi::PageStatus()
 		Send(kModes[i]); Send("</button>");
 		}
 	Send("</form></td></tr>");
+	if (iCast)
+		{
+		char c[100];
+		iCast->StateText(c, sizeof(c));
+		Send("<tr><td><a href=\"/screen\">PsiCast</a></td><td>"); SendEsc(c);
+		if (iCast->Enabled())
+			Send(" &middot; <a href=\"/screen\">show the screen</a>");
+		Send("</td></tr>");
+		}
 	int dns = iHal->DnsOk();
 	Send("<tr><td>Internet check</td><td>");
 	Send(iHal->Internet() == 1 ? "passed" : iHal->Internet() == 0 ? "failed" : "not run yet");
@@ -488,7 +518,7 @@ void WebUi::PageSettings()
 	Send("<div class=\"warn\"><b>Serial safety:</b> the Psion's port is RS-232 (up to ±12 V). Every serial pin below must reach it "
 		"through an RS-232 transceiver (a MAX3232, or the Atomic RS232 Base). Never wire a pin straight to the Psion.</div>");
 	// every group with a setting on this page (SchemaWebPage), in the table's order
-	static const TSchemaGroup kGroups[] = { SGUplink, SGSerial, SGProxy, SGTls, SGMail, SGPictures, SGExec, SGSystem, SGWifi, SGWg };
+	static const TSchemaGroup kGroups[] = { SGUplink, SGSerial, SGProxy, SGTls, SGMail, SGPictures, SGExec, SGCast, SGSystem, SGWifi, SGWg };
 	for (size_t g = 0; g < sizeof(kGroups) / sizeof(kGroups[0]); g++)
 		{
 		bool any = false;
@@ -538,6 +568,37 @@ void WebUi::PageLog()
 		}
 	Send("</pre>");
 	Tail();
+	}
+
+// PsiCast's viewer: one page, gzipped (cast/viewer.html, tools/mkcastpage.py)
+void WebUi::PageScreen()
+	{
+	if (!Allowed()) return;
+	if (!iCast)
+		{
+		iServer.send(404, "text/plain", "No PsiCast in this firmware");
+		return;
+		}
+	iServer.sendHeader("Content-Encoding", "gzip");
+	iServer.sendHeader("Cache-Control", "no-cache");
+	iServer.send_P(200, "text/html; charset=utf-8", (const char*)kCastPageGz, kCastPageGzLen);
+	}
+
+// {"t":"<token>","port":5962,"control":true}: single use, for 60 s; ?control=1 asks for control
+void WebUi::ScreenToken()
+	{
+	if (!Allowed()) return;
+	iServer.sendHeader("Cache-Control", "no-store");
+	char t[32];
+	if (!iCast || !iCast->NewToken(iServer.arg("control") == "1", t, sizeof(t)))
+		{
+		iServer.send(403, "application/json", iCast ? "{\"error\":\"PsiCast is off\"}" : "{\"error\":\"No PsiCast in this firmware\"}");
+		return;
+		}
+	char m[96];
+	snprintf(m, sizeof(m), "{\"t\":\"%s\",\"port\":%u,\"control\":%s}", t, (unsigned)kCastViewPort,
+		iServer.arg("control") == "1" ? "true" : "false");
+	iServer.send(200, "application/json", m);
 	}
 
 // the LCD as it is now: the frame buffer pushed to the panel, as a 24-bit

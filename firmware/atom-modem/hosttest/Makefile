@@ -17,15 +17,17 @@ CXX ?= g++
 CC ?= gcc
 CXXFLAGS ?= -O1 -g -Wall -Wextra -Wno-unused-parameter -std=c++17
 IMG = ../../../mail/engine/img
-SRC = ../src/modem.cpp ../src/settings.cpp ../src/schema.cpp ../src/uplink.cpp ../src/proxy.cpp ../src/wgconf.cpp ../src/netlist.cpp ../src/dnsrelay.cpp ../src/atremote.cpp \
+CODEC = ../../../cast/codec
+SRC = ../src/cast/cast.cpp ../src/cast/websock.cpp ../src/cast/castnet.cpp ../src/modem.cpp ../src/settings.cpp ../src/schema.cpp ../src/uplink.cpp ../src/proxy.cpp ../src/wgconf.cpp ../src/netlist.cpp ../src/dnsrelay.cpp ../src/atremote.cpp \
       ../src/htmlsimp.cpp ../src/gzip.cpp ../src/imgconv.cpp ../src/ppp.cpp ../src/status.cpp ../src/canvas.cpp ../src/button.cpp ../src/usbnet/ncm.cpp ../src/usbnet/ipheth.cpp
-HDR = ../src/canvas.h ../src/fontmetrics.h ../src/modem.h ../src/atremote.h ../src/wgconf.h ../src/netlist.h ../src/dnsrelay.h ../src/status.h ../src/button.h ../src/ppp.h ../src/settings.h ../src/schema.h ../src/uplink.h ../src/proxy.h ../src/htmlsimp.h \
+HDR = ../src/cast/cast.h ../src/cast/websock.h ../src/cast/castnet.h $(CODEC)/pccodec.h ../src/canvas.h ../src/fontmetrics.h ../src/modem.h ../src/atremote.h ../src/wgconf.h ../src/netlist.h ../src/dnsrelay.h ../src/status.h ../src/button.h ../src/ppp.h ../src/settings.h ../src/schema.h ../src/uplink.h ../src/proxy.h ../src/htmlsimp.h \
       ../src/gzip.h ../src/imgconv.h ../src/usbnet/ncm.h ../src/usbnet/ipheth.h
 IMGSRC = $(IMG)/pmimg.c $(IMG)/pmjpeg.c $(IMG)/pmjprog.c $(IMG)/pmpng.c $(IMG)/pmgif.c $(IMG)/picojpeg.c
-IMGOBJ = pmimg.o pmjpeg.o pmjprog.o pmpng.o pmgif.o picojpeg.o
-INC = -I../src -I$(IMG)
+# (with PsiCast's screen codec, both halves: the tests play the Psion too)
+IMGOBJ = pmimg.o pmjpeg.o pmjprog.o pmpng.o pmgif.o picojpeg.o pccodec.o
+INC = -I../src -I$(IMG) -I$(CODEC)
 
-test: test_modem test_v22 test_atremote test_usbnet test_proxy test_proxy_tinfl test_imapxcode test_fwtrial pictures
+test: test_modem test_v22 test_atremote test_usbnet test_proxy test_proxy_tinfl test_imapxcode test_fwtrial test_cast pictures
 	./test_modem
 	./test_v22
 	./test_atremote
@@ -34,12 +36,15 @@ test: test_modem test_v22 test_atremote test_usbnet test_proxy test_proxy_tinfl 
 	./test_proxy_tinfl
 	./test_imapxcode
 	./test_fwtrial
+	./test_cast
 
 # the decoders PsiMail uses, compiled as they are (zlib from the system here)
 pm%.o: $(IMG)/pm%.c $(IMG)/pmimg.h
 	$(CC) -O1 -g -Wall -I$(IMG) -c -o $@ $<
 picojpeg.o: $(IMG)/picojpeg.c $(IMG)/picojpeg.h
 	$(CC) -O1 -g -Wall -I$(IMG) -c -o $@ $<
+pccodec.o: $(CODEC)/pccodec.c $(CODEC)/pccodec.h
+	$(CC) -O1 -g -Wall -fno-strict-aliasing -I$(CODEC) -c -o $@ $<
 
 test_modem: test_modem.cpp fakehal.h $(SRC) $(HDR) $(IMGOBJ)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ test_modem.cpp $(SRC) $(IMGOBJ) -lz
@@ -58,6 +63,12 @@ test_atremote: test_atremote.cpp fakehal.h $(SRC) $(HDR) $(IMGOBJ)
 # model of the bootloader's two-slot otadata (with the sanitizers)
 test_fwtrial: test_fwtrial.cpp ../src/fwtrial.cpp ../src/fwtrial.h
 	$(CXX) $(CXXFLAGS) -fsanitize=address,undefined $(INC) -o $@ test_fwtrial.cpp ../src/fwtrial.cpp
+
+# PsiCast (src/cast): link A's framing and session against a Psion played with
+# the real encoder, tokens, WebSocket, per-viewer merging (pixel-exact), the
+# input path and the modem route (with the sanitizers)
+test_cast: test_cast.cpp fakehal.h $(SRC) $(HDR) $(IMGOBJ)
+	$(CXX) $(CXXFLAGS) -fsanitize=address,undefined $(INC) -o $@ test_cast.cpp $(SRC) $(IMGOBJ) -lz
 
 test_usbnet: test_usbnet.cpp ../src/usbnet/ncm.cpp ../src/usbnet/ncm.h ../src/usbnet/ipheth.cpp ../src/usbnet/ipheth.h
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ test_usbnet.cpp ../src/usbnet/ncm.cpp ../src/usbnet/ipheth.cpp
@@ -96,11 +107,19 @@ screens: render_screens
 
 # TLS for the proxy comes from the PC's OpenSSL 3 (libssl.so.3), loaded at
 # run time, so no OpenSSL headers are needed to build
-hostmodem: hostmodem.cpp $(SRC) $(HDR) $(IMGOBJ)
+hostmodem: hostmodem.cpp $(SRC) $(HDR) $(IMGOBJ) ../src/cast/castpage.h
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ hostmodem.cpp $(SRC) $(IMGOBJ) -lz -ldl
 
+# the codec as a shared library, for the end-to-end test's fake Psion (ctypes)
+libpccodec.so: $(CODEC)/pccodec.c $(CODEC)/pccodec.h
+	$(CC) -O2 -fPIC -shared -fno-strict-aliasing -I$(CODEC) -o $@ $< -lz
+
+# PsiCast end to end: hostmodem, a fake Psion on both routes, WebSocket viewers
+cast-e2e: hostmodem libpccodec.so
+	python3 test_cast_e2e.py
+
 clean:
-	rm -f test_fwtrial test_modem test_v22 test_atremote test_usbnet test_proxy test_proxy_tinfl test_imapxcode tinfl.o hostmodem render_screens $(IMGOBJ)
+	rm -f test_fwtrial test_cast libpccodec.so test_modem test_v22 test_atremote test_usbnet test_proxy test_proxy_tinfl test_imapxcode tinfl.o hostmodem render_screens $(IMGOBJ)
 	rm -rf pictures screens
 
-.PHONY: test clean pictures screens
+.PHONY: test clean pictures screens cast-e2e

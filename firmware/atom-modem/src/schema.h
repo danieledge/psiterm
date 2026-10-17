@@ -45,8 +45,8 @@ enum TSchemaApply
 	SAWg             // the WireGuard tunnel decides again (2.2)
 	};
 
-enum TSchemaGroup { SGWifi, SGUplink, SGSerial, SGProxy, SGTls, SGMail, SGPictures, SGExec, SGSystem, SGWg };
-static const int kSchemaGroups = 10;
+enum TSchemaGroup { SGWifi, SGUplink, SGSerial, SGProxy, SGTls, SGMail, SGPictures, SGExec, SGSystem, SGWg, SGCast };
+static const int kSchemaGroups = 11;
 
 struct SchemaEntry
 	{

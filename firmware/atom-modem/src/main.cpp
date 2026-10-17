@@ -22,6 +22,8 @@
 #include "board/ppptls.h"
 #include "board/wgtunnel.h"
 #include "board/fwsafe.h"
+#include "cast/cast.h"
+#include "cast/castnet.h"
 #if defined(AM_HAS_LCD)
 #include "board/screen.h"
 #endif
@@ -50,6 +52,13 @@ static am::Button gButton;
 static am::PppProxy gPppProxy;
 static am::PppAt gPppAt;
 static am::PppTls gPppTls;
+// PsiCast (cast/cast.h): the Psion's screen in a browser. AM_CAST=0 builds
+// leave the service out (the dial to it then gives NO CARRIER)
+#ifndef AM_CAST
+#define AM_CAST 1
+#endif
+static am::Cast* gCast = 0;
+static am::CastNet gCastNet;
 
 // The ring towards the Psion: as big as the heap allows after WiFi, leaving
 // room for the web proxy: the modem object with the proxy (about 25 KB), a
@@ -248,6 +257,11 @@ void setup()
 	gHal.SetWeb(&gWeb);
 	gHal.SetUsb(&gUsb);
 	gModem = new am::Modem(gHal, ring, size);
+#if AM_CAST
+	gCast = new am::Cast(gHal);               // (small until used: the screen and buffers come with the Psion)
+	gModem->SetCast(gCast);
+	gWeb.SetCast(gCast);
+#endif
 	gWeb.Begin(*gModem, gHal);
 	gModem->Begin();                          // (loads the settings; starts WiFi, the pages, the USB host)
 	gModem->SeedNetwork(AM_DEFAULT_SSID, AM_DEFAULT_PASS);   // (first start only; empty in a plain build)
@@ -269,6 +283,14 @@ void loop()
 	gPppAt.Loop(*gModem, gHal);               // (AT commands for PsiConnect over PPP, 192.168.7.1:2323: only while a PPP call is up)
 	gPppTls.Loop(*gModem, gHal);              // (the stunnel-style TLS mail relay over PPP: only while a PPP call is up and a mail host is set)
 	am::gWg.Loop(millis());                   // (the WireGuard tunnel: the clock, the endpoint, the handshake)
+	if (gCast)
+		{
+		// PsiCast: its timers, the viewers' WebSocket (port 5962) and, during a
+		// PPP call, the Psion's link on 192.168.7.1:5961 (the modem route's is
+		// in Modem::Loop). Non-blocking, a bounded share of each pass
+		gCast->Tick();
+		gCastNet.Loop(*gCast, gHal, gCast->Enabled(), gModem->PppCall() && gModem->Ppp().Up() ? am::kPppLocalIp : "");
+		}
 	ButtonTick();
 	// (the firmware trial: healthy once the uplink is up, or a page has been
 	// served, or - with no network set - the access point is up)

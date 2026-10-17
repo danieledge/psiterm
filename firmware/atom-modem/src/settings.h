@@ -21,7 +21,7 @@
 
 namespace am {
 
-static const char* const kVersion = "2.2";
+static const char* const kVersion = "2.3";
 
 // ----- the 1.x record ------------------------------------------------------
 struct Settings
@@ -100,7 +100,8 @@ struct Settings2
 	uint8_t mailXcode;         // AT$MAILXCODE: 1 = Layer-2 IMAP embedded-image transcoding on the 993 relay (default 0)
 	uint8_t wgMode;            // AT$WG (2.2): TWgMode, the WireGuard tunnel off, on, or automatic (a spare byte
 	                           // before 2.2, so an older record loads it as 0: off)
-	uint8_t spare[448 - 4 - 2 - 2 - 4 - 5 - 1 - 3 - 1 - 2 - 2 - 1 - 1 - 16 - 33 - 33 - 64 - 33 - 40 - 1 - 64 - 64 - 64 - 1 - 1];
+	uint8_t castOff;           // AT$CAST (PsiCast), stored inverted so that 0 (an older record's spare byte) is on
+	uint8_t spare[448 - 4 - 2 - 2 - 4 - 5 - 1 - 3 - 1 - 2 - 2 - 1 - 1 - 16 - 33 - 33 - 64 - 33 - 40 - 1 - 64 - 64 - 64 - 1 - 1 - 1];
 	};
 
 // built-in tripwires so the NVS layout cannot drift unnoticed: the
@@ -110,6 +111,7 @@ struct Settings2
 static_assert(sizeof(Settings2) == 448, "Settings2 must stay 448 bytes (NVS back-compat)");
 static_assert(offsetof(Settings2, imapHost) == 248, "imapHost moved: a short record would load mail hosts onto the wrong bytes");
 static_assert(offsetof(Settings2, wgMode) == 441, "wgMode must be the first of the old spare bytes");
+static_assert(offsetof(Settings2, castOff) == 442, "castOff must be the second of the old spare bytes");
 
 // AT$WG: the WireGuard tunnel (wgtunnel.h)
 enum TWgMode { EWgModeOff = 0, EWgModeOn = 1, EWgModeAuto = 2 };

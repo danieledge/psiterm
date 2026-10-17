@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PsiCast">
+<meta name="theme-color" content="#15181b">
+<link rel="manifest" href="/screen/manifest.json">
+<link rel="apple-touch-icon" href="/screen/icon.png">
+<title>PsiCast</title>
+<style>
+:root{
+  --bg:#15181b;--panel:#1f2327;--panel2:#272c31;--line:#343a40;--text:#e9ecef;--dim:#9aa3ab;--accent:#7fb069;
+  --warn:#e0b04a;--bad:#e06a5a;--key:#2b3035;--keyon:#4d6b3c;--radius:12px;
+  --safe-t:env(safe-area-inset-top,0px);--safe-b:env(safe-area-inset-bottom,0px);
+  --safe-l:env(safe-area-inset-left,0px);--safe-r:env(safe-area-inset-right,0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+  font:15px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%}
+body{display:flex;flex-direction:column;min-height:100%;overflow:hidden;
+  padding:var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l)}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;touch-action:manipulation}
+header{display:flex;align-items:center;gap:8px;padding:8px 12px 6px}
+.brand{display:flex;flex-direction:column;min-width:0;flex:1}
+.brand b{font-size:17px;letter-spacing:.2px}
+.brand span{font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tool{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;background:var(--panel)}
+.tool svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.tool.on{background:var(--keyon)}
+.tool.rec{background:#7a2a22}
+.tool[hidden]{display:none}
+#stage{flex:1;display:flex;align-items:center;justify-content:center;padding:4px 10px;min-height:0;position:relative}
+@media (orientation:portrait){#stage{align-items:flex-start;padding-top:14px}}
+#frame{position:relative;width:100%;max-width:100%;background:#000;border-radius:6px;overflow:hidden;
+  box-shadow:0 0 0 1px #000,0 8px 30px rgba(0,0,0,.45)}
+canvas#screen{display:block;width:100%;height:auto;image-rendering:pixelated;image-rendering:crisp-edges;
+  image-rendering:-webkit-optimize-contrast;touch-action:manipulation}
+body.control canvas#screen{touch-action:none}
+#veil{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+  text-align:center;padding:16px;background:rgba(15,17,19,.72);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
+  transition:opacity .25s}
+#veil.gone{opacity:0;pointer-events:none}
+#veil .big{font-size:17px;font-weight:600}
+#veil .small{font-size:13px;color:var(--dim);max-width:30em}
+#veil button{margin-top:4px;padding:8px 14px;border-radius:9px;background:var(--panel2)}
+.spin{width:26px;height:26px;border-radius:50%;border:3px solid #4a525a;border-top-color:var(--accent);animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+#banner{position:absolute;left:50%;top:8px;transform:translateX(-50%);padding:4px 10px;border-radius:999px;font-size:12px;
+  background:rgba(20,22,24,.85);color:var(--warn);pointer-events:none;transition:opacity .25s}
+#banner.gone{opacity:0}
+#status{display:flex;flex-wrap:wrap;gap:4px 12px;justify-content:center;padding:6px 12px 2px;font-size:12.5px;color:var(--dim);
+  font-variant-numeric:tabular-nums;cursor:pointer}
+#status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--bad);margin-right:6px;vertical-align:0}
+#status .dot.ok{background:var(--accent)}
+#status .dot.wait{background:var(--warn)}
+#keys{padding:6px 8px 8px;display:none}
+body.control #keys{display:block}
+.row{display:flex;gap:5px;margin-top:5px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.row::-webkit-scrollbar{display:none}
+.k{flex:1 0 auto;min-width:44px;height:38px;padding:0 9px;border-radius:8px;background:var(--key);font-size:13.5px;
+  box-shadow:inset 0 -2px 0 rgba(0,0,0,.35);display:grid;place-items:center;user-select:none;-webkit-user-select:none}
+.k:active,.k.down{background:#3a4148}
+.k.mod.latch{background:var(--keyon)}
+.k.mod.lock{background:#6f8f3d;box-shadow:inset 0 0 0 2px #b8d27a}
+.k.app{font-size:12.5px;background:#252a2e}
+.k svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+#kbd{position:fixed;left:-100px;top:0;width:10px;height:10px;opacity:0;font-size:16px;border:0;padding:0}
+.sheet{position:fixed;inset:0;display:none;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.45);z-index:20}
+.sheet.open{display:flex}
+.card{width:100%;max-width:520px;background:var(--panel);border-radius:16px 16px 0 0;padding:14px 16px calc(16px + var(--safe-b));
+  max-height:85vh;overflow:auto;box-shadow:0 -10px 40px rgba(0,0,0,.4)}
+.card h2{font-size:16px;margin:2px 0 10px}
+.card h3{font-size:13px;color:var(--dim);font-weight:600;margin:16px 0 8px;text-transform:uppercase;letter-spacing:.5px}
+.card .line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line)}
+.card .line:last-child{border-bottom:0}
+.card .line small{display:block;color:var(--dim);font-size:12px}
+.btn{padding:10px 14px;border-radius:10px;background:var(--panel2);text-align:center}
+.btn.go{background:var(--keyon)}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.btns .btn{flex:1}
+.themes{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px}
+.sw{border-radius:10px;padding:8px;background:var(--panel2);font-size:12px;text-align:center;border:2px solid transparent}
+.sw.on{border-color:var(--accent)}
+.sw i{display:block;height:34px;border-radius:5px;margin-bottom:6px;font-style:normal;font:600 13px/34px ui-monospace,Menlo,monospace}
+.tog{position:relative;width:46px;height:28px;border-radius:14px;background:#454c52;flex:0 0 auto;transition:background .2s}
+.tog::after{content:"";position:absolute;left:3px;top:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:left .2s}
+.tog.on{background:var(--accent)}
+.tog.on::after{left:21px}
+dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0;font-size:14px}
+dt{color:var(--dim)}
+dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
+#toast{position:fixed;left:50%;bottom:calc(20px + var(--safe-b));transform:translateX(-50%);background:#2f353a;color:var(--text);
+  padding:9px 14px;border-radius:10px;font-size:14px;z-index:30;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw}
+#toast.show{opacity:1}
+body.control #toast{bottom:calc(150px + var(--safe-b))}
+#recdot{display:none;position:absolute;right:8px;top:8px;padding:3px 8px;border-radius:999px;background:rgba(160,30,25,.9);font-size:12px;
+  font-variant-numeric:tabular-nums}
+body.recording #recdot{display:block}
+/* the immersive view: only the screen (and a way back) */
+body.immersive header,body.immersive #status,body.immersive #keys{display:none}
+body.immersive #stage{padding:0}
+body.immersive #frame{border-radius:0;box-shadow:none}
+#exit{display:none;position:fixed;right:calc(10px + var(--safe-r));top:calc(10px + var(--safe-t));z-index:15;width:38px;height:38px;
+  border-radius:50%;background:rgba(30,33,36,.75)}
+body.immersive #exit{display:grid;place-items:center}
+#exit svg{width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2}
+@media (orientation:landscape) and (max-height:500px){
+  header{padding:4px 10px 2px}
+  .tool{width:34px;height:34px}
+  #status{padding:2px 10px 0;font-size:11.5px}
+  .k{height:32px;min-width:40px}
+  #keys{padding:2px 8px 4px}
+  .row{margin-top:3px}
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><b>PsiCast</b><span id="sub">Connecting…</span></div>
+  <button class="tool" id="bControl" aria-label="Control the Psion" title="Control the Psion">
+    <svg viewBox="0 0 24 24"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V10"/><path d="M12 9.5a1.5 1.5 0 0 1 3 0V11"/><path d="M15 10.5a1.5 1.5 0 0 1 3 0v3.5a6 6 0 0 1-6 6h-.6a6 6 0 0 1-4.6-2.2L4.4 15a1.5 1.5 0 0 1 2.3-1.9L9 15"/></svg>
+  </button>
+  <button class="tool" id="bShot" aria-label="Screenshot" title="Screenshot">
+    <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+  </button>
+  <button class="tool" id="bRec" aria-label="Record a video" title="Record a video" hidden>
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/></svg>
+  </button>
+  <button class="tool" id="bFull" aria-label="Full screen" title="Full screen">
+    <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+  </button>
+  <button class="tool" id="bMore" aria-label="Settings" title="Settings">
+    <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>
+  </button>
+</header>
+
+<div id="stage">
+  <div id="frame">
+    <canvas id="screen" width="640" height="240"></canvas>
+    <div id="banner" class="gone"></div>
+    <div id="recdot">REC 0:00</div>
+    <div id="veil"><div class="spin"></div><div class="big">Connecting…</div><div class="small"></div></div>
+  </div>
+</div>
+
+<div id="status" title="Details"><span><i class="dot wait"></i><b id="sLink">Connecting</b></span></div>
+
+<div id="keys">
+  <div class="row">
+    <button class="k" data-sc="148">Menu</button>
+    <button class="k" data-sc="4">Esc</button>
+    <button class="k" data-sc="2">Tab</button>
+    <button class="k mod" data-mod="22">Ctrl</button>
+    <button class="k mod" data-mod="18">Shift</button>
+    <button class="k mod" data-mod="24">Fn</button>
+    <button class="k" data-sc="1">Del</button>
+    <button class="k" data-sc="3">Enter</button>
+    <button class="k" id="bKbd" aria-label="Keyboard"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg></button>
+  </div>
+  <div class="row">
+    <button class="k" data-sc="14" aria-label="Left"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+    <button class="k" data-sc="17" aria-label="Down"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+    <button class="k" data-sc="16" aria-label="Up"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
+    <button class="k" data-sc="15" aria-label="Right"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+    <button class="k" data-fn="14">Home</button>
+    <button class="k" data-fn="15">End</button>
+    <button class="k" data-fn="16">PgUp</button>
+    <button class="k" data-fn="17">PgDn</button>
+    <button class="k" data-sc="5">Space</button>
+  </div>
+  <div class="row" id="apps"></div>
+</div>
+
+<input id="kbd" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Type on the Psion">
+<button id="exit" aria-label="Leave full screen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+
+<div class="sheet" id="shMore"><div class="card">
+  <h2>PsiCast</h2>
+  <h3>Look</h3>
+  <div class="themes" id="themes"></div>
+  <h3>Viewing</h3>
+  <div class="line"><div>Keep this screen awake<small>While the Psion is being shown</small></div><button class="tog" id="tWake" aria-label="Keep this screen awake"></button></div>
+  <div class="line"><div>Show taps and keys in videos<small>Circles where you tap, and the keys you press</small></div><button class="tog" id="tOverlay" aria-label="Show taps and keys in videos"></button></div>
+  <div class="line"><div>Status line<small>Updates, data, latency and the Psion's battery</small></div><button class="tog" id="tStatus" aria-label="Status line"></button></div>
+  <h3>Psion</h3>
+  <dl id="details"></dl>
+  <div class="btns"><button class="btn" id="bRefresh">Repaint the screen</button><button class="btn" id="bClose">Done</button></div>
+  <p class="small" style="color:var(--dim);font-size:12px;margin:14px 0 0">To use PsiCast like an app, choose Share, then Add to Home Screen. Taps on the Psion's own icons (System, Word and the others) are sent where the 5mx has them.</p>
+</div></div>
+
+<div class="sheet" id="shShot"><div class="card">
+  <h2>Screenshot</h2>
+  <div class="btns">
+    <button class="btn go" data-shot="1">Exact size<br><small>640 × 240</small></button>
+    <button class="btn go" data-shot="3">Large<br><small>1920 × 720</small></button>
+  </div>
+  <div class="btns"><button class="btn" data-close>Cancel</button></div>
+</div></div>
+
+<div class="sheet" id="shSave"><div class="card">
+  <h2>Video ready</h2>
+  <p id="saveInfo" style="color:var(--dim);margin:0 0 6px"></p>
+  <div class="btns"><button class="btn go" id="bSaveVid">Save or share</button><button class="btn" data-close>Discard</button></div>
+</div></div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+(function () {
+const $ = s => document.querySelector(s);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("psicast." + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("psicast." + k, JSON.stringify(v)); } catch (e) {} }
+};
+
+// ----- themes: a palette of 16 greys from ink (0) to paper (15) -----
+const THEMES = [
+  { id: "paper", name: "Paper", ink: [0, 0, 0], paper: [255, 255, 255], frame: "#fff" },
+  { id: "lcd", name: "5mx LCD", ink: [27, 36, 26], paper: [186, 196, 164], frame: "#bac4a4" },
+  { id: "amber", name: "Amber", ink: [255, 176, 32], paper: [22, 13, 2], frame: "#160d02" },
+  { id: "green", name: "Green screen", ink: [92, 255, 120], paper: [3, 22, 8], frame: "#031608" },
+  { id: "dark", name: "Dark", ink: [232, 234, 236], paper: [24, 26, 28], frame: "#181a1c" }
+];
+let theme = THEMES.find(t => t.id === store.get("theme", "lcd")) || THEMES[1];
+let lut = new Uint32Array(16);
+const little = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+function makeLut() {
+  for (let g = 0; g < 16; g++) {
+    const f = g / 15, c = [0, 1, 2].map(i => Math.round(theme.ink[i] + (theme.paper[i] - theme.ink[i]) * f));
+    lut[g] = little ? (255 << 24 | c[2] << 16 | c[1] << 8 | c[0]) >>> 0 : (c[0] << 24 | c[1] << 16 | c[2] << 8 | 255) >>> 0;
+  }
+}
+makeLut();
+
+// ----- the screen: a grey per pixel (the model) and the canvas -----
+const cv = $("#screen"), ctx = cv.getContext("2d", { alpha: false });
+let W = 640, H = 240, grey = new Uint8Array(W * H).fill(15), img = ctx.createImageData(W, H), px = new Uint32Array(img.data.buffer);
+let haveScreen = false;
+function resize(w, h) {
+  if (w === W && h === H) return;
+  W = w; H = h; cv.width = w; cv.height = h;
+  grey = new Uint8Array(w * h).fill(15);
+  img = ctx.createImageData(w, h); px = new Uint32Array(img.data.buffer);
+  fitFrame();
+}
+function paintAll() {
+  for (let i = 0; i < grey.length; i++) px[i] = lut[grey[i]];
+  ctx.putImageData(img, 0, 0);
+  if (rec) recDirty = true;
+}
+function paintRect(x, y, w, h) {
+  for (let r = y; r < y + h; r++) { let o = r * W + x; for (let c = 0; c < w; c++, o++) px[o] = lut[grey[o]]; }
+  ctx.putImageData(img, 0, 0, x, y, w, h);
+}
+function applyTheme() {
+  makeLut();
+  document.querySelector('meta[name="theme-color"]').content = "#15181b";
+  $("#frame").style.background = theme.frame;
+  paintAll();
+  document.querySelectorAll(".sw").forEach(s => s.classList.toggle("on", s.dataset.id === theme.id));
+}
+
+// ----- the frame's size: fit the width, or the height in landscape -----
+function fitFrame() {
+  const st = $("#stage"), fr = $("#frame");
+  const aw = st.clientWidth - (document.body.classList.contains("immersive") ? 0 : 20), ah = st.clientHeight - 8;
+  let w = aw, h = w * H / W;
+  if (h > ah && ah > 50) { h = ah; w = h * W / H; }
+  fr.style.width = Math.floor(w) + "px";
+}
+addEventListener("resize", fitFrame);
+addEventListener("orientationchange", () => setTimeout(fitFrame, 200));
+
+// ----- link B -----
+let ws = null, retry = 0, retryTimer = 0, pingTimer = 0, alive = false;
+let wantControl = store.get("control", false);
+let st = {}, hello = {}, linkUp = false, gotBye = false, refusedWhy = "";
+let rttViewer = null, pingSent = 0, pingN = 0;
+let bytesIn = 0, rateIn = 0, rateMark = performance.now(), updates = 0, ups = 0;
+
+function veil(kind, big, small, button) {
+  const v = $("#veil");
+  if (!kind) { v.classList.add("gone"); return; }
+  v.classList.remove("gone");
+  v.innerHTML = (kind === "spin" ? '<div class="spin"></div>' : "") + '<div class="big"></div><div class="small"></div>' +
+    (button ? '<button id="veilBtn"></button>' : "");
+  v.querySelector(".big").textContent = big;
+  v.querySelector(".small").textContent = small || "";
+  if (button) { const b = $("#veilBtn"); b.textContent = button[0]; b.onclick = button[1]; }
+}
+function banner(text) {
+  const b = $("#banner");
+  if (text) { b.textContent = text; b.classList.remove("gone"); } else b.classList.add("gone");
+}
+
+async function connect() {
+  clearTimeout(retryTimer);
+  if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+  if (!haveScreen) veil("spin", retry ? "Reconnecting…" : "Connecting…", "");
+  setLink("wait", retry ? "Reconnecting" : "Connecting");
+  let tok;
+  try {
+    const r = await fetch("/screen/token" + (wantControl ? "?control=1" : ""), { cache: "no-store", credentials: "same-origin" });
+    if (r.status === 401) { veil("msg", "Sign in again", "The Atom asked for its web password.", ["Reload", () => location.reload()]); setLink("bad", "Not signed in"); return; }
+    tok = await r.json();
+    if (!r.ok || !tok.t) {
+      refusedWhy = tok.error || "PsiCast is not available";
+      veil("msg", refusedWhy, "Turn PsiCast on in the Atom's settings (AT$CAST=1), then try again.", ["Try again", () => { retry = 0; connect(); }]);
+      setLink("bad", "Off");
+      return schedule(10000);
+    }
+  } catch (e) {
+    if (!haveScreen) veil("spin", "Reconnecting…", "The Atom is not answering.");
+    setLink("bad", "No Atom");
+    return schedule();
+  }
+  const sock = new WebSocket("ws://" + location.hostname + ":" + (tok.port || 5962) + "/cast?t=" + encodeURIComponent(tok.t));
+  sock.binaryType = "arraybuffer";
+  ws = sock;
+  sock.onopen = () => {
+    if (ws !== sock) return;
+    alive = true; retry = 0; gotBye = false;
+    clearInterval(pingTimer);
+    pingTimer = setInterval(ping, 2000);
+    ping();
+  };
+  sock.onmessage = ev => {
+    if (ws !== sock) return;
+    if (typeof ev.data === "string") onJson(ev.data);
+    else onBinary(ev.data);
+  };
+  sock.onclose = () => {
+    if (ws !== sock) return;
+    ws = null; alive = false;
+    clearInterval(pingTimer);
+    linkUp = false;
+    if (haveScreen) { cv.style.opacity = .55; banner("Reconnecting…"); } else veil("spin", "Reconnecting…", "");
+    setLink("bad", "Reconnecting");
+    schedule();
+  };
+}
+function schedule(ms) {
+  clearTimeout(retryTimer);
+  retry++;
+  retryTimer = setTimeout(connect, ms || Math.min(10000, 700 * Math.pow(1.6, retry)));
+}
+function send(o) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+function ping() { pingSent = performance.now(); send({ t: "ping", n: ++pingN }); }
+
+function onBinary(buf) {
+  bytesIn += buf.byteLength;
+  const d = new DataView(buf), t = d.getUint8(0);
+  if (t === 1) {                                 // FULL
+    const w = d.getUint16(1, true), h = d.getUint16(3, true);
+    resize(w, h);
+    const p = new Uint8Array(buf, 5);
+    for (let i = 0, o = 0; i < p.length && o < grey.length; i++) { grey[o++] = p[i] & 15; grey[o++] = p[i] >> 4; }
+    paintAll();
+    haveScreen = true;
+    updates++;
+  } else if (t === 2) {                          // RECTS
+    const n = d.getUint16(1, true);
+    let o = 3 + n * 8;
+    const bytes = new Uint8Array(buf);
+    for (let k = 0; k < n; k++) {
+      const x = d.getUint16(3 + k * 8, true), y = d.getUint16(5 + k * 8, true), w = d.getUint16(7 + k * 8, true), h = d.getUint16(9 + k * 8, true);
+      if (x + w > W || y + h > H) return;        // (not for this screen)
+      for (let r = 0; r < h; r++) {
+        let g = (y + r) * W + x;
+        for (let c = 0; c < w; c += 2) { const b = bytes[o++]; grey[g++] = b & 15; grey[g++] = b >> 4; }
+      }
+      paintRect(x, y, w, h);
+    }
+    updates++;
+  } else if (t === 3) {                          // SCROLL: rows y0..y1 move by dy
+    let y0 = d.getUint16(1, true), y1 = d.getUint16(3, true);
+    const dy = d.getInt16(5, true);
+    const x = buf.byteLength >= 11 ? d.getUint16(7, true) : 0, w = buf.byteLength >= 11 ? d.getUint16(9, true) : W;
+    let d0 = y0 + dy, d1 = y1 + dy;
+    if (d0 < 0) { y0 -= d0; d0 = 0; }
+    if (d1 > H) { y1 -= d1 - H; d1 = H; }
+    if (y1 > y0 && x + w <= W) {
+      if (w === W) {
+        grey.copyWithin(d0 * W, y0 * W, y1 * W);
+        px.copyWithin(d0 * W, y0 * W, y1 * W);
+      } else {                                   // (some columns: row by row, in the safe order)
+        const n = d1 - d0, down = dy > 0;
+        for (let i = 0; i < n; i++) {
+          const k = down ? n - 1 - i : i, s0 = (y0 + k) * W + x, t0 = (d0 + k) * W + x;
+          grey.copyWithin(t0, s0, s0 + w);
+          px.copyWithin(t0, s0, s0 + w);
+        }
+      }
+      ctx.putImageData(img, 0, 0, x, d0, w, d1 - d0);
+    }
+  }
+  if (rec) recDirty = true;
+  if (!veilKeep() && haveScreen) { veil(); cv.style.opacity = 1; }
+}
+function veilKeep() { return !linkUp && !haveScreen; }
+
+function onJson(s) {
+  let m;
+  try { m = JSON.parse(s); } catch (e) { return; }
+  if (m.t === "pong") { if (m.n === pingN) rttViewer = Math.round(performance.now() - pingSent); return; }
+  if (m.t === "hello") { hello = m; if (m.w && m.h) resize(m.w, m.h); showName(); return; }
+  if (m.t === "bye") { gotBye = true; return; }
+  if (m.t === "status") { st = m; onStatus(); }
+}
+function showName() {
+  $("#sub").textContent = hello.name ? hello.name + (st.linkUp ? (st.route === "modem" ? " · modem" : " · PPP") : "") : "Waiting for the Psion";
+}
+function onStatus() {
+  const was = linkUp;
+  linkUp = !!st.linkUp;
+  showName();
+  if (!linkUp) {
+    const why = gotBye ? "The Psion stopped sharing its screen." : "Start PsiCast on the Psion and choose Share screen.";
+    if (haveScreen) { cv.style.opacity = .55; banner("Waiting for the Psion…"); veil(); }
+    else veil("spin", "Waiting for the Psion…", why);
+    setLink("wait", "Waiting for the Psion");
+  } else {
+    cv.style.opacity = 1;
+    if (haveScreen) veil();
+    banner(st.paused ? "Psion paused" : (wantControl && !st.control ? "Control is off on the Psion" : ""));
+    setLink(st.paused ? "wait" : "ok", st.paused ? "Paused" : "Live");
+  }
+  if (linkUp && !was && !haveScreen) veil("spin", "Waiting for the picture…", "");
+  controlState();
+  renderStatus();
+}
+
+// ----- the status line and the details -----
+function kb(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? (n / 1024).toFixed(n >= 10240 ? 0 : 1) + " KB" : n + " B"; }
+let linkKind = "wait", linkText = "Connecting";
+function setLink(kind, text) { linkKind = kind; linkText = text; renderStatus(); }
+function latency() {
+  if (rttViewer === null) return null;
+  return Math.round((rttViewer + (st.rtt || 0)) / 2);
+}
+function renderStatus() {
+  const s = $("#status");
+  if (!store.get("statusLine", true)) { s.style.display = "none"; return; }
+  s.style.display = "";
+  const parts = ['<span><i class="dot ' + (linkKind === "ok" ? "ok" : linkKind === "wait" ? "wait" : "") + '"></i><b>' + esc(linkText) + "</b></span>"];
+  if (linkUp) {
+    parts.push("<span>" + (st.ups != null ? st.ups.toFixed(1) : ups.toFixed(1)) + " updates/s</span>");
+    parts.push("<span>" + kb(st.rateBytes || 0) + "/s</span>");
+    const l = latency();
+    if (l !== null) parts.push("<span>" + l + " ms</span>");
+    if (st.mains) parts.push("<span>On mains</span>");
+    else if (st.battery != null) parts.push("<span>Battery " + st.battery + "%</span>");
+    if (st.freeRam) parts.push("<span>" + kb(st.freeRam) + " free</span>");
+  }
+  if (st.viewers > 1) parts.push("<span>" + st.viewers + " watching</span>");
+  s.innerHTML = parts.join("");
+  if ($("#shMore").classList.contains("open")) renderDetails();
+}
+function esc(t) { return String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
+function renderDetails() {
+  const rows = [
+    ["Psion", hello.name || "–"],
+    ["Link", linkUp ? (st.route === "modem" ? "Modem route" : "PPP") : "Not connected"],
+    ["Screen", W + " × " + H],
+    ["Updates", (st.ups != null ? st.ups.toFixed(1) : "0") + " a second (" + (st.updates || 0) + " in all)"],
+    ["From the Psion", kb(st.rateBytes || 0) + "/s"],
+    ["To this phone", kb(rateIn) + "/s"],
+    ["Latency", rttViewer === null ? "–" : "Atom " + rttViewer + " ms" + (st.rtt ? ", Psion " + st.rtt + " ms" : "")],
+    ["Psion CPU", st.cpu != null ? st.cpu.toFixed(1) + "%" : "–"],
+    ["Battery", st.mains ? "On mains" : st.battery != null ? st.battery + "%" : "–"],
+    ["Free memory", st.freeRam ? kb(st.freeRam) : "–"],
+    ["Control", !st.control ? "Off on the Psion" : wantControl ? (st.you ? "On" : "Asked for") : "Allowed (not asked for)"],
+    ["Watching", (st.viewers || 0) + ""],
+    ["Errors", (st.errors || 0) + ""]
+  ];
+  $("#details").innerHTML = rows.map(r => "<dt>" + esc(r[0]) + "</dt><dd>" + esc(r[1]) + "</dd>").join("");
+}
+setInterval(() => {
+  const now = performance.now(), dt = (now - rateMark) / 1000;
+  rateIn = Math.round(bytesIn / dt); ups = updates / dt;
+  bytesIn = 0; updates = 0; rateMark = now;
+}, 2000);
+$("#status").onclick = () => openSheet("shMore");
+
+// ----- control: taps, keys, typing -----
+function canControl() { return wantControl && linkUp && st.control && st.you; }
+function controlState() {
+  document.body.classList.toggle("control", wantControl);
+  $("#bControl").classList.toggle("on", wantControl);
+}
+$("#bControl").onclick = () => {
+  wantControl = !wantControl;
+  store.set("control", wantControl);
+  controlState();
+  toast(wantControl ? "Control on: taps and keys go to the Psion" : "Control off: watching only");
+  retry = 0; connect();                          // (a new token, with or without control)
+  setTimeout(fitFrame, 50);
+};
+function toPsion(e) {
+  const r = cv.getBoundingClientRect();
+  return { x: Math.floor((e.clientX - r.left) * W / r.width), y: Math.floor((e.clientY - r.top) * H / r.height) };
+}
+let penDown = false, lastMove = 0;
+cv.addEventListener("pointerdown", e => {
+  if (!wantControl) { if (document.body.classList.contains("immersive")) toast("Tap × to leave full screen"); return; }
+  if (!canControl()) { toast(st.control ? "Connecting for control…" : "Control is off on the Psion"); return; }
+  e.preventDefault();
+  cv.setPointerCapture(e.pointerId);
+  penDown = true;
+  const p = toPsion(e);
+  send({ t: "pen", e: "down", x: p.x, y: p.y });
+  overlayTap(p.x, p.y);
+});
+cv.addEventListener("pointermove", e => {
+  if (!penDown) return;
+  e.preventDefault();
+  const now = performance.now();
+  if (now - lastMove < 30) return;
+  lastMove = now;
+  const p = toPsion(e);
+  send({ t: "pen", e: "move", x: p.x, y: p.y });
+});
+function penUp(e) {
+  if (!penDown) return;
+  penDown = false;
+  const p = toPsion(e);
+  send({ t: "pen", e: "up", x: p.x, y: p.y });
+}
+cv.addEventListener("pointerup", penUp);
+cv.addEventListener("pointercancel", penUp);
+
+// modifiers: a tap holds one for the next key; a second tap locks it; a third lets it go
+const MODS = { 22: "Ctrl", 18: "Shift", 24: "Fn" };
+const mods = {};                                 // sc -> "latch" | "lock"
+function modButtons() {
+  document.querySelectorAll(".k.mod").forEach(b => {
+    const m = mods[b.dataset.mod];
+    b.classList.toggle("latch", m === "latch");
+    b.classList.toggle("lock", m === "lock");
+  });
+}
+function keyName(sc) {
+  const b = document.querySelector('.k[data-sc="' + sc + '"]');
+  if (b) return b.getAttribute("aria-label") || b.textContent.trim();
+  if (sc >= 65 && sc <= 90) return String.fromCharCode(sc);
+  if (sc >= 48 && sc <= 57) return String.fromCharCode(sc);
+  return "Key";
+}
+// one key, with the held modifiers (and aExtra, e.g. Fn for Home)
+function press(sc, label, extra) {
+  if (!canControl()) { toast(st.control ? "Connecting for control…" : "Control is off on the Psion"); return; }
+  const held = Object.keys(mods).map(Number);
+  if (extra && held.indexOf(extra) < 0) held.push(extra);
+  held.forEach(m => send({ t: "key", e: "down", sc: m }));
+  send({ t: "key", e: "down", sc: sc });
+  send({ t: "key", e: "up", sc: sc });
+  held.slice().reverse().forEach(m => send({ t: "key", e: "up", sc: m }));
+  const names = held.filter(m => m !== extra).map(m => MODS[m]);
+  overlayKey(names.concat([label || keyName(sc)]).join("+"));
+  Object.keys(mods).forEach(m => { if (mods[m] === "latch") delete mods[m]; });
+  modButtons();
+}
+document.querySelectorAll(".k[data-sc]").forEach(b => b.addEventListener("click", () => press(+b.dataset.sc)));
+document.querySelectorAll(".k[data-fn]").forEach(b => b.addEventListener("click", () => press(+b.dataset.fn, b.textContent.trim(), 24)));
+document.querySelectorAll(".k.mod").forEach(b => b.addEventListener("click", () => {
+  const m = b.dataset.mod;
+  mods[m] = !mods[m] ? "latch" : mods[m] === "latch" ? "lock" : undefined;
+  if (!mods[m]) delete mods[m];
+  modButtons();
+}));
+// the 5mx's silkscreen: the icons below the screen and down its left side are
+// taps outside the LCD (the digitiser is bigger: DEVINFO, 695 x 280 on the
+// 5mx, with about 10 px of it to the right of the LCD). Positions from the
+// 5mx's layout; see the firmware's README
+const APPS = [
+  ["System", -1, -1], ["Word", 50, -1], ["Sheet", 130, -1], ["Contacts", 210, -1], ["Agenda", 290, -1],
+  ["Email", 370, -1], ["Calc", 450, -1], ["Jotter", 530, -1], ["Extras", 610, -1],
+  ["Clipboard", -1, 66], ["Infrared", -1, 118], ["Zoom in", -1, 172], ["Zoom out", -1, 220]
+];
+function silkscreen() {                          // -1: the middle of the left strip, or of the strip below
+  const dg = hello.digitiser || [0, 0];
+  const left = dg[0] > W ? Math.max(10, dg[0] - W - 10) : 45, below = dg[1] > H ? dg[1] - H : 40;
+  return APPS.map(a => [a[0], a[1] < 0 ? -Math.round(left / 2) : a[1], a[2] < 0 ? H + Math.round(below / 2) : a[2]]);
+}
+$("#apps").innerHTML = APPS.map((a, i) => '<button class="k app" data-app="' + i + '">' + esc(a[0]) + "</button>").join("");
+document.querySelectorAll(".k[data-app]").forEach(b => b.addEventListener("click", () => {
+  if (!canControl()) { toast(st.control ? "Connecting for control…" : "Control is off on the Psion"); return; }
+  const a = silkscreen()[+b.dataset.app];
+  send({ t: "pen", e: "down", x: a[1], y: a[2] });
+  setTimeout(() => send({ t: "pen", e: "up", x: a[1], y: a[2] }), 60);
+  overlayKey(a[0]);
+}));
+
+// the phone's keyboard: text as characters (the Psion finds the keys for them)
+const kbd = $("#kbd");
+$("#bKbd").onclick = () => { kbd.focus(); toast("Type: it goes to the Psion"); };
+const CP1252 = { 0x20ac: 0x80, 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2013: 0x96, 0x2014: 0x97, 0x2026: 0x85 };
+function typeText(text) {
+  for (const ch of text) {
+    let c = ch.codePointAt(0);
+    if (c === 0x2018 || c === 0x2019) c = 39;   // (curly quotes: the plain ones the 5mx has keys for)
+    else if (c === 0x201c || c === 0x201d) c = 34;
+    else if (c > 255) c = CP1252[c] || 0;
+    if (!c) continue;
+    const held = Object.keys(mods).map(Number).filter(m => m !== 18);
+    if (held.length && /[a-z0-9]/i.test(ch)) { press(ch.toUpperCase().charCodeAt(0), ch.toUpperCase()); continue; }
+    if (c === 10 || c === 13) { press(3, "Enter"); continue; }
+    send({ t: "char", c: c });
+    overlayKey(ch === " " ? "Space" : ch);
+  }
+}
+kbd.addEventListener("beforeinput", e => {
+  if (!canControl()) { e.preventDefault(); return; }
+  if (e.inputType === "insertText" || e.inputType === "insertReplacementText" || e.inputType === "insertFromPaste") typeText(e.data || "");
+  else if (e.inputType === "deleteContentBackward") press(1, "Del");
+  else if (e.inputType === "insertLineBreak" || e.inputType === "insertParagraph") press(3, "Enter");
+  e.preventDefault();
+});
+kbd.addEventListener("input", () => { if (kbd.value) { typeText(kbd.value); kbd.value = ""; } });
+const HWKEYS = { ArrowLeft: 14, ArrowRight: 15, ArrowUp: 16, ArrowDown: 17, Escape: 4, Tab: 2, Enter: 3, Backspace: 1 };
+document.addEventListener("keydown", e => {
+  if (!canControl() || e.target.tagName === "BUTTON") return;
+  if (HWKEYS[e.key] !== undefined) { e.preventDefault(); press(HWKEYS[e.key], e.key.replace("Arrow", "")); }
+  else if ((e.ctrlKey || e.metaKey) && e.key.length === 1 && /[a-z]/i.test(e.key)) {
+    e.preventDefault();
+    mods[22] = mods[22] || "latch";
+    press(e.key.toUpperCase().charCodeAt(0), e.key.toUpperCase());
+  } else if (document.activeElement !== kbd && e.key.length === 1 && !e.altKey) { e.preventDefault(); typeText(e.key); }
+});
+
+// ----- screenshot -----
+function stamp() {
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + "-" + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
+}
+function dataUrlFile(url, name) {
+  const [head, b64] = url.split(","), mime = head.slice(5, head.indexOf(";"));
+  const bin = atob(b64), a = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+  return new File([a], name, { type: mime });
+}
+function saveFile(file) {
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file], title: file.name }).catch(() => {});
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(file); a.download = file.name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  toast("Saved " + file.name);
+}
+$("#bShot").onclick = () => { if (!haveScreen) return toast("No picture yet"); openSheet("shShot"); };
+document.querySelectorAll("[data-shot]").forEach(b => b.onclick = () => {
+  const k = +b.dataset.shot;
+  let c = cv;
+  if (k > 1) {
+    c = document.createElement("canvas"); c.width = W * k; c.height = H * k;
+    const x = c.getContext("2d"); x.imageSmoothingEnabled = false; x.drawImage(cv, 0, 0, c.width, c.height);
+  }
+  closeSheets();
+  saveFile(dataUrlFile(c.toDataURL("image/png"), "psion-" + stamp() + (k > 1 ? "-large" : "") + ".png"));
+});
+
+// ----- video: the screen at 2x, with the taps and keys drawn on it if wanted -----
+let rec = null, recCv = null, recCtx = null, recChunks = [], recStart = 0, recDirty = true, recBlob = null, recType = "";
+const marks = [];                                // taps and key names for the overlay
+function overlayTap(x, y) { if (rec && store.get("overlay", true)) marks.push({ kind: "tap", x, y, t: performance.now() }); }
+function overlayKey(name) { if (rec && store.get("overlay", true)) marks.push({ kind: "key", name, t: performance.now() }); }
+function pickType() {
+  const types = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"];
+  return types.find(t => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || "";
+}
+if (window.MediaRecorder && HTMLCanvasElement.prototype.captureStream && pickType()) $("#bRec").hidden = false;
+function recFrame() {
+  if (!rec) return;
+  const now = performance.now(), k = recCv.width / W;
+  recCtx.imageSmoothingEnabled = false;
+  recCtx.drawImage(cv, 0, 0, recCv.width, recCv.height);
+  for (let i = marks.length - 1; i >= 0; i--) {
+    const m = marks[i], age = now - m.t;
+    if (age > (m.kind === "tap" ? 700 : 1400)) { marks.splice(i, 1); continue; }
+    if (m.kind === "tap") {
+      const a = 1 - age / 700;
+      recCtx.strokeStyle = "rgba(220,60,40," + a + ")"; recCtx.fillStyle = "rgba(220,60,40," + a * .25 + ")"; recCtx.lineWidth = 3 * k / 2;
+      recCtx.beginPath(); recCtx.arc(m.x * k, m.y * k, (10 + age / 25) * k / 2, 0, Math.PI * 2); recCtx.fill(); recCtx.stroke();
+    }
+  }
+  const keys = marks.filter(m => m.kind === "key").slice(-4);
+  if (keys.length) {
+    recCtx.font = "600 " + Math.round(13 * k) + "px -apple-system,Helvetica,Arial,sans-serif";
+    let x = recCv.width - 12 * k;
+    const y = recCv.height - 12 * k;
+    keys.slice().reverse().forEach(m => {
+      const a = Math.min(1, 1.6 - (now - m.t) / 875), tw = recCtx.measureText(m.name).width + 16 * k;
+      x -= tw;
+      recCtx.fillStyle = "rgba(25,28,31," + .85 * a + ")";
+      roundRect(recCtx, x, y - 22 * k, tw, 22 * k, 6 * k); recCtx.fill();
+      recCtx.fillStyle = "rgba(255,255,255," + a + ")";
+      recCtx.fillText(m.name, x + 8 * k, y - 6.5 * k);
+      x -= 6 * k;
+    });
+  }
+  const s = Math.floor((now - recStart) / 1000);
+  $("#recdot").textContent = "REC " + Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  requestAnimationFrame(recFrame);
+}
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath(); c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+}
+$("#bRec").onclick = () => {
+  if (rec) { rec.stop(); return; }
+  if (!haveScreen) return toast("No picture yet");
+  recType = pickType();
+  recCv = document.createElement("canvas"); recCv.width = W * 2; recCv.height = H * 2;
+  recCtx = recCv.getContext("2d", { alpha: false });
+  const stream = recCv.captureStream(30);
+  try { rec = new MediaRecorder(stream, { mimeType: recType, videoBitsPerSecond: 2500000 }); }
+  catch (e) { rec = new MediaRecorder(stream); }
+  recChunks = [];
+  rec.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+  rec.onstop = () => {
+    const type = (rec && rec.mimeType) || recType || "video/mp4";
+    rec = null;
+    document.body.classList.remove("recording");
+    $("#bRec").classList.remove("rec");
+    recBlob = new Blob(recChunks, { type: type });
+    const secs = Math.round((performance.now() - recStart) / 1000);
+    $("#saveInfo").textContent = secs + " s, " + kb(recBlob.size) + (type.indexOf("mp4") >= 0 ? ", MP4" : ", WebM");
+    openSheet("shSave");
+  };
+  recStart = performance.now();
+  rec.start(1000);
+  document.body.classList.add("recording");
+  $("#bRec").classList.add("rec");
+  requestAnimationFrame(recFrame);
+  toast("Recording: tap the button again to stop");
+};
+$("#bSaveVid").onclick = () => {
+  if (!recBlob) return;
+  const ext = recBlob.type.indexOf("mp4") >= 0 ? "mp4" : "webm";
+  saveFile(new File([recBlob], "psion-" + stamp() + "." + ext, { type: recBlob.type }));
+  closeSheets();
+};
+
+// ----- full screen: the real thing where there is one, else only the screen -----
+$("#bFull").onclick = () => {
+  document.body.classList.add("immersive");
+  const el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  setTimeout(fitFrame, 60);
+};
+$("#exit").onclick = () => {
+  document.body.classList.remove("immersive");
+  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  setTimeout(fitFrame, 60);
+};
+document.addEventListener("fullscreenchange", () => {
+  if (!document.fullscreenElement) document.body.classList.remove("immersive");
+  setTimeout(fitFrame, 60);
+});
+
+// ----- sheets, settings, toasts -----
+function openSheet(id) { if (id === "shMore") renderDetails(); $("#" + id).classList.add("open"); }
+function closeSheets() { document.querySelectorAll(".sheet").forEach(s => s.classList.remove("open")); }
+document.querySelectorAll(".sheet").forEach(s => s.addEventListener("click", e => { if (e.target === s || e.target.hasAttribute("data-close")) closeSheets(); }));
+$("#bMore").onclick = () => openSheet("shMore");
+$("#bClose").onclick = closeSheets;
+$("#bRefresh").onclick = () => { send({ t: "full" }); closeSheets(); toast("Repainting"); };
+$("#themes").innerHTML = THEMES.map(t => {
+  const ink = "rgb(" + t.ink.join(",") + ")", paper = "rgb(" + t.paper.join(",") + ")";
+  return '<button class="sw" data-id="' + t.id + '"><i style="background:' + paper + ";color:" + ink + '">Psion</i>' + esc(t.name) + "</button>";
+}).join("");
+document.querySelectorAll(".sw").forEach(b => b.onclick = () => {
+  theme = THEMES.find(t => t.id === b.dataset.id);
+  store.set("theme", theme.id);
+  applyTheme();
+});
+function toggle(id, key, dflt, then) {
+  const b = $(id), set = v => b.classList.toggle("on", v);
+  set(store.get(key, dflt));
+  b.onclick = () => { const v = !store.get(key, dflt); store.set(key, v); set(v); if (then) then(v); };
+}
+toggle("#tOverlay", "overlay", true);
+toggle("#tStatus", "statusLine", true, () => { renderStatus(); setTimeout(fitFrame, 30); });
+toggle("#tWake", "wake", true, v => wake(v));
+let toastTimer = 0;
+function toast(t) {
+  const el = $("#toast");
+  el.textContent = t; el.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 2200);
+}
+
+// ----- keep the phone awake, and come back after it slept -----
+let lock = null;
+async function wake(on) {
+  try {
+    if (on && navigator.wakeLock && document.visibilityState === "visible") lock = await navigator.wakeLock.request("screen");
+    else if (!on && lock) { await lock.release(); lock = null; }
+  } catch (e) {}
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  if (store.get("wake", true)) wake(true);
+  if (!ws || ws.readyState > 1) { retry = 0; connect(); }
+});
+
+applyTheme();
+controlState();
+fitFrame();
+wake(store.get("wake", true));
+connect();
+})();
+</script>
+</body>
+</html>

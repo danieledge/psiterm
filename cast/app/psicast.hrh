@@ -1,0 +1,62 @@
+// PSICAST.HRH - command and dialog ids for PsiCast
+
+#ifndef __PSICAST_HRH
+#define __PSICAST_HRH
+
+enum TCsCommandIds
+	{
+	ECsCmdStart = 0x1000,       // Share > Start sharing (Shift+Ctrl+G)
+	ECsCmdStop,                 // Share > Stop sharing (Shift+Ctrl+E)
+	ECsCmdShareButton,          // the Share button: pressed in while sharing, tap again to stop
+	ECsCmdPause,                // Share > Pause sharing (tick box, Shift+Ctrl+W; in every program while sharing)
+	ECsCmdControl,              // Share > Allow control from the viewer (tick box, Shift+Ctrl+R)
+	ECsCmdPrevious,             // File > Go to previous program (Shift+Ctrl+Y)
+	ECsCmdZoomIn,
+	ECsCmdZoomOut,
+	ECsCmdToolbar,
+	ECsCmdPrefs,
+	ECsCmdConnSettings,
+	ECsCmdDisconnect,           // Tools > Disconnect (Ctrl+U): the Psion Internet connection down
+	ECsCmdHelp,
+	ECsCmdAbout
+	};
+
+enum TCsDialogIds
+	{
+	ECsDlgRate = 0x2000,
+	ECsDlgControl,
+	ECsDlgBattery,
+	ECsDlgOnClose,
+	ECsDlgAbout1,
+	ECsDlgAbout2,
+	ECsDlgAboutStatus,
+	ECsDlgAbout4,
+	ECsDlgHelpTopic,
+	ECsDlgHelpText,
+	ECsDlgLink,
+	ECsDlgBaud,
+	ECsDlgFlow,
+	ECsDlgPppStart,
+	ECsDlgProxy,
+	ECsDlgProxyHost,
+	ECsDlgProxyPort,
+	ECsDlgKeepUp,
+	ECsDlgTest1,
+	ECsDlgTest2,
+	ECsDlgTest3,
+	ECsDlgTest4,
+	ECsDlgTest5
+	};
+
+enum TCsPageIds
+	{
+	ECsPageLink = 1,
+	ECsPageProxy
+	};
+
+enum TCsButtonIds
+	{
+	ECsBidTest = 0x3000
+	};
+
+#endif

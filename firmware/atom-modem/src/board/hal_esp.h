@@ -79,6 +79,9 @@ public:
 	void ApInfo(char* aOut, size_t aMax) override;
 	void WebInfo(char* aOut, size_t aMax) override;
 	int FirmwareInfo(char* aOut, size_t aMax) override;
+	void Random(uint8_t* aOut, size_t aLen) override;
+	void* BigAlloc(size_t aLen) override;
+	bool BigRoom(size_t aLen) override;
 
 	// the pins in use (after the settings, swaps and the board's defaults)
 	int PinTx() const { return iTx; }

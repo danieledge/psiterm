@@ -18,11 +18,14 @@ class AtomHal;
 
 namespace am {
 
+class Cast;
+
 class WebUi
 	{
 public:
 	WebUi();
 	void Begin(Modem& aModem, AtomHal& aHal);
+	void SetCast(Cast* aCast) { iCast = aCast; }   // PsiCast's viewer page (/screen), if this firmware has it
 	void Apply(const Settings2& aS2);         // the settings changed (or config mode did)
 	void Loop();
 	void ApInfo(char* aOut, size_t aMax) const;
@@ -44,6 +47,8 @@ private:
 	void PageLog();
 	void ScreenBmp();                     // GET /screen.bmp: the LCD as drawn (AtomS3R)
 	void PageSystem();
+	void PageScreen();                         // GET /screen: PsiCast's viewer (cast/viewer.html)
+	void ScreenToken();                        // GET /screen/token: a single-use token for its WebSocket
 	void PageVpn();
 	void PostWg();
 	void PostNet();
@@ -59,6 +64,7 @@ private:
 
 	Modem* iModem;
 	AtomHal* iHal;
+	Cast* iCast;
 	WebServer iServer;
 	DNSServer iDns;
 	bool iApUp;

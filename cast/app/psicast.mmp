@@ -1,0 +1,21 @@
+// PSICAST.MMP - PsiCast.app (the engine, psicast.exe, is built by ../engine/engine.mk)
+TARGET        psicast.app
+TARGETTYPE    app
+UID           0x1000006c 0x01000A92
+TARGETPATH    \system\apps\psicast
+
+PROJECT       castproj
+SUBPROJECT    psicast
+
+SOURCE        psicast.cpp cshelp.cpp
+SUBPROJECT    psitermssh
+SOURCE        pglinktest.cpp
+SUBPROJECT    psicast
+RESOURCE      psicast.rss
+
+USERINCLUDE   \castproj\psicast
+SYSTEMINCLUDE \castproj\psicastinc \castproj\psitermssh \epoc32\include\libc \epoc32\include
+
+LIBRARY       euser.lib efsrv.lib apparc.lib cone.lib eikon.lib ws32.lib gdi.lib
+LIBRARY       fbscli.lib bafl.lib etext.lib nifman.lib
+LIBRARY       c32.lib esock.lib insock.lib

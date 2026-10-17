@@ -15,6 +15,9 @@
 #include "lwip/tcpip.h"
 #include <esp_heap_caps.h>
 #include <esp_system.h>
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+#include <esp_random.h>
+#endif
 
 static const char* const kNvs = "atommodem";
 
@@ -558,6 +561,35 @@ void AtomHal::WebInfo(char* aOut, size_t aMax)
 		iWeb->WebInfo(aOut, aMax);
 	else if (aMax)
 		aOut[0] = 0;
+	}
+
+// PsiCast's big buffers: PSRAM where there is some; else only while the
+// internal heap keeps enough for WiFi and a TLS connection
+static const size_t kCastKeepFree = 40 * 1024;
+
+void AtomHal::Random(uint8_t* aOut, size_t aLen)
+	{
+	esp_fill_random(aOut, aLen);              // (the RF subsystem is on: true random)
+	}
+
+bool AtomHal::BigRoom(size_t aLen)
+	{
+#if defined(BOARD_HAS_PSRAM)
+	if (psramFound())
+		return heap_caps_get_free_size(MALLOC_CAP_SPIRAM) >= aLen + 64 * 1024;
+#endif
+	size_t free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+	size_t big = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+	return free >= aLen + kCastKeepFree && big >= (aLen < 80 * 1024 ? aLen : 80 * 1024);
+	}
+
+void* AtomHal::BigAlloc(size_t aLen)
+	{
+#if defined(BOARD_HAS_PSRAM)
+	if (psramFound())
+		return heap_caps_malloc(aLen, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+	return BigRoom(aLen) ? malloc(aLen) : 0;
 	}
 
 int AtomHal::FirmwareInfo(char* aOut, size_t aMax)

@@ -770,6 +770,9 @@ builds and runs:
   pass-through of oversize and refused pictures, and reader mode on
   synthetic pages (and on the saved real pages with `PAGES=`).
 
+- `test_fwtrial` and `test_cast`: the firmware trial after an update, and
+  PsiCast (see `README.md`, *Building and testing*).
+
 `hostmodem` (the modem as a PC program for the emulator's serial bridge)
 gains the same features, so `python3 tools/emu/net.py` keeps working.
 
