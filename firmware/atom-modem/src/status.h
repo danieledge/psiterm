@@ -15,7 +15,8 @@
 //   Pager       which page is shown: the gestures and the return to Home
 //
 // The pages (2.2): Home is the default and the one the screen goes back to.
-// A press steps round the short main ring Home -> Wi-Fi -> VPN -> Home. A
+// A press steps round the short main ring Home -> Wi-Fi -> VPN -> Home (with
+// an extension module's page after Home when it has one, ext.h). A
 // double-press is the page's one action: on Home it opens the Details
 // (setup, call, modes, mail, system, log), on Wi-Fi it joins the next saved
 // network, on VPN it changes the mode; in the Details a press is the next
@@ -39,13 +40,14 @@ static const int kScreenRows = 16;
 
 enum TScreenPage
 	{
-	// the main ring: a press steps through these
-	EPageHome = 0, EPageNetwork, EPageVpn,
+	// the main ring: a press steps through these (EPageExt, an extension
+	// module's page, comes after Home, and only when a module has one)
+	EPageHome = 0, EPageNetwork, EPageVpn, EPageExt,
 	// the Details: a double-press on Home opens them at Setup
 	EPageSetup, EPageCall, EPageModes, EPageMail, EPageSystem, EPageLog,
 	EPageCount
 	};
-static const int kMainPages = EPageSetup;                  // Home, Wi-Fi, VPN
+static const int kMainPages = EPageSetup;                  // Home, Wi-Fi, VPN, a module's
 static const int kDetailPages = EPageCount - EPageSetup;
 
 // the font family: FreeSans, drawn smooth at any size (canvas.h)
@@ -115,6 +117,7 @@ struct ScreenPage
 	int blocks;
 	char hint[32];                             // the gestures on this page
 	bool hintOn;                               // show the hint (just after a press), else the page dots
+	bool extPage;                              // a module's page is in the main ring (one more dot)
 	};
 
 // ----- the drawing ----------------------------------------------------------
@@ -234,13 +237,16 @@ public:
 	// the gestures' hint shows this long after a press
 	static const uint32_t kHintMs = 4000;
 
-	Pager() : iPage(EPageHome), iLastMs(0), iPressed(false) {}
+	Pager() : iPage(EPageHome), iLastMs(0), iPressed(false), iExtPage(false) {}
+	// a module's page is in the main ring, after Home (ext.h: HasPage)
+	void SetExtPage(bool aOn) { iExtPage = aOn; if (!aOn && iPage == EPageExt) iPage = EPageHome; }
 	int Page() const { return iPage; }
 	bool InDetails() const { return iPage >= EPageSetup; }
 	// a press: the next page of the ring it is in
 	void Click(uint32_t aNowMs);
 	// a double-press: the page's action. Home opens the Details, the Details
-	// go back to Home (both ENothing); Wi-Fi and VPN ask the caller to act
+	// and a module's page go back to Home (ENothing); Wi-Fi and VPN ask the
+	// caller to act
 	TAction Double(uint32_t aNowMs);
 	// the hold turned config mode on (the Setup page, with the access point's
 	// name and password) or off (Home)
@@ -261,6 +267,7 @@ private:
 	int iPage;
 	uint32_t iLastMs;               // the last press
 	bool iPressed;                  // (a press since start)
+	bool iExtPage;                  // the main ring has a module's page
 	};
 
 } // namespace am

@@ -134,6 +134,14 @@ void ExtLedLevel(const ExtLed& aLed, uint32_t aNowMs, uint8_t& aR, uint8_t& aG, 
 	aB = (uint8_t)(aLed.b * level / 256);
 	}
 
+Extension* ExtPagePick(const Modem& aModem)
+	{
+	for (int i = 0; i < aModem.ExtensionCount(); i++)
+		if (aModem.ExtensionAt(i)->HasPage())
+			return aModem.ExtensionAt(i);
+	return 0;
+	}
+
 Extension* ExtScreenPick(const Modem& aModem)
 	{
 	for (int i = 0; i < aModem.ExtensionCount(); i++)

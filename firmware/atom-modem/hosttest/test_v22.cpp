@@ -798,13 +798,14 @@ static void TestPages()
 // ----- an extension module's page on the LCD and light on the LED (ext.h) ---------------
 struct SampleExt : am::Extension
 	{
-	bool want = false, led = false;
+	bool want = false, led = false, page = false;
 	uint32_t news = 0, gen = 1;
 	uint8_t over = am::EExtLedOverCall;
 	uint8_t pic[16 * 4];
 	SampleExt() { for (int i = 0; i < 64; i++) pic[i] = (uint8_t)(i * 4); }
 	const char* Name() const override { return "Sample"; }
 	bool ScreenWanted() const override { return want; }
+	bool HasPage() const override { return page; }
 	uint32_t ScreenNews() const override { return news; }
 	void ScreenDraw(am::ExtPen& aPen, uint32_t aNowMs) override
 		{
@@ -836,6 +837,28 @@ static void TestExtHooks()
 	CHECK(am::ExtScreenPick(*r.modem) == &y);
 	x.want = true;
 	CHECK(am::ExtScreenPick(*r.modem) == &x);
+	// a page in the button's ring: the first module that has one. Home's hint
+	// names it, and the ring's dots count it
+	am::ScreenPage sp;
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageHome, sp);
+	CHECK(am::ExtPagePick(*r.modem) == 0 && !sp.extPage && strncmp(sp.hint, "1x Wi-Fi   2x ", 14) == 0);
+	am::Layout la;
+	am::StatusModel::Lay(sp, la);
+	int dots = 0;
+	for (int i = 0; i < la.n; i++) dots += la.op[i].op == am::EOpDot;
+	CHECK(dots == 3);
+	y.page = true;
+	CHECK(am::ExtPagePick(*r.modem) == &y);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageHome, sp);
+	CHECK(sp.extPage && strncmp(sp.hint, "1x Sample   2x ", 15) == 0);
+	am::StatusModel::Lay(sp, la);
+	dots = 0;
+	for (int i = 0; i < la.n; i++) dots += la.op[i].op == am::EOpDot;
+	CHECK(dots == 4);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageVpn, sp);
+	am::StatusModel::Fill(*r.modem, r.hal, am::EPageExt, sp);
+	CHECK(sp.page == am::EPageExt);              // (laid out by the module; Home stands in)
+	y.page = false;
 	// when it may show: on Home with no press for a while; never over Setup
 	am::Pager pg;
 	CHECK(pg.Quiet(1000));                                      // (no press since start)

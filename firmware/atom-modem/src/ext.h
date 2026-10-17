@@ -17,9 +17,10 @@
 //   - lines in ATI and AT$STAT?, rows on the web status page and the LCD's
 //     Call page;
 //   - web routes (GET), behind the web password unless marked open;
-//   - a page of its own on the LCD while it has something to show (boards
-//     with one), and a light of its own on the status LED (boards with a
-//     WS2812), each under the modem's own where those matter.
+//   - a page of its own on the LCD (boards with one): in the button's main
+//     ring after Home, and over Home while it has something to show; and a
+//     light of its own on the status LED (boards with a WS2812), each under
+//     the modem's own where those matter.
 // The Hal's Random, BigAlloc, BigFree and BigRoom are there for modules.
 // Plain C++, no Arduino calls.
 // MIT licence (see LICENSE at the top of the repository).
@@ -142,6 +143,11 @@ public:
 	// a number that changes when something on its page is worth waking a
 	// dimmed screen for (the page coming and going wakes it anyway)
 	virtual uint32_t ScreenNews() const { return 0; }
+	// true: its page is also one of the button's pages, the next after Home
+	// (status.h), drawn with ScreenDraw whether or not it is wanted, so it
+	// must show something sensible when nothing is happening. Fixed for the
+	// run; the first module that says so has the page
+	virtual bool HasPage() const { return false; }
 
 	// ----- the status LED (boards with a WS2812) -----
 	// true: it asks for the light in aOut now (asked every pass; cheap)
@@ -181,6 +187,8 @@ bool ExtLedPick(const Modem& aModem, int aModemLed, bool aBusy, ExtLed& aOut);
 void ExtLedLevel(const ExtLed& aLed, uint32_t aNowMs, uint8_t& aR, uint8_t& aG, uint8_t& aB);
 // the module whose page the LCD shows (the first that wants it), or 0
 Extension* ExtScreenPick(const Modem& aModem);
+// the module whose page is in the button's ring (HasPage), or 0
+Extension* ExtPagePick(const Modem& aModem);
 
 // the modules in this build, in the order they registered
 Extension* ExtModules();

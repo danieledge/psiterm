@@ -796,7 +796,10 @@ opens on **Home** and goes back to Home after 30 seconds without a press
 (90 seconds in the Details). The backlight dims after a minute; a press on a
 dimmed screen only wakes it. The dots at the foot show where you are (three
 for the main pages, six in the Details); for four seconds after each press
-they give way to what a press (`1x`) and a double-press (`2x`) do there.
+they give way to what a press (`1x`) and a double-press (`2x`) do there. An
+extension module (below) can add a page of its own to the main pages, the
+next after Home (a fourth dot; a double-press there goes back to Home), and
+can show it over Home by itself while it has something to show.
 
 **Home** shows only the essentials: the state on a band in the LED's colour
 (*Ready*, *In call*, *Dialling*, *No Wi-Fi*, *Setup*), then three large rows,
@@ -902,12 +905,15 @@ DCD on all the time.
   at `--warnings all`.
 - Extension modules (`src/ext.h`): optional parts kept outside this tree.
   A module is a directory with a `module.json` (its sources, include
-  directories and defines); a link to it in `ext/` (git-ignored), or its
+  directories, defines and libraries, for every board or per chip); a link to it in `ext/` (git-ignored), or its
   path in `$AM_EXT_DIRS`, builds it in (`tools/ext.py`), and `AM_EXT=0 pio
   run` leaves every module out. It can add settings (in `Settings2`'s
   `ext[]` bytes), answer calls to `ATDT192.168.7.1:<port>`, listen on the
   PPP link, add lines to `ATI` and `AT$STAT?`, and add web routes and status
-  rows. Without one the firmware is complete. A module's host tests use
+  rows, a page on the LCD (in the button's main ring, and over Home while
+  it has something to show) and a light on the LED, and say it shares the
+  radio with Bluetooth (Wi-Fi then keeps its modem sleep). Without one the
+  firmware is complete. A module's host tests use
   `hosttest/sources.mk` and build their own `hostmodem` with it.
 - `make -C hosttest test` runs the unit tests on a PC (it needs zlib, and
   python3 with Pillow for the pictures).

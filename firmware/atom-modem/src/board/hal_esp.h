@@ -45,6 +45,7 @@ public:
 	bool WifiUp() override { return WiFi.status() == WL_CONNECTED; }
 	void WifiBegin(const char* aSsid, const char* aPass) override;
 	void WifiHardReset() override;
+	void RadioShared(bool aShared) override;
 	void WifiEnd() override { WiFi.disconnect(true); }
 	void WifiInfo(char* aOut, size_t aMax) override;
 	int WifiScan(char aNames[][33], int aMax) override;
@@ -103,6 +104,7 @@ private:
 	volatile int iDnsOk;                      // ... its DNS lookup: -1, 0, 1
 	volatile int iWifiFail;                   // am::TWifiFail since the last WifiBegin
 	bool iWifiEvents;                         // WifiEvent is registered
+	bool iRadioShared = false;                // Bluetooth is on too (RadioShared): modem sleep stays on
 	volatile bool iProbing;
 	char iProbeHost[40];
 	uint16_t iProbePort;

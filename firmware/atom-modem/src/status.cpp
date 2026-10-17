@@ -316,7 +316,11 @@ void PageHome(const Modem& m, Hal& h, ScreenPage& p)
 	p.vpnTone = tone;
 	p.vpnLocked = m.WgWant() == EWgWantUp;
 	char ap[96];
-	Copy(p.hint, sizeof(p.hint), ApUp(h, ap, sizeof(ap)) ? "1x Wi-Fi   2x password" : "1x Wi-Fi   2x details");
+	// (the next page: a module's, if it has one, else Wi-Fi)
+	const Extension* x = ExtPagePick(m);
+	char hint[32];
+	snprintf(hint, sizeof(hint), "1x %s   2x %s", x ? x->Name() : "Wi-Fi", ApUp(h, ap, sizeof(ap)) ? "password" : "details");
+	Copy(p.hint, sizeof(p.hint), hint);
 	}
 
 // a Home-style row: an icon and a few bold words (label: what it is, for
@@ -772,8 +776,9 @@ void LayFoot(const ScreenPage& p, Pen& aPen)
 		return;
 		}
 	bool details = p.page >= EPageSetup;
-	int n = details ? kDetailPages : kMainPages;
-	int at = details ? p.page - EPageSetup : p.page;
+	// (the main ring: Home, a module's page if there is one, Wi-Fi, VPN)
+	int n = details ? kDetailPages : p.extPage ? 4 : 3;
+	int at = details ? p.page - EPageSetup : p.page == EPageHome ? 0 : p.page == EPageExt ? 1 : p.page + (p.extPage ? 1 : 0);
 	const int kGap = 9;
 	int x0 = (kScreenPx - (n - 1) * kGap) / 2;
 	for (int i = 0; i < n; i++)
@@ -1019,9 +1024,11 @@ void StatusModel::Fill(const Modem& aModem, Hal& aHal, int aPage, ScreenPage& aO
 	aOut.signal = -1;
 	int led = aModem.LedNow();
 	aOut.bar = led >= 0 ? (LedState)led : ELedNoWifi;
+	aOut.extPage = ExtPagePick(aModem) != 0;
 	switch (page)
 		{
-	case EPageHome:    PageHome(aModem, aHal, aOut); break;
+	case EPageHome:
+	case EPageExt:     PageHome(aModem, aHal, aOut); break;   // (a module draws its own: Home stands in)
 	case EPageNetwork: PageNetwork(aModem, aHal, aOut); break;
 	case EPageVpn:     PageVpn(aModem, aHal, aOut); break;
 	case EPageSetup:   PageSetup(aModem, aHal, aOut); break;
@@ -1147,8 +1154,12 @@ void Pager::Click(uint32_t aNowMs)
 	iPressed = true;
 	if (InDetails())
 		iPage = iPage + 1 < EPageCount ? iPage + 1 : EPageSetup;
+	else if (iPage == EPageHome)
+		iPage = iExtPage ? EPageExt : EPageNetwork;
+	else if (iPage == EPageExt)
+		iPage = EPageNetwork;
 	else
-		iPage = (iPage + 1) % kMainPages;
+		iPage = (iPage + 1) % EPageExt;      // (Wi-Fi -> VPN -> Home)
 	}
 
 Pager::TAction Pager::Double(uint32_t aNowMs)

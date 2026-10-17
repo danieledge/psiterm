@@ -268,7 +268,8 @@ void AtomHal::WifiBegin(const char* aSsid, const char* aPass)
 	// default on this core, which parks the radio and drops the first inbound
 	// packets to a sleeping device (cold pings/HTTP time out until it is warm;
 	// it has bitten OTA and the web UI). Off = the web UI/OTA answer at once.
-	WiFi.setSleep(false);
+	// (On while a module uses Bluetooth: the radio's coexistence needs it.)
+	WiFi.setSleep(iRadioShared);
 	char m[80];
 	snprintf(m, sizeof(m), "WiFi: joining \"%s\"", aSsid);
 	Log(m);
@@ -291,6 +292,12 @@ void AtomHal::WifiHardReset()
 void AtomHal::WifiInfo(char* aOut, size_t aMax)
 	{
 	snprintf(aOut, aMax, "\"%s\" IP %s RSSI %d", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+	}
+
+void AtomHal::RadioShared(bool aShared)
+	{
+	iRadioShared = aShared;
+	WiFi.setSleep(aShared);                   // (modem sleep while Bluetooth shares the radio; off again after)
 	}
 
 int AtomHal::WifiScan(char aNames[][33], int aMax)

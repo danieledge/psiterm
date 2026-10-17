@@ -180,6 +180,9 @@ public:
 	virtual bool WifiUp() = 0;
 	virtual void WifiBegin(const char* aSsid, const char* aPass) = 0;
 	virtual void WifiHardReset() {}            // a real radio down/up for the rejoin retry (no-op off-device)
+	// an extension module is using the radio for Bluetooth too (true while it
+	// does): Wi-Fi then keeps its modem sleep, which sharing the radio needs
+	virtual void RadioShared(bool aShared) { (void)aShared; }
 	virtual void WifiEnd() = 0;
 	virtual void WifiInfo(char* aOut, size_t aMax) = 0; // "SSID x, IP a.b.c.d, RSSI -60"
 	virtual int WifiScan(char aNames[][33], int aMax) { (void)aNames; (void)aMax; return 0; }

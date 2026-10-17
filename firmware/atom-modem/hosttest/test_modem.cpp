@@ -1454,6 +1454,24 @@ static void TestPager()
 	g.Click(t);
 	CHECK(!g.Idle(t + 2000, false) && g.Page() == am::EPageNetwork);
 	CHECK(g.Idle(t + am::Pager::kHomeAfterMs + 5, false));
+	// a module's page (ext.h: HasPage) is the next after Home, then Wi-Fi and
+	// VPN as before; a double-press there is Home, and so is the wait
+	am::Pager e;
+	e.SetExtPage(true);
+	t = 5000;
+	e.Click(t); CHECK(e.Page() == am::EPageExt && !e.InDetails() && !e.Quiet(t));
+	e.Click(t); CHECK(e.Page() == am::EPageNetwork);
+	e.Click(t); CHECK(e.Page() == am::EPageVpn);
+	e.Click(t); CHECK(e.Page() == am::EPageHome);
+	e.Click(t);
+	CHECK(e.Double(t) == am::Pager::ENothing && e.Page() == am::EPageHome);
+	e.Click(t);
+	CHECK(!e.Idle(t + am::Pager::kHomeAfterMs - 1, false) && e.Idle(t + am::Pager::kHomeAfterMs, false) && e.Page() == am::EPageHome);
+	// the module gone (or none): never its page, and back to Home from it
+	e.Click(t);
+	e.SetExtPage(false);
+	CHECK(e.Page() == am::EPageHome);
+	e.Click(t); CHECK(e.Page() == am::EPageNetwork);
 	}
 
 // ----- PPP output: whole frames, in order, paced, held when offline -----------

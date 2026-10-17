@@ -195,9 +195,11 @@ void Screen::Tick(const Modem& aModem, Hal& aHal, uint32_t aNowMs)
 		}
 	if (iPager.Idle(aNowMs, keep))
 		iForce = true;
-	// a module's page (ext.h), while Home would show: its coming and going,
-	// and its news, wake the screen
-	Extension* ext = iPager.Quiet(aNowMs) ? ExtScreenPick(aModem) : 0;
+	// a module's page (ext.h): its own place in the ring, or over Home while
+	// it is wanted; its coming and going, and its news, wake the screen
+	Extension* own = ExtPagePick(aModem);
+	iPager.SetExtPage(own != 0);
+	Extension* ext = iPager.Page() == EPageExt ? own : iPager.Quiet(aNowMs) ? ExtScreenPick(aModem) : 0;
 	uint32_t news = ext ? ext->ScreenNews() : 0;
 	if (ext != iExtShown || news != iExtNews)
 		{
