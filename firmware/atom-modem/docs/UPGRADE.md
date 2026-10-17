@@ -627,6 +627,49 @@ boards use WireGuard, vendored and pinned in `lib/wireguard` (its
 firmware update over the web (`/ota`, see `WIRING.md`) is written beside the
 running one.
 
+### A failed update goes back to the previous firmware
+
+An update written over the web is *on trial* until it has started properly,
+and the modem goes back to the previous firmware by itself if it does not
+(`src/fwtrial.h` explains the rules; `board/fwsafe.cpp` is the ESP-IDF side).
+Two layers:
+
+- **The bootloader.** Arduino-ESP32's prebuilt bootloader (3.1.3 for the S3
+  boards, 2.0.17 for the plain Atom) is built with
+  `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`. A slot just written boots once as
+  *pending verify*; if the chip restarts before the firmware has confirmed
+  itself, the bootloader marks the slot *aborted* and boots the other one.
+  The core's start-up (`initArduino`) used to confirm every firmware at once;
+  the firmware now overrides its hook (`verifyRollbackLater()`), so it
+  confirms itself in `setup()` instead. That covers a crash before `setup()`.
+- **The trial** (from the start of `setup()`): the new firmware confirms
+  itself at once, so the bootloader lets it start again, and counts its own
+  starts in NVS (`fwtrial`, keyed by the slot and the image's ELF SHA-256). A
+  start is healthy when the uplink has been up for 30 s, or a page of the web
+  UI has been opened (or, with no network set, the access point is up after
+  30 s): the trial then ends and the firmware is kept. A start that is not
+  healthy within three minutes restarts the modem; a main loop not seen for a
+  minute restarts it too (an `esp_timer`, only while on trial); a crash, a
+  watchdog, a brownout or the power being pulled count the same. At the
+  fourth start the firmware marks itself invalid
+  (`esp_ota_mark_app_invalid_rollback_and_reboot`) and the bootloader boots the
+  previous one. If otadata has no entry for the previous firmware (it was
+  flashed over USB and this is the first update since), the firmware points
+  the bootloader at that slot with `esp_ota_set_boot_partition`. If there is
+  no image there at all, it gives up the trial and keeps running.
+
+The previous firmware shows *"Running the previous firmware: the update failed
+to start 3 times"* on the System page, as a line in `ATI` and as `FW=PREVIOUS`
+in `AT$STAT?` (`FW=TRIAL` while a firmware is on trial, `FW=OK` otherwise),
+until another firmware is written over the failed one. A firmware flashed
+over USB is never on trial (esptool leaves otadata blank), and a build from
+before the trial existed, sent over the web, is confirmed at once by the core, as before.
+`hosttest/test_fwtrial` runs the rules against a model of the bootloader's
+otadata (the cases above, a brownout, an older build, nothing to go back to).
+What only hardware can show: that the prebuilt bootloader really behaves as
+the model (try it with a build that crashes in `setup()` on purpose), and the
+restart reasons the log gives (`Firmware: the last restart was ...`).
+
 ### The web password in a public build
 
 The tree has **no web password built in**. A fresh modem's station-mode

@@ -25,7 +25,7 @@ IMGSRC = $(IMG)/pmimg.c $(IMG)/pmjpeg.c $(IMG)/pmjprog.c $(IMG)/pmpng.c $(IMG)/p
 IMGOBJ = pmimg.o pmjpeg.o pmjprog.o pmpng.o pmgif.o picojpeg.o
 INC = -I../src -I$(IMG)
 
-test: test_modem test_v22 test_atremote test_usbnet test_proxy test_proxy_tinfl test_imapxcode pictures
+test: test_modem test_v22 test_atremote test_usbnet test_proxy test_proxy_tinfl test_imapxcode test_fwtrial pictures
 	./test_modem
 	./test_v22
 	./test_atremote
@@ -33,6 +33,7 @@ test: test_modem test_v22 test_atremote test_usbnet test_proxy test_proxy_tinfl 
 	./test_proxy
 	./test_proxy_tinfl
 	./test_imapxcode
+	./test_fwtrial
 
 # the decoders PsiMail uses, compiled as they are (zlib from the system here)
 pm%.o: $(IMG)/pm%.c $(IMG)/pmimg.h
@@ -52,6 +53,11 @@ test_v22: test_v22.cpp fakehal.h $(SRC) $(HDR) $(IMGOBJ)
 # session, RemoteLine, a PPP call surviving it (with the sanitizers)
 test_atremote: test_atremote.cpp fakehal.h $(SRC) $(HDR) $(IMGOBJ)
 	$(CXX) $(CXXFLAGS) -fsanitize=address,undefined $(INC) -o $@ test_atremote.cpp $(SRC) $(IMGOBJ) -lz
+
+# the firmware trial after an update over the web (src/fwtrial.h), against a
+# model of the bootloader's two-slot otadata (with the sanitizers)
+test_fwtrial: test_fwtrial.cpp ../src/fwtrial.cpp ../src/fwtrial.h
+	$(CXX) $(CXXFLAGS) -fsanitize=address,undefined $(INC) -o $@ test_fwtrial.cpp ../src/fwtrial.cpp
 
 test_usbnet: test_usbnet.cpp ../src/usbnet/ncm.cpp ../src/usbnet/ncm.h ../src/usbnet/ipheth.cpp ../src/usbnet/ipheth.h
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ test_usbnet.cpp ../src/usbnet/ncm.cpp ../src/usbnet/ipheth.cpp
@@ -94,7 +100,7 @@ hostmodem: hostmodem.cpp $(SRC) $(HDR) $(IMGOBJ)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ hostmodem.cpp $(SRC) $(IMGOBJ) -lz -ldl
 
 clean:
-	rm -f test_modem test_v22 test_atremote test_usbnet test_proxy test_proxy_tinfl test_imapxcode tinfl.o hostmodem render_screens $(IMGOBJ)
+	rm -f test_fwtrial test_modem test_v22 test_atremote test_usbnet test_proxy test_proxy_tinfl test_imapxcode tinfl.o hostmodem render_screens $(IMGOBJ)
 	rm -rf pictures screens
 
 .PHONY: test clean pictures screens

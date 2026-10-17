@@ -9,6 +9,7 @@
 #include "../cabundle.h"
 #include "wgtunnel.h"
 #include "pppdns.h"
+#include "fwsafe.h"
 #include <Preferences.h>
 #include "lwip/netif.h"
 #include "lwip/tcpip.h"
@@ -557,6 +558,12 @@ void AtomHal::WebInfo(char* aOut, size_t aMax)
 		iWeb->WebInfo(aOut, aMax);
 	else if (aMax)
 		aOut[0] = 0;
+	}
+
+int AtomHal::FirmwareInfo(char* aOut, size_t aMax)
+	{
+	am::gFwSafe.Text(aOut, aMax);
+	return am::gFwSafe.Show();
 	}
 
 // ----- 2.2: the uplink's address, the tunnel, the DNS relay, the new records -------------

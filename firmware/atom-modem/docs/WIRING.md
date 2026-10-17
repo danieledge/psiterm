@@ -200,4 +200,21 @@ curl -u atom:PASSWORD -F firmware=@firmware.bin http://<atom-ip>/ota
 ```
 
 A web password must be set first (`AT$WEBPASS` over the serial line, then `AT&W`).
-If a bad build will not boot, recover over USB (`esptool … 0x10000 firmware.bin`).
+
+**A bad build goes back by itself.** A firmware sent this way is *on trial*
+until it has started properly: the uplink (Wi-Fi or USB) up for 30 s, or a page
+of the web UI opened. A start that does not get there (a crash, a watchdog, a
+brownout, the power pulled, three minutes without the network, or the main
+loop stuck for a minute) is counted, and after **three** such starts the modem
+marks the new firmware invalid and boots the one it ran before. The System
+page then says *"Running the previous firmware: the update failed to start 3
+times"* (and `AT$STAT?` gives `FW=PREVIOUS`) until another firmware is written
+over the failed one. A crash so early that the firmware never reaches its own
+code (in the Arduino core's start-up) is caught by the bootloader at the first
+restart instead. While a firmware is on trial the System page shows which
+start it is on (`FW=TRIAL`).
+
+Recovery over USB (`esptool … 0x10000 firmware.bin`) is still there for what
+the trial cannot catch: a firmware flashed over USB (it is never on trial),
+the first update after a USB flash when that USB firmware is not in a usable
+state, or a build that starts, gets the network, and only then misbehaves.

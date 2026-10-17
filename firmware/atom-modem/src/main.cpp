@@ -21,6 +21,7 @@
 #include "board/pppat.h"
 #include "board/ppptls.h"
 #include "board/wgtunnel.h"
+#include "board/fwsafe.h"
 #if defined(AM_HAS_LCD)
 #include "board/screen.h"
 #endif
@@ -220,6 +221,9 @@ void setup()
 #if ARDUINO_USB_CDC_ON_BOOT
 	Serial.setTxTimeoutMs(0);                 // (never wait for a PC that is not there: host mode)
 #endif
+	// a firmware just written over the web is on trial: counted, and given up
+	// on (the previous one booted) after three starts that never got healthy
+	am::gFwSafe.Begin(gHal);
 #if defined(AM_HAS_LCD)
 	am::gScreen.Begin();                      // (M5Unified first: the reset countdown is shown on it)
 #endif
@@ -266,6 +270,9 @@ void loop()
 	gPppTls.Loop(*gModem, gHal);              // (the stunnel-style TLS mail relay over PPP: only while a PPP call is up and a mail host is set)
 	am::gWg.Loop(millis());                   // (the WireGuard tunnel: the clock, the endpoint, the handshake)
 	ButtonTick();
+	// (the firmware trial: healthy once the uplink is up, or a page has been
+	// served, or - with no network set - the access point is up)
+	am::gFwSafe.Tick(gModem->Link().Up(), gWeb.ApUp() && !gModem->Config().ssid[0] && gModem->Nets().count == 0);
 #if defined(AM_HAS_LCD)
 	am::gScreen.Tick(*gModem, gHal, millis());   // (after the pages, never inside Modem::Loop())
 #endif

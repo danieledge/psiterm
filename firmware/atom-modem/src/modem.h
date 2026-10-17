@@ -233,6 +233,10 @@ public:
 	virtual void ApplyUplink(const Settings2& aS2) { (void)aS2; } // (the USB host at the next restart)
 	virtual void ApInfo(char* aOut, size_t aMax) { if (aMax) aOut[0] = 0; }   // "PsiConnect-1A2B up, 192.168.4.1"
 	virtual void WebInfo(char* aOut, size_t aMax) { if (aMax) aOut[0] = 0; }  // "http://192.168.1.50/"
+	// the firmware trial (fwtrial.h): a TFwShow (0 all well, 1 a new firmware
+	// on trial, 2 running the previous one after an update failed), and a line
+	// for ATI ("" when all is well)
+	virtual int FirmwareInfo(char* aOut, size_t aMax) { if (aMax) aOut[0] = 0; return 0; }
 private:
 	LogRing iLog;
 	bool iTlsVerify;

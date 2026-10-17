@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include <esp_system.h>
 #include <Update.h>
+#include "fwsafe.h"
 #if defined(AM_HAS_LCD)
 #include "screen.h"
 #include "../canvas.h"
@@ -197,7 +198,10 @@ bool WebUi::FromAp()
 bool WebUi::Allowed()
 	{
 	if (FromAp())
+		{
+		gFwSafe.WebServed();                  // (a new firmware on trial: the pages work)
 		return true;
+		}
 	if (!iS2.webPass[0])
 		{
 		iServer.send(403, "text/plain", "No web password is set: set one with AT$WEBPASS, or use the access point");
@@ -208,6 +212,7 @@ bool WebUi::Allowed()
 		iServer.requestAuthentication(BASIC_AUTH, "PsiConnect");
 		return false;
 		}
+	gFwSafe.WebServed();
 	return true;
 	}
 
@@ -215,11 +220,10 @@ bool WebUi::Allowed()
 // while the body streams in, so it cannot write a response here.
 bool WebUi::OtaAuth()
 	{
-	if (FromAp())
-		return true;
-	if (!iS2.webPass[0])
-		return false;
-	return iServer.authenticate("atom", iS2.webPass);
+	bool ok = FromAp() || (iS2.webPass[0] && iServer.authenticate("atom", iS2.webPass));
+	if (ok)
+		gFwSafe.WebServed();
+	return ok;
 	}
 
 // ----- pieces of pages ---------------------------------------------------------------------------
@@ -569,13 +573,30 @@ void WebUi::PageSystem()
 	Send("<h2>Save</h2><form method=\"post\" action=\"/set\"><input type=\"hidden\" name=\"back\" value=\"/system\">"
 		"<input type=\"hidden\" name=\"save\" value=\"1\"><button class=\"go\">Save settings to flash</button></form>");
 	Send("<h2>Restart</h2><form method=\"post\" action=\"/set\"><input type=\"hidden\" name=\"restart\" value=\"1\"><button>Restart the modem</button></form>");
+	{
+	char t[160];
+	gFwSafe.Text(t, sizeof(t));
+	if (t[0])
+		{
+		Send(gFwSafe.Show() == EFwShowPrevious ? "<div class=\"warn\"><b>" : "<div class=\"ok\"><b>");
+		SendEsc(t);
+		Send(".</b></div>");
+		}
+	}
 	Send("<h2>Firmware update</h2><p>Upload a new <code>firmware.bin</code>: the modem writes it to the spare slot and "
-		"restarts on it. A web password must be set (<code>AT$WEBPASS</code>). If a bad build will not boot, recover over USB.</p>"
+		"restarts on it. A web password must be set (<code>AT$WEBPASS</code>). The new firmware is on trial until it has "
+		"the network (or a page is opened) after a restart; if it fails to start properly three times, the modem goes back "
+		"to the firmware it runs now, by itself.</p>"
 		"<form method=\"post\" action=\"/ota\" enctype=\"multipart/form-data\"><input type=\"file\" name=\"firmware\" accept=\".bin\">"
 		"<button class=\"go\" onclick=\"return confirm('Flash this firmware?')\">Upload &amp; flash</button></form>"
 		"<p><small>Or from a computer: <code>curl -u atom:PASSWORD -F firmware=@firmware.bin http://IP/ota</code></small></p>");
 	Send("<h2>Factory reset</h2><p>Every setting, the WiFi network and passwords included, back to the factory ones. The modem restarts.</p>"
 		"<form method=\"post\" action=\"/set\"><input type=\"hidden\" name=\"reset\" value=\"YES\"><button onclick=\"return confirm('Factory reset?')\">Factory reset</button></form>");
+	{
+	char t[96];
+	gFwSafe.Slots(t, sizeof(t));
+	Send("<p><small>Firmware: "); SendEsc(t); Send(".</small></p>");
+	}
 	Send("<h2>About</h2><p>PsiConnect "); Send(kVersion); Send(" on the "); Send(kBoardName);
 	Send(". <a href=\"/api/settings\">Settings as JSON</a>. The firmware and its documentation are in the PsiTerm repository "
 		"(<code>firmware/atom-modem/docs/UPGRADE.md</code>).</p>");

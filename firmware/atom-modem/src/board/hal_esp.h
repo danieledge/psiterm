@@ -78,6 +78,7 @@ public:
 	void ApplyUplink(const am::Settings2& aS2) override;
 	void ApInfo(char* aOut, size_t aMax) override;
 	void WebInfo(char* aOut, size_t aMax) override;
+	int FirmwareInfo(char* aOut, size_t aMax) override;
 
 	// the pins in use (after the settings, swaps and the board's defaults)
 	int PinTx() const { return iTx; }

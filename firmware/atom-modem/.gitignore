@@ -13,6 +13,7 @@ hosttest/screens/
 src/webpass_local.h
 hosttest/test_atremote
 hosttest/test_imapxcode
+hosttest/test_fwtrial
 hosttest/run.out
 *_local.h
 # WireGuard client configs and keys: never commit them (paste them on the

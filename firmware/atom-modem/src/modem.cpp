@@ -1979,6 +1979,12 @@ void Modem::Info()
 	iHal.MemInfo(w, sizeof(w));
 	if (w[0])
 		SayLine(w);
+	if (iHal.FirmwareInfo(m, sizeof(m)) && m[0])
+		{
+		char f[176];
+		snprintf(f, sizeof(f), "Firmware: %s", m);
+		SayLine(f);
+		}
 	}
 
 // AT&V: every setting (secrets as set/none)
@@ -2171,6 +2177,10 @@ Modem::TResult Modem::Join(const char* aArgs)
 //   WGEP         the endpoint (quoted host:port), when a config is set
 //   WGHS         seconds since the last handshake, -1 none
 //   WGRX, WGTX   bytes through the tunnel since it started
+// and then:
+//   FW           OK; TRIAL (a firmware just written over the web, not yet
+//                seen to start properly); PREVIOUS (an update failed to start
+//                three times, and the modem went back to the firmware before it)
 void Modem::Status()
 	{
 	char m[200], q[140];
@@ -2263,6 +2273,10 @@ void Modem::Status()
 	snprintf(m, sizeof(m), "+STAT:WGRX=%lu", (unsigned long)iWgStatus.rx);
 	SayLine(m);
 	snprintf(m, sizeof(m), "+STAT:WGTX=%lu", (unsigned long)iWgStatus.tx);
+	SayLine(m);
+	static const char* const kFw[] = { "OK", "TRIAL", "PREVIOUS" };
+	int fw = iHal.FirmwareInfo(q, sizeof(q));
+	snprintf(m, sizeof(m), "+STAT:FW=%s", kFw[fw >= 0 && fw <= 2 ? fw : 0]);
 	SayLine(m);
 	}
 
