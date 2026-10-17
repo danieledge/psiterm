@@ -993,6 +993,8 @@ function kb(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1
 let linkKind = "wait", linkText = "Connecting";
 function setLink(kind, text) { linkKind = kind; linkText = text; renderStatus(); }
 function latency() {
+  const L = st.lat;                              // (PsiCast 0.11: capture to the Atom, the wait there, half this phone's round trip)
+  if (L && L.link != null) return Math.round(L.link + (L.queue || 0) + (rttViewer !== null ? rttViewer : (L.view || 0)) / 2);
   if (rttViewer === null) return null;
   return Math.round((rttViewer + (st.rtt || 0)) / 2);
 }
@@ -1024,6 +1026,10 @@ function renderDetails() {
     ["From the Psion", kb(st.rateBytes || 0) + "/s"],
     ["To this phone", kb(rateIn) + "/s"],
     ["Latency", rttViewer === null ? "–" : "Atom " + rttViewer + " ms" + (st.rtt ? ", Psion " + st.rtt + " ms" : "")],
+    ["Picture delay", st.lat && st.lat.link != null
+      ? "Psion to Atom " + st.lat.link + " ms (at most " + st.lat.linkMax + ", ±" + st.lat.acc + "), Atom to phone "
+        + ((st.lat.queue || 0) + Math.round((rttViewer ?? st.lat.view ?? 0) / 2)) + " ms"
+      : "–"],
     ["Psion CPU", st.cpu != null ? st.cpu.toFixed(1) + "%" : "–"],
     ["Battery", st.mains ? "On mains" : st.battery != null ? st.battery + "%" : "–"],
     ["Free memory", st.freeRam ? kb(st.freeRam) : "–"],
