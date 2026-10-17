@@ -37,8 +37,7 @@ header{display:flex;align-items:center;gap:8px;padding:8px 12px 6px}
 @media (orientation:portrait){#stage{align-items:flex-start;padding-top:14px}}
 #frame{position:relative;width:100%;max-width:100%;background:#000;border-radius:6px;overflow:hidden;
   box-shadow:0 0 0 1px #000,0 8px 30px rgba(0,0,0,.45)}
-canvas#screen{display:block;width:100%;height:auto;image-rendering:pixelated;image-rendering:crisp-edges;
-  image-rendering:-webkit-optimize-contrast;touch-action:manipulation}
+canvas#screen{display:block;width:100%;height:auto;aspect-ratio:8 / 3;touch-action:manipulation}
 body.control canvas#screen{touch-action:none}
 #veil{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
   text-align:center;padding:16px;background:rgba(15,17,19,.72);backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
@@ -108,6 +107,28 @@ body.immersive #frame{border-radius:0;box-shadow:none}
   border-radius:50%;background:rgba(30,33,36,.75)}
 body.immersive #exit{display:grid;place-items:center}
 #exit svg{width:18px;height:18px;stroke:#fff;fill:none;stroke-width:2}
+/* full screen as the 5mx: the bezel with its silkscreen icons, down the left
+   and along the bottom, where the digitiser has them (--k: CSS px a Psion px) */
+#device{display:contents}
+.silk{display:none}
+body.immersive #device{display:grid;grid-template-columns:var(--sl) var(--sw);grid-template-rows:var(--sh) var(--sb);
+  background:#1c1e20;border-radius:calc(var(--k) * 10px);box-shadow:0 0 0 1px #000,0 10px 40px rgba(0,0,0,.5)}
+body.immersive .silk{display:block;position:relative;touch-action:none}
+body.immersive #frame{grid-column:2;grid-row:1;width:var(--sw)!important}
+#silkL{grid-column:1;grid-row:1}
+#silkB{grid-column:1 / span 2;grid-row:2}
+.sk{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:calc(var(--k) * 1.5px);width:calc(var(--k) * var(--bw));height:calc(var(--k) * var(--bh));border-radius:calc(var(--k) * 5px);
+  color:#c3c8bd;font-size:calc(var(--k) * 7.5px);line-height:1;letter-spacing:.1px;user-select:none;-webkit-user-select:none}
+.sk svg{width:calc(var(--k) * 15px);height:calc(var(--k) * 15px);stroke:currentColor;fill:none;stroke-width:1.6;
+  stroke-linecap:round;stroke-linejoin:round}
+.sk:active,.sk.down{background:rgba(255,255,255,.12);color:#fff}
+#fkbd{display:none;position:fixed;right:calc(56px + var(--safe-r));top:calc(10px + var(--safe-t));z-index:15;width:38px;height:38px;
+  border-radius:50%;background:rgba(30,33,36,.75)}
+body.immersive.control #fkbd{display:grid;place-items:center}
+#exit,#fkbd{transition:opacity .4s}
+body.immersive.quiet #exit,body.immersive.quiet #fkbd{opacity:.22}
+#fkbd svg{width:20px;height:20px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 @media (orientation:landscape) and (max-height:500px){
   header{padding:4px 10px 2px}
   .tool{width:34px;height:34px}
@@ -139,11 +160,16 @@ body.immersive #exit{display:grid;place-items:center}
 </header>
 
 <div id="stage">
+  <div id="device">
+  <div class="silk" id="silkL"></div>
   <div id="frame">
     <canvas id="screen" width="640" height="240"></canvas>
+    <canvas id="model" width="640" height="240" hidden></canvas>
     <div id="banner" class="gone"></div>
     <div id="recdot">REC 0:00</div>
     <div id="veil"><div class="spin"></div><div class="big">Connecting…</div><div class="small"></div></div>
+  </div>
+  <div class="silk" id="silkB"></div>
   </div>
 </div>
 
@@ -176,6 +202,7 @@ body.immersive #exit{display:grid;place-items:center}
 </div>
 
 <input id="kbd" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Type on the Psion">
+<button id="fkbd" aria-label="Keyboard"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg></button>
 <button id="exit" aria-label="Leave full screen"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 
 <div class="sheet" id="shMore"><div class="card">
@@ -238,12 +265,39 @@ function makeLut() {
 makeLut();
 
 // ----- the screen: a grey per pixel (the model) and the canvas -----
-const cv = $("#screen"), ctx = cv.getContext("2d", { alpha: false });
+// The Psion's picture lives at its own size in the model canvas (#model: what
+// screenshots and videos take); #screen shows it at the phone's full
+// resolution, scaled "sharp bilinear": blown up by a whole number with hard
+// edges, then smoothly to the exact size. Every Psion pixel comes out the
+// same size, with clean edges, at any scale (plain nearest-neighbour at 3.5x
+// makes some pixels 3 device pixels wide and some 4: jagged text).
+const cv = $("#screen"), vctx = cv.getContext("2d", { alpha: false });
+const mc = $("#model"), ctx = mc.getContext("2d", { alpha: false });
+const up = document.createElement("canvas"), uctx = up.getContext("2d", { alpha: false });
+let presentQ = false;
+function present() {
+  if (presentQ) return;
+  presentQ = true;
+  requestAnimationFrame(() => {
+    presentQ = false;
+    const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    if (!r.width) return;
+    const dw = Math.round(r.width * dpr), dh = Math.round(r.height * dpr);
+    if (cv.width !== dw || cv.height !== dh) { cv.width = dw; cv.height = dh; }
+    const n = Math.max(1, Math.ceil(dw / W));
+    if (up.width !== W * n || up.height !== H * n) { up.width = W * n; up.height = H * n; }
+    uctx.imageSmoothingEnabled = false;
+    uctx.drawImage(mc, 0, 0, up.width, up.height);
+    vctx.imageSmoothingEnabled = true;
+    vctx.drawImage(up, 0, 0, dw, dh);
+  });
+}
 let W = 640, H = 240, grey = new Uint8Array(W * H).fill(15), img = ctx.createImageData(W, H), px = new Uint32Array(img.data.buffer);
 let haveScreen = false;
 function resize(w, h) {
   if (w === W && h === H) return;
-  W = w; H = h; cv.width = w; cv.height = h;
+  W = w; H = h; mc.width = w; mc.height = h;
+  cv.style.aspectRatio = w + " / " + h;
   grey = new Uint8Array(w * h).fill(15);
   img = ctx.createImageData(w, h); px = new Uint32Array(img.data.buffer);
   fitFrame();
@@ -251,11 +305,13 @@ function resize(w, h) {
 function paintAll() {
   for (let i = 0; i < grey.length; i++) px[i] = lut[grey[i]];
   ctx.putImageData(img, 0, 0);
+  present();
   if (rec) recDirty = true;
 }
 function paintRect(x, y, w, h) {
   for (let r = y; r < y + h; r++) { let o = r * W + x; for (let c = 0; c < w; c++, o++) px[o] = lut[grey[o]]; }
   ctx.putImageData(img, 0, 0, x, y, w, h);
+  present();
 }
 function applyTheme() {
   makeLut();
@@ -268,12 +324,25 @@ function applyTheme() {
 // ----- the frame's size: fit the width, or the height in landscape -----
 function fitFrame() {
   const st = $("#stage"), fr = $("#frame");
+  if (document.body.classList.contains("immersive")) {
+    // the whole 5mx face: the silkscreen strips round the screen, all at one scale
+    const [L, B] = silkDims(), dv = $("#device");
+    const k = Math.max(0.2, Math.min(st.clientWidth / (L + W), st.clientHeight / (H + B)));
+    dv.style.setProperty("--k", k);
+    dv.style.setProperty("--sl", Math.floor(L * k) + "px");
+    dv.style.setProperty("--sw", Math.floor(W * k) + "px");
+    dv.style.setProperty("--sh", Math.floor(H * k) + "px");
+    dv.style.setProperty("--sb", Math.floor(B * k) + "px");
+    layoutSilk(k);
+    return;
+  }
   const aw = st.clientWidth - (document.body.classList.contains("immersive") ? 0 : 20), ah = st.clientHeight - 8;
   let w = aw, h = w * H / W;
   if (h > ah && ah > 50) { h = ah; w = h * W / H; }
   fr.style.width = Math.floor(w) + "px";
 }
 addEventListener("resize", fitFrame);
+if (window.ResizeObserver) new ResizeObserver(() => present()).observe(cv);
 addEventListener("orientationchange", () => setTimeout(fitFrame, 200));
 
 // ----- link B -----
@@ -397,6 +466,7 @@ function onBinary(buf) {
         }
       }
       ctx.putImageData(img, 0, 0, x, d0, w, d1 - d0);
+      present();
     }
   }
   if (rec) recDirty = true;
@@ -596,6 +666,75 @@ document.querySelectorAll(".k[data-app]").forEach(b => b.addEventListener("click
   overlayKey(a[0]);
 }));
 
+// the silkscreen drawn round the screen in full screen: each icon is a tap at
+// its place on the digitiser (Menu is the Menu key: the same thing, surely)
+const ICONS = {
+  Menu: '<path d="M5 7h14M5 12h14M5 17h14"/>',
+  System: '<rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/>',
+  Word: '<path d="M6 3h9l4 4v14H6z"/><path d="M9 11h7M9 14h7M9 17h5"/>',
+  Sheet: '<rect x="4" y="5" width="16" height="14" rx="1"/><path d="M4 10h16M4 15h16M10 5v14M15 5v14"/>',
+  Contacts: '<rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="12" cy="10" r="3"/><path d="M7 18c1-3 3-4 5-4s4 1 5 4"/>',
+  Agenda: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
+  Email: '<rect x="3" y="6" width="18" height="12" rx="1"/><path d="M3 7l9 6 9-6"/>',
+  Calc: '<rect x="6" y="3" width="12" height="18" rx="2"/><path d="M9 7h6M9 12h.01M12 12h.01M15 12h.01M9 16h.01M12 16h.01M15 16h.01"/>',
+  Jotter: '<path d="M6 4h12v16H6z"/><path d="M9 4v16"/><path d="M12 9h4M12 13h4"/>',
+  Extras: '<circle cx="7" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="17" cy="12" r="1.5"/>',
+  Clipboard: '<rect x="6" y="5" width="12" height="16" rx="1"/><path d="M9 5V3h6v2"/>',
+  Infrared: '<path d="M8 8a6 6 0 0 1 0 8M11 6a9 9 0 0 1 0 12M14 4a12 12 0 0 1 0 16"/>',
+  "Zoom in": '<circle cx="10" cy="10" r="6"/><path d="M15 15l5 5M7.5 10h5M10 7.5v5"/>',
+  "Zoom out": '<circle cx="10" cy="10" r="6"/><path d="M15 15l5 5M7.5 10h5"/>'
+};
+function silkDims() {
+  const dg = hello.digitiser || [0, 0];
+  return [dg[0] > W ? Math.max(10, dg[0] - W - 10) : 45, dg[1] > H ? dg[1] - H : 40];
+}
+function silkButton(name, i) {
+  return '<button class="sk" data-silk="' + i + '" aria-label="' + esc(name) + '"><svg viewBox="0 0 24 24">' + (ICONS[name] || "") +
+    "</svg><span>" + esc(name === "Contacts" ? "Contacts" : name) + "</span></button>";
+}
+let silkBuilt = false;
+function layoutSilk(k) {
+  const [L, B] = silkDims();
+  if (!silkBuilt) {
+    silkBuilt = true;
+    $("#silkL").innerHTML = silkButton("Menu", -1) + APPS.map((a, i) => a[1] < 0 && a[2] >= 0 ? silkButton(a[0], i) : "").join("");
+    $("#silkB").innerHTML = APPS.map((a, i) => a[2] < 0 ? silkButton(a[0], i) : "").join("");
+    document.querySelectorAll(".sk").forEach(b => b.addEventListener("pointerdown", e => {
+      e.preventDefault();
+      b.classList.add("down"); setTimeout(() => b.classList.remove("down"), 150);
+      const i = +b.dataset.silk;
+      if (i < 0) { press(148, "Menu"); return; }
+      if (!canControl()) { toast(!wantControl ? "Turn on control to use the Psion's icons" : st.control ? "Connecting for control…" : "Control is off on the Psion"); return; }
+      const a = silkscreen()[i];
+      send({ t: "pen", e: "down", x: a[1], y: a[2] });
+      setTimeout(() => send({ t: "pen", e: "up", x: a[1], y: a[2] }), 60);
+      overlayKey(a[0]);
+    }));
+  }
+  // where each icon sits, in Psion pixels from the strip's corner
+  const pos = silkscreen();
+  document.querySelectorAll(".sk").forEach(b => {
+    const i = +b.dataset.silk, inLeft = b.parentNode.id === "silkL";
+    let x, y;
+    if (i < 0) { x = L / 2; y = 16; }
+    else if (inLeft) { x = L / 2; y = pos[i][2]; }
+    else { x = L + pos[i][1]; y = B / 2; }
+    b.style.left = (x * k) + "px"; b.style.top = (y * k) + "px";
+    b.style.setProperty("--bw", (inLeft ? Math.min(L - 4, 42) : 64) + "px");
+    b.style.setProperty("--bh", (inLeft ? 44 : Math.min(B - 4, 36)) + "px");
+  });
+}
+// in full screen the two floating buttons fade after a few seconds (they sit
+// over the Psion's toolbar) and come back at a touch
+let quietTimer = 0;
+function wake() {
+  document.body.classList.remove("quiet");
+  clearTimeout(quietTimer);
+  quietTimer = setTimeout(() => document.body.classList.add("quiet"), 3000);
+}
+document.addEventListener("pointerdown", wake, true);
+$("#fkbd").onclick = () => { $("#kbd").focus(); toast("Type: it goes to the Psion"); };
+
 // the phone's keyboard: text as characters (the Psion finds the keys for them)
 const kbd = $("#kbd");
 $("#bKbd").onclick = () => { kbd.focus(); toast("Type: it goes to the Psion"); };
@@ -658,10 +797,10 @@ function saveFile(file) {
 $("#bShot").onclick = () => { if (!haveScreen) return toast("No picture yet"); openSheet("shShot"); };
 document.querySelectorAll("[data-shot]").forEach(b => b.onclick = () => {
   const k = +b.dataset.shot;
-  let c = cv;
+  let c = mc;
   if (k > 1) {
     c = document.createElement("canvas"); c.width = W * k; c.height = H * k;
-    const x = c.getContext("2d"); x.imageSmoothingEnabled = false; x.drawImage(cv, 0, 0, c.width, c.height);
+    const x = c.getContext("2d"); x.imageSmoothingEnabled = false; x.drawImage(mc, 0, 0, c.width, c.height);
   }
   closeSheets();
   saveFile(dataUrlFile(c.toDataURL("image/png"), "psion-" + stamp() + (k > 1 ? "-large" : "") + ".png"));
@@ -681,7 +820,7 @@ function recFrame() {
   if (!rec) return;
   const now = performance.now(), k = recCv.width / W;
   recCtx.imageSmoothingEnabled = false;
-  recCtx.drawImage(cv, 0, 0, recCv.width, recCv.height);
+  recCtx.drawImage(mc, 0, 0, recCv.width, recCv.height);
   for (let i = marks.length - 1; i >= 0; i--) {
     const m = marks[i], age = now - m.t;
     if (age > (m.kind === "tap" ? 700 : 1400)) { marks.splice(i, 1); continue; }
@@ -752,6 +891,7 @@ $("#bSaveVid").onclick = () => {
 // ----- full screen: the real thing where there is one, else only the screen -----
 $("#bFull").onclick = () => {
   document.body.classList.add("immersive");
+  wake();
   const el = document.documentElement;
   if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
   else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();

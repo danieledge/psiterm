@@ -93,7 +93,7 @@ def main():
             shots.append("2-portrait.png")
             # the canvas, read back: the Psion's picture exactly (5mx LCD theme, the default)
             same = page.evaluate("""() => {
-                const c = document.getElementById('screen'), d = c.getContext('2d').getImageData(0, 0, 640, 240).data;
+                const c = document.getElementById('model'), d = c.getContext('2d').getImageData(0, 0, 640, 240).data;
                 const ink = [27, 36, 26], paper = [186, 196, 164], g = [];
                 for (let i = 0; i < 640 * 240; i++) {
                     let best = 0, bd = 1e9;
@@ -149,6 +149,15 @@ def main():
             page.wait_for_timeout(500)
             page.screenshot(path=os.path.join(out, "7-landscape-full.png"))
             shots.append("7-landscape-full.png")
+            # full screen is the 5mx's face: the silkscreen icons round the screen, each a tap where the digitiser has it
+            e2e.check(page.locator('.sk').count() == 14, "full screen shows the 14 silkscreen icons")
+            page.click('.sk[data-silk="11"]')     # Zoom in, on the left strip
+            page.wait_for_timeout(400)
+            e2e.check((1, -23, 172) in ps.inputs, "the Zoom in icon in full screen is a tap at -23,172 (%r)" % ps.inputs[-4:])
+            # drawn at the phone's resolution (3x here), not the Psion's
+            dims = page.evaluate("() => { const c = document.getElementById('screen'), r = c.getBoundingClientRect(); return [c.width, Math.round(r.width * devicePixelRatio)]; }")
+            e2e.check(dims[0] == dims[1] and dims[0] > 640, "the screen is drawn at the phone's own resolution (%r)" % dims)
+
             # paused on the Psion, then gone
             page.click("#exit")
             page.wait_for_timeout(400)
