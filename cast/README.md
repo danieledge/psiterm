@@ -89,6 +89,11 @@ EMU_SERIAL=/tmp/psicast/sock tools/emu/run.sh cast \
 
 The decoded screens match the emulator's own screenshots pixel for pixel, at 4 and 16 greys. `--answer-status` and `--sim-clock` are for the emulator, which runs many times faster than real time while the Psion is idle.
 
+## Credits
+
+- **The 5mx's face** in the viewer's full screen (`firmware/atom-modem/src/cast/silk5mx.jpg`) is the 5mx skin of the Psion Web Emulator, with the screen area cut out: "Psion Web Emulator by Joe Haines — https://joehaines.com/psion".
+- **The Series 7 theme's colours and pictures** come from the Psion Series 7's own ROM (EIKON's colour list, and the colour versions of the 5mx's icons, paired by `firmware/atom-modem/tools/s7icons.py`). They are Psion's.
+
 ## Support
 
 PsiCast is free. If it's useful to you, see the Support section of the [main README](../README.md).

@@ -72,6 +72,12 @@ void WebUi::Begin(Modem& aModem, AtomHal& aHal)
 	// the Series 7 theme's colour pictures (and their matcher), fetched only when it is chosen
 	iServer.on("/screen/iconmatch.js", HTTP_GET, [this]() { CastAsset("text/javascript", kCastIconMatchGz, kCastIconMatchGzLen); });
 	iServer.on("/screen/s7icons.json", HTTP_GET, [this]() { CastAsset("application/json", kCastS7IconsGz, kCastS7IconsGzLen); });
+	iServer.on("/screen/silk5mx.jpg", HTTP_GET, [this]()          // (the 5mx's face, for full screen: not gzipped)
+		{
+		if (!Allowed()) return;
+		iServer.sendHeader("Cache-Control", "max-age=604800");
+		iServer.send_P(200, "image/jpeg", (const char*)kCastSilk5mx, kCastSilk5mxLen);
+		});
 	iServer.on("/system", HTTP_GET, [this]() { PageSystem(); });
 	iServer.on("/vpn", HTTP_GET, [this]() { PageVpn(); });
 	iServer.on("/wg", HTTP_POST, [this]() { PostWg(); });

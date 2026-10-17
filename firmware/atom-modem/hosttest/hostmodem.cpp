@@ -599,6 +599,8 @@ struct CastHttp
 			return Reply(200, "image/png", std::string((const char*)kCastIcon512, kCastIcon512Len));
 		if (base == "/screen/iconmatch.js")
 			return Reply(200, "text/javascript", std::string((const char*)kCastIconMatchGz, kCastIconMatchGzLen), "Content-Encoding: gzip\r\n");
+		if (base == "/screen/silk5mx.jpg")
+			return Reply(200, "image/jpeg", std::string((const char*)kCastSilk5mx, kCastSilk5mxLen));
 		if (base == "/screen/s7icons.json")
 			return Reply(200, "application/json", std::string((const char*)kCastS7IconsGz, kCastS7IconsGzLen), "Content-Encoding: gzip\r\n");
 		return Reply(404, "text/plain", "Not found\n");
