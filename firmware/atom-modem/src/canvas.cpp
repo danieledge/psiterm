@@ -333,6 +333,23 @@ void Canvas::Render(const Layout& aLayout, uint16_t* aFb)
 		case EOpLock:  Lock(aFb, o.x, o.y, o.w, o.h != 0, o.fg); break;
 		case EOpDot:   Circle(aFb, o.x, o.y, o.w, o.fg); break;
 		case EOpIcon:  Icon(aFb, o.x, o.y, o.w, o.h, o.font, o.fg, kOff); break;
+		case EOpPicture:
+			if (!aLayout.pic)
+				break;
+			for (int y = 0; y < o.h; y++)
+				{
+				int py = o.y + y;
+				if (py < 0 || py >= N)
+					continue;
+				const uint8_t* row = aLayout.pic + (size_t)y * o.w;
+				for (int x = 0; x < o.w; x++)
+					{
+					int px = o.x + x;
+					if (px >= 0 && px < N)
+						aFb[py * N + px] = Rgb565(row[x], row[x], row[x]);
+					}
+				}
+			break;
 			}
 		}
 	}

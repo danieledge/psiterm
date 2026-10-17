@@ -26,7 +26,7 @@ static AtomHal* sAtomHal = 0;             // the one HAL, for the WiFi event cal
 AtomHal::AtomHal()
 	: iInternet(-1), iDnsOk(-1), iWifiFail(am::EWifiFailNone), iWifiEvents(false), iProbing(false), iProbePort(0), iCur(&iPlain), iWeb(0), iUsb(0), iBaud(115200), iTx(kPinTx),
 	  iRx(kPinRx), iRts(kPinRts), iCts(kPinCts), iDcdPin(-1), iFlow(false), iStarted(false), iRunning(false),
-	  iUsbStarted(false), iUsbWanted(false)
+	  iUsbStarted(false), iUsbWanted(false), iLedState(-1), iExtLed(false), iExtLedMs(0)
 	{
 	iProbeHost[0] = 0;
 	sAtomHal = this;                          // (for WifiEvent: there is one)
@@ -515,11 +515,8 @@ void AtomHal::Restart()
 
 // ----- the LED, the web pages ----------------------------------------------------------
 
-void AtomHal::Led(am::LedState aState)
+static void ModemLed(int aState)
 	{
-#if defined(AM_HAS_LCD)
-	am::gScreen.SetBar(aState);               // the LCD's bar: the same state as the LED's
-#endif
 	switch (aState)
 		{
 	case am::ELedNoWifi:     LedWrite(24, 0, 0); break;    // red
@@ -529,6 +526,42 @@ void AtomHal::Led(am::LedState aState)
 	case am::ELedData:       LedWrite(24, 24, 48); break;  // white flash
 	case am::ELedConfig:     LedWrite(24, 0, 32); break;   // purple: the access point is up
 		}
+	}
+
+void AtomHal::Led(am::LedState aState)
+	{
+#if defined(AM_HAS_LCD)
+	am::gScreen.SetBar(aState);               // the LCD's bar: the same state as the LED's
+#endif
+	iLedState = aState;
+	if (!iExtLed)                             // (a module's light: LedTick decides)
+		ModemLed(aState);
+	}
+
+void AtomHal::LedTick(const am::Modem& aModem, bool aBusy, uint32_t aNowMs)
+	{
+	if (kPinLed < 0)
+		return;                               // (no WS2812: the LCD shows the module's page instead)
+	am::ExtLed l;
+	bool ext = am::ExtLedPick(aModem, iLedState, aBusy, l);
+	if (!ext)
+		{
+		if (iExtLed)
+			{
+			iExtLed = false;
+			ModemLed(iLedState);              // the modem's own state, at once
+			}
+		return;
+		}
+	// about 50 times a second is smooth enough for a pulse, and keeps the
+	// WS2812's (RMT) writes out of most passes
+	if (iExtLed && aNowMs - iExtLedMs < 20)
+		return;
+	iExtLed = true;
+	iExtLedMs = aNowMs;
+	uint8_t r, g, b;
+	am::ExtLedLevel(l, aNowMs, r, g, b);
+	LedWrite(r, g, b);
 	}
 
 void AtomHal::ApplyWeb(const am::Settings2& aS2)

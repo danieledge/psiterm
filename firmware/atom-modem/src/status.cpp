@@ -1074,11 +1074,77 @@ void StatusModel::LayMessage(const char* aLine1, const char* aLine2, const char*
 	pen.Centre(EFaceSans, FitSize(EFaceSans, t, kScreenPx - 2 * kMargin, kText - 1, 8), 96, grey, t);
 	}
 
+// ----- an extension module's page --------------------------------------------------
+
+static_assert(ExtPen::kText == kText && ExtPen::kSmall == kSmall && ExtPen::kMargin == kMargin && ExtPen::kBandH == kBandH
+	&& ExtPen::kHomeBandH == kHomeBandH, "ExtPen's measures must be the pages' own");
+
+uint16_t ExtPen::Tone(int aTone) const { return ToneColour(aTone); }
+void ExtPen::Fill(int aX, int aY, int aW, int aH, uint16_t aColour) { Pen(iL).Fill(aX, aY, aW, aH, aColour); }
+void ExtPen::Text(int aFace, int aSize, int aX, int aBase, uint16_t aColour, const char* aText, int aMaxW)
+	{ Pen(iL).Text(aFace, aSize, aX, aBase, aColour, aText, aMaxW); }
+void ExtPen::Right(int aFace, int aSize, int aRight, int aBase, uint16_t aColour, const char* aText, int aMaxW)
+	{ Pen(iL).Right(aFace, aSize, aRight, aBase, aColour, aText, aMaxW); }
+void ExtPen::Centre(int aFace, int aSize, int aBase, uint16_t aColour, const char* aText)
+	{ Pen(iL).Centre(aFace, aSize, aBase, aColour, aText); }
+int ExtPen::TextWidth(int aFace, int aSize, const char* aText) const { return StatusModel::TextWidth(aFace, aSize, aText); }
+int ExtPen::FitSize(int aFace, const char* aText, int aW, int aMax, int aMin) const { return am::FitSize(aFace, aText, aW, aMax, aMin); }
+void ExtPen::Dot(int aX, int aY, int aRadius, uint16_t aColour) { Pen(iL).Op(EOpDot, aX, aY, aRadius, 0, aColour); }
+
+void ExtPen::Icon(int aIcon, int aArg, int aX, int aY, uint16_t aColour)
+	{
+	Pen pen(iL);
+	LayIcon(pen, aIcon, aArg, aX, aY, aColour);
+	}
+
+void ExtPen::RoundBox(int aX, int aY, int aW, int aH, int aRadius, uint16_t aColour)
+	{
+	int r = aRadius;
+	if (r * 2 > aW) r = aW / 2;
+	if (r * 2 > aH) r = aH / 2;
+	if (r <= 0)
+		{
+		Fill(aX, aY, aW, aH, aColour);
+		return;
+		}
+	Pen pen(iL);
+	pen.Fill(aX + r, aY, aW - 2 * r, aH, aColour);
+	pen.Fill(aX, aY + r, aW, aH - 2 * r, aColour);
+	// the corners: dots centred half a pixel in, so the curve meets the edges
+	pen.Op(EOpDot, aX + r, aY + r, r, 0, aColour);
+	pen.Op(EOpDot, aX + aW - r, aY + r, r, 0, aColour);
+	pen.Op(EOpDot, aX + r, aY + aH - r, r, 0, aColour);
+	pen.Op(EOpDot, aX + aW - r, aY + aH - r, r, 0, aColour);
+	}
+
+void ExtPen::Picture(int aX, int aY, int aW, int aH, const uint8_t* aGreys, uint32_t aGen)
+	{
+	if (!aGreys || aW <= 0 || aH <= 0 || iL.pic)
+		{
+		if (iL.pic) iL.dropped++;               // (one picture a page)
+		return;
+		}
+	if (Pen(iL).Op(EOpPicture, aX, aY, aW, aH, 0))
+		{
+		iL.pic = aGreys;
+		iL.picGen = aGen;
+		}
+	}
+
+void StatusModel::LayExt(Extension& aExt, uint32_t aNowMs, Layout& aOut)
+	{
+	memset(&aOut, 0, sizeof(aOut));
+	Pen(aOut).Fill(0, 0, kScreenPx, kScreenPx, kBlack);
+	ExtPen pen(aOut);
+	aExt.ScreenDraw(pen, aNowMs);
+	}
+
 // ----- the gestures ----------------------------------------------------------
 
 void Pager::Click(uint32_t aNowMs)
 	{
 	iLastMs = aNowMs;
+	iPressed = true;
 	if (InDetails())
 		iPage = iPage + 1 < EPageCount ? iPage + 1 : EPageSetup;
 	else
@@ -1088,6 +1154,7 @@ void Pager::Click(uint32_t aNowMs)
 Pager::TAction Pager::Double(uint32_t aNowMs)
 	{
 	iLastMs = aNowMs;
+	iPressed = true;
 	switch (iPage)
 		{
 	case EPageHome: iPage = EPageSetup; return ENothing;
@@ -1100,6 +1167,7 @@ Pager::TAction Pager::Double(uint32_t aNowMs)
 void Pager::ConfigMode(bool aOn, uint32_t aNowMs)
 	{
 	iLastMs = aNowMs;
+	iPressed = true;
 	iPage = aOn ? EPageSetup : EPageHome;
 	}
 

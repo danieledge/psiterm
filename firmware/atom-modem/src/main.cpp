@@ -280,6 +280,7 @@ void loop()
 	for (int i = 0; i < gModem->ExtensionCount(); i++)
 		gModem->ExtensionAt(i)->Loop(gModem->PppCall() && gModem->Ppp().Up() ? am::kPppLocalIp : "", "");
 	ButtonTick();
+	gHal.LedTick(*gModem, gWeb.OtaBusy(), millis());   // (a module's light on the LED, ext.h; never over an update)
 	// (the firmware trial: healthy once the uplink is up, or a page has been
 	// served, or - with no network set - the access point is up)
 	am::gFwSafe.Tick(gModem->Link().Up(), gWeb.ApUp() && !gModem->Config().ssid[0] && gModem->Nets().count == 0);

@@ -80,7 +80,7 @@ pictures/photo.jpg: mkpictures.py
 
 # the LCD's pages as pictures, from the same layout the AtomS3R draws
 M5FONTS = ../.pio/libdeps/atoms3r/M5GFX/src/lgfx/Fonts
-render_screens: render_screens.cpp fakehal.h $(SRC) $(HDR) ../src/fontmetrics.h $(IMGOBJ)
+render_screens: render_screens.cpp shots.h fakehal.h $(SRC) $(HDR) ../src/fontmetrics.h $(IMGOBJ)
 	$(CXX) $(CXXFLAGS) $(INC) -I$(M5FONTS) -Wno-narrowing -o $@ render_screens.cpp $(SRC) $(IMGOBJ) -lz
 screens: render_screens
 	./render_screens > /dev/null

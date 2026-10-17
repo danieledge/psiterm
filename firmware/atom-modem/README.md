@@ -859,6 +859,11 @@ AtomS3 Lite and Atom have the WS2812.
 | white flash | data moving |
 | purple | the access point is up (config mode, or no network saved) |
 
+An extension module built in (`src/ext.h`) may show a light of its own in
+place of green or blue, and on the AtomS3R a page of its own over Home
+while it has something to show (a press brings the pages back for a
+while). Red, amber, purple and a firmware update always win.
+
 **Factory reset:** hold the button while plugging the Atom in. The LED
 flashes white (on the AtomS3R the screen counts "Hold for reset 3..2..1");
 after 3 seconds every setting, including the WiFi network, returns to the

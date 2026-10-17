@@ -4,11 +4,14 @@
 // design can be looked at without the hardware. Each page in a few states
 // goes to screens/<name>.ppm; mkscreens.py turns them into PNGs (and one
 // contact sheet). Needs `pio run -e atoms3r` to have fetched M5GFX once.
+// An extension module's test build may add pages of its own (shots.h).
+// The folder is screens/, or the first argument.
 //   make -C hosttest screens
 // MIT licence (see LICENSE at the top of the repository).
 #include "fakehal.h"
 #include "../src/status.h"
 #include "../src/canvas.h"
+#include "shots.h"
 #include <stdint.h>
 #include <string>
 #include <vector>
@@ -22,13 +25,23 @@ struct GFXfont { uint8_t* bitmap; GFXglyph* glyph; uint16_t first, last; uint8_t
 #include "GFXFF/FreeSansBold24pt7b.h"
 
 static uint16_t gFb[am::Canvas::kSize * am::Canvas::kSize];
+static std::string gDir = "screens";
+
+// the modules' pages (shots.h), in the order they registered
+static void (*gShots[8])(ShotSave);
+static int gShotCount = 0;
+ShotRegister::ShotRegister(void (*aRun)(ShotSave))
+	{
+	if (gShotCount < 8)
+		gShots[gShotCount++] = aRun;
+	}
 
 // the frame buffer as the Atom serves it at /screen.bmp
 static void Save(const std::string& aName, const am::Layout& l)
 	{
 	memset(gFb, 0, sizeof(gFb));
 	am::Canvas::Render(l, gFb);
-	std::string path = "screens/" + aName + ".bmp";
+	std::string path = gDir + "/" + aName + ".bmp";
 	FILE* f = fopen(path.c_str(), "wb");
 	if (!f) { perror(path.c_str()); return; }
 	uint8_t h[am::Canvas::kBmpHeader], row[am::Canvas::kBmpRow];
@@ -83,9 +96,13 @@ static void Wg(Rig& r)
 		printf("wg config: %s\n", why);
 	}
 
-int main()
+static void SaveShot(const char* aName, const am::Layout& aLayout) { Save(aName, aLayout); }
+
+int main(int argc, char** argv)
 	{
-	mkdir("screens", 0755);
+	if (argc > 1)
+		gDir = argv[1];
+	mkdir(gDir.c_str(), 0755);
 	am::Canvas::SetFace(am::EFaceSans, { FreeSans24pt7bBitmaps, FreeSans24pt7bGlyphs, 0x20, 0x7e });
 	am::Canvas::SetFace(am::EFaceBold, { FreeSansBold24pt7bBitmaps, FreeSansBold24pt7bGlyphs, 0x20, 0x7e });
 	{ Rig r; Nets(r, { "Home", "Phone" }); r.hal.wifiSsid = "Home"; r.hal.internet = 1; r.Start(); r.Run(300);
@@ -155,5 +172,7 @@ int main()
 	am::Layout l;
 	am::StatusModel::LayMessage("VPN mode", "Auto", "", l); Save("18-toast", l);
 	am::StatusModel::LayMessage("Hold for reset", "3..2..", "", l); Save("19-reset", l);
+	for (int i = 0; i < gShotCount; i++)
+		gShots[i](&SaveShot);
 	return 0;
 	}

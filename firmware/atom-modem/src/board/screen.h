@@ -4,7 +4,9 @@
 // a frame buffer (32 KB, in PSRAM) and pushed to the panel in one go, and
 // only when its layout changed, so nothing flickers. The web pages serve the
 // buffer as /screen.bmp. The backlight dims
-// after a minute without a press. Built only when AM_HAS_LCD is set (the
+// after a minute without a press. An extension module may put a page of its
+// own over the pages while it has something to show (ext.h: ScreenWanted),
+// while Home would be showing (Pager::Quiet). Built only when AM_HAS_LCD is set (the
 // atoms3r environment). It is drawn from loop(), never from Modem::Loop().
 // MIT licence (see LICENSE at the top of the repository).
 #ifndef ATOM_SCREEN_H
@@ -58,6 +60,8 @@ private:
 	LedState iBar;                              // the bar now (set from the LED state machine)
 	bool iHaveShown;
 	Layout iShown;                              // what the panel shows now
+	const Extension* iExtShown;                 // the module whose page is up (0: the pages)
+	uint32_t iExtNews;                          // its ScreenNews() when last looked at
 	};
 
 extern Screen gScreen;

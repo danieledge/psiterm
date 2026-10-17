@@ -16,7 +16,10 @@
 //     PPP call is up (for listeners on the Psion's own route);
 //   - lines in ATI and AT$STAT?, rows on the web status page and the LCD's
 //     Call page;
-//   - web routes (GET), behind the web password unless marked open.
+//   - web routes (GET), behind the web password unless marked open;
+//   - a page of its own on the LCD while it has something to show (boards
+//     with one), and a light of its own on the status LED (boards with a
+//     WS2812), each under the modem's own where those matter.
 // The Hal's Random, BigAlloc, BigFree and BigRoom are there for modules.
 // Plain C++, no Arduino calls.
 // MIT licence (see LICENSE at the top of the repository).
@@ -29,6 +32,9 @@
 namespace am {
 
 class Hal;
+class Modem;
+class ExtPen;
+struct ExtLed;
 struct Settings2;
 struct SchemaEntry;
 
@@ -122,8 +128,59 @@ public:
 	virtual const ExtRoute* Routes() const { return 0; }
 	virtual void Get(const char* aPath, const ExtQuery& aQuery, ExtReply& aReply) { (void)aPath; (void)aQuery; (void)aReply; }
 
+	// ----- the LCD (boards with one: the AtomS3R) -----
+	// true: it has a page to show now, over the modem's pages. The screen
+	// shows it while Home would be showing (Pager::Quiet in status.h): a
+	// press brings the modem's pages back for a while, and the Setup page,
+	// a toast and the reset count come first. Asked about four times a
+	// second; cheap
+	virtual bool ScreenWanted() const { return false; }
+	// its page, laid out with aPen (status.h) on black, while it is wanted.
+	// Laid out about four times a second and drawn only when it looks
+	// different, so a picture's generation should change only when its pixels do
+	virtual void ScreenDraw(ExtPen& aPen, uint32_t aNowMs) { (void)aPen; (void)aNowMs; }
+	// a number that changes when something on its page is worth waking a
+	// dimmed screen for (the page coming and going wakes it anyway)
+	virtual uint32_t ScreenNews() const { return 0; }
+
+	// ----- the status LED (boards with a WS2812) -----
+	// true: it asks for the light in aOut now (asked every pass; cheap)
+	virtual bool LedWanted(ExtLed& aOut) const { (void)aOut; return false; }
+
 	Extension* iNextModule;    // (the registry's list)
 	};
+
+// a light a module asks the status LED for. It is shown only over the
+// modem's states that aOver names; never over no Wi-Fi (red), the access
+// point (purple), a firmware update or the reset count
+enum TExtLedStyle
+	{
+	EExtLedSteady = 0,
+	EExtLedPulse,              // brightens and fades, once a periodMs
+	EExtLedBlink               // on for the first half of each periodMs, off for the rest
+	};
+enum TExtLedOver
+	{
+	EExtLedOverIdle = 1,       // over Wi-Fi up, with no call (green)
+	EExtLedOverCall,           // ... and a call (blue, and its white data flash)
+	EExtLedOverDial            // ... and dialling (amber)
+	};
+struct ExtLed
+	{
+	uint8_t r, g, b;           // at full brightness (the modem's own are 16..48)
+	uint8_t style;             // TExtLedStyle
+	uint16_t periodMs;
+	uint8_t over;              // TExtLedOver
+	};
+// the light the LED shows now: true if a module's (the strongest aOver of
+// those asking, the first registered on a tie) wins over the modem's state
+// aModemLed (a LedState, modem.h; -1 none yet). aBusy: a firmware update is
+// being written (the modem's light stays)
+bool ExtLedPick(const Modem& aModem, int aModemLed, bool aBusy, ExtLed& aOut);
+// aLed's colour at aNowMs (its style)
+void ExtLedLevel(const ExtLed& aLed, uint32_t aNowMs, uint8_t& aR, uint8_t& aG, uint8_t& aB);
+// the module whose page the LCD shows (the first that wants it), or 0
+Extension* ExtScreenPick(const Modem& aModem);
 
 // the modules in this build, in the order they registered
 Extension* ExtModules();

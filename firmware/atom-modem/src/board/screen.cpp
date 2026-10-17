@@ -31,7 +31,7 @@ static FaceData FaceOf(const lgfx::GFXfont& aF)
 
 Screen::Screen()
 	: iReady(false), iDimmed(false), iForce(true), iLastDrawMs(0), iLastActiveMs(0), iToastUntilMs(0), iBar(ELedNoWifi),
-	  iHaveShown(false)
+	  iHaveShown(false), iExtShown(0), iExtNews(0)
 	{
 	memset(&iShown, 0, sizeof(iShown));
 	}
@@ -195,6 +195,19 @@ void Screen::Tick(const Modem& aModem, Hal& aHal, uint32_t aNowMs)
 		}
 	if (iPager.Idle(aNowMs, keep))
 		iForce = true;
+	// a module's page (ext.h), while Home would show: its coming and going,
+	// and its news, wake the screen
+	Extension* ext = iPager.Quiet(aNowMs) ? ExtScreenPick(aModem) : 0;
+	uint32_t news = ext ? ext->ScreenNews() : 0;
+	if (ext != iExtShown || news != iExtNews)
+		{
+		iExtShown = ext;
+		iExtNews = news;
+		iLastActiveMs = aNowMs;
+		if (iDimmed)
+			Backlight(true);
+		iForce = true;
+		}
 	if (iDimmed && !iForce)
 		return;                                 // (nothing to see: no work to do)
 	iForce = false;
@@ -203,7 +216,10 @@ void Screen::Tick(const Modem& aModem, Hal& aHal, uint32_t aNowMs)
 	StatusModel::Fill(aModem, aHal, iPager.Page(), page);
 	page.hintOn = iPager.HintOn(aNowMs);
 	iBar = page.bar;                            // the modem's own LED state: one source
-	StatusModel::Lay(page, lay);
+	if (ext)
+		StatusModel::LayExt(*ext, aNowMs, lay);
+	else
+		StatusModel::Lay(page, lay);
 	// only a page that looks different is drawn (Lay clears every byte, so
 	// two layouts of the same page compare equal)
 	if (iHaveShown && memcmp(&lay, &iShown, sizeof(lay)) == 0)

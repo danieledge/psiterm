@@ -10,6 +10,7 @@
 #include "fakehal.h"
 #include "../src/status.h"
 #include "../src/button.h"
+#include "../src/canvas.h"
 #include <stdlib.h>
 #include <time.h>
 
@@ -794,6 +795,110 @@ static void TestPages()
 	CHECK(!strcmp(p.vpn, "VPN off") && p.vpnTone == am::EToneGrey);   // off: a grey "VPN off" on Home
 	}
 
+// ----- an extension module's page on the LCD and light on the LED (ext.h) ---------------
+struct SampleExt : am::Extension
+	{
+	bool want = false, led = false;
+	uint32_t news = 0, gen = 1;
+	uint8_t over = am::EExtLedOverCall;
+	uint8_t pic[16 * 4];
+	SampleExt() { for (int i = 0; i < 64; i++) pic[i] = (uint8_t)(i * 4); }
+	const char* Name() const override { return "Sample"; }
+	bool ScreenWanted() const override { return want; }
+	uint32_t ScreenNews() const override { return news; }
+	void ScreenDraw(am::ExtPen& aPen, uint32_t aNowMs) override
+		{
+		aPen.Fill(0, 0, am::ExtPen::kSize, am::ExtPen::kBandH, aPen.Tone(am::EToneRed));
+		aPen.Text(am::EFaceBold, am::ExtPen::kText + 1, am::ExtPen::kMargin, 16, aPen.Tone(am::EToneWhite), "Sample");
+		aPen.Picture(10, 30, 16, 4, pic, gen);
+		aPen.RoundBox(8, 100, 112, 20, 4, aPen.Tone(am::EToneAmber));
+		}
+	bool LedWanted(am::ExtLed& aOut) const override
+		{
+		if (!led) return false;
+		aOut = am::ExtLed{ 0, 40, 40, am::EExtLedPulse, 2000, over };
+		return true;
+		}
+	};
+
+static void TestExtHooks()
+	{
+	Rig r(false);
+	SampleExt x, y;
+	CHECK(r.modem == 0);
+	r.ring.assign(64 * 1024, 0);
+	r.modem = new am::Modem(r.hal, r.ring.data(), r.ring.size());
+	CHECK(r.modem->AddExtension(x) && r.modem->AddExtension(y));
+	r.modem->Begin();
+	// the page: the first module that wants the screen
+	CHECK(am::ExtScreenPick(*r.modem) == 0);
+	y.want = true;
+	CHECK(am::ExtScreenPick(*r.modem) == &y);
+	x.want = true;
+	CHECK(am::ExtScreenPick(*r.modem) == &x);
+	// when it may show: on Home with no press for a while; never over Setup
+	am::Pager pg;
+	CHECK(pg.Quiet(1000));                                      // (no press since start)
+	pg.Click(5000);                                             // -> Wi-Fi
+	CHECK(!pg.Quiet(6000));
+	pg.Click(6000); pg.Click(7000);                             // round to Home: still the pages, for a while
+	CHECK(pg.Page() == am::EPageHome && !pg.Quiet(8000) && !pg.Quiet(7000 + am::Pager::kHomeAfterMs - 1));
+	CHECK(pg.Quiet(7000 + am::Pager::kHomeAfterMs));
+	pg.ConfigMode(true, 50000);
+	CHECK(!pg.Idle(50000 + 10 * am::Pager::kDetailsHomeAfterMs, true));                        // (the access point up: Setup stays)
+	CHECK(pg.Page() == am::EPageSetup && !pg.Quiet(50000 + 10 * am::Pager::kDetailsHomeAfterMs));
+	pg.Click(200000);                                           // a Details page
+	CHECK(!pg.Quiet(200000 + am::Pager::kHomeAfterMs));
+	CHECK(pg.Idle(200000 + am::Pager::kDetailsHomeAfterMs, false) && pg.Quiet(200000 + am::Pager::kDetailsHomeAfterMs));
+	// laid out with ExtPen, on black; the picture drawn as greys, compared by its generation
+	am::Layout a, b;
+	am::StatusModel::LayExt(x, 0, a);
+	am::StatusModel::LayExt(x, 0, b);
+	CHECK(a.dropped == 0 && a.pic == x.pic && a.picGen == 1 && memcmp(&a, &b, sizeof(a)) == 0);
+	x.gen = 2;
+	am::StatusModel::LayExt(x, 0, b);
+	CHECK(memcmp(&a, &b, sizeof(a)) != 0);
+	bool picOp = false;
+	for (int i = 0; i < a.n; i++)
+		if (a.op[i].op == am::EOpPicture && a.op[i].x == 10 && a.op[i].y == 30 && a.op[i].w == 16 && a.op[i].h == 4) picOp = true;
+	CHECK(picOp && a.op[0].op == am::EOpFill && a.op[0].fg == 0);
+	static uint16_t fb[am::Canvas::kSize * am::Canvas::kSize];
+	am::Canvas::Render(a, fb);
+	CHECK(fb[30 * 128 + 10] == 0 && fb[33 * 128 + 25] == am::Rgb565(252, 252, 252) && fb[31 * 128 + 12] == am::Rgb565(72, 72, 72));
+	CHECK(fb[127 * 128 + 0] == 0 && fb[110 * 128 + 64] == a.op[a.n - 1].fg);   // (the box, inside; black below)
+	// the LED: a module's light over the states it names, never over no Wi-Fi,
+	// the access point or an update; the strongest of those asking
+	am::ExtLed l;
+	CHECK(!am::ExtLedPick(*r.modem, am::ELedWifi, false, l));   // (nobody asking)
+	x.led = true;
+	CHECK(am::ExtLedPick(*r.modem, am::ELedWifi, false, l) && l.g == 40 && l.style == am::EExtLedPulse);
+	CHECK(am::ExtLedPick(*r.modem, am::ELedConnected, false, l) && am::ExtLedPick(*r.modem, am::ELedData, false, l));
+	CHECK(!am::ExtLedPick(*r.modem, am::ELedConnecting, false, l));
+	CHECK(!am::ExtLedPick(*r.modem, am::ELedNoWifi, false, l) && !am::ExtLedPick(*r.modem, am::ELedConfig, false, l));
+	CHECK(!am::ExtLedPick(*r.modem, -1, false, l) && !am::ExtLedPick(*r.modem, am::ELedWifi, true, l));
+	x.over = am::EExtLedOverIdle;
+	CHECK(am::ExtLedPick(*r.modem, am::ELedWifi, false, l) && !am::ExtLedPick(*r.modem, am::ELedConnected, false, l));
+	y.led = true; y.over = am::EExtLedOverDial;
+	CHECK(am::ExtLedPick(*r.modem, am::ELedConnecting, false, l) && l.over == am::EExtLedOverDial);
+	// its colour in time: a pulse never quite out, a blink on then off
+	uint8_t cr, cg, cb;
+	am::ExtLed p = { 0, 200, 100, am::EExtLedPulse, 2000, am::EExtLedOverCall };
+	am::ExtLedLevel(p, 0, cr, cg, cb);
+	CHECK(cr == 0 && cg == 25 && cb == 12);
+	am::ExtLedLevel(p, 1000, cr, cg, cb);
+	CHECK(cg == 200 && cb == 100);
+	am::ExtLedLevel(p, 2500, cr, cg, cb);
+	CHECK(cg > 25 && cg < 200);
+	p.style = am::EExtLedBlink;
+	am::ExtLedLevel(p, 100, cr, cg, cb);
+	CHECK(cg == 200);
+	am::ExtLedLevel(p, 1100, cr, cg, cb);
+	CHECK(cg == 0 && cb == 0);
+	p.style = am::EExtLedSteady;
+	am::ExtLedLevel(p, 1100, cr, cg, cb);
+	CHECK(cg == 200);
+	}
+
 int main()
 	{
 	srand((unsigned)time(0));
@@ -809,6 +914,7 @@ int main()
 	printf("schema coverage\n"); TestSchemaCoverage();
 	printf("double-press\n"); TestDoublePress();
 	printf("pages\n"); TestPages();
+	printf("extension page and light\n"); TestExtHooks();
 	printf("%d checks, %d failed\n", gChecks, gFails);
 	return gFails ? 1 : 0;
 	}

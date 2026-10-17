@@ -90,6 +90,9 @@ public:
 	int PinCts() const { return iCts; }
 	bool Flow() const { return iFlow; }
 	static void NvsClear();
+	// from loop(): an extension module's light on the LED (ext.h: ExtLedPick),
+	// or the modem's own state back. aBusy: a firmware update is being written
+	void LedTick(const am::Modem& aModem, bool aBusy, uint32_t aNowMs);
 
 private:
 	void StartSerial();
@@ -115,6 +118,9 @@ private:
 	bool iRunning;
 	bool iUsbStarted;
 	bool iUsbWanted;
+	int iLedState;                            // the modem's LED state, last set (-1 none yet)
+	bool iExtLed;                             // a module's light is showing in its place
+	uint32_t iExtLedMs;                       // when it was last written
 	};
 
 #endif
