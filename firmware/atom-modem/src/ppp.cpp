@@ -19,8 +19,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/stream_buffer.h"
 
-// one PPP netif for the single link the modem ever has
-static struct netif gPppIf;
+// The PPP netifs. One link at a time, but two netifs: a link that ends while
+// PPP is still negotiating or closing cannot be freed at once (ppp_free wants
+// the DEAD phase; lcp_close may take seconds of Terminate-Requests), and lwIP
+// asserts ("netif already added") if a new link is created on a netif still in
+// its list. So the old link is kept on its netif until it can be freed, and a
+// new one uses the other.
+static struct netif gPppIf[2];
 #endif
 
 namespace am {
@@ -29,7 +34,7 @@ PppLink::PppLink()
 	: iActive(false), iUp(false), iDropped(false), iDropErr(0), iDropLogged(false), iNat(false), iBytesIn(0), iDns(0), iDropFrames(0), iDropping(false), iStageLen(0),
 	  iUpLogged(false), iPendOfs(0), iPendLen(0)
 #ifdef AM_PPP_DEVICE
-	, iPcb(0), iQueue(0)
+	, iPcb(0), iOldPcb(0), iIf(0), iOldIf(0), iQueue(0)
 #endif
 	{}
 
@@ -121,14 +126,20 @@ size_t PppLink::Drain(Hal& aHal, Pacer& aPacer)
 struct PppCallbacks
 	{
 	// (pppos_output_cb_fn: u32_t (*)(ppp_pcb*, u8_t*, u32_t, void*); the tcpip thread)
-	static u32_t Output(ppp_pcb* /*pcb*/, u8_t* data, u32_t len, void* ctx)
+	// (a link that has ended but is still closing keeps calling these: its
+	// frames and its status are not the current call's, so they are dropped)
+	static u32_t Output(ppp_pcb* pcb, u8_t* data, u32_t len, void* ctx)
 		{
-		((PppLink*)ctx)->QueueOut(data, len);   // never the HAL: only the queue
+		PppLink* self = (PppLink*)ctx;
+		if (pcb == (ppp_pcb*)self->iPcb)
+			self->QueueOut(data, len);          // never the HAL: only the queue
 		return len;                             // (a dropped frame is PPP's to recover: the peer retries)
 		}
-	static void Status(ppp_pcb* /*pcb*/, int err, void* ctx)
+	static void Status(ppp_pcb* pcb, int err, void* ctx)
 		{
-		((PppLink*)ctx)->OnStatus(err);
+		PppLink* self = (PppLink*)ctx;
+		if (pcb == (ppp_pcb*)self->iPcb)
+			self->OnStatus(err);
 		}
 	};
 
@@ -215,6 +226,19 @@ static const char* PppErrName(int aErr)
 		}
 	}
 
+// is this netif in lwIP's list? (read under the core lock, from the loop task)
+static bool InNetifList(struct netif* aIf)
+	{
+	bool in = false;
+	LOCK_TCPIP_CORE();
+	struct netif* n;
+	NETIF_FOREACH(n)
+		if (n == aIf)
+			in = true;
+	UNLOCK_TCPIP_CORE();
+	return in;
+	}
+
 bool PppLink::Start(Hal& aHal)
 	{
 	if (iActive)
@@ -233,12 +257,23 @@ bool PppLink::Start(Hal& aHal)
 	iDropErr = 0;
 	iBytesIn = 0;
 	iDropFrames = 0;
-	ppp_pcb* pcb = pppapi_pppos_create(&gPppIf, PppCallbacks::Output, PppCallbacks::Status, this);
+	// the last link, if it was still closing: free it now if it has finished
+	Reap(aHal);
+	int nif = iOldPcb ? 1 - iOldIf : iIf;
+	if (InNetifList(&gPppIf[nif]))
+		{
+		// (cannot happen: the netif is in use; refuse rather than let lwIP abort)
+		aHal.Log("ppp: the last link is still closing - dial again in a few seconds");
+		return false;
+		}
+	iPcb = 0;
+	ppp_pcb* pcb = pppapi_pppos_create(&gPppIf[nif], PppCallbacks::Output, PppCallbacks::Status, this);
 	if (!pcb)
 		{
 		aHal.Log("ppp: create failed");
 		return false;
 		}
+	iIf = nif;
 	iPcb = pcb;
 	// Static addressing. The prebuilt lwIP has no PPP *server* role
 	// (CONFIG_LWIP_PPP_SERVER_SUPPORT off), so the modem cannot assign the
@@ -283,7 +318,22 @@ void PppLink::Stop(Hal& aHal)
 				}
 			}
 		pppapi_close(pcb, 1);               // 1: drop carrier now
-		pppapi_free(pcb);
+		iPcb = 0;                           // (its callbacks are ignored from here)
+		if (pppapi_free(pcb) != ERR_OK)
+			{
+			// not DEAD yet: it ended while negotiating or closing, and lcp_close
+			// is sending Terminate-Requests. Free it when it gets there (Reap).
+			if (iOldPcb)
+				Reap(aHal);
+			if (!iOldPcb)
+				{
+				iOldPcb = pcb;
+				iOldIf = iIf;
+				aHal.Log("ppp: the link is still closing; freed when it has");
+				}
+			else
+				aHal.Log("ppp: two links still closing");   // (the netif check in Start keeps this safe)
+			}
 		}
 	iPcb = 0;
 	iActive = iUp = iNat = false;
@@ -307,8 +357,24 @@ size_t PppLink::Input(Hal& aHal, const uint8_t* aData, size_t aLen)
 	return aLen;                            // lwIP copies the bytes
 	}
 
+// free the last link if it has finished closing (ppp_free succeeds only in
+// the DEAD phase, and removes its netif)
+void PppLink::Reap(Hal& aHal)
+	{
+	if (iOldPcb && pppapi_free((ppp_pcb*)iOldPcb) == ERR_OK)
+		{
+		iOldPcb = 0;
+		aHal.Log("ppp: the last link has closed");
+		}
+	}
+
 void PppLink::Poll(Hal& aHal)
 	{
+	// called every loop, in a call or not
+	if (iOldPcb)
+		Reap(aHal);
+	if (!iActive)
+		return;
 	// the link runs on the tcpip thread; here only the log lines, from the loop task
 	if (iActive && iUp && !iUpLogged)
 		{

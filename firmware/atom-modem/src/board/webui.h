@@ -45,6 +45,7 @@ private:
 	void PageWifi();
 	void PageSettings();
 	void PageLog();
+	void PageCrash();
 	void ScreenBmp();                     // GET /screen.bmp: the LCD as drawn (AtomS3R)
 	void PageSystem();
 	void PageScreen();                         // GET /screen: PsiCast's viewer (cast/viewer.html)

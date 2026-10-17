@@ -5,6 +5,8 @@
 #include <WiFi.h>
 #include <esp_system.h>
 #include <Update.h>
+#include <esp_core_dump.h>
+#include <esp_flash.h>
 #include "fwsafe.h"
 #include "../cast/cast.h"
 #include "../cast/castpage.h"
@@ -45,6 +47,7 @@ void WebUi::Begin(Modem& aModem, AtomHal& aHal)
 	iServer.on("/wifi", HTTP_GET, [this]() { PageWifi(); });
 	iServer.on("/settings", HTTP_GET, [this]() { PageSettings(); });
 	iServer.on("/log", HTTP_GET, [this]() { PageLog(); });
+	iServer.on("/crash", HTTP_GET, [this]() { PageCrash(); });
 	iServer.on("/screen.bmp", HTTP_GET, [this]() { ScreenBmp(); });
 	// PsiCast: the viewer (behind the password), its token, and the Home
 	// Screen files (not secret, and fetched without the password by iOS)
@@ -245,6 +248,64 @@ bool WebUi::OtaAuth()
 	if (ok)
 		gFwSafe.WebServed();
 	return ok;
+	}
+
+// ----- the crash report ---------------------------------------------------------------------------
+
+// The last crash's core dump, which the IDF writes to the coredump partition
+// on a panic. Plain text: the task, the exception, the backtrace (decode the
+// addresses with addr2line and the build's firmware.elf). ?raw=1 sends the
+// whole dump (for esp-coredump), ?clear=1 erases it.
+void WebUi::PageCrash()
+	{
+	if (!Allowed())
+		return;
+	size_t addr = 0, size = 0;
+	if (esp_core_dump_image_get(&addr, &size) != ESP_OK || !size)
+		{
+		iServer.send(200, "text/plain", "No crash report saved\n");
+		return;
+		}
+	if (iServer.hasArg("clear"))
+		{
+		esp_core_dump_image_erase();
+		iServer.send(200, "text/plain", "Crash report erased\n");
+		return;
+		}
+	if (iServer.hasArg("raw"))
+		{
+		iServer.setContentLength(size);
+		iServer.sendHeader("Content-Disposition", "attachment; filename=coredump.elf");
+		iServer.send(200, "application/octet-stream", "");
+		static uint8_t buf[1024];
+		for (size_t off = 0; off < size; off += sizeof(buf))
+			{
+			size_t n = size - off < sizeof(buf) ? size - off : sizeof(buf);
+			if (esp_flash_read(NULL, buf, addr + off, n) != ESP_OK)
+				break;
+			iServer.client().write(buf, n);
+			}
+		return;
+		}
+	static esp_core_dump_summary_t s;
+	if (esp_core_dump_get_summary(&s) != ESP_OK)
+		{
+		iServer.send(200, "text/plain", "A crash report is saved but cannot be read (?raw=1 to download it)\n");
+		return;
+		}
+	String o;
+	char line[96];
+	snprintf(line, sizeof(line), "Task: %.16s\nPC: 0x%08lx\nCause: %lu  address: 0x%08lx\nELF: %.16s\nBacktrace%s:",
+		s.exc_task, (unsigned long)s.exc_pc, (unsigned long)s.ex_info.exc_cause, (unsigned long)s.ex_info.exc_vaddr,
+		(const char*)s.app_elf_sha256, s.exc_bt_info.corrupted ? " (corrupted)" : "");
+	o += line;
+	for (uint32_t i = 0; i < s.exc_bt_info.depth && i < 16; i++)
+		{
+		snprintf(line, sizeof(line), " 0x%08lx", (unsigned long)s.exc_bt_info.bt[i]);
+		o += line;
+		}
+	o += "\n";
+	iServer.send(200, "text/plain", o);
 	}
 
 // ----- pieces of pages ---------------------------------------------------------------------------

@@ -125,8 +125,12 @@ private:
 	void QueueReset();
 #ifdef AM_PPP_DEVICE
 	void* iPcb;                // ppp_pcb* (opaque here, to keep lwIP out of the header)
+	void* iOldPcb;             // the last link, if lwIP would not free it yet (still closing)
+	int iIf;                   // which of the two netifs iPcb uses
+	int iOldIf;                // and which iOldPcb uses
 	void* iQueue;              // the FreeRTOS stream buffer (kept for the life of the firmware)
 	void OnStatus(int aErr);   // called from the PPP status callback (tcpip thread)
+	void Reap(Hal& aHal);      // free iOldPcb if it has finished closing
 	friend struct PppCallbacks;
 #else
 	std::deque<uint8_t> iHostQ;   // the host build's queue

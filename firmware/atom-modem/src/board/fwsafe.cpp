@@ -129,13 +129,16 @@ void FwSafe::Begin(Hal& aHal)
 	gLoopSeenMs = millis();
 	esp_reset_reason_t why = esp_reset_reason();
 	iTrial.Boot(gOta);
+	// every start: why the last one ended (a crash leaves its report at /crash)
+	static const char* const kWhy[] = { "unknown", "power-on", "external", "software", "panic", "interrupt watchdog",
+		"task watchdog", "watchdog", "deep sleep", "brownout", "SDIO" };
+	char m[96];
+	bool crash = why == ESP_RST_PANIC || why == ESP_RST_INT_WDT || why == ESP_RST_TASK_WDT || why == ESP_RST_WDT;
+	snprintf(m, sizeof(m), "Firmware: the last restart was %s%s", (int)why < 11 ? kWhy[(int)why] : "other",
+		crash ? " - the crash report is at /crash" : "");
+	gOta.Log(m);
 	if (iTrial.OnTrial())
 		{
-		static const char* const kWhy[] = { "unknown", "power-on", "external", "software", "panic", "interrupt watchdog",
-			"task watchdog", "watchdog", "deep sleep", "brownout", "SDIO" };
-		char m[80];
-		snprintf(m, sizeof(m), "Firmware: the last restart was %s", (int)why < 11 ? kWhy[(int)why] : "other");
-		gOta.Log(m);
 		// the watchdog for a start that hangs (loop() never seen again)
 		esp_timer_create_args_t a = {};
 		a.callback = &FwSafe::Watch;

@@ -513,9 +513,10 @@ void Modem::Loop()
 		}
 	EscapeTick(iHal.Millis());
 	FlushUp();
+	iPpp.Poll(iHal);                         // (also frees a finished call's link that was still closing)
 	if (iPppCall)
 		{
-		iPpp.Poll(iHal);                     // PPP runs on the lwIP thread; notice a drop
+		// PPP runs on the lwIP thread; notice a drop
 		if (iPpp.Dropped())
 			{
 			iHal.Log("ppp: link dropped by the Psion (or lost) - hanging up");
