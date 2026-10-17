@@ -41,3 +41,8 @@
   and have the icon tools write them (bmconv /4). An automatic conversion of
   the flat colour artwork was tried and is no better than today's 4 greys.
   Start with the 48 px app icons as samples.
+  Built-in apps too? Their .aif and .mbm files are in ROM (Z:\System\Apps\…).
+  Find out in the emulator whether EPOC takes an app's icon from C: for a
+  ROM app (apparc looks for the .aif beside the .app, so probably not
+  without a stand-in app); toolbar pictures are loaded by full ROM path, so
+  they likely can't be replaced.
