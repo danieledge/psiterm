@@ -46,6 +46,92 @@ def draw_screen(ps):
             ps.fb[y * 320 + x // 2] = a | (b << 4)
 
 
+def put_greys(ps, g):
+    """A 640x240 list of greys (0..15) into the fake Psion's frame buffer."""
+    for y in range(240):
+        for x in range(0, 640, 2):
+            ps.fb[y * 320 + x // 2] = g[y][x] | (g[y][x + 1] << 4)
+
+
+def draw_eikon(ps):
+    """A 5mx screen drawn the way EIKON draws it, in 4 greys (the geometry of a
+    real one, from the emulator): a page of text, a dialog with its title bar
+    and a button, a menu (a dialog's border, no title bar) and the toolbar
+    with its buttons. #cccccc is a checkerboard of greys 10 and 15. Returns
+    the points the Series 7 theme's checks look at."""
+    from PIL import Image, ImageDraw, ImageFont
+    try:
+        f = ImageFont.truetype("DejaVuSans.ttf", 11)
+    except OSError:
+        f = ImageFont.load_default()
+    g = [[15] * 640 for _ in range(240)]
+
+    def box(x0, y0, x1, y1, v):
+        for y in range(max(0, y0), min(240, y1 + 1)):
+            for x in range(max(0, x0), min(640, x1 + 1)):
+                g[y][x] = v
+
+    def light(x0, y0, x1, y1):
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                g[y][x] = 10 if (x + y) & 1 else 15
+
+    def text(x, y, t):
+        im = Image.new("L", (640, 240), 0)
+        ImageDraw.Draw(im).text((x, y), t, font=f, fill=255)
+        px = im.load()
+        for yy in range(max(0, y - 2), min(240, y + 16)):
+            for xx in range(x, min(640, x + 8 * len(t))):
+                if px[xx, yy] > 127:
+                    g[yy][xx] = 0
+
+    def button(x, y, r, b, label=None):
+        box(x, y, r, b, 0)                         # 1 black all round
+        box(x + 1, y + 1, r - 2, y + 2, 15)        # 2 white at the top and left
+        box(x + 1, y + 1, x + 2, b - 2, 15)
+        box(r - 2, y + 1, r - 1, b - 1, 5)         # 2 dark grey at the right and bottom
+        box(x + 1, b - 2, r - 1, b - 1, 5)
+        g[y + 1][r - 2] = 15
+        g[b - 2][x + 1] = 15
+        light(x + 3, y + 3, r - 3, b - 3)
+        if label:
+            text(x + 8, y + 5, label)
+
+    def thick(x0, y0, r, b):                       # EThickDeepRaisedWithOutline
+        box(x0, y0, r, b, 0)
+        box(x0 + 2, y0 + 2, r - 2, b - 2, 15)
+        box(r - 4, y0 + 2, r - 2, b - 2, 5)
+        box(x0 + 2, b - 4, r - 2, b - 2, 5)
+        box(x0 + 4, y0 + 4, r - 5, y0 + 4, 10)
+        box(x0 + 4, y0 + 4, x0 + 4, b - 5, 10)
+        box(x0 + 5, y0 + 5, r - 5, b - 5, 15)
+
+    for i, t in enumerate(("Dear reader,", "PsiCast shows this screen on the phone, live.", "A page stays black on white.")):
+        text(10, 4 + i * 15, t)
+    # a dialog
+    thick(60, 50, 459, 200)
+    light(65, 55, 454, 74)
+    text(72, 58, "About this Psion")
+    box(65, 75, 454, 75, 10)                     # (the grey line under the title)
+    text(80, 90, "PsiCast shows the screen on a phone")
+    button(220, 160, 290, 182, "Continue")
+    # a menu: the same border, no title
+    thick(330, 4, 520, 44)
+    text(342, 14, "Preferences...")
+    # the toolbar
+    box(570, 0, 570, 239, 0)
+    box(570, 0, 639, 0, 0)
+    box(639, 0, 639, 239, 0)
+    box(570, 239, 639, 239, 0)
+    text(590, 6, "Word")
+    for k, t in enumerate(("Bold", "Italic", "Print")):
+        button(570, 25 + 36 * k, 639, 61 + 36 * k, t)
+    put_greys(ps, g)
+    return {"title": (70, 70), "titletext": next((x, y) for y in range(55, 75) for x in range(72, 200) if g[y][x] == 0),
+            "body": (68, 140), "face": (224, 164), "tbar": (600, 3), "tface": (575, 30), "page": (5, 100),
+            "menu": (500, 30), "grey": g}
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "screens", "cast")
     os.makedirs(out, exist_ok=True)
@@ -138,6 +224,48 @@ def main():
                 page.wait_for_timeout(150)
                 page.locator("#frame").screenshot(path=os.path.join(out, "5-theme-%s.png" % t))
                 shots.append("5-theme-%s.png" % t)
+            # the Series 7 theme's role pass: a screen with no dialog or toolbar
+            # looks exactly as its plain greys would...
+            rgb = """() => { const d = document.getElementById('model').getContext('2d').getImageData(0, 0, 640, 240).data, o = [];
+                for (let i = 0; i < 640 * 240; i++) o.push([d[i * 4], d[i * 4 + 1], d[i * 4 + 2]]); return o; }"""
+            page.click('.sw[data-id="s7"]')
+            page.wait_for_timeout(400)
+            got = page.evaluate(rgb)
+            want = [v for byte in ps.fb for v in (byte & 15, byte >> 4)]
+            e2e.check(all(got[i] == [want[i] * 17] * 3 for i in range(640 * 240)),
+                      "Series 7: a screen with no dialog or toolbar is its plain greys")
+            # ...and a real one's dialog title is navy, its button and the toolbar's are blue
+            saved = bytes(ps.fb)
+            pts = draw_eikon(ps)
+            ps.update()
+            page.wait_for_timeout(600)
+            page.locator("#frame").screenshot(path=os.path.join(out, "5-theme-s7-dialog.png"))
+            shots.append("5-theme-s7-dialog.png")
+            got = page.evaluate(rgb)
+            at = lambda k: got[pts[k][1] * 640 + pts[k][0]]
+            for k, c, what in (("title", [0, 0, 128], "a dialog's title bar is navy"),
+                               ("titletext", [255, 255, 255], "its title is white"),
+                               ("body", [200, 200, 200], "the dialog is light grey"),
+                               ("face", [150, 150, 180], "its button is blue-grey"),
+                               ("tbar", [200, 200, 200], "the toolbar is light grey"),
+                               ("tface", [150, 150, 180], "the toolbar's buttons are blue-grey"),
+                               ("page", [255, 255, 255], "the page stays white"),
+                               ("menu", [255, 255, 255], "a menu (no title bar) stays white")):
+                e2e.check(at(k) == c, "Series 7: %s (%r at %r)" % (what, at(k), pts[k]))
+            # the pass itself, in this Chromium, on that screen: well under the 150 ms between passes
+            src = open(os.path.join(HERE, "..", "src", "cast", "viewer.html")).read()
+            code = src[src.index("const R_TITLE"):src.index("// ----- the frame's size")]
+            ms = page.evaluate("""([code, grey]) => {
+                const f = new Function(code + '; return findRoles;')(), g = new Uint8Array(grey.flat());
+                const role = new Uint8Array(640 * 240), stack = new Int32Array(640 * 240);
+                for (let i = 0; i < 5; i++) f(g, 640, 240, role, stack);
+                const t = performance.now();
+                for (let i = 0; i < 20; i++) f(g, 640, 240, role, stack);
+                return (performance.now() - t) / 20; }""", [code, pts["grey"]])
+            e2e.check(ms < 10, "Series 7: the role pass takes %.1f ms" % ms)
+            print("cast_page_shot: the role pass takes %.2f ms" % ms)
+            ps.fb[:] = saved
+            ps.update()
             page.click('.sw[data-id="lcd"]')
             page.click("#bClose")
             # landscape

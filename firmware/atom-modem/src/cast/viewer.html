@@ -257,10 +257,13 @@ const THEMES = [
   // and dialogs (10), the white page (15) - so a colour for each makes the
   // screens look made in colour; the greys between blend, so pictures come
   // out as a tint. "Series 7" is EIKON's colour scheme from the Psion Series
-  // 7's own ROM (EikPriv.rsc, its colour list beside the grey one): the
-  // interface stays grey, but the buttons' light grey (#cccccc: grey 12 at
-  // 16 greys, 10 at 4) is #9696b4, a greyish blue; dimmed stays #555555
-  { id: "s7", name: "Series 7", stops: [[0, [0, 0, 0]], [5, [85, 85, 85]], [10, [150, 150, 180]], [12, [150, 150, 180]], [15, [255, 255, 255]]], frame: "#fff" },
+  // 7's own ROM (EikPriv.rsc, its colour list beside the grey one). The 5mx
+  // draws dialog titles, buttons, menus and scroll bars all in the same light
+  // grey, and the Series 7 colours only some of them, so no palette can do
+  // it: its greys stay neutral (menus, scroll bars and pages are the same on
+  // both) and the role pass below colours what it finds by its shape
+  { id: "s7", name: "Series 7", ink: [0, 0, 0], paper: [255, 255, 255], ui: "s7", icons: true, frame: "#fff",
+    swatch: "linear-gradient(90deg,#000080 0 28%,#9696b4 28% 40%,#c8c8c8 40%)" },
   { id: "warm", name: "Warm", stops: [[0, [48, 30, 22]], [5, [182, 84, 46]], [10, [240, 226, 200]], [15, [255, 251, 243]]], frame: "#fffbf3" },
   { id: "mint", name: "Mint", stops: [[0, [14, 42, 40]], [5, [20, 130, 112]], [10, [206, 236, 224]], [15, [250, 255, 252]]], frame: "#fafffc" }
 ];
@@ -276,11 +279,18 @@ function themeRgb(th, g) {
 let theme = THEMES.find(t => t.id === store.get("theme", "lcd")) || THEMES[1];
 let lut = new Uint32Array(16);
 const little = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
+const pack = c => little ? (255 << 24 | c[2] << 16 | c[1] << 8 | c[0]) >>> 0 : (c[0] << 24 | c[1] << 16 | c[2] << 8 | 255) >>> 0;
+// the colours of the parts the role pass finds (R_* below), by the theme's "ui"
+const UI_COLOURS = {
+  // the Series 7's EikPriv.rsc: DialogTitle, DialogTitleText, DialogBackground,
+  // ToolbarBackground, ButtonFaceClear, ButtonTextDimmed, ButtonFaceSet
+  s7: [null, [0, 0, 128], [255, 255, 255], [200, 200, 200], [200, 200, 200], [150, 150, 180], [220, 220, 220], [130, 130, 160]]
+};
+const roleLut = new Uint32Array(8);
 function makeLut() {
-  for (let g = 0; g < 16; g++) {
-    const c = themeRgb(theme, g);
-    lut[g] = little ? (255 << 24 | c[2] << 16 | c[1] << 8 | c[0]) >>> 0 : (c[0] << 24 | c[1] << 16 | c[2] << 8 | 255) >>> 0;
-  }
+  for (let g = 0; g < 16; g++) lut[g] = pack(themeRgb(theme, g));
+  const u = UI_COLOURS[theme.ui];
+  if (u) for (let r = 1; r < u.length; r++) roleLut[r] = pack(u[r]);
 }
 makeLut();
 
@@ -313,33 +323,322 @@ function present() {
   });
 }
 let W = 640, H = 240, grey = new Uint8Array(W * H).fill(15), img = ctx.createImageData(W, H), px = new Uint32Array(img.data.buffer);
+// the role pass's results: a role per pixel (R_*, 0 for none), the grey each was found on, and its work stack
+let role = new Uint8Array(W * H), roleGrey = new Uint8Array(W * H), roleStack = new Int32Array(W * H);
 let haveScreen = false;
 function resize(w, h) {
   if (w === W && h === H) return;
   W = w; H = h; mc.width = w; mc.height = h;
   cv.style.aspectRatio = w + " / " + h;
   grey = new Uint8Array(w * h).fill(15);
+  role = new Uint8Array(w * h); roleGrey = new Uint8Array(w * h); roleStack = new Int32Array(w * h);
   img = ctx.createImageData(w, h); px = new Uint32Array(img.data.buffer);
   fitFrame();
 }
 function paintAll() {
+  if (theme.ui) return runRoles();             // (the whole picture: its roles straight away, so it never shows grey first)
   for (let i = 0; i < grey.length; i++) px[i] = lut[grey[i]];
+  if (iconsOn()) icons.paint(px, W, icons.find(grey, W, H), little);
   ctx.putImageData(img, 0, 0);
   present();
   if (rec) recDirty = true;
 }
 function paintRect(x, y, w, h) {
-  for (let r = y; r < y + h; r++) { let o = r * W + x; for (let c = 0; c < w; c++, o++) px[o] = lut[grey[o]]; }
+  const ui = !!theme.ui;
+  for (let r = y; r < y + h; r++) {
+    let o = r * W + x;
+    // (a pixel keeps its role's colour while it still has the grey the role was
+    // found on; the next pass, soon, sorts out the rest)
+    if (ui) for (let c = 0; c < w; c++, o++) px[o] = role[o] && roleGrey[o] === grey[o] ? roleLut[role[o]] : lut[grey[o]];
+    else for (let c = 0; c < w; c++, o++) px[o] = lut[grey[o]];
+  }
   ctx.putImageData(img, 0, 0, x, y, w, h);
+  iconPass(x, y, w, h);
   present();
+  if (ui) rolesSoon();
 }
 function applyTheme() {
   makeLut();
+  loadIcons();
   document.querySelector('meta[name="theme-color"]').content = "#15181b";
   $("#frame").style.background = theme.frame;
   paintAll();
   document.querySelectorAll(".sw").forEach(s => s.classList.toggle("on", s.dataset.id === theme.id));
 }
+
+// ----- Series 7: its colour pictures over the 5mx's grey ones -----
+// The 5mx's standard pictures (app icons, toolbar buttons, file types) are
+// fixed bitmaps, and the Series 7's ROM has colour versions of the same ones:
+// s7icons.json pairs them (tools/s7icons.py), and iconmatch.js finds the grey
+// ones on the screen (exactly, on the pixels each draws) and paints the colour
+// ones. Loaded from the Atom the first time the theme is chosen.
+let icons = null, iconsLoading = false;
+function iconsOn() { return !!icons && !!theme.icons; }
+function loadIcons() {
+  if (icons || iconsLoading || !theme.icons) return;
+  iconsLoading = true;
+  const s = document.createElement("script");
+  s.src = "/screen/iconmatch.js";
+  s.onload = () => fetch("/screen/s7icons.json", { credentials: "same-origin" })
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(p => { icons = IconMatch.create(p); if (theme.icons && haveScreen) paintAll(); })
+    .catch(() => {}).finally(() => { iconsLoading = false; });
+  s.onerror = () => { iconsLoading = false; };
+  document.head.appendChild(s);
+}
+function iconPass(x, y, w, h) {                  // after a rect is painted: its pictures (and those it touches)
+  if (!iconsOn()) return;
+  const hits = icons.find(grey, W, H, { x: x, y: y, w: w, h: h });
+  if (!hits.length) return;
+  icons.paint(px, W, hits, little);
+  for (const t of hits) ctx.putImageData(img, 0, 0, t.x, t.y + t.r0, t.icon.w, t.r1 - t.r0);
+}
+
+// ----- the role pass: colours for the parts a palette can't tell apart -----
+// The 5mx draws a dialog's title bar, its buttons, menus and scroll bars in the
+// same light grey; the Series 7 colours only some of them. So for a theme with
+// "ui", this finds the parts by the shapes EIKON draws them with (eikbordr.cpp,
+// eikdialg.cpp, eikmover.cpp, eikcmbut.cpp, eiktbar.cpp in the SDK):
+// - a dialog: a thick raised border (2 black, 2 white and a grey line at the
+//   top and left; 3 dark grey and 2 black at the bottom and right), then the
+//   title bar (light grey, with a grey line under it), then the white body;
+// - a command button: 1 black all round, 2 white at the top and left, 2 dark
+//   grey at the bottom and right, round a light grey face;
+// - the toolbar: the right-hand column in a black box, its buttons its full width.
+// Light grey (#cccccc) comes out as a checkerboard of greys 10 and 15, or as
+// one grey (12 or 13). A menu has a dialog's border but no title bar, so only a
+// border with a title bar counts: a miss leaves the plain greys, which is far
+// better than colouring someone's document.
+// It runs on the whole picture at most every 150 ms (a few ms on a phone).
+const R_TITLE = 1, R_TTEXT = 2, R_DLG = 3, R_TBAR = 4, R_FACE = 5, R_DIM = 6, R_SET = 7;
+let roleTimer = 0, roleLast = 0;
+function rolesSoon() {
+  // (a moment after the first change, so a burst of updates makes one pass)
+  if (!roleTimer) roleTimer = setTimeout(runRoles, Math.max(30, roleLast + 150 - performance.now()));
+}
+function runRoles() {
+  clearTimeout(roleTimer);
+  roleTimer = 0;
+  if (!theme.ui) return;
+  roleLast = performance.now();
+  findRoles(grey, W, H, role, roleStack);
+  roleGrey.set(grey);
+  for (let i = 0; i < grey.length; i++) px[i] = role[i] ? roleLut[role[i]] : lut[grey[i]];
+  ctx.putImageData(img, 0, 0);
+  if (iconsOn()) {
+    icons.paint(px, W, icons.find(grey, W, H), little);
+    ctx.putImageData(img, 0, 0);
+  }
+  present();
+  if (rec) recDirty = true;
+}
+// fills role (w x h) from the greys g; stack is work space of the same size
+function findRoles(g, w, h, role, stack) {
+  role.fill(0);
+  const blk = v => v <= 1, dark = v => v >= 4 && v <= 6, mid = v => v >= 7 && v <= 11, white = v => v === 15;
+  const WHITE = [15, 15];
+  function rowShare(y, x0, x1, test) {         // the share of row y's pixels x0..x1 that pass test
+    if (y < 0 || y >= h || x1 < x0) return 0;
+    let n = 0;
+    for (let o = y * w + x0, e = y * w + x1; o <= e; o++) if (test(g[o])) n++;
+    return n / (x1 - x0 + 1);
+  }
+  function colShare(x, y0, y1, test) {
+    if (x < 0 || x >= w || y1 < y0) return 0;
+    let n = 0;
+    for (let y = y0; y <= y1; y++) if (test(g[y * w + x])) n++;
+    return n / (y1 - y0 + 1);
+  }
+  // the light grey round the edge of a rectangle, as [grey where x+y is even,
+  // where it is odd], by a vote (a button's picture may touch its edge); or null
+  const votes = new Int32Array(32);
+  function lightAt(x0, y0, x1, y1) {
+    votes.fill(0);
+    let all = 0;
+    const vote = (x, y) => { const v = g[y * w + x]; all++; if (v >= 10) votes[((x + y) & 1) * 16 + v]++; };
+    for (let x = x0; x <= x1; x++) { vote(x, y0); if (y1 > y0) vote(x, y1); }
+    for (let y = y0 + 1; y < y1; y++) { vote(x0, y); if (x1 > x0) vote(x1, y); }
+    let a = 10, b = 10;
+    for (let v = 11; v < 16; v++) { if (votes[v] > votes[a]) a = v; if (votes[16 + v] > votes[16 + b]) b = v; }
+    const ok = (a === 10 && b === 15) || (a === 15 && b === 10) || (a === b && a >= 11 && a <= 13);
+    return ok && votes[a] + votes[16 + b] >= .4 * all ? [a, b] : null;
+  }
+  // flood (4 ways) through pixels of the pattern p ([even, odd]) with no role
+  // yet, inside x0,y0..x1,y1, from the seeds; giving them role r
+  function flood(x0, y0, x1, y1, p, r, seeds) {
+    const a = p[0], b = p[1];
+    let sp = 0;
+    const push = (x, y) => {
+      const o = y * w + x;
+      if (role[o] === 0 && g[o] === ((x + y) & 1 ? b : a)) { role[o] = r; stack[sp++] = o; }
+    };
+    seeds(push);
+    while (sp) {
+      const o = stack[--sp], y = (o / w) | 0, x = o - y * w, q = (x + y) & 1 ? a : b;   // (its neighbours' grey)
+      if (x > x0 && role[o - 1] === 0 && g[o - 1] === q) { role[o - 1] = r; stack[sp++] = o - 1; }
+      if (x < x1 && role[o + 1] === 0 && g[o + 1] === q) { role[o + 1] = r; stack[sp++] = o + 1; }
+      if (y > y0 && role[o - w] === 0 && g[o - w] === q) { role[o - w] = r; stack[sp++] = o - w; }
+      if (y < y1 && role[o + w] === 0 && g[o + w] === q) { role[o + w] = r; stack[sp++] = o + w; }
+    }
+  }
+  const edges = (x0, y0, x1, y1) => push => {
+    for (let x = x0; x <= x1; x++) { push(x, y0); push(x, y1); }
+    for (let y = y0; y <= y1; y++) { push(x0, y); push(x1, y); }
+  };
+  // a dimmed button's text is dark grey with no black: ButtonTextDimmed
+  function dimmed(x0, y0, x1, y1) {
+    let ink = 0, dim = 0;
+    for (let y = y0; y <= y1; y++) for (let o = y * w + x0, e = y * w + x1; o <= e; o++) { if (blk(g[o])) ink++; else if (dark(g[o])) dim++; }
+    if (ink || !dim) return;
+    for (let y = y0; y <= y1; y++) for (let o = y * w + x0, e = y * w + x1; o <= e; o++) if (dark(g[o])) role[o] = R_DIM;
+  }
+  // the command buttons with their top-left corners in x0,y0..x1,y1 (their
+  // border is distinctive enough to find them anywhere: in a dialog whose
+  // title is off the screen, or in a view like PsiMail's Compose)
+  function buttons(x0, y0, x1, y1) {
+    for (let y = y0; y + 12 <= y1; y++) for (let x = x0; x + 28 <= x1; x++) {
+      const o = y * w + x;
+      if (!blk(g[o]) || !blk(g[o + 1]) || !blk(g[o + w]) || g[o + w + 1] !== 15 || g[o + w + 2] !== 15 ||
+          g[o + 2 * w + 1] !== 15 || g[o + 2 * w + 2] !== 15) continue;
+      let rx = x + 1, by = y + 1;                // along the white top, and down the white left
+      while (rx < x1 && g[o + w + rx - x] === 15) rx++;
+      while (by < y1 && g[by * w + x + 1] === 15) by++;
+      if (!dark(g[o + w + rx - x]) || !blk(g[o + w + rx - x + 1]) || !dark(g[by * w + x + 1]) || !blk(g[(by + 1) * w + x + 1])) continue;
+      const r = rx + 1, b = by + 1;              // the black on the right and at the bottom
+      // (a scroll bar's arrows and thumb are drawn the same but are 23 wide, and
+      // stay grey on the Series 7; one at the screen's edge is the toolbar's)
+      if (r - x < 28 || b - y < 12 || b - y > 100 || r === w - 1) continue;
+      if (rowShare(y, x, r, blk) < .9 || rowShare(b, x, r, blk) < .9 || colShare(x, y, b, blk) < .9 || colShare(r, y, b, blk) < .9 ||
+          rowShare(b - 1, x + 2, r - 1, dark) < .9 || colShare(r - 1, y + 2, b - 1, dark) < .9) continue;
+      const p = lightAt(x + 3, y + 3, r - 3, b - 3);
+      if (!p) continue;
+      flood(x + 3, y + 3, r - 3, b - 3, p, R_FACE, edges(x + 3, y + 3, r - 3, b - 3));
+      dimmed(x + 3, y + 3, r - 3, b - 3);
+      x = r;
+    }
+  }
+  // the toolbar's buttons, the full width of the box down the right from
+  // column xt: found from their right-hand side, as a dialog or a menu may
+  // hide their left; as [top, bottom, light grey (or null: set)]s. A set
+  // button (a view that is on, a tool in use) is sunken: 2 black at the top
+  // and left, 1 at the bottom and right, round a white face
+  function toolButtons(xt) {
+    const found = [];
+    for (let y = 1; y + 12 < h; y++) {
+      const o = y * w + w - 1;                   // (the right-hand end of row y)
+      if (!blk(g[o]) || !blk(g[o - 1]) || !blk(g[o - 16])) continue;
+      if (blk(g[o + w]) && dark(g[o + w - 1]) && g[o + w - 2] === 15) {
+        const t = (y + 1) * w;
+        let lx = w - 3, b = y + 2;               // where the white top starts, and the black bottom
+        while (lx > xt + 1 && g[t + lx - 1] === 15) lx--;
+        while (b < h - 1 && dark(g[b * w + w - 2])) b++;
+        if (!blk(g[b * w + w - 2]) || b - y < 12 || b - y > 100 || w - lx < 16) continue;
+        if (rowShare(y, lx, w - 1, blk) < .9 || rowShare(b, lx, w - 1, blk) < .9 || colShare(w - 1, y, b, blk) < .9 ||
+            rowShare(b - 1, Math.max(lx, xt + 2), w - 2, dark) < .9) continue;
+        const p = lightAt(Math.max(lx, xt + 3), y + 3, w - 4, b - 3);
+        if (!p) continue;
+        found.push([y, b, p]);
+        y = b - 1;
+      } else if (blk(g[o + w - 1]) && blk(g[o + w - 16]) && g[o + 2 * w - 1] === 15 && g[o + 3 * w - 1] === 15) {
+        const t = (y + 2) * w;
+        let lx = w - 2, b = y + 2;
+        while (lx > xt + 2 && g[t + lx - 1] === 15) lx--;
+        while (b < h - 1 && g[b * w + w - 2] === 15) b++;
+        if (!blk(g[b * w + w - 2]) || b - y < 12 || b - y > 100 || w - lx < 16) continue;
+        if (rowShare(y, lx, w - 1, blk) < .9 || rowShare(y + 1, lx, w - 1, blk) < .9 || rowShare(b, lx, w - 1, blk) < .9 ||
+            colShare(w - 1, y, b, blk) < .9) continue;
+        found.push([y, b, null]);
+        y = b - 1;
+      }
+    }
+    return found;
+  }
+  // a toolbar button's face, from its right-hand edge (whatever hides its left
+  // has the face's greys too: a menu's white, a shadow's grey)
+  function toolFace(xt, y, b, p) {
+    if (p) flood(xt + 3, y + 3, w - 4, b - 3, p, R_FACE, push => { for (let k = y + 3; k <= b - 3; k++) push(w - 4, k); });
+    else flood(xt + 2, y + 2, w - 2, b - 1, WHITE, R_SET, push => { for (let k = y + 2; k < b; k++) push(w - 2, k); });
+  }
+  // whether a button the last pass found is still there, by its right-hand end
+  function toolStill(y, b, p) {
+    const e = w - 2;
+    return p ? blk(g[y * w + e]) && dark(g[(y + 1) * w + e]) && dark(g[(b - 1) * w + e]) && blk(g[b * w + e])
+             : blk(g[y * w + e]) && blk(g[(y + 1) * w + e]) && white(g[(y + 2) * w + e]) && white(g[(b - 1) * w + e]) && blk(g[b * w + e]);
+  }
+  // a dialog whose left border runs down column x from row ya to yb (the
+  // top or bottom may be off the screen): its title bar, its body, its buttons
+  const lsig = o => blk(g[o]) && blk(g[o + 1]) && g[o + 2] === 15 && g[o + 3] === 15 && mid(g[o + 4]);
+  const rsig = o => blk(g[o]) && blk(g[o - 1]) && dark(g[o - 2]) && dark(g[o - 3]) && dark(g[o - 4]);
+  function dialog(x, ya, yb) {
+    const ym = (ya + yb) >> 1, n = yb - ya + 1;
+    let r = -1;
+    for (let c = x + 40; c < w && r < 0; c++) {  // the right border, all the way down
+      if (!rsig(ym * w + c)) continue;
+      let k = 0;
+      for (let y = ya; y <= yb; y++) if (rsig(y * w + c)) k++;
+      if (k >= .9 * n) r = c;
+    }
+    if (r < 0) return;
+    let t0 = ya;                                 // the title bar's first row: under the grey line of the border
+    if (rowShare(ya, x + 5, r - 5, mid) >= .9) t0 = ya + 1;
+    if (ya >= 4 && (t0 === ya || rowShare(ya - 4, x + 4, r - 5, blk) < .9 || rowShare(ya - 3, x + 4, r - 5, blk) < .9 ||
+        rowShare(ya - 2, x + 4, r - 6, white) < .9 || rowShare(ya - 1, x + 4, r - 6, white) < .9)) return;
+    if (yb < h - 1) {                            // the bottom border, unless it is off the screen
+      let bot = false;
+      for (let y = yb - 2; y <= yb + 6 && !bot; y++) bot = rowShare(y, x + 6, r - 6, dark) >= .8;
+      if (!bot) return;
+    }
+    // the title bar: light grey down its left margin, then the grey line, then the white body
+    const p = lightAt(x + 5, t0, x + 9, Math.min(yb, t0 + 5));
+    if (!p) return;
+    const isP = o => g[o] === p[(o % w + ((o / w) | 0)) & 1];
+    let tl = t0;
+    while (tl <= yb && isP(tl * w + x + 5) && isP(tl * w + x + 6) && isP(tl * w + x + 7) && isP(tl * w + x + 8) && isP(tl * w + x + 9)) tl++;
+    const th = tl - t0;
+    if (th < (ya >= 4 ? 8 : 3) || th > 30 || rowShare(tl, x + 5, r - 5, mid) < .9 || rowShare(tl + 1, x + 5, x + 9, white) < 1) return;
+    let light = 0, other = 0;                    // only light grey and its writing
+    for (let y = t0; y < tl; y++) for (let o = y * w + x + 5, e = y * w + r - 5; o <= e; o++) { if (isP(o)) light++; else if (g[o] > 6) other++; }
+    const all = th * (r - x - 9);
+    if (light < .6 * all || other > .01 * all) return;
+    for (let y = t0; y < tl; y++) for (let o = y * w + x + 5, e = y * w + r - 5; o <= e; o++) role[o] = isP(o) ? R_TITLE : g[o] <= 6 ? R_TTEXT : 0;
+    // the body's white, from its edges in: a white box inside (an edit box, in its own border) stays white
+    flood(x + 5, tl + 1, r - 5, yb, WHITE, R_DLG, edges(x + 5, tl + 1, r - 5, yb));
+  }
+  for (let x = 0; x + 45 < w; x++) {
+    let ya = -1;
+    for (let y = 0; y <= h; y++) {
+      if (y < h && lsig(y * w + x)) { if (ya < 0) ya = y; continue; }
+      if (ya >= 0 && y - ya >= 12) dialog(x, ya, y - 1);
+      ya = -1;
+    }
+  }
+  buttons(0, 0, w - 1, h - 1);
+  // the toolbar: a black box down the right-hand side with buttons its full width
+  let bar = -1;
+  for (let xt = w - 40; xt >= w - 120 && xt > 0 && h > 40; xt--) {
+    if (colShare(xt, 0, 20, blk) < 1 || rowShare(0, xt, w - 1, blk) < 1 || colShare(w - 1, 0, h - 1, blk) < .9) continue;
+    const found = toolButtons(xt);
+    if (found.length) toolMemo.btns = found;
+    else if (toolMemo.xt === xt) {
+      // (a menu over all its buttons: still the toolbar the last pass found, as
+      // its box is still there; the buttons whose right-hand ends still show)
+      for (const k of toolMemo.btns) if (toolStill(...k)) found.push(k);
+    } else continue;
+    for (const [y, b, p] of found) toolFace(xt, y, b, p);
+    // its background: the white round its buttons, from its top and down its
+    // right-hand side (a menu or a dialog over it has its own border there, so
+    // its white is never reached; the left may be a menu's, with text on it)
+    flood(xt + 1, 1, w - 2, h - 2, WHITE, R_TBAR, push => {
+      for (let x = xt + 1; x <= w - 2; x++) push(x, 1);
+      for (let y = 1; y <= h - 2; y++) push(w - 2, y);
+    });
+    bar = xt;
+    break;
+  }
+  toolMemo.xt = bar;
+}
+// the toolbar the last pass found: its left-hand line and its buttons
+const toolMemo = { xt: -1, btns: [] };
 
 // ----- the frame's size: fit the width, or the height in landscape -----
 function fitFrame() {
@@ -477,19 +776,20 @@ function onBinary(buf) {
     if (d0 < 0) { y0 -= d0; d0 = 0; }
     if (d1 > H) { y1 -= d1 - H; d1 = H; }
     if (y1 > y0 && x + w <= W) {
+      // (the roles move with the picture, until the next pass looks again)
+      const all = [grey, px, role, roleGrey];
       if (w === W) {
-        grey.copyWithin(d0 * W, y0 * W, y1 * W);
-        px.copyWithin(d0 * W, y0 * W, y1 * W);
+        for (const a of all) a.copyWithin(d0 * W, y0 * W, y1 * W);
       } else {                                   // (some columns: row by row, in the safe order)
         const n = d1 - d0, down = dy > 0;
         for (let i = 0; i < n; i++) {
           const k = down ? n - 1 - i : i, s0 = (y0 + k) * W + x, t0 = (d0 + k) * W + x;
-          grey.copyWithin(t0, s0, s0 + w);
-          px.copyWithin(t0, s0, s0 + w);
+          for (const a of all) a.copyWithin(t0, s0, s0 + w);
         }
       }
       ctx.putImageData(img, 0, 0, x, d0, w, d1 - d0);
       present();
+      if (theme.ui) rolesSoon();
     }
   }
   if (rec) recDirty = true;
@@ -940,7 +1240,7 @@ $("#bClose").onclick = closeSheets;
 $("#bRefresh").onclick = () => { send({ t: "full" }); closeSheets(); toast("Repainting"); };
 $("#themes").innerHTML = THEMES.map(t => {
   const c = g => "rgb(" + themeRgb(t, g).join(",") + ")";
-  const bg = t.stops ? "linear-gradient(90deg," + c(10) + " 0 28%," + c(15) + " 28%)" : c(15);
+  const bg = t.swatch || (t.stops ? "linear-gradient(90deg," + c(10) + " 0 28%," + c(15) + " 28%)" : c(15));
   return '<button class="sw" data-id="' + t.id + '"><i style="background:' + bg + ";color:" + c(t.stops ? 5 : 0) + '">Psion</i>' + esc(t.name) + "</button>";
 }).join("");
 document.querySelectorAll(".sw").forEach(b => b.onclick = () => {

@@ -37,6 +37,7 @@ test: test_modem test_v22 test_atremote test_usbnet test_proxy test_proxy_tinfl 
 	./test_imapxcode
 	./test_fwtrial
 	./test_cast
+	if command -v node >/dev/null; then node test_iconmatch.js; else echo 'test_iconmatch: SKIP (no node)'; fi
 
 # the decoders PsiMail uses, compiled as they are (zlib from the system here)
 pm%.o: $(IMG)/pm%.c $(IMG)/pmimg.h

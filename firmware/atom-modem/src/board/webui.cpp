@@ -10,6 +10,7 @@
 #include "fwsafe.h"
 #include "../cast/cast.h"
 #include "../cast/castpage.h"
+#include "../cast/casticons.h"
 #if defined(AM_HAS_LCD)
 #include "screen.h"
 #include "../canvas.h"
@@ -68,6 +69,9 @@ void WebUi::Begin(Modem& aModem, AtomHal& aHal)
 		iServer.sendHeader("Cache-Control", "max-age=86400");
 		iServer.send_P(200, "image/png", (const char*)kCastIcon512, kCastIcon512Len);
 		});
+	// the Series 7 theme's colour pictures (and their matcher), fetched only when it is chosen
+	iServer.on("/screen/iconmatch.js", HTTP_GET, [this]() { CastAsset("text/javascript", kCastIconMatchGz, kCastIconMatchGzLen); });
+	iServer.on("/screen/s7icons.json", HTTP_GET, [this]() { CastAsset("application/json", kCastS7IconsGz, kCastS7IconsGzLen); });
 	iServer.on("/system", HTTP_GET, [this]() { PageSystem(); });
 	iServer.on("/vpn", HTTP_GET, [this]() { PageVpn(); });
 	iServer.on("/wg", HTTP_POST, [this]() { PostWg(); });
@@ -248,6 +252,16 @@ bool WebUi::OtaAuth()
 	if (ok)
 		gFwSafe.WebServed();
 	return ok;
+	}
+
+// a gzipped file of the viewer's, behind the password like the page itself
+void WebUi::CastAsset(const char* aType, const unsigned char* aData, unsigned aLen)
+	{
+	if (!Allowed())
+		return;
+	iServer.sendHeader("Content-Encoding", "gzip");
+	iServer.sendHeader("Cache-Control", "max-age=604800");
+	iServer.send_P(200, aType, (const char*)aData, aLen);
 	}
 
 // ----- the crash report ---------------------------------------------------------------------------
