@@ -18,7 +18,8 @@
 // directly connected subnet holding it, and is not the endpoint - and
 // otherwise hands over to the IDF's own hook (__real_), so everything else
 // routes exactly as before. A socket bound to another interface's address
-// stays on that interface.
+// stays on that interface. With no uplink the hook also sends the Psion's
+// packets for the outside to be answered at once (board/pppoffline.h).
 //
 // The Psion's traffic: it reaches the Atom over PPP and is NAT'd (NAPT is on
 // for the PPP netif) out of whichever netif the route picks; for the tunnel

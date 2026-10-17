@@ -9,6 +9,7 @@
 #include "../cabundle.h"
 #include "wgtunnel.h"
 #include "pppdns.h"
+#include "pppoffline.h"
 #include "fwsafe.h"
 #include <Preferences.h>
 #include "lwip/netif.h"
@@ -670,14 +671,29 @@ bool AtomHal::DnsRelayStart()
 
 void AtomHal::DnsRelayStop()
 	{
+	char m[128];
+	uint32_t refused = am::PppOfflineTake();
+	if (refused)
+		{
+		snprintf(m, sizeof(m), "ppp: %lu packets for the outside answered at once (no uplink)", (unsigned long)refused);
+		Log(m);
+		}
 	if (!am::gPppDns.Running())
 		return;
 	const am::DnsRelay& r = am::gPppDns.Relay();
-	char m[96];
-	snprintf(m, sizeof(m), "ppp: DNS relay: %lu queries, %lu answered, %lu timed out, %lu dropped",
-		(unsigned long)r.Forwarded(), (unsigned long)r.Answered(), (unsigned long)r.TimedOut(), (unsigned long)r.Dropped());
+	snprintf(m, sizeof(m), "ppp: DNS relay: %lu queries, %lu answered, %lu timed out, %lu dropped, %lu refused (no uplink)",
+		(unsigned long)r.Forwarded(), (unsigned long)r.Answered(), (unsigned long)r.TimedOut(), (unsigned long)r.Dropped(),
+		(unsigned long)r.Refused());
 	Log(m);
 	am::gPppDns.Stop();
+	}
+
+// no uplink: the relay answers DNS itself, and the Psion's connections to
+// the outside are refused at once (board/pppoffline.h)
+void AtomHal::PppUplink(bool aUp)
+	{
+	am::gPppDns.SetOffline(!aUp);
+	am::PppOfflineSet(!aUp);
 	}
 
 void AtomHal::DnsRelayUpstream(uint32_t aServer)

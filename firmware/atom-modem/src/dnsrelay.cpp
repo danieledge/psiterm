@@ -21,7 +21,7 @@ DnsRelay::DnsRelay() : iRand(0x2545f491u)
 void DnsRelay::Reset()
 	{
 	memset(iSlot, 0, sizeof(iSlot));
-	iForwarded = iAnswered = iDropped = iTimedOut = 0;
+	iForwarded = iAnswered = iDropped = iTimedOut = iRefused = 0;
 	}
 
 int DnsRelay::Pending() const
@@ -64,13 +64,17 @@ void DnsRelay::Expire(uint32_t aNowMs)
 static uint16_t Get16(const uint8_t* p) { return (uint16_t)((p[0] << 8) | p[1]); }
 static void Put16(uint8_t* p, uint16_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
 
+// a standard query (QR 0, opcode 0) with one question and no answers
+bool DnsRelay::IsQuery(const uint8_t* aPkt, size_t aLen) const
+	{
+	return aPkt && aLen >= 12 && aLen <= kMaxPacket && !(aPkt[2] & 0x80) && ((aPkt[2] >> 3) & 0x0f) == 0
+		&& Get16(aPkt + 4) == 1 && Get16(aPkt + 6) == 0;
+	}
+
 bool DnsRelay::FromClient(uint8_t* aPkt, size_t aLen, uint32_t aClient, uint16_t aPort, uint32_t aServer, uint32_t aNowMs)
 	{
 	Expire(aNowMs);
-	// a standard query (QR 0, opcode 0) with one question and no answers
-	if (!aPkt || aLen < 12 || aLen > kMaxPacket || !aServer || !aPort
-		|| (aPkt[2] & 0x80) || ((aPkt[2] >> 3) & 0x0f) != 0
-		|| Get16(aPkt + 4) != 1 || Get16(aPkt + 6) != 0)
+	if (!IsQuery(aPkt, aLen) || !aServer || !aPort)
 		{
 		iDropped++;
 		return false;
@@ -109,6 +113,49 @@ bool DnsRelay::FromClient(uint8_t* aPkt, size_t aLen, uint32_t aClient, uint16_t
 	Put16(aPkt, s.newId);
 	iForwarded++;
 	return true;
+	}
+
+size_t DnsRelay::Refuse(uint8_t* aPkt, size_t aLen)
+	{
+	if (!IsQuery(aPkt, aLen))
+		{
+		iDropped++;
+		return 0;
+		}
+	// the question's end: its name (plain labels, no pointers, at most 255
+	// bytes), then the type and class. What follows it (an EDNS record) goes
+	size_t o = 12, name = 0;
+	for (;;)
+		{
+		if (o >= aLen)
+			{
+			iDropped++;
+			return 0;
+			}
+		uint8_t n = aPkt[o];
+		if (!n)
+			break;
+		name += n + 1u;
+		if (n > 63 || name > 255)
+			{
+			iDropped++;
+			return 0;
+			}
+		o += n + 1u;
+		}
+	o += 1 + 4;
+	if (o > aLen)
+		{
+		iDropped++;
+		return 0;
+		}
+	aPkt[2] = (uint8_t)(0x80 | (aPkt[2] & 0x01));   // an answer; RD as asked
+	aPkt[3] = (uint8_t)(0x80 | kOfflineRcode);      // RA, and the code
+	Put16(aPkt + 6, 0);
+	Put16(aPkt + 8, 0);
+	Put16(aPkt + 10, 0);
+	iRefused++;
+	return o;
 	}
 
 bool DnsRelay::FromServer(uint8_t* aPkt, size_t aLen, uint32_t aFrom, uint16_t aFromPort, uint32_t& aClient,

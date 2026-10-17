@@ -1,5 +1,6 @@
 // wgtunnel.cpp - see wgtunnel.h. MIT licence (see LICENSE at the top of the repository).
 #include "wgtunnel.h"
+#include "pppoffline.h"
 #include <Arduino.h>
 #include <string.h>
 #include <time.h>
@@ -73,6 +74,9 @@ extern "C" struct netif* __real_ip4_route_src_hook(const ip4_addr_t* src, const 
 
 extern "C" struct netif* __wrap_ip4_route_src_hook(const ip4_addr_t* src, const ip4_addr_t* dest)
 	{
+	// no uplink: the Psion's packets for the outside are answered at once (pppoffline.h)
+	if (dest && am::PppOfflineFrom(src) && ConnectedLen(ip4_addr_get_u32(dest), 0) < 0)
+		return am::PppOfflineNetif();
 	struct netif* wg = gRouteIf;
 	if (wg && dest && netif_is_up(wg) && !OtherNetifAddress(src, wg))
 		{

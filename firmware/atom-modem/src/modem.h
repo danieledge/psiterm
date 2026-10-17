@@ -213,6 +213,11 @@ public:
 	virtual bool DnsRelayStart() { return false; }
 	virtual void DnsRelayStop() {}
 	virtual void DnsRelayUpstream(uint32_t aServer) { (void)aServer; }
+	// whether there is an uplink, told when it changes (and once at the
+	// start). With none, the PPP side gets its answers at once: the relay
+	// answers DNS itself, and connections to the outside are refused
+	// (board/pppoffline.h)
+	virtual void PppUplink(bool aUp) { (void)aUp; }
 	// the USB host (ESP32-S3): a TUsbState, and a few words (the device, its address)
 	virtual int UsbState(char* aDetail, size_t aMax) { if (aMax) aDetail[0] = 0; return EUsbNone; }
 	// settings
@@ -446,6 +451,7 @@ private:
 	uint32_t iProbeDueMs;
 	int iLastWifiState;
 	int iLastActive;
+	int iPppUplink;                     // the uplink as last told to PppUplink (-1 not yet)
 	void NetTick(uint32_t aNow);
 	// 2.2
 	NetList iNets;

@@ -390,7 +390,7 @@ Modem::Modem(Hal& aHal, uint8_t* aRing, size_t aRingSize)
 	  iPendingBaud(0), iTrialFrom(0), iTrialStartMs(0), iTrialArmed(false), iTrialGen(0), iLed(-1), iProxy(aHal),
 	  iProxyCall(false), iPppCall(false), iExecCall(false), iExtCount(0), iExtCall(0), iExtId(0), iExecOneShot(false), iTlsCall(false), iConfigMode(false),
 	  iConfigUntilMs(0), iLastTickMs(0), iJoinMs(0), iJoinFail(0), iWifiDownMs(0), iWifiRetryMs(0), iWifiRetries(0), iProbeDueMs(0), iLastWifiState(-1),
-	  iLastActive(-1), iNetSkip(0), iNetTrying(-1), iWgWant(EWgWantOff), iWgApplied(false), iWgGen(1), iWgAppliedGen(0),
+	  iLastActive(-1), iPppUplink(-1), iNetSkip(0), iNetTrying(-1), iWgWant(EWgWantOff), iWgApplied(false), iWgGen(1), iWgAppliedGen(0),
 	  iWgIp(0), iWgLastState(-1), iWgTickMs(0), iLastDnsOk(-1), iDnsUp(0), iWgTextLen(0), iWgTextBad(false), iPendingPins(false),
 	  iLineTrial(false), iLineArmed(false), iLineStartMs(0), iLineOldFlow(0), iLineOldFlowSwap(0), iLineOldSwap(0),
 	  iLineOldDcd(-1), iUpLen(0), iCap(0), iCapLen(0), iCapMax(0), iCapCut(false), iInResult(false), iRemote(false)
@@ -670,6 +670,18 @@ void Modem::NetTick(uint32_t aNow)
 		{
 		iLastActive = act;
 		iHal.Log(act == EActiveUsb ? "Uplink: USB" : act == EActiveWifi ? "Uplink: WiFi" : "Uplink: none");
+		}
+	// the PPP side follows the uplink: a call stays up without one (the
+	// modem's own services still work), and the outside world comes back
+	// with it, with no redial (NAT goes out of whichever uplink routes)
+	int up = iUplink.Up() ? 1 : 0;
+	if (up != iPppUplink)
+		{
+		if (iPppCall && iPppUplink >= 0)
+			iHal.Log(up ? "ppp: the uplink is back - the Psion reaches the outside world again"
+				: "ppp: no uplink - only the modem's own services until it comes back");
+		iPppUplink = up;
+		iHal.PppUplink(up != 0);
 		}
 	// the Internet check: not during a call (the line is busy, and a failed
 	// connect would say nothing new), soon while unconfirmed, rarely once passed
@@ -1719,11 +1731,11 @@ Modem::TResult Modem::DialTo(const char* aArgs)
 				iHal.Log("ppp: dial ignored - PPP is off (AT$PPP=1 to enable)");
 				return RNoCarrier;           // PPP off: a phone number goes nowhere
 				}
+			// no uplink: the call comes up all the same, for the modem's own
+			// services on 192.168.7.1; the outside world fails at once (DNS
+			// answered here, connections refused) until the uplink is back
 			if (!iUplink.Up())
-				{
-				iHal.Log("ppp: dial failed - no uplink (WiFi/USB down)");
-				return RNoCarrier;
-				}
+				iHal.Log("ppp: no uplink - only the modem's own services until it comes back");
 			if (iConnected || iClosing)
 				{
 				iHal.Log("ppp: a call was still up at dial - hanging it up first");

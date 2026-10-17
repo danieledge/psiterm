@@ -228,6 +228,9 @@ public:
 	bool DnsRelayStart() override { relayOn = relayOk; return relayOk; }
 	void DnsRelayStop() override { relayOn = false; }
 	void DnsRelayUpstream(uint32_t a) override { relayUp = a; }
+	int pppUplink = -1;                        // what PppUplink was last told (-1 never)
+	int pppUplinkCalls = 0;
+	void PppUplink(bool a) override { pppUplink = a ? 1 : 0; pppUplinkCalls++; }
 	int dnsOk = -1;
 	int DnsOk() override { return dnsOk; }
 	int scans = 0;

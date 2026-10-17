@@ -564,7 +564,7 @@ last until power-off; **`AT&W` saves them**.
 | `AT` | `OK` |
 | `ATDT host:port` | Opens a TCP connection and answers `CONNECT <baud>`; `NO CARRIER` if it cannot. `ATDThost:port`, `ATD host:port`, `ATDP…` and `ATDT"host:port"` also work. With no port, 23 is used |
 | `ATDT psiproxy:8080` | The modem's own [web proxy](#the-web-proxy-for-psiweb) (any port): `CONNECT`, then HTTP proxy requests are answered by the modem |
-| `ATDT777` (digits only) | A phone number means [PPP](#ppp-the-psions-own-internet): `CONNECT`, then the serial line is a PPP link (on by default; `AT$PPP=0` turns it off, and then it is `NO CARRIER`). `NO CARRIER` on a board without PPP (the plain Atom) |
+| `ATDT777` (digits only) | A phone number means [PPP](#ppp-the-psions-own-internet): `CONNECT`, then the serial line is a PPP link (on by default; `AT$PPP=0` turns it off, and then it is `NO CARRIER`). With no uplink it still connects, for the modem's own services. `NO CARRIER` on a board without PPP (the plain Atom) |
 | `+++` | Quiet for the guard time, `+++`, then quiet again: back to command mode with the connection still up (`OK`). The pluses are not passed to the server |
 | `ATO` | Back to the connection (`CONNECT`), or `NO CARRIER` if it has gone |
 | `ATH`, `ATH0` | Hangs up |
@@ -741,9 +741,37 @@ from the server the query went to. So one setting, 192.168.7.1, works at
 home, on a hotspot and through the tunnel. (Before 2.2 nothing answered on
 192.168.7.1 and the Psion needed a real server: a home router's address
 then failed away from home. 1.1.1.1 still works with 2.2, but without the
-home names.) If port 53 is already taken (the access point's captive DNS
-during setup), the relay does not start and the dial logs that the Psion
-was given the uplink's DNS instead.
+home names.) The relay shares port 53 with the access point's captive DNS
+(the relay answers 192.168.7.1, the access point's DNS the rest); if it
+cannot start all the same, the dial logs that the Psion was given the
+uplink's DNS instead.
+
+**With no uplink:** a PPP dial still comes up when the modem has no WiFi
+or USB uplink, for the modem's own services on 192.168.7.1: its web
+pages, AT commands on port 2323 and any extension module's ports (the web
+proxy and the mail relay need the outside world). The log says
+`ppp: no uplink - only the modem's own services until it comes back`.
+Meanwhile the outside world fails at once rather than timing out: the DNS
+relay answers every query itself with SERVFAIL ("the server cannot answer
+now"), a new TCP connection to the outside is reset, and other packets
+for the outside (UDP) get an ICMP "network unreachable". A connection that
+was already open is left alone, so a moment without WiFi does not end it.
+When the uplink comes up during the call the outside world works again
+with no redial, and the call is never dropped because the uplink went.
+Addresses on a network the modem is on itself, such as its access
+point's, are reached as ever.
+
+**Watching from a phone with no WiFi network:** the modem's own access
+point works without an uplink. It is up while no network is saved, for
+ten minutes in config mode (the button: see
+[Status LED and button](#status-led-and-button)), or always with
+`AT$WEB=AP` (`AT$WEB=2`) and `AT&W`; `AT$WEB=ON` and `AT&W` go back to
+normal. Join `PsiConnect-xxxx` (`AT$AP?` gives its name; the password is
+on the USB console, in `AT$LOG?` and on the AtomS3R's Setup page) and use
+the modem's address there, 192.168.4.1: the web pages and the extension
+modules' ports answer on it too. While a network is saved but out of
+reach the modem keeps trying to join it, which can interrupt the access
+point for a moment now and then; with no network saved it does not.
 
 RTS/CTS (`AT$FC=1`) and a higher baud rate are strongly
 recommended: PPP frames are paced at the same rate as everything else.
@@ -925,13 +953,16 @@ DCD on all the time.
     `ATZ`, a 1.x record, a shorter record), a walk of the schema (every
     setting answers `?` and takes `=`; bad values are `ERROR`), each new
     `AT$` command, TLS termination reaching the HAL as TLS, psiexec and
-    `AT$EXEC` against a fake helper, the uplink manager and config mode.
+    `AT$EXEC` against a fake helper, the uplink manager and config mode,
+    and a PPP call with no uplink (it connects, and lives through the
+    uplink coming and going).
   - `test_v22` (2.2, built with AddressSanitizer and UBSan): the WireGuard
     config parser (good configs, CR LF, comments, IPv6 skipped; 24 kinds of
     malformed, oversized and missing-field configs refused with a reason that
     never quotes a key; random garbage), Auto's decision, the split-tunnel
     routing rule, the DNS relay (forwarding, the ID mapping, retries,
-    timeouts, a full table, garbage both ways), the saved networks (choice,
+    timeouts, a full table, garbage both ways, the SERVFAIL answers with
+    no uplink), the saved networks (choice,
     fallback, pinning, migration from 2.1, limits, `AT$NETS?`/`$NET`/
     `$NETADD`/`$FORGET`), WireGuard through the modem (`AT$WGL`, `AT$WG`,
     `AT$STAT?`, Auto at home, the DNS relay's upstream), the line-setting

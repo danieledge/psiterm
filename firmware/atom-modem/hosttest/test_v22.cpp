@@ -364,6 +364,58 @@ static void TestDnsRelay()
 		&& nw[0] == 0x40 && nw[1] == am::DnsRelay::kSlots + 3);
 	}
 
+// ----- the relay with no uplink: every query answered at once, SERVFAIL -------------------------
+static void TestDnsRelayOffline()
+	{
+	am::DnsRelay r;
+	// a query: its answer, in place: the same ID, QR and RA, RD as asked, rcode 2, the question kept
+	std::vector<uint8_t> q = Query(0xbeef, "p12345.invalid"), orig = q;
+	size_t n = r.Refuse(q.data(), q.size());
+	CHECK(n == orig.size() && q[0] == 0xbe && q[1] == 0xef);
+	CHECK(q[2] == 0x81 && q[3] == 0x82 && (q[3] & 0x0f) == am::DnsRelay::kOfflineRcode);
+	CHECK(q[4] == 0 && q[5] == 1 && q[6] == 0 && q[7] == 0 && q[8] == 0 && q[9] == 0 && q[10] == 0 && q[11] == 0);
+	CHECK(memcmp(q.data() + 12, orig.data() + 12, orig.size() - 12) == 0);
+	CHECK(r.Refused() == 1 && r.Pending() == 0 && r.Forwarded() == 0);
+	// RD clear stays clear
+	std::vector<uint8_t> q2 = Query(7); q2[2] = 0x00;
+	CHECK(r.Refuse(q2.data(), q2.size()) && q2[2] == 0x80);
+	// an EDNS record after the question is left off the answer
+	std::vector<uint8_t> e = Query(8);
+	size_t qlen = e.size();
+	e[11] = 1;                                                        // ARCOUNT 1
+	const uint8_t opt[] = { 0, 0, 41, 0x10, 0, 0, 0, 0, 0, 0, 0 };
+	e.insert(e.end(), opt, opt + sizeof(opt));
+	CHECK(r.Refuse(e.data(), e.size()) == qlen && e[10] == 0 && e[11] == 0);
+	// garbage: not a query, no question, a name that runs off the end, a
+	// pointer, a label too long, a name over 255, no room for type and class
+	std::vector<uint8_t> g1(5, 0), g2 = Query(1), g3 = Query(2), g4 = Query(3), g5 = Query(4), g6 = Query(5), g7 = Query(6);
+	g2[2] |= 0x80;                                                    // an answer
+	g3[5] = 0;                                                        // no question
+	g4.resize(15);                                                    // the name cut short
+	g5[12] = 0xc0;                                                    // a pointer
+	g6[12] = 64;                                                      // a label of 64
+	g7.resize(g7.size() - 2);                                         // half the class
+	std::vector<uint8_t> g8 = { 0, 1, 0x01, 0, 0, 1, 0, 0, 0, 0, 0, 0 };
+	for (int i = 0; i < 5; i++) { g8.push_back(63); g8.insert(g8.end(), 63, 'a'); }
+	g8.push_back(0); g8.push_back(0); g8.push_back(1); g8.push_back(0); g8.push_back(1);   // 320 bytes of name
+	uint32_t refused = r.Refused(), dropped = r.Dropped();
+	CHECK(!r.Refuse(g1.data(), g1.size()) && !r.Refuse(g2.data(), g2.size()) && !r.Refuse(g3.data(), g3.size())
+		&& !r.Refuse(g4.data(), g4.size()) && !r.Refuse(g5.data(), g5.size()) && !r.Refuse(g6.data(), g6.size())
+		&& !r.Refuse(g7.data(), g7.size()) && !r.Refuse(g8.data(), g8.size()) && !r.Refuse(0, 40));
+	CHECK(r.Refused() == refused && r.Dropped() == dropped + 9);
+	// random bytes: never a crash, never an answer longer than the query
+	for (int i = 0; i < 5000; i++)
+		{
+		std::vector<uint8_t> x(1 + rand() % 600);
+		for (auto& b : x) b = (uint8_t)rand();
+		if (rand() & 1) { x.resize(x.size() < 12 ? 12 : x.size()); x[2] &= 0x07; x[4] = 0; x[5] = 1; x[6] = x[7] = 0; }
+		size_t m = r.Refuse(x.data(), x.size());
+		CHECK(m <= x.size());
+		}
+	r.Reset();
+	CHECK(r.Refused() == 0);
+	}
+
 // ----- the saved networks ---------------------------------------------------------------------
 static am::WifiNet Net(const char* s, int rssi)
 	{
@@ -929,6 +981,7 @@ int main()
 	printf("wireguard keys from wg\n"); TestWgRealKeys();
 	printf("wireguard decisions and routing\n"); TestWgDecide();
 	printf("dns relay\n"); TestDnsRelay();
+	printf("dns relay offline\n"); TestDnsRelayOffline();
 	printf("saved networks\n"); TestNetList();
 	printf("saved networks in the modem\n"); TestSavedNetsModem();
 	printf("wireguard in the modem\n"); TestWgModem();

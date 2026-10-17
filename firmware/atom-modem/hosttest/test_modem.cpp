@@ -1056,7 +1056,9 @@ static void TestReachability()
 // PPP dial dispatch (the lwIP link itself is verified on hardware; here the
 // host stub only flips the mode, so we check a numeric dial routes to PPP,
 // data goes into PPP not a TCP server, escape keeps the link up, ATH ends it,
-// *99# triggers it too, and an uplink-down or PPP-off dial gives NO CARRIER)
+// *99# triggers it too, and a PPP-off dial gives NO CARRIER; with no uplink
+// the call comes up all the same, and it lives through the uplink going and
+// coming back)
 static void TestPpp()
 	{
 	Rig r;
@@ -1089,11 +1091,35 @@ static void TestPpp()
 	r.TypeRun("+++", 900); r.Got();
 	r.TypeRun("ATH\r"); r.Got();
 	CHECK(!r.modem->PppCall());     // torn down before the next dial
-	// uplink down: NO CARRIER even with PPP on
+	// the HAL has been told about the uplink (once, at the start)
+	CHECK(r.hal.pppUplink == 1 && r.hal.pppUplinkCalls == 1);
+	// no uplink: the call comes up all the same, for the modem's own services
 	r.hal.wifi = false;
 	r.Run(300);
+	CHECK(r.hal.pppUplink == 0 && r.hal.pppUplinkCalls == 2);
+	CHECK(!r.hal.Logged("ppp: the uplink is back"));
 	r.TypeRun("ATD777\r");
-	CHECK(Has(r.Got(), "NO CARRIER") && !r.modem->PppCall());
+	CHECK(Has(r.Got(), "CONNECT") && r.modem->PppCall() && r.modem->Online() && r.hal.dcd);
+	CHECK(r.hal.Logged("ppp: no uplink - only the modem's own services until it comes back"));
+	r.TypeRun("pppdata", 1000);
+	CHECK(r.modem->PppCall() && r.hal.toServer.empty());
+	// the uplink comes up during the call: no redial, the call goes on
+	r.hal.wifi = true;
+	r.Run(300);
+	CHECK(r.hal.pppUplink == 1 && r.modem->PppCall() && r.modem->Online());
+	CHECK(r.hal.Logged("ppp: the uplink is back - the Psion reaches the outside world again"));
+	// and goes again: the call is not dropped
+	r.hal.wifi = false;
+	r.Run(2000);
+	std::string g = r.Got();
+	CHECK(!Has(g, "NO CARRIER") && r.modem->PppCall() && r.modem->Online() && r.hal.dcd && r.hal.pppUplink == 0);
+	r.Run(1000);
+	r.TypeRun("+++", 900); r.Got();
+	r.TypeRun("ATH\r");
+	CHECK(Has(r.Got(), "OK") && !r.modem->PppCall());
+	// a TCP dial with no uplink still gives NO CARRIER
+	r.TypeRun("ATDT example.org:23\r");
+	CHECK(Has(r.Got(), "NO CARRIER") && !r.modem->Connected());
 	}
 
 // ----- the button: debounce, click, hold, boot-hold -----------------------------

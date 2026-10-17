@@ -53,6 +53,9 @@ bool PppDns::Start()
 		{
 		ip_addr_t local;
 		ip_addr_set_ip4_u32(&local, Ip4(192, 168, 7, 1));
+#if SO_REUSE
+		ip_set_option(c, SOF_REUSEADDR);    // (port 53 shared with the access point's captive DNS)
+#endif
 		ok = udp_bind(c, &local, 53) == ERR_OK && udp_bind(u, IP_ANY_TYPE, 0) == ERR_OK;
 		}
 	if (ok)
@@ -95,7 +98,14 @@ void PppDns::FromPsion(void* aPbuf, uint32_t aIp, uint16_t aPort)
 		{
 		size_t n = pbuf_copy_partial(p, buf, p->tot_len, 0);
 		uint32_t up = iUpstream;
-		if (iRelay.FromClient(buf, n, aIp, aPort, up, sys_now()))
+		if (iOffline)
+			{
+			// no uplink: the answer at once, from 192.168.7.1:53
+			size_t a = iRelay.Refuse(buf, n);
+			if (a)
+				SendTo(iClient, buf, a, aIp, aPort);
+			}
+		else if (iRelay.FromClient(buf, n, aIp, aPort, up, sys_now()))
 			SendTo(iUp, buf, n, up, 53);
 		}
 	pbuf_free(p);

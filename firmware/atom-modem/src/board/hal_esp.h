@@ -61,6 +61,7 @@ public:
 	bool DnsRelayStart() override;
 	void DnsRelayStop() override;
 	void DnsRelayUpstream(uint32_t aServer) override;
+	void PppUplink(bool aUp) override;
 	bool LoadNets(am::NetList& aL, size_t& aLength) override;
 	bool SaveNets(const am::NetList& aL) override;
 	bool LoadWg(am::WgConfig& aC, size_t& aLength) override;
