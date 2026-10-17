@@ -374,7 +374,9 @@ async function connect() {
   setLink("wait", retry ? "Reconnecting" : "Connecting");
   let tok;
   try {
-    const r = await fetch("/screen/token" + (wantControl ? "?control=1" : ""), { cache: "no-store", credentials: "same-origin" });
+    // (always a token that may control: the Control button turns it on and off
+    // on this connection, so switching never opens a second one)
+    const r = await fetch("/screen/token?control=1", { cache: "no-store", credentials: "same-origin" });
     if (r.status === 401) { veil("msg", "Sign in again", "The Atom asked for its web password.", ["Reload", () => location.reload()]); setLink("bad", "Not signed in"); return; }
     tok = await r.json();
     if (!r.ok || !tok.t) {
@@ -394,6 +396,7 @@ async function connect() {
   sock.onopen = () => {
     if (ws !== sock) return;
     alive = true; retry = 0; gotBye = false;
+    send({ t: "control", on: wantControl ? 1 : 0 });
     clearInterval(pingTimer);
     pingTimer = setInterval(ping, 2000);
     ping();
@@ -568,7 +571,8 @@ $("#bControl").onclick = () => {
   store.set("control", wantControl);
   controlState();
   toast(wantControl ? "Control on: taps and keys go to the Psion" : "Control off: watching only");
-  retry = 0; connect();                          // (a new token, with or without control)
+  if (alive) send({ t: "control", on: wantControl ? 1 : 0 });   // (the same connection)
+  else { retry = 0; connect(); }
   setTimeout(fitFrame, 50);
 };
 function toPsion(e) {

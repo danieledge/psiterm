@@ -104,7 +104,8 @@ struct CastViewer
 	static const int kMaxRects = 48;
 	struct Rect { uint16_t x, y, w, h; };
 	bool used;
-	bool control;                   // its token asked for control
+	bool control;                   // it is controlling now (its token allowed it, and the page has not turned it off)
+	bool mayControl;                // its token was issued with control
 	uint32_t openedMs, lastInMs, lastStatusMs;
 	bool needFull;                  // FULL before anything else
 	bool needHello;

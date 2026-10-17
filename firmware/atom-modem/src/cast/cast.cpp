@@ -1207,6 +1207,7 @@ int Cast::ViewerOpen(const char* aToken, char* aWhy, size_t aWhyMax)
 	iTokens[t].text[0] = 0;                   // (single use)
 	v->used = true;
 	v->control = control;
+	v->mayControl = control;
 	v->openedMs = v->lastInMs = now;
 	v->rateMarkMs = now;
 	v->needFull = true;
@@ -1324,6 +1325,22 @@ void Cast::ViewerText(CastViewer& aV, const char* aJson)
 	if (strcmp(t, "full") == 0)
 		{
 		aV.needFull = true;
+		return;
+		}
+	if (strcmp(t, "control") == 0)
+		{
+		// the page turns control on and off on the same connection (a token
+		// issued with control): no reconnect, so no second viewer for a while
+		long on = 0;
+		JsonInt(aJson, "on", on);
+		bool want = on != 0 && aV.mayControl;
+		if (want != aV.control)
+			{
+			aV.control = want;
+			aV.needStatus = true;
+			iHal.Log(want ? "PsiCast: a viewer took control" : "PsiCast: a viewer gave up control");
+			ViewersChanged();
+			}
 		return;
 		}
 	// input: only from a viewer whose token asked for control, while the Psion allows it

@@ -199,7 +199,10 @@ Atom's web UI at `http://<atom>/screen`.
   - `{"t":"bye"}` (the Psion stopped sharing); `{"t":"pong","n":n}`.
 - **Browser -> Atom (text, JSON):** `{"t":"pen","e":"down|move|up","x":..,"y":..}`,
   `{"t":"key","e":"down|up","sc":<EPOC scan code>}`,
-  `{"t":"char","c":<character code>}`, `{"t":"full"}` (send a
+  `{"t":"char","c":<character code>}`, `{"t":"control","on":0|1}` (take or
+  give up control on this connection; only a token issued with control can
+  take it, and the page asks for such a token every time so that switching
+  never reconnects), `{"t":"full"}` (send a
   FULL now), `{"t":"ping","n":n}` (answered at once with pong: the page's
   latency). A viewer that sends nothing for 45 s is closed; the page pings
   every 2 s.
