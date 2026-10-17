@@ -114,6 +114,8 @@ struct Psion
 	{
 	pc_enc* enc;
 	uint32_t seq = 0;
+	bool stamp = false;                          // (WELCOME asked: each UPDATE carries stampMs)
+	uint32_t stampMs = 0;
 	std::vector<uint8_t> frame;                  // 640x240 packed, the model
 	Psion() : enc(pc_enc_new(640, 240, 3)), frame(640 * 240 / 2, 0xff) {}
 	~Psion() { pc_enc_free(enc); }
@@ -136,7 +138,21 @@ struct Psion
 		seq++;
 		out[0] = (uint8_t)seq; out[1] = (uint8_t)(seq >> 8); out[2] = (uint8_t)(seq >> 16); out[3] = (uint8_t)(seq >> 24);
 		out.resize((size_t)len + 4);
-		return Frame(am::ECastUpdate, aKey ? 1 : 0, out);
+		if (stamp)
+			{
+			uint8_t t[4] = { (uint8_t)stampMs, (uint8_t)(stampMs >> 8), (uint8_t)(stampMs >> 16), (uint8_t)(stampMs >> 24) };
+			out.insert(out.begin() + 4, t, t + 4);
+			}
+		return Frame(am::ECastUpdate, (aKey ? 1 : 0) | (stamp ? 2 : 0), out);
+		}
+	// a newer Psion's STATUS: its clock, and the PING it answers (0: none)
+	static Bytes StatusClock(uint32_t aPsionMs, uint32_t aToken)
+		{
+		Bytes f = Status();
+		Bytes p(f.begin() + 8, f.end() - 4);
+		for (int i = 0; i < 4; i++) p.push_back((uint8_t)(aPsionMs >> (8 * i)));
+		for (int i = 0; i < 4; i++) p.push_back((uint8_t)(aToken >> (8 * i)));
+		return Frame(am::ECastStatus, 0, p);
 		}
 	static Bytes Status(int aBattery = 80, bool aCtl = true)
 		{
@@ -184,10 +200,13 @@ struct ViewModel
 	size_t bytes = 0;
 	int fulls = 0, rects = 0, scrolls = 0, partial = 0;
 	std::vector<std::string> texts;
+	std::vector<Bytes> pings;                    // (the Atom's WebSocket pings: their payloads)
 	static void OnMsg(void* aCtx, int aOp, const uint8_t* aP, size_t aN)
 		{
 		ViewModel* self = (ViewModel*)aCtx;
-		if (aOp == am::EWsText)
+		if (aOp == am::EWsPing)
+			self->pings.push_back(Bytes(aP, aP + aN));
+		else if (aOp == am::EWsText)
 			self->texts.push_back(std::string((const char*)aP, aN));
 		else if (aOp == am::EWsBinary)
 			self->Binary(aP, aN);
@@ -635,6 +654,141 @@ static void TestViewers()
 	CHECK(vs.Same(r.cast.Screen()));              // (the last picture stays)
 	}
 
+// the last status JSON a viewer was sent
+static std::string LastStatus(const ViewModel& aV)
+	{
+	for (size_t i = aV.texts.size(); i-- > 0;)
+		if (aV.texts[i].find("\"t\":\"status\"") != std::string::npos)
+			return aV.texts[i];
+	return "";
+	}
+
+// Latency (PROTOCOL.md): stamps asked for only from a Psion that can; the
+// clocks compared by PING and the STATUS that answers it; capture -> applied
+// in the viewers' status; a viewer's wait and WebSocket round trip
+static void TestLatency()
+	{
+	// an older Psion (no HELLO bit2): no stamps asked for, no extra PINGs
+		{
+		Rig r;
+		Psion ps;
+		r.id = r.cast.LinkOpen(am::Cast::ERouteTcp);
+		r.ToAtom(Psion::Hello(3));
+		std::vector<Msg> m = r.Take();
+		CHECK(m.size() == 2 && m[0].type == am::ECastWelcome && Le32(m[0].p.data() + 4) == 1);
+		r.ToAtom(ps.Update(true));
+		for (int i = 0; i < 40; i++)              // (busy: an update every 100 ms for 4 s)
+			{
+			r.Ms(100);
+			ps.Box(10 * i, 50, 8, 8, i & 15);
+			r.ToAtom(ps.Update(false));
+			}
+		m = r.Take();
+		CHECK(Count(m, am::ECastPing) == 0);
+		int v = r.Viewer();
+		ViewModel vm;
+		r.Ms(1100);
+		r.Pump(v, vm);
+		CHECK(LastStatus(vm).find("\"lat\":{\"link\":null,\"linkMax\":null,\"acc\":null") != std::string::npos);
+		}
+	Rig r;
+	Psion ps;
+	const uint32_t kOff = 0x80000123u;           // (the Psion's clock: the Atom's + this, wrapping)
+	r.id = r.cast.LinkOpen(am::Cast::ERouteTcp);
+	r.ToAtom(Psion::Hello(7));
+	std::vector<Msg> m = r.Take();
+	CHECK(m.size() >= 1 && m[0].type == am::ECastWelcome && Le32(m[0].p.data() + 4) == 3);
+	int v = r.Viewer();                          // (the first viewer: KEYREQ, so before the keyframe)
+	ViewModel vm;
+	ps.stamp = true;
+	ps.stampMs = r.hal.Millis() + kOff;
+	r.ToAtom(ps.Update(true));                   // (no offset yet: applied, no figure)
+	CHECK(memcmp(r.cast.Screen(), ps.frame.data(), ps.frame.size()) == 0);
+	r.Ms(50);                                    // the clocks are compared at once
+	m = r.Take();
+	uint32_t token = 0;
+	for (const Msg& x : m)
+		if (x.type == am::ECastPing && x.p.size() == 8)
+			token = Le32(x.p.data());
+	CHECK(token != 0);
+	// a STATUS that answers no PING, and one with the wrong token: ignored
+	r.ToAtom(Psion::StatusClock(r.hal.Millis() + kOff + 5000, 0));
+	r.ToAtom(Psion::StatusClock(r.hal.Millis() + kOff + 5000, token + 1));
+	// the answer, 40 ms later; the Psion read its clock half-way
+	uint32_t sent = r.hal.Millis();
+	r.hal.Advance(40000);
+	r.ToAtom(Psion::StatusClock(sent + 20 + kOff, token));
+	r.Take();
+	r.Pump(v, vm);
+	// captured now, taken 120 ms later; then 300 ms
+	ps.Box(100, 100, 50, 20, 7);
+	ps.stampMs = r.hal.Millis() + kOff;
+	r.hal.Advance(120000);
+	r.ToAtom(ps.Update(false));
+	r.Pump(v, vm);                               // (sent on at once: a wait of 0)
+	ps.Box(200, 100, 50, 20, 3);
+	ps.stampMs = r.hal.Millis() + kOff;
+	r.hal.Advance(300000);
+	r.ToAtom(ps.Update(false));
+	CHECK(memcmp(r.cast.Screen(), ps.frame.data(), ps.frame.size()) == 0);
+	r.Ms(1000);
+	r.Pump(v, vm);
+	std::string st = LastStatus(vm);
+	CHECK(st.find("\"lat\":{\"link\":210,\"linkMax\":300,\"acc\":36,\"queue\":0,\"view\":null}") != std::string::npos);
+	if (st.find("\"link\":210") == std::string::npos)
+		printf("  status: %s\n", st.c_str());
+	// the viewer's WebSocket round trip: our ping, its pong 30 ms later
+	size_t had = vm.pings.size();
+	for (int i = 0; i < 50 && vm.pings.size() == had; i++)
+		{
+		r.Ms(50);
+		r.Pump(v, vm);
+		}
+	CHECK(vm.pings.size() == had + 1 && vm.pings.back().size() == 4);
+	if (!vm.pings.empty())
+		{
+		r.hal.Advance(30000);
+		std::string pl(vm.pings.back().begin(), vm.pings.back().end());
+		uint32_t rtt = r.hal.Millis() - Le32(vm.pings.back().data());   // (its payload: when it went)
+		CHECK(rtt >= 30 && rtt < 100);
+		Bytes pong = ClientFrame(am::EWsPong, pl);
+		r.cast.ViewerIn(v, pong.data(), pong.size());
+		r.Ms(1000);
+		r.Pump(v, vm);
+		char want[32];
+		snprintf(want, sizeof(want), "\"view\":%u}", (unsigned)rtt);
+		CHECK(LastStatus(vm).find(want) != std::string::npos);
+		}
+	// busy (an update every 100 ms): the clocks compared again every 5 s
+	r.Take();
+	int pings = 0;
+	for (int i = 0; i < 110; i++)
+		{
+		r.Ms(100);
+		ps.Box(5 * i, 150, 4, 4, i & 15);
+		ps.stampMs = r.hal.Millis() + kOff;
+		r.ToAtom(ps.Update(false));
+		m = r.Take();
+		for (const Msg& x : m)
+			if (x.type == am::ECastPing)
+				{
+				pings++;
+				r.ToAtom(Psion::StatusClock(r.hal.Millis() + kOff, Le32(x.p.data())));
+				}
+		r.Pump(v, vm);
+		}
+	CHECK(pings >= 2 && pings <= 3);
+	CHECK(LastStatus(vm).find("\"link\":0,") != std::string::npos);
+	// the Psion was switched off (its clock stopped for a minute): the figure
+	// that cannot be drops the offset, and the clocks are compared again
+	ps.Box(0, 200, 30, 30, 0);
+	ps.stampMs = r.hal.Millis() + kOff - 61000;
+	r.ToAtom(ps.Update(false));
+	r.Ms(50);
+	m = r.Take();
+	CHECK(Count(m, am::ECastPing) == 1);
+	}
+
 static void TestInput()
 	{
 	Rig r;
@@ -753,6 +907,7 @@ int main()
 	TestWebSocket();
 	TestViewers();
 	TestInput();
+	TestLatency();
 	TestModemRoute();
 	printf("test_cast: %d checks, %d failed\n", gChecks, gFails);
 	return gFails ? 1 : 0;

@@ -39,6 +39,10 @@ out as PNG, to compare with the emulator's own screenshot.
   --answer-status  answer every STATUS with VIEWERS, so the Psion hears from
                    the Atom at least every 5 s of its own time however fast
                    the emulator runs (idle, it runs some 30 times real time)
+  --stamps         ask a Psion that can (HELLO bit2) to stamp each UPDATE with
+                   its capture time (WELCOME bit1), and log every update's
+                   stamp in the Psion's own seconds (PROTOCOL.md "Latency"):
+                   in the emulator, against the time a key was pressed
 
 It exits when the Psion says BYE or hangs up (+++ ATH), or on Ctrl+C; the
 summary line at the end of atom.log says what came. Plain HTTP, no secrets,
@@ -162,13 +166,17 @@ class Atom:
             self.w, self.h = w, h
             self.dec = self.lib.pc_dec_new(w, h)
             ext = self.a.url.encode() if self.a.url else b''
-            self.send(conn, T_WELCOME, struct.pack('<HHII', 1, 2, 1, self.a.max_payload) + ext)
+            caps = 1 | (2 if self.a.stamps and caps & 4 else 0)
+            self.send(conn, T_WELCOME, struct.pack('<HHII', 1, 2, caps, self.a.max_payload) + ext)
             self.send(conn, T_VIEWERS, bytes([self.a.viewers, self.a.viewers if self.a.control else 0]))
             self.welcomed_at = time.time()
         elif t == T_UPDATE:
             seq = struct.unpack('<I', p[:4])[0]
             key = flags & 1
             body = p[4:]
+            if flags & 2 and len(p) >= 8:           # (stamped: the capture time, then the body)
+                body = p[8:]
+                self.log('UPDATE %d captured at %.3f s (Psion), %d bytes' % (seq, struct.unpack('<I', p[4:8])[0] / 1000.0, len(body)))
             r = self.lib.pc_dec_update(self.dec, body, len(body), key, None, None, None) if self.dec else -99
             self.updates += 1
             self.keyframes += key
@@ -344,6 +352,7 @@ def main():
     ap.add_argument('--drop-ack', type=int, default=0)
     ap.add_argument('--answer-status', action='store_true')
     ap.add_argument('--sim-clock', action='store_true')
+    ap.add_argument('--stamps', action='store_true')
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     logf = open(os.path.join(a.out, 'atom.log'), 'a')

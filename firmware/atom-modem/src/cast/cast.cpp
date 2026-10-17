@@ -324,6 +324,8 @@ uint32_t Cast::LinkOpen(int aRoute)
 	iCpu10 = 65535;
 	iPaused = false;
 	iLastViewers = iLastViewersCtl = -1;
+	iStamps = iSyncDue = iHaveOff = iHaveLat = false;
+	iLatSum = iLatN = iLatMax = 0;
 	iRateMark = iBytesIn;
 	iRateMarkMs = now;
 	iUpdMark = iUpdates;
@@ -411,6 +413,7 @@ size_t Cast::LinkOut(uint32_t aId, uint8_t* aOut, size_t aMax)
 	{
 	if (!aId || aId != iLinkId)
 		return 0;
+	FlushInput();                             // (a viewer's tap goes in the pass it came in)
 	if (iAckDue)
 		{
 		uint8_t p[4];
@@ -442,13 +445,14 @@ void Cast::Ping()
 	{
 	uint8_t p[8];
 	uint32_t now = iHal.Millis();
-	iPingToken = now;
+	iPingToken = now ? now : 1;               // (never 0: a STATUS's 0 answers no PING)
 	Put32(p, iPingToken);
 	Put32(p + 4, iHaveSeq ? iLastSeq : 0);
 	if (Send(ECastPing, p, 8))
 		{
 		iPingSentMs = now;
 		iPingWait = true;
+		iSyncDue = false;
 		}
 	}
 
@@ -532,13 +536,21 @@ void Cast::OnHello(const uint8_t* aP, uint32_t aN)
 		}
 	iInputCap = (caps & 1) != 0;
 	iCtlAllowed = (caps & 2) != 0;
+	iStamps = (caps & 4) != 0;                // (it can stamp its updates: asked to below)
+	iSyncDue = iStamps;                       // (and the clocks compared at once)
+	iHaveOff = iHaveLat = false;
+	iLatSum = iLatN = iLatMax = 0;
 	iDigW = iDigH = 0;                        // (DEVINFO may follow)
-	// WELCOME: version 1, a window of 2, viewers' input passed on, the
-	// largest UPDATE payload this buffer takes; then the viewer page's address
+	// WELCOME: version 1, a window of 2, viewers' input passed on (bit0),
+	// stamp the updates (bit1, if it can), the largest UPDATE payload this
+	// buffer takes; then the viewer page's address. (A window of 2 is
+	// enough: link A carries about 10 KB/s and its round trip is tens of ms,
+	// so one update in flight already fills the link; more would only queue
+	// older pictures in front of newer ones)
 	uint8_t p[12 + 64];
 	Put16(p, 1);
 	Put16(p + 2, 2);
-	Put32(p + 4, 1);
+	Put32(p + 4, 1 | (iStamps ? 2 : 0));
 	Put32(p + 8, (uint32_t)(iRxSize - 12));
 	size_t n = 12;
 	char url[64];
@@ -577,6 +589,8 @@ void Cast::OnUpdate(int aFlags, const uint8_t* aP, uint32_t aN)
 		return;
 	uint32_t seq = Le32(aP);
 	bool key = (aFlags & 1) != 0;
+	// stamped (flags bit1): the capture time follows seq, then the body
+	size_t head = (aFlags & 2) && aN >= 8 ? 8 : 4;
 	iAckSeq = seq;                            // (every UPDATE taken is acknowledged: the window moves)
 	iAckDue = true;
 	bool gap = iHaveSeq && seq != iLastSeq + 1;
@@ -592,12 +606,14 @@ void Cast::OnUpdate(int aFlags, const uint8_t* aP, uint32_t aN)
 		Ping();                                   // (discarded: the Psion's window may be stalled)
 		return;
 		}
-	int r = pc_dec_update(iDec, aP + 4, (int)(aN - 4), key ? 1 : 0, &Cast::OnScrollCb, &Cast::OnRectCb, this);
+	int r = pc_dec_update(iDec, aP + head, (int)(aN - head), key ? 1 : 0, &Cast::OnScrollCb, &Cast::OnRectCb, this);
 	if (r == PC_OK)
 		{
 		iUpdates++;
 		if (key)
 			iAwaitKey = false;
+		if (head == 8)
+			OnStamp(Le32(aP + 4));
 		}
 	else
 		{
@@ -624,7 +640,9 @@ void Cast::OnStatus(const uint8_t* aP, uint32_t aN)
 	iCtlAllowed = aP[10] != 0;
 	iPaused = aP[11] != 0;
 	iHaveStatus = true;
-	if (iPingWait)
+	if (aN >= 20)
+		OnClock(Le32(aP + 12), Le32(aP + 16));    // (a newer Psion: its clock, and the PING it answers)
+	else if (iPingWait)
 		{
 		iRttMs = iHal.Millis() - iPingSentMs;
 		iPingWait = false;
@@ -632,6 +650,68 @@ void Cast::OnStatus(const uint8_t* aP, uint32_t aN)
 	for (int i = 0; i < kCastViewers; i++)
 		if (iView[i])
 			iView[i]->needStatus = true;
+	}
+
+// A STATUS with the Psion's clock: if it answers our last PING, the round
+// trip, and an offset between the clocks (Psion - Atom) good to half of it:
+// the Psion read its clock somewhere between our PING going and its STATUS
+// coming. The answer with the shortest round trip is kept (a busy link
+// queues some behind an update), and is replaced after 30 s by whatever
+// comes, so the offset follows any drift
+void Cast::OnClock(uint32_t aPsionMs, uint32_t aToken)
+	{
+	if (!aToken || !iPingWait || aToken != iPingToken)
+		return;                               // (not an answer, or to an older PING)
+	uint32_t now = iHal.Millis();
+	uint32_t rtt = now - iPingSentMs;
+	iRttMs = rtt;
+	iPingWait = false;
+	if (rtt > 3000)
+		return;                               // (too slow to say much about the clocks)
+	if (!iHaveOff || rtt <= iOffRttMs || now - iOffAtMs >= 30000)
+		{
+		iOffMs = aPsionMs - (iPingSentMs + rtt / 2);
+		iOffRttMs = rtt;
+		iOffAtMs = now;
+		iHaveOff = true;
+		}
+	}
+
+// A stamped UPDATE has just been applied: capture -> applied here, in this
+// second's figures. A figure that cannot be (the Psion was switched off,
+// and its clock stopped meanwhile) drops the offset: the clocks are
+// compared again
+void Cast::OnStamp(uint32_t aCapMs)
+	{
+	if (!iHaveOff)
+		return;
+	int32_t lat = (int32_t)(iHal.Millis() - (aCapMs - iOffMs));
+	if (lat < -(int32_t)(iOffRttMs / 2) - 50 || lat > 60000)
+		{
+		iHaveOff = false;
+		iSyncDue = true;
+		return;
+		}
+	uint32_t l = lat < 0 ? 0 : (uint32_t)lat;
+	iLatSum += l;
+	iLatN++;
+	if (l > iLatMax)
+		iLatMax = l;
+	}
+
+void Cast::FlushInput()
+	{
+	if (!iLinkId || iLinkEnding || !iWelcomed)
+		return;
+	// at most 64 events a message
+	while (iInputN)
+		{
+		int n = iInputN > 64 ? 64 : iInputN;
+		if (!Send(ECastInput, &iInput[0][0], (size_t)n * 8))
+			break;
+		memmove(iInput, iInput + n, (size_t)(iInputN - n) * 8);
+		iInputN -= n;
+		}
 	}
 
 void Cast::Tick()
@@ -645,17 +725,11 @@ void Cast::Tick()
 			{
 			if (now - iLastOutMs >= kPingMs)
 				Ping();
+			else if (iStamps && (iSyncDue || now - iPingSentMs >= kSyncMs))
+				Ping();                           // (the clocks, while updates keep the link busy)
 			if (iAwaitKey && now - iKeyReqMs >= kKeyRetryMs)
 				KeyReq();
-			// the viewers' input, at most 64 events a message
-			while (iInputN)
-				{
-				int n = iInputN > 64 ? 64 : iInputN;
-				if (!Send(ECastInput, &iInput[0][0], (size_t)n * 8))
-					break;
-				memmove(iInput, iInput + n, (size_t)(iInputN - n) * 8);
-				iInputN -= n;
-				}
+			FlushInput();
 			}
 		}
 	if (now - iRateMarkMs >= 1000)
@@ -666,6 +740,13 @@ void Cast::Tick()
 		iRateMark = iBytesIn;
 		iUpdMark = iUpdates;
 		iRateMarkMs = now;
+		if (iLatN)
+			{
+			iLatLink = iLatSum / iLatN;
+			iLatLinkMax = iLatMax;
+			iHaveLat = true;
+			iLatSum = iLatN = iLatMax = 0;
+			}
 		for (int i = 0; i < kCastViewers; i++)
 			{
 			CastViewer* v = iView[i];
@@ -690,6 +771,17 @@ void Cast::Tick()
 			}
 		if (now - v->lastStatusMs >= kStatusMs)
 			v->needStatus = true;
+		// a WebSocket ping (the browser answers it itself): this viewer's
+		// round trip, behind whatever is on its way to it
+		if (now - v->wsPingMs >= kViewPingMs)
+			{
+			uint8_t p[4];
+			uint32_t token = now ? now : 1;
+			Put32(p, token);
+			QueueCtl(*v, EWsPing, p, 4);
+			v->wsPingMs = now;
+			v->wsPingToken = token;
+			}
 		}
 	// tokens are good for a minute
 	for (size_t i = 0; i < sizeof(iTokens) / sizeof(iTokens[0]); i++)
@@ -795,6 +887,11 @@ void Cast::MarkRect(CastViewer& aV, int aX, int aY, int aW, int aH)
 	if (aY + aH > iH) aH = iH - aY;
 	if (aW <= 0 || aH <= 0)
 		return;
+	if (!aV.dirtyAtMs)
+		{
+		uint32_t now = iHal.Millis();
+		aV.dirtyAtMs = now ? now : 1;
+		}
 	int tx0 = aX / CastViewer::kTileW, tx1 = (aX + aW - 1) / CastViewer::kTileW;
 	int ty0 = aY / CastViewer::kTileH, ty1 = (aY + aH - 1) / CastViewer::kTileH;
 	for (int ty = ty0; ty <= ty1; ty++)
@@ -879,6 +976,7 @@ void Cast::StartFull(CastViewer& aV)
 	{
 	aV.needFull = false;
 	memset(aV.dirty, 0, sizeof(aV.dirty));
+	aV.dirtyAtMs = aV.msgDirtyAtMs = 0;
 	aV.nRect = 1;
 	aV.rect[0].x = 0;
 	aV.rect[0].y = 0;
@@ -907,11 +1005,14 @@ bool Cast::BuildRects(CastViewer& aV)
 	struct T { int tx0, tx1, ty0, ty1; } rt[CastViewer::kMaxRects];
 	int n = 0;
 	uint32_t bytes = 0;
-	bool full = false;
+	bool full = false, early = false;
 	for (int ty = 0; ty < nty && !full; ty++)
 		{
 		if (bytes >= 32 * 1024)
+			{
+			early = true;
 			break;
+			}
 		int tx = 0;
 		while (tx < ntx)
 			{
@@ -949,6 +1050,11 @@ bool Cast::BuildRects(CastViewer& aV)
 		}
 	if (!n)
 		return false;
+	// (the wait: from the oldest mark this message carries; what is left
+	// for the next is as old)
+	aV.msgDirtyAtMs = aV.dirtyAtMs;
+	if (!full && !early)
+		aV.dirtyAtMs = 0;
 	uint32_t len = 1 + 2 + 8 * (uint32_t)n;
 	for (int j = 0; j < n; j++)
 		{
@@ -1024,7 +1130,15 @@ size_t Cast::Stream(CastViewer& aV, uint8_t* aOut, size_t aMax)
 			}
 		}
 	if (aV.curRect >= aV.nRect)
+		{
+		if (aV.inType == ECastRects && aV.msgDirtyAtMs)
+			{
+			aV.queueMs = iHal.Millis() - aV.msgDirtyAtMs;
+			aV.haveQueue = true;
+			aV.msgDirtyAtMs = 0;
+			}
 		aV.inType = 0;
+		}
 	return o;
 	}
 
@@ -1058,21 +1172,34 @@ void Cast::QueueHello(CastViewer& aV)
 
 void Cast::QueueStatus(CastViewer& aV)
 	{
-	char m[420];
-	char bat[16], mains[8], cpu[16], rtt[16];
+	char m[560];
+	char bat[16], mains[8], cpu[16], rtt[16], lat[120];
 	if (iBattery <= 100) snprintf(bat, sizeof(bat), "%d", iBattery); else strcpy(bat, "null");
 	if (iMains <= 1) snprintf(mains, sizeof(mains), "%s", iMains ? "true" : "false"); else strcpy(mains, "null");
 	if (iCpu10 != 65535) snprintf(cpu, sizeof(cpu), "%d.%d", iCpu10 / 10, iCpu10 % 10); else strcpy(cpu, "null");
 	if (iRttMs && LinkUp()) snprintf(rtt, sizeof(rtt), "%lu", (unsigned long)iRttMs); else strcpy(rtt, "null");
 	bool up = LinkUp() && !iLinkEnding;
 	bool you = up && aV.control && iCtlAllowed && iInputCap;
+	// latency, ms (PROTOCOL.md): capture on the Psion -> applied here (the
+	// last second's mean and most, and how sure: +/- acc), this viewer's
+	// wait here, and its WebSocket round trip; null where not known
+	{
+	char l1[12], l2[12], l3[12], l4[12], l5[12];
+	bool haveLink = up && iHaveLat && iHaveOff;
+	if (haveLink) snprintf(l1, sizeof(l1), "%lu", (unsigned long)iLatLink); else strcpy(l1, "null");
+	if (haveLink) snprintf(l2, sizeof(l2), "%lu", (unsigned long)iLatLinkMax); else strcpy(l2, "null");
+	if (haveLink) snprintf(l3, sizeof(l3), "%lu", (unsigned long)(iOffRttMs / 2 + 16)); else strcpy(l3, "null");
+	if (aV.haveQueue) snprintf(l4, sizeof(l4), "%lu", (unsigned long)aV.queueMs); else strcpy(l4, "null");
+	if (aV.haveViewRtt) snprintf(l5, sizeof(l5), "%lu", (unsigned long)aV.viewRttMs); else strcpy(l5, "null");
+	snprintf(lat, sizeof(lat), "{\"link\":%s,\"linkMax\":%s,\"acc\":%s,\"queue\":%s,\"view\":%s}", l1, l2, l3, l4, l5);
+	}
 	snprintf(m, sizeof(m), "{\"t\":\"status\",\"linkUp\":%s,\"route\":\"%s\",\"battery\":%s,\"mains\":%s,\"freeRam\":%lu,"
 		"\"ups\":%lu.%lu,\"psionUps\":%d.%d,\"cpu\":%s,\"control\":%s,\"paused\":%s,\"viewers\":%d,\"rateBytes\":%lu,"
-		"\"viewBytes\":%lu,\"rtt\":%s,\"you\":%s,\"errors\":%lu,\"updates\":%lu}",
+		"\"viewBytes\":%lu,\"rtt\":%s,\"you\":%s,\"errors\":%lu,\"updates\":%lu,\"lat\":%s}",
 		up ? "true" : "false", iRoute == ERouteModem ? "modem" : "ppp", bat, mains, (unsigned long)(iHaveStatus ? iFreeRam : 0),
 		(unsigned long)(iUps10 / 10), (unsigned long)(iUps10 % 10), iPsionUps10 / 10, iPsionUps10 % 10, cpu,
 		up && iCtlAllowed ? "true" : "false", up && iPaused ? "true" : "false", Viewers(), (unsigned long)(up ? iRateBytes : 0),
-		(unsigned long)aV.rateBytes, rtt, you ? "true" : "false", (unsigned long)Errors(), (unsigned long)iUpdates);
+		(unsigned long)aV.rateBytes, rtt, you ? "true" : "false", (unsigned long)Errors(), (unsigned long)iUpdates, lat);
 	QueueText(aV, m);
 	aV.needStatus = false;
 	aV.lastStatusMs = iHal.Millis();
@@ -1209,6 +1336,7 @@ int Cast::ViewerOpen(const char* aToken, char* aWhy, size_t aWhyMax)
 	v->control = control;
 	v->mayControl = control;
 	v->openedMs = v->lastInMs = now;
+	v->wsPingMs = now;                        // (our first ping after kViewPingMs)
 	v->rateMarkMs = now;
 	v->needFull = true;
 	v->needHello = true;
@@ -1281,6 +1409,18 @@ void Cast::OnWsMessage(void* aCtx, int aOp, const uint8_t* aData, size_t aLen)
 
 void Cast::ViewerMessage(CastViewer& aV, int aOp, const uint8_t* aData, size_t aLen)
 	{
+	if (aOp == EWsPong)
+		{
+		// (the answer to our ping: the round trip. The browser sends it by
+		// itself, so it does not count as the page being there: lastInMs)
+		if (aLen == 4 && aV.wsPingToken && Le32(aData) == aV.wsPingToken)
+			{
+			aV.viewRttMs = iHal.Millis() - aV.wsPingMs;
+			aV.haveViewRtt = true;
+			aV.wsPingToken = 0;
+			}
+		return;
+		}
 	aV.lastInMs = iHal.Millis();
 	if (aV.closing)
 		return;

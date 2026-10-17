@@ -22,6 +22,11 @@ void cs_beat(void);
 int  cs_capture_init(void);            /* 0, or <0: no way to read the screen */
 int  cs_capture(unsigned char *aFrame);
 const char *cs_capture_kind(void);
+/* a cheap look: have rows aPart, aPart + aParts, ... of the frame buffer
+   changed since the last cs_capture? 1 changed (or the depth has, or it
+   cannot be read just now: capture to see), 0 not, -1 no frame buffer to
+   look at (the window server's copy) */
+int  cs_capture_peek(int aPart, int aParts);
 int  cs_capture_slow(void);            /* 1: the window server's copy (much dearer) */
 
 /* the viewer's input, already checked (csmain.c) */

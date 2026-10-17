@@ -2,7 +2,7 @@
 
 Shows the **Psion Series 5mx**'s screen, live, in a web browser - on an iPhone, say - through the Atom modem, and if you want, lets the person watching tap and type on the Psion.
 
-- The whole 640 x 240 screen in its 16 greys, as the Psion draws it: about ten updates a second while it changes, once a second while it is still.
+- The whole 640 x 240 screen in its 16 greys, as the Psion draws it: about ten updates a second while it changes, and a change after a still spell shows within about a tenth of a second.
 - Watch only, as standard. **Allow control from the viewer** lets the viewer tap the screen and the icons round it, and type.
 - **Pause** (Shift+Ctrl+W, in every program while sharing) stops sending before you type a password; the viewer keeps the last picture.
 - It can go on sharing after PsiCast has closed, and stops by itself when the batteries are low.
@@ -55,7 +55,7 @@ With control allowed, the viewer's taps and keys reach the Psion as if they were
 - **Modem route:** PsiCast dials the Atom's own address (`ATDT192.168.7.1:5961`), and the serial port is PsiCast's while it shares: PsiTerm and the others can't use the modem meanwhile.
 - **Psion Internet:** PsiCast connects to the Atom over the PPP link, which other programs can use at the same time.
 - If the Atom doesn't answer, PsiCast tries again by itself, less often as time goes on. The line at the bottom of its screen says why.
-- PsiCast reads the screen only while someone is watching and the Psion is on, and slows down when the screen is still. A still screen costs one pass over the frame buffer a second; nothing is encoded or sent.
+- PsiCast reads the screen only while someone is watching and the Psion is on, and only glances at it when the screen is still: a quarter of the frame buffer ten times a second (about 1.5 ms each), nothing encoded or sent.
 
 ## How it works
 

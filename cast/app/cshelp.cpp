@@ -32,8 +32,9 @@ static const TCsHelpTopic KHelpTopics[] =
 	  "shows its address on its own screen; PsiCast shows it too when the Atom says.\n"
 	  "\n"
 	  "The page asks for the Atom's web password, then shows the Psion's screen and keeps "
-	  "it up to date: about ten times a second while it changes, once a second while it is "
-	  "still. Turn the phone sideways for a bigger picture.\n"
+	  "it up to date: about ten times a second while it changes, and within about a tenth "
+	  "of a second of a change after a still spell. Turn the phone sideways for a bigger "
+	  "picture.\n"
 	  "\n"
 	  "More than one phone or computer can watch at once. PsiCast says how many are "
 	  "watching." },

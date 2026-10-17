@@ -57,9 +57,9 @@ the error, and (Atom side) sends KEYREQ so the picture recovers.
 
 | Type | Name | Payload |
 |---|---|---|
-| 0x01 | HELLO | u16 protocol version (1), u16 width, u16 height, u8 format (0 = model above), u8 reserved, u32 capabilities (bit0 input supported, bit1 control allowed now), then a UTF-8 device name (rest of payload, may be empty) |
-| 0x02 | UPDATE | u32 seq, then the compressed update (below). flags bit0 = keyframe (the zlib stream was reset before this update and it repaints the whole screen) |
-| 0x03 | STATUS | u8 battery % (255 unknown), u8 on mains (0/1/255), u32 free RAM bytes, u16 updates/s x10, u16 Psion CPU % x10 (the engine's share, roughly; 65535 unknown), u8 control allowed (0/1), u8 paused (0/1) |
+| 0x01 | HELLO | u16 protocol version (1), u16 width, u16 height, u8 format (0 = model above), u8 reserved, u32 capabilities (bit0 input supported, bit1 control allowed now, bit2 can stamp its UPDATEs: see *Latency*), then a UTF-8 device name (rest of payload, may be empty) |
+| 0x02 | UPDATE | u32 seq, then (only if flags bit1) u32 capture time, then the compressed update (below). flags bit0 = keyframe (the zlib stream was reset before this update and it repaints the whole screen); bit1 = stamped, set only when WELCOME asked for it |
+| 0x03 | STATUS | u8 battery % (255 unknown), u8 on mains (0/1/255), u32 free RAM bytes, u16 updates/s x10, u16 Psion CPU % x10 (the engine's share, roughly; 65535 unknown), u8 control allowed (0/1), u8 paused (0/1); then, optionally (PsiCast 0.11 on), u32 the Psion's clock in ms (the clock of UPDATE's capture time) and u32 the token of the PING this STATUS answers (0: it answers none). A receiver takes 12 bytes or more and ignores what it does not know |
 | 0x04 | BYE | none |
 | 0x05 | DEVINFO | u16 digitiser width, u16 digitiser height (695 x 280 on the 5mx). Sent right after HELLO; optional. The digitiser is bigger than the LCD: taps at x < 0 and y >= 240 are the silkscreen icons |
 
@@ -67,7 +67,7 @@ the error, and (Atom side) sends KEYREQ so the picture recovers.
 
 | Type | Name | Payload |
 |---|---|---|
-| 0x81 | WELCOME | u16 protocol version, u16 max updates in flight (window, normally 2), u32 capabilities (bit0 viewer can send input), u32 max UPDATE payload in bytes (0 = 65536; a board short of memory says less, and the Psion keeps its updates within it), then an optional UTF-8 viewer address, e.g. `http://192.168.1.50/screen` (rest of payload) |
+| 0x81 | WELCOME | u16 protocol version, u16 max updates in flight (window, normally 2), u32 capabilities (bit0 viewer can send input, bit1 stamp each UPDATE with its capture time: only if HELLO's bit2 said the Psion can), u32 max UPDATE payload in bytes (0 = 65536; a board short of memory says less, and the Psion keeps its updates within it), then an optional UTF-8 viewer address, e.g. `http://192.168.1.50/screen` (rest of payload) |
 | 0x82 | ACK | u32 seq of the last UPDATE **taken**, applied or discarded. Cumulative: it acknowledges every UPDATE up to that seq |
 | 0x83 | KEYREQ | none: send a keyframe next |
 | 0x84 | VIEWERS | u8 number of viewers connected, u8 number with control |
@@ -91,6 +91,39 @@ the error, and (Atom side) sends KEYREQ so the picture recovers.
 - With no viewers (VIEWERS = 0) the Psion may stop sending updates and
   capture slowly; on the first viewer the Atom sends KEYREQ. (The Atom keeps
   its copy, so a keyframe is only needed if updates were skipped.)
+
+The window of 2 is enough on a link of about 10 KB/s: its round trip is tens
+of milliseconds, so one update in flight already keeps it busy while the next
+is captured and encoded. A larger window would only queue older pictures in
+front of the newest (more latency, no more pictures).
+
+### Latency
+
+A way to see how long a picture takes, without new hardware. Both halves are
+optional and negotiated, so an older Psion or Atom works with a newer one as
+before:
+
+- A Psion that can stamp sets HELLO's capability bit2. The Atom asks for
+  stamps with WELCOME's bit1, and only then does the Psion set UPDATE's
+  flags bit1 and put the capture time (u32, its own clock in ms, wrapping)
+  after seq. The payload is then 4 bytes longer, within WELCOME's maximum.
+- The Psion's STATUS carries its clock and the token of the PING it answers
+  (after the 12 bytes above). The Atom's PING token is its own clock (never
+  0). For a STATUS that answers its last PING, the Atom knows the round trip
+  and that the Psion read its clock while the PING was out: the offset
+  between the clocks is the Psion's clock less the middle of the round trip,
+  good to half of it. The Atom keeps the offset from the answer with the
+  shortest round trip, takes a fresh one after 30 s, and while the Psion
+  stamps it sends PING at least every 5 s even when the link is busy.
+- For each stamped UPDATE it applies, the Atom works out capture -> applied
+  (encoding, the Psion's send queue, the link, the Atom's receive buffer and
+  decoding). A figure below zero or over 60 s means the clocks have moved
+  (the Psion was off: its clock stops): the offset is dropped and measured
+  again.
+- The Psion stamps the time it read the screen, so the figure leaves out the
+  time between the screen changing and the read (up to the capture interval:
+  0.1 s as standard, or one look while the screen is still).
+- The figures go to each viewer in the status JSON (link B, `lat`).
 
 ### Liveness
 
@@ -191,11 +224,21 @@ Atom's web UI at `http://<atom>/screen`.
 - **Atom -> browser (text, JSON):**
   - `{"t":"hello","name":..,"w":640,"h":240,"digitiser":[w,h],"linkUp":bool,"route":"modem|ppp","askedControl":bool}`
     (`digitiser` from DEVINFO, `[0,0]` if not sent);
-  - `{"t":"status","linkUp":bool,"route":..,"battery":n|null,"mains":bool|null,"freeRam":n,"ups":n,"psionUps":n,"cpu":n|null,"control":bool,"paused":bool,"viewers":n,"rateBytes":n,"viewBytes":n,"rtt":ms|null,"you":bool,"errors":n,"updates":n}`,
+  - `{"t":"status","linkUp":bool,"route":..,"battery":n|null,"mains":bool|null,"freeRam":n,"ups":n,"psionUps":n,"cpu":n|null,"control":bool,"paused":bool,"viewers":n,"rateBytes":n,"viewBytes":n,"rtt":ms|null,"you":bool,"errors":n,"updates":n,"lat":{"link":ms|null,"linkMax":ms|null,"acc":ms|null,"queue":ms|null,"view":ms|null}}`,
     at most once a second: `ups` is the updates the Atom applied a second,
     `psionUps` the Psion's own figure, `rateBytes` link A's bytes a second,
     `viewBytes` this viewer's, `rtt` PING to STATUS on link A, `control`
-    the Psion allows control, `you` this viewer's input is passed on;
+    the Psion allows control, `you` this viewer's input is passed on.
+    `lat` (*Latency*): `link` and `linkMax` the mean and the most of capture
+    on the Psion -> applied on the Atom over the last second with updates
+    (null if the Psion does not stamp, or the clocks are not yet compared),
+    `acc` how sure that is (+/- ms: half the round trip the offset came from,
+    plus the Psion's 15.6 ms tick), `queue` this viewer's last wait on the
+    Atom (its dirty area first marked -> the message carrying it all handed
+    to its socket), `view` the round trip of the Atom's last WebSocket ping
+    to this viewer (behind whatever was on its way to it). Picture latency is
+    about `link` + `queue` + `view`/2, plus the wait before the Psion reads
+    its screen;
   - `{"t":"bye"}` (the Psion stopped sharing); `{"t":"pong","n":n}`.
 - **Browser -> Atom (text, JSON):** `{"t":"pen","e":"down|move|up","x":..,"y":..}`,
   `{"t":"key","e":"down|up","sc":<EPOC scan code>}`,
@@ -208,8 +251,21 @@ Atom's web UI at `http://<atom>/screen`.
   every 2 s.
 - Each viewer has its own dirty state on the Atom; a slow viewer gets merged
   rects, never a backlog, and never slows link A.
+- The Atom sends each viewer a WebSocket ping (4 bytes: its clock) every 2 s;
+  the browser answers it by itself. The answer gives `lat.view`, and does not
+  count as the viewer sending anything (the 45 s rule).
 - Input is passed on only if the Psion said control is allowed (HELLO /
   STATUS) and the viewer's token was issued with control (the page asks).
+
+## Changes in PsiCast 0.11 (still version 1)
+
+Latency figures (*Latency*): HELLO capability bit2, WELCOME capability bit1,
+UPDATE flags bit1 and its capture time, STATUS's clock and PING token after
+its 12 bytes, `lat` in the status JSON, and the Atom's WebSocket pings. All
+optional: a Psion that does not set HELLO's bit2 is never asked for stamps,
+an Atom that does not set WELCOME's bit1 never gets them, and both ends
+already took a STATUS longer than 12 bytes and ignored capability bits they
+did not know.
 
 ## Changes from draft 1
 

@@ -306,6 +306,34 @@ static int RawSame(volatile const TUint8* aFb, int aBpp)
 	return 0;
 	}
 
+// The rows aPart, aPart + aParts, ... of the frame buffer against gRaw (the
+// last capture), stopping at the first difference. A quarter of the rows of
+// a 16-grey screen is 4,800 word compares, about 1.5 ms on the 5mx: cheap
+// enough to look ten times a second while the screen is still, where a
+// whole capture is four times that. Nothing is copied: gRaw stays the last
+// capture's, so a change is seen until it has been captured.
+extern "C" int cs_capture_peek(int aPart, int aParts)
+	{
+	if (gMode != KModeDirect)
+		return -1;
+	int bpp = PaletteBpp(gFb);
+	if (bpp == 0 || bpp != gRawBpp)
+		return 1;                            // (being rewritten, or a new depth: capture)
+	if (aParts < 1)
+		aParts = 1;
+	const TUint32* src = (const TUint32*)gFb;
+	const TInt rowWords = CS_STRIDE * bpp / 4 / 4;      // (80 bytes a bit of depth: 20 words)
+	for (TInt y = aPart < 0 ? 0 : aPart; y < CS_H; y += aParts)
+		{
+		const TUint32* s = src + y * rowWords;
+		const TUint32* r = gRaw + y * rowWords;
+		for (TInt i = 0; i < rowWords; i += 4)
+			if (s[i] != r[i] || s[i + 1] != r[i + 1] || s[i + 2] != r[i + 2] || s[i + 3] != r[i + 3])
+				return 1;
+		}
+	return 0;
+	}
+
 static int WsOpen()
 	{
 	if (gBmp)

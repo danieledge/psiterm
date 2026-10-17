@@ -7,7 +7,9 @@
 # route (ATDT192.168.7.1:5961 on the serial line, here hostmodem's unix
 # socket) and the TCP end that stands in for PPP. Also: the token rules,
 # input from a viewer with control reaching the Psion, a slow viewer, and a
-# KEYREQ after a damaged update.
+# KEYREQ after a damaged update. The TCP route's Psion is a newer one, which
+# stamps its updates with the capture time (PROTOCOL.md "Latency"): the
+# viewers' status then carries the capture -> Atom figure.
 #   make -C hosttest hostmodem libpccodec.so && python3 hosttest/test_cast_e2e.py
 # MIT licence.
 import base64, ctypes, json, os, random, socket, struct, subprocess, sys, tempfile, threading, time, zlib
@@ -80,8 +82,12 @@ class Parser:
 class Psion:
     """A Psion running psicast.exe: the screen, the encoder, link A."""
 
-    def __init__(self, sock, name="Test 5mx"):
+    def __init__(self, sock, name="Test 5mx", stamps=False):
         self.sock = sock
+        self.stamps = stamps            # (it can stamp: HELLO bit2)
+        self.stamp = False              # (and WELCOME asked it to)
+        self.clock_off = 0x7ffff000     # (its clock: ours + this, wrapping)
+        self.pings = 0
         self.enc = lib.pc_enc_new(W, H, 3)
         self.fb = bytearray(b"\xff" * (STRIDE * H))
         self.seq = self.acked = 0
@@ -116,6 +122,7 @@ class Psion:
                 if t == 0x81:
                     self.welcome = pl
                     self.window = struct.unpack("<H", pl[2:4])[0]
+                    self.stamp = bool(struct.unpack("<I", pl[4:8])[0] & 2)
                 elif t == 0x82:
                     self.acked = max(self.acked, struct.unpack("<I", pl[:4])[0])
                 elif t == 0x83:
@@ -128,15 +135,22 @@ class Psion:
                         k, a, b = pl[i], struct.unpack("<h", pl[i + 2:i + 4])[0], struct.unpack("<h", pl[i + 4:i + 6])[0]
                         self.inputs.append((k, a, b))
                 elif t == 0x86:
-                    self.status()
+                    self.pings += 1
+                    self.status(token=struct.unpack("<I", pl[:4])[0])
         self.alive = False
 
     def hello(self, caps=3):
         nm = self.name.encode()
-        self.send(frame(0x01, struct.pack("<HHHBBI", 1, W, H, 0, 0, caps) + nm))
+        self.send(frame(0x01, struct.pack("<HHHBBI", 1, W, H, 0, 0, caps | (4 if self.stamps else 0)) + nm))
 
-    def status(self, ctl=True):
-        self.send(frame(0x03, struct.pack("<BBIHHBB", 77, 0, 3 << 20, 50, 120, 1 if ctl else 0, 0)))
+    def clock(self):
+        return (int(time.monotonic() * 1000) + self.clock_off) & 0xffffffff
+
+    def status(self, ctl=True, token=0):
+        p = struct.pack("<BBIHHBB", 77, 0, 3 << 20, 50, 120, 1 if ctl else 0, 0)
+        if self.stamps:
+            p += struct.pack("<II", self.clock(), token)
+        self.send(frame(0x03, p))
 
     def update(self, damage=False):
         """Encode and send the screen as it is now (waits for room in the window)."""
@@ -148,15 +162,17 @@ class Psion:
         out = ctypes.create_string_buffer(65536)
         n = ctypes.c_int(0)
         key = 1 if self.need_key else 0
-        r = lib.pc_enc_frame(self.enc, bytes(self.fb), STRIDE, key, out, 65532, ctypes.byref(n))
+        cap = self.clock()
+        r = lib.pc_enc_frame(self.enc, bytes(self.fb), STRIDE, key, out, 65532 - (4 if self.stamp else 0), ctypes.byref(n))
         if r == 1:
             return False
         check(r == 0, "pc_enc_frame %d" % r)
         self.need_key = False
         self.seq += 1
-        f = bytearray(frame(0x02, struct.pack("<I", self.seq) + out.raw[:n.value], key))
+        head = struct.pack("<I", self.seq) + (struct.pack("<I", cap) if self.stamp else b"")
+        f = bytearray(frame(0x02, head + out.raw[:n.value], key | (2 if self.stamp else 0)))
         if damage:
-            f[20] ^= 0x10
+            f[24 if self.stamp else 20] ^= 0x10
         self.send(bytes(f))
         return True
 
@@ -378,8 +394,18 @@ def session(psion, http, label):
     slow.settle()
     check(slow.same(psion.fb), label + ": the slow viewer's picture is the Psion's")
     check(slow.bytes < v.bytes, label + ": the slow viewer was sent less (%d against %d)" % (slow.bytes, v.bytes))
+    time.sleep(1.2)                                 # (the latency figures: a second's)
+    v.pump()
     st = [t for t in v.texts if t.get("t") == "status"]
     check(st and st[-1]["linkUp"] and st[-1]["viewers"] == 2, label + ": status JSON")
+    lat = st[-1].get("lat", {}) if st else {}
+    check(psion.stamp == psion.stamps, label + ": stamps asked for only from a Psion that can")
+    if psion.stamps:
+        ok = isinstance(lat.get("link"), int) and 0 <= lat["link"] <= lat["linkMax"] < 2000 and isinstance(lat.get("acc"), int)
+        check(ok and psion.pings >= 1, label + ": capture -> Atom in the status (%r, %d PINGs)" % (lat, psion.pings))
+        print("  %s: latency %r" % (label, lat))
+    else:
+        check(lat.get("link", 0) is None, label + ": no latency figure from an older Psion (%r)" % lat)
     print("  %s: fast viewer %d bytes (%r), slow %d bytes (%r)" % (label, v.bytes, v.counts, slow.bytes, slow.counts))
     # control: a viewer that asked for it can tap and type; one that did not cannot
     c = Viewer(http, control=True)
@@ -453,7 +479,7 @@ def main():
         check(b"NO CARRIER" in ps.raw, "BYE ends the modem call (NO CARRIER)")
         # the TCP end (the PPP route's)
         tcp = socket.create_connection(("127.0.0.1", link))
-        session(Psion(tcp, "PPP 5mx"), http, "TCP route")
+        session(Psion(tcp, "PPP 5mx", stamps=True), http, "TCP route")
         tcp.close()
     finally:
         proc.terminate()

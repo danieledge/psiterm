@@ -14,6 +14,12 @@
 //   keyframe comes), PING with the last seq taken when idle and after a
 //   discarded update, closed after 20 s of silence, VIEWERS when the count
 //   changes, DEVINFO (the digitiser) passed to the viewers, INPUT from them.
+//   latency: a Psion that can (HELLO bit2) is asked (WELCOME bit1) to stamp
+//   each UPDATE with its capture time; its STATUS carries its clock and the
+//   PING it answers, so the clocks' offset is known (from the answer with the
+//   shortest round trip), and capture -> applied here is reported to the
+//   viewers ("lat" in the status JSON), with each viewer's own wait here and
+//   WebSocket round trip.
 //   link B (each viewer): a dirty map of 16x8 tiles. Every change the decoder
 //   reports marks every viewer's map; a viewer that can take more is sent
 //   the dirty area as RECTS, read from the screen as the bytes go, so a slow
@@ -128,6 +134,13 @@ struct CastViewer
 	bool closing;                   // a close frame is queued: then the connection ends
 	uint32_t pingN;                 // (stats)
 	uint32_t bytesOut, rateBytes;   // to this viewer, and per second
+	// latency: when its dirty area was first marked, the message carrying
+	// it, and the last wait (marked -> the message all out); a WebSocket
+	// ping of ours (its payload: when it went) and the last round trip
+	uint32_t dirtyAtMs, msgDirtyAtMs, queueMs;
+	bool haveQueue;
+	uint32_t wsPingMs, wsPingToken, viewRttMs;
+	bool haveViewRtt;
 	uint32_t rateMark, rateMarkMs;
 	WsReader reader;
 	};
@@ -198,6 +211,9 @@ public:
 	static const uint32_t kKeyRetryMs = 3000;      // KEYREQ again while no keyframe has come
 	static const uint32_t kViewerIdleMs = 45000;   // a viewer that has sent nothing this long is closed
 	static const uint32_t kStatusMs = 1000;        // status JSON to the viewers at most this often
+	static const uint32_t kSyncMs = 5000;          // with stamps: PING (the clocks) at least this often, busy or not
+	static const uint32_t kViewPingMs = 2000;      // a WebSocket ping to each viewer this often (its round trip)
+
 
 private:
 	friend struct CastTest;
@@ -231,6 +247,9 @@ private:
 	void ViewerMessage(CastViewer& aV, int aOp, const uint8_t* aData, size_t aLen);
 	void ViewerText(CastViewer& aV, const char* aJson);
 	void Input(int aKind, int aA, int aB);
+	void FlushInput();                            // the viewers' input into the link's out queue
+	void OnClock(uint32_t aPsionMs, uint32_t aToken);   // a STATUS that answered a PING
+	void OnStamp(uint32_t aCapMs);                // a stamped UPDATE, just taken
 	void ViewersChanged();
 
 	Hal& iHal;
@@ -264,6 +283,12 @@ private:
 	int iDigW, iDigH;
 	bool iHaveStatus;
 	int iLastViewers, iLastViewersCtl;
+	// latency (PROTOCOL.md "Latency"): stamps asked for; the clocks' offset
+	// (Psion - Atom) from the PING answered fastest, its round trip and age;
+	// this second's capture -> applied figures, and the last second's
+	bool iStamps = false, iSyncDue = false, iHaveOff = false, iHaveLat = false;
+	uint32_t iOffMs = 0, iOffRttMs = 0, iOffAtMs = 0;
+	uint32_t iLatSum = 0, iLatN = 0, iLatMax = 0, iLatLink = 0, iLatLinkMax = 0;
 	// the input for the Psion, waiting to go
 	static const int kInputMax = 128;
 	uint8_t iInput[kInputMax][8];

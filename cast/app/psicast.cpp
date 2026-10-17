@@ -19,7 +19,7 @@
 #include "psilink.h"
 #include "pglinktest.h"
 
-_LIT(KVersion, "0.10");            // also cast/pkg/psicast.pkg
+_LIT(KVersion, "0.11");            // also cast/pkg/psicast.pkg
 _LIT(KEngineExe, "psicast.exe");
 _LIT(KIniFile, "C:\\System\\Apps\\PsiCast\\PsiCast.ini");
 _LIT(KAtomHost, "192.168.7.1");    // the Atom's own address (PROTOCOL.md link A)

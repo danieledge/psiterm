@@ -10,10 +10,22 @@
  *
  * Capturing adapts: up to the preferred rate (10 a second as standard)
  * while the screen changes, 20 a second for a moment after the viewer's
- * own input, once a second when the screen has been still for 2 s, not at
- * all with no viewers or while paused. While the Psion is off nothing runs.
- * A capture whose frame buffer has not changed at all costs one pass of word
- * compares (csepoc.cpp) and never reaches the encoder.
+ * own input, not at all with no viewers or while paused. When the screen
+ * has been still for 2 s it is only looked at: a quarter of the frame
+ * buffer's rows, a different quarter each time, at the preferred rate (at
+ * most 10 a second), and captured at once when they differ - so a key
+ * pressed on the Psion itself after a pause shows within about 0.1 s, not
+ * up to the second the old once-a-second capture took. (ER5 has no way to
+ * ask how long since the last key or tap: no User::InactivityTime.) With
+ * the window server's copy (no frame buffer) it captures once every 4 s
+ * instead. While the Psion is off nothing runs. A capture whose frame
+ * buffer has not changed at all costs one pass of word compares
+ * (csepoc.cpp) and never reaches the encoder.
+ *
+ * Latency (PROTOCOL.md): an Atom that asks for it in WELCOME gets each
+ * UPDATE stamped with the time its frame was captured, and STATUS carries
+ * this clock and answers the PING it replies to, so the Atom can show the
+ * viewers how long a picture takes from the Psion's screen to the Atom.
  *
  * Everything from the Atom is untrusted: framing, lengths and CRCs are
  * checked, input events are validated and rate-limited, and injected only
@@ -33,6 +45,7 @@ extern int  pg_wait(int ms, int want_net, int want_kbd);
 extern int  pg_kbd_avail(void);
 extern int  pg_kbd_read(void *buf, int max);
 extern int  pg_quit_requested(void);
+extern int  pg_net_nodelay(void);
 
 #define ATOM_HOST        "192.168.7.1"
 #define ATOM_PORT        5961
@@ -44,8 +57,9 @@ extern int  pg_quit_requested(void);
 #define WELCOME_MS       10000
 #define LIVENESS_MS      20000      /* nothing from the Atom for this long: the link is dead */
 #define STATUS_MS        4000       /* at least every 5 s (PROTOCOL.md) */
-#define STILL_AFTER_MS   2000       /* no change for this long: capture once a second */
-#define STILL_MS         1000
+#define STILL_AFTER_MS   2000       /* no change for this long: only look (cs_capture_peek) */
+#define PEEK_PARTS       4          /* ...at a quarter of the rows each time */
+#define PEEK_MIN_MS      100        /* ...at the preferred rate, at most 10 a second */
 #define INPUT_FAST_MS    1500       /* after the viewer's input: capture at 20 a second */
 #define FAST_MS          50
 #define SLOW_FAST_MS     1000       /* the same with the slow capture (no frame buffer) */
@@ -146,6 +160,8 @@ typedef struct
 	int timed;
 	int body_max;                         /* the most an UPDATE body may be (WELCOME) */
 	int ping_acks;                        /* the Atom's PINGs carry last_seq */
+	int stamp;                            /* the Atom asked for capture times (WELCOME) */
+	int peeking, peek_part, peeks_timed;  /* still: looking at part of the screen */
 	/* the settings as last acted on */
 	int control, paused;
 	unsigned int app_seen;
@@ -205,9 +221,11 @@ static void stats_update(unsigned long now)
 	g_s.stat_bytes = g_s.stat_updates = g_s.stat_busy = 0;
 }
 
-static int send_status(unsigned long now)
+/* aToken: the PING this answers (0: none). After PROTOCOL.md's 12 bytes,
+   this clock and that token, so the Atom can work out the clock offset */
+static int send_status(unsigned long now, unsigned long aToken)
 {
-	unsigned char p[12];
+	unsigned char p[20];
 	int pct, mains, low;
 	unsigned long ram = cs_free_ram();
 	stats_update(now);
@@ -219,8 +237,10 @@ static int send_status(unsigned long now)
 	put16(p + 8, S()->cpu_x10);
 	p[10] = (unsigned char)(S()->allow_control ? 1 : 0);
 	p[11] = (unsigned char)(S()->paused ? 1 : 0);
+	put32(p + 12, cs_ms());
+	put32(p + 16, aToken);
 	g_s.last_status = now;
-	return send_msg(T_STATUS, 0, p, 12);
+	return send_msg(T_STATUS, 0, p, 20);
 }
 
 static int send_hello(void)
@@ -235,7 +255,8 @@ static int send_hello(void)
 	put16(p + 4, CS_H);
 	p[6] = 0;                                /* format: the model in PROTOCOL.md */
 	p[7] = 0;
-	put32(p + 8, 1UL | (S()->allow_control ? 2UL : 0UL));
+	/* bit0 input, bit1 control allowed now, bit2 can stamp its updates */
+	put32(p + 8, 1UL | (S()->allow_control ? 2UL : 0UL) | 4UL);
 	memcpy(p + 12, name, n);
 	return send_msg(T_HELLO, 0, p, 12 + n);
 }
@@ -251,16 +272,19 @@ static int send_devinfo(void)
 	return send_msg(T_DEVINFO, 0, p, 4);
 }
 
-/* encodes the frame just captured and sends it. 1 sent, 0 nothing to send
-   (or it could not be encoded: the next is a keyframe), -1 link lost */
-static int send_update(void)
+/* encodes the frame just captured (at aCapMs) and sends it. 1 sent, 0
+   nothing to send (or it could not be encoded: the next is a keyframe), -1
+   link lost. Stamped (flags bit1, if the Atom asked): seq, then the capture
+   time, then the body */
+static int send_update(unsigned long aCapMs)
 {
 	int len = 0, key = g_s.need_key, r;
+	int hdr = g_s.stamp ? 16 : 12;
 	unsigned long crc;
-	r = pc_enc_frame(g_enc, g_frame, CS_STRIDE, key, g_tx + 12, g_s.body_max, &len);
+	r = pc_enc_frame(g_enc, g_frame, CS_STRIDE, key, g_tx + hdr, g_s.body_max, &len);
 	if (r == PC_ERR_ARG && !key) {
 		key = 1;                            /* (the stream needs a fresh start) */
-		r = pc_enc_frame(g_enc, g_frame, CS_STRIDE, 1, g_tx + 12, g_s.body_max, &len);
+		r = pc_enc_frame(g_enc, g_frame, CS_STRIDE, 1, g_tx + hdr, g_s.body_max, &len);
 	}
 	if (r == 1)
 		return 0;
@@ -270,11 +294,14 @@ static int send_update(void)
 		return 0;
 	}
 	g_s.seq_sent++;
-	g_tx[0] = 'P'; g_tx[1] = 'C'; g_tx[2] = T_UPDATE; g_tx[3] = (unsigned char)(key ? 1 : 0);
-	put32(g_tx + 4, 4 + len);
+	g_tx[0] = 'P'; g_tx[1] = 'C'; g_tx[2] = T_UPDATE;
+	g_tx[3] = (unsigned char)((key ? 1 : 0) | (g_s.stamp ? 2 : 0));
+	put32(g_tx + 4, hdr - 8 + len);
 	put32(g_tx + 8, g_s.seq_sent);
-	crc = crc32(0L, g_tx, 12 + len);
-	put32(g_tx + 12 + len, crc);
+	if (g_s.stamp)
+		put32(g_tx + 12, aCapMs);
+	crc = crc32(0L, g_tx, hdr + len);
+	put32(g_tx + hdr + len, crc);
 	if (key) {
 		pc_stats st;
 		pc_enc_stats(g_enc, &st);
@@ -284,7 +311,7 @@ static int send_update(void)
 	g_s.need_key = 0;
 	if (g_s.seq_sent - g_s.seq_acked == 1)
 		g_s.last_ack = cs_ms();                 /* (the oldest unacknowledged went now) */
-	if (send_raw(g_tx, 16 + len) != 0)
+	if (send_raw(g_tx, hdr + len + 4) != 0)
 		return -1;
 	g_s.stat_updates++;
 	S()->updates++;
@@ -402,6 +429,7 @@ static void input_event(const unsigned char *e, unsigned long now)
 	}
 	S()->inputs++;
 	g_s.fast_until = now + INPUT_FAST_MS;
+	g_s.peeking = 0;
 	if ((long)(g_s.next_cap - (now + 30)) > 0)
 		g_s.next_cap = now + 30;             /* show what it did, soon */
 }
@@ -416,8 +444,10 @@ static void ack(unsigned long seq, unsigned long now)
 		int was_full = (int)(g_s.seq_sent - g_s.seq_acked) >= g_s.window;
 		g_s.last_ack = now;
 		g_s.seq_acked = seq;
-		if (was_full)
+		if (was_full) {
 			g_s.next_cap = now;          /* the newest picture, now */
+			g_s.peeking = 0;
+		}
 	}
 }
 
@@ -434,11 +464,14 @@ static void handle(int type, const unsigned char *p, int n, unsigned long now)
 		if (g_s.window > 8) g_s.window = 8;
 		/* the largest UPDATE payload the Atom takes (0: 65536); the
 		   encoder splits a change to fit, but needs PC_ENC_MIN_OUT */
-		g_s.body_max = BODY_MAX;
+		/* (bit1 of its capabilities: stamp each UPDATE with the capture
+		   time, 4 bytes more of the payload) */
+		g_s.stamp = (get32(p + 4) & 2) != 0;
+		g_s.body_max = BODY_MAX - (g_s.stamp ? 4 : 0);
 		if (n >= 12) {
-			unsigned long most = get32(p + 8);
-			if (most != 0 && most < 4UL + BODY_MAX)
-				g_s.body_max = most < 4UL + PC_ENC_MIN_OUT ? PC_ENC_MIN_OUT : (int)(most - 4);
+			unsigned long most = get32(p + 8), over = g_s.stamp ? 8UL : 4UL;
+			if (most != 0 && most < over + g_s.body_max)
+				g_s.body_max = most < over + PC_ENC_MIN_OUT ? PC_ENC_MIN_OUT : (int)(most - over);
 		}
 		/* then, optionally, the viewer's address (UTF-8; printable ASCII
 		   kept, e.g. "http://192.168.1.40/screen") */
@@ -451,10 +484,12 @@ static void handle(int type, const unsigned char *p, int n, unsigned long now)
 			S()->eng_seq++;
 		}
 		if (!g_s.welcomed)
-			cs_log("cast: WELCOME version %u, window %d, capabilities %lx, updates up to %d bytes%s%s", get16(p),
-				g_s.window, get32(p + 4), g_s.body_max + 4, k ? ", viewer at " : "", url);
+			cs_log("cast: WELCOME version %u, window %d, capabilities %lx, updates up to %d bytes%s%s%s", get16(p),
+				g_s.window, get32(p + 4), g_s.body_max + (g_s.stamp ? 8 : 4), g_s.stamp ? ", stamped" : "",
+				k ? ", viewer at " : "", url);
 		g_s.welcomed = 1;
 		g_s.next_cap = now;
+		g_s.peeking = 0;
 		set_phase(CS_PHASE_SHARING);
 		set_msg("");
 		break;
@@ -470,8 +505,10 @@ static void handle(int type, const unsigned char *p, int n, unsigned long now)
 	case T_VIEWERS:
 		if (n < 2)
 			return;
-		if (S()->viewers <= 0 && p[0] > 0)
+		if (S()->viewers <= 0 && p[0] > 0) {
 			g_s.next_cap = now;
+			g_s.peeking = 0;
+		}
 		if (S()->viewers != p[0])
 			cs_log("cast: %d viewer%s, %d with control", p[0], p[0] == 1 ? "" : "s", p[1]);
 		set_viewers(p[0], p[1] > p[0] ? p[0] : p[1]);
@@ -492,7 +529,7 @@ static void handle(int type, const unsigned char *p, int n, unsigned long now)
 				cs_log("cast: PING says %lu applied (its ACK did not come)", last);
 			ack(last, now);
 		}
-		send_status(now);
+		send_status(now, n >= 4 ? get32(p) : 0);
 		break;
 	default:
 		break;                                /* (unknown: a newer Atom; ignored) */
@@ -592,12 +629,14 @@ static int settings(unsigned long now)
 		g_s.paused = !!s->paused;
 		cs_log("cast: %s", g_s.paused ? "paused" : "going on");
 		changed = 1;
-		if (!g_s.paused)
+		if (!g_s.paused) {
 			g_s.next_cap = now;
+			g_s.peeking = 0;
+		}
 	}
 	if (!g_s.control || g_s.paused)
 		release_all();
-	return changed && g_s.welcomed ? send_status(now) : 0;
+	return changed && g_s.welcomed ? send_status(now, 0) : 0;
 }
 
 /* one connection to the Atom: 0 asked to stop, -1 the link was lost
@@ -619,7 +658,7 @@ static int session(void)
 	g_s.app_seen = S()->app_seq;
 	g_s.control = !!S()->allow_control;
 	g_s.paused = !!S()->paused;
-	g_s.interval = STILL_MS;
+	g_s.interval = PEEK_MIN_MS;
 	S()->updates = 0;
 	set_viewers(-1, 0);
 	set_msg("Waiting for the Atom to answer");
@@ -647,7 +686,7 @@ static int session(void)
 			snprintf(g_s.why, sizeof(g_s.why), "no word from the Atom for 20 s");
 			return -1;
 		}
-		if (now - g_s.last_status >= STATUS_MS && send_status(now) != 0)
+		if (now - g_s.last_status >= STATUS_MS && send_status(now, 0) != 0)
 			return -1;
 
 		/* capture, and send if there is room in the window */
@@ -659,14 +698,29 @@ static int session(void)
 				fast = SLOW_FAST_MS;            /* (the window server's copy: ~0.8 s of CPU each) */
 			if ((int)(g_s.seq_sent - g_s.seq_acked) < g_s.window) {
 				unsigned long t0 = cs_ms();
-				int cr = cs_capture(g_frame);
-				if (cr >= 0) {
+				int cr = 1, pk = 1;
+				/* still: look at a quarter of the rows first, and capture
+				   only if they have changed (the four quarters in turn, so
+				   any change is seen within four looks) */
+				if (g_s.peeking && !g_s.need_key && !pc_enc_pending(g_enc)) {
+					pk = cs_capture_peek(g_s.peek_part, PEEK_PARTS);
+					g_s.peek_part = (g_s.peek_part + 1) % PEEK_PARTS;
+					if (g_s.peeks_timed < 4 && pk >= 0) {
+						g_s.peeks_timed++;
+						cs_log("cast: a look at the screen: %s, %lu ms", pk ? "changed" : "still", cs_ms() - t0);
+					}
+				}
+				if (pk != 0)
+					cr = cs_capture(g_frame);
+				if (pk == 0) {
+					/* (nothing seen: look again soon) */
+				} else if (cr >= 0) {
 					g_s.capture_fails = 0;
 					/* (raw frame buffer unchanged: nothing to encode, unless a
 					   keyframe is due or the last change did not all fit; else
 					   pc_enc_frame itself says when nothing changed) */
 					if (cr == 0 || g_s.need_key || pc_enc_pending(g_enc)) {
-						r = send_update();
+						r = send_update(t0);
 						if (r < 0)
 							return -1;
 						if (r > 0)
@@ -682,8 +736,16 @@ static int session(void)
 					cs_log("cast: the screen could not be read 20 times running");
 				}
 				g_s.stat_busy += cs_ms() - t0;
-				g_s.interval = now - g_s.still_since >= STILL_AFTER_MS && (long)(g_s.fast_until - now) <= 0
-					? (cs_capture_slow() ? SLOW_STILL_MS : STILL_MS) : fast;
+				/* still for 2 s: look rather than capture (cs_capture_peek;
+				   the window server's copy cannot be looked at cheaply, so
+				   that is captured every SLOW_STILL_MS) */
+				if (now - g_s.still_since >= STILL_AFTER_MS && (long)(g_s.fast_until - now) <= 0 && pk != 0) {
+					g_s.peeking = !cs_capture_slow();
+					g_s.interval = g_s.peeking ? (fast > PEEK_MIN_MS ? fast : PEEK_MIN_MS) : SLOW_STILL_MS;
+				} else if (pk != 0) {
+					g_s.peeking = 0;
+					g_s.interval = fast;
+				}
 			}
 			else if (!g_s.ping_acks && now - g_s.last_ack > ACK_LOST_MS) {
 				/* (an older Atom, whose PING does not say what it has applied:
@@ -786,6 +848,14 @@ void cs_loop(void)
 			continue;
 		}
 		cs_log("cast: connected to the Atom");
+		/* Psion Internet: no Nagle, so a small update or a STATUS is not
+		   held back until the Atom (lwIP: delayed ACKs) acknowledges the
+		   last segment - up to 250 ms a time */
+		if (!pwn_modem()) {
+			int nd = pg_net_nodelay();
+			if (nd != 0)
+				cs_log("cast: TCP no-delay not set (%d)", nd);
+		}
 		t0 = cs_ms();
 		r = session();
 		release_all();
