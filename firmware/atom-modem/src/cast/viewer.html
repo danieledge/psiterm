@@ -256,11 +256,11 @@ const THEMES = [
   // grey borders, title bars and dimmed items (5), light grey toolbars, menus
   // and dialogs (10), the white page (15) - so a colour for each makes the
   // screens look made in colour; the greys between blend, so pictures come
-  // out as a tint. "Series 7" is the colour EPOC R5 had on the Psion Series 7
-  // and netBook (sampled from screenshots of the real machine): the greyish
-  // blue #9999cc of its buttons, dialogs and scroll bars (what the 5mx draws
-  // in light grey), and a muted navy for the dark grey
-  { id: "s7", name: "Series 7", stops: [[0, [0, 0, 0]], [5, [51, 51, 102]], [10, [153, 153, 204]], [15, [255, 255, 255]]], frame: "#fff" },
+  // out as a tint. "Series 7" is EIKON's colour scheme from the Psion Series
+  // 7's own ROM (EikPriv.rsc, its colour list beside the grey one): the
+  // interface stays grey, but the buttons' light grey (#cccccc: grey 12 at
+  // 16 greys, 10 at 4) is #9696b4, a greyish blue; dimmed stays #555555
+  { id: "s7", name: "Series 7", stops: [[0, [0, 0, 0]], [5, [85, 85, 85]], [10, [150, 150, 180]], [12, [150, 150, 180]], [15, [255, 255, 255]]], frame: "#fff" },
   { id: "warm", name: "Warm", stops: [[0, [48, 30, 22]], [5, [182, 84, 46]], [10, [240, 226, 200]], [15, [255, 251, 243]]], frame: "#fffbf3" },
   { id: "mint", name: "Mint", stops: [[0, [14, 42, 40]], [5, [20, 130, 112]], [10, [206, 236, 224]], [15, [250, 255, 252]]], frame: "#fafffc" }
 ];
