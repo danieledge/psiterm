@@ -38,6 +38,9 @@ test: test_modem test_v22 test_atremote test_usbnet test_proxy test_proxy_tinfl 
 	./test_fwtrial
 	./test_cast
 	if command -v node >/dev/null; then node test_iconmatch.js; else echo 'test_iconmatch: SKIP (no node)'; fi
+	# the Modern packs' 5mx sides against the built pictures (those built here)
+	python3 ../tools/modicons.py --check
+	if [ -f ../tools/modicons/specs_local.py ]; then python3 ../tools/modicons.py --spec ../tools/modicons/specs_local.py --check; fi
 
 # the decoders PsiMail uses, compiled as they are (zlib from the system here)
 pm%.o: $(IMG)/pm%.c $(IMG)/pmimg.h
@@ -108,7 +111,7 @@ screens: render_screens
 
 # TLS for the proxy comes from the PC's OpenSSL 3 (libssl.so.3), loaded at
 # run time, so no OpenSSL headers are needed to build
-hostmodem: hostmodem.cpp $(SRC) $(HDR) $(IMGOBJ) ../src/cast/castpage.h
+hostmodem: hostmodem.cpp $(SRC) $(HDR) $(IMGOBJ) ../src/cast/castpage.h ../src/cast/casticons.h $(wildcard ../src/cast/casticons_local.h)
 	$(CXX) $(CXXFLAGS) $(INC) -o $@ hostmodem.cpp $(SRC) $(IMGOBJ) -lz -ldl
 
 # the codec as a shared library, for the end-to-end test's fake Psion (ctypes)

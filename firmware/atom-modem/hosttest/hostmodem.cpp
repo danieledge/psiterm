@@ -603,6 +603,8 @@ struct CastHttp
 			return Reply(200, "image/jpeg", std::string((const char*)kCastSilk5mx, kCastSilk5mxLen));
 		if (base == "/screen/s7icons.json")
 			return Reply(200, "application/json", std::string((const char*)kCastS7IconsGz, kCastS7IconsGzLen), "Content-Encoding: gzip\r\n");
+		if (base == "/screen/modicons.json" && kCastModIconsGzLen)
+			return Reply(200, "application/json", std::string((const char*)kCastModIconsGz, kCastModIconsGzLen), "Content-Encoding: gzip\r\n");
 		return Reply(404, "text/plain", "Not found\n");
 		}
 	void Serve(am::Cast& aCast)

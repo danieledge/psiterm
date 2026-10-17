@@ -270,6 +270,11 @@ const THEMES = [
   // both) and the role pass below colours what it finds by its shape
   { id: "s7", name: "Series 7", ink: [0, 0, 0], paper: [255, 255, 255], ui: "s7", icons: true, frame: "#fff",
     swatch: "linear-gradient(90deg,#000080 0 28%,#9696b4 28% 40%,#c8c8c8 40%)" },
+  // "Modern": a flat palette of today's (navy ink, slate greys, warm white
+  // paper) with its own colours for the parts, and its own pictures
+  { id: "modern", name: "Modern", stops: [[0, [29, 36, 51]], [5, [107, 115, 133]], [10, [228, 231, 236]], [15, [251, 250, 247]]],
+    ui: "modern", icons: "modern", frame: "#fbfaf7",
+    swatch: "linear-gradient(90deg,#1f3a5f 0 28%,#0f766e 28% 40%,#eef1f5 40%)" },
   { id: "warm", name: "Warm", stops: [[0, [48, 30, 22]], [5, [182, 84, 46]], [10, [240, 226, 200]], [15, [255, 251, 243]]], frame: "#fffbf3" },
   { id: "mint", name: "Mint", stops: [[0, [14, 42, 40]], [5, [20, 130, 112]], [10, [206, 236, 224]], [15, [250, 255, 252]]], frame: "#fafffc" }
 ];
@@ -286,17 +291,23 @@ let theme = THEMES.find(t => t.id === store.get("theme", "lcd")) || THEMES[1];
 let lut = new Uint32Array(16);
 const little = new Uint8Array(new Uint32Array([1]).buffer)[0] === 1;
 const pack = c => little ? (255 << 24 | c[2] << 16 | c[1] << 8 | c[0]) >>> 0 : (c[0] << 24 | c[1] << 16 | c[2] << 8 | 255) >>> 0;
-// the colours of the parts the role pass finds (R_* below), by the theme's "ui"
+// the colours of the parts the role pass finds (R_* below), by the theme's
+// "ui"; null: that part keeps the theme's greys
 const UI_COLOURS = {
   // the Series 7's EikPriv.rsc: DialogTitle, DialogTitleText, DialogBackground,
-  // ToolbarBackground, ButtonFaceClear, ButtonTextDimmed, ButtonFaceSet
-  s7: [null, [0, 0, 128], [255, 255, 255], [200, 200, 200], [200, 200, 200], [150, 150, 180], [220, 220, 220], [130, 130, 160]]
+  // ToolbarBackground, ButtonFaceClear, ButtonTextDimmed, ButtonFaceSet (its
+  // selections, scroll bars and menus are the 5mx's)
+  s7: [null, [0, 0, 128], [255, 255, 255], [200, 200, 200], [200, 200, 200], [150, 150, 180], [220, 220, 220], [130, 130, 160],
+       null, null, null, null],
+  // then Selection, ScrollShaft, ScrollFace, MenuBackground
+  modern: [null, [31, 58, 95], [255, 255, 255], [238, 241, 245], [227, 232, 239], [221, 228, 238], [154, 163, 178], [125, 211, 200],
+           [15, 118, 110], [233, 237, 242], [197, 207, 220], [244, 246, 249]]
 };
-const roleLut = new Uint32Array(8);
+const roleLut = new Uint32Array(12), roleOff = new Uint8Array(12);
 function makeLut() {
   for (let g = 0; g < 16; g++) lut[g] = pack(themeRgb(theme, g));
   const u = UI_COLOURS[theme.ui];
-  if (u) for (let r = 1; r < u.length; r++) roleLut[r] = pack(u[r]);
+  if (u) for (let r = 1; r < roleLut.length; r++) { roleOff[r] = u[r] ? 0 : 1; roleLut[r] = u[r] ? pack(u[r]) : 0; }
 }
 makeLut();
 
@@ -372,25 +383,38 @@ function applyTheme() {
   document.querySelectorAll(".sw").forEach(s => s.classList.toggle("on", s.dataset.id === theme.id));
 }
 
-// ----- Series 7: its colour pictures over the 5mx's grey ones -----
+// ----- Series 7 and Modern: colour pictures over the 5mx's grey ones -----
 // The 5mx's standard pictures (app icons, toolbar buttons, file types) are
 // fixed bitmaps, and the Series 7's ROM has colour versions of the same ones:
 // s7icons.json pairs them (tools/s7icons.py), and iconmatch.js finds the grey
 // ones on the screen (exactly, on the pixels each draws) and paints the colour
-// ones. Loaded from the Atom the first time the theme is chosen.
-let icons = null, iconsLoading = false;
+// ones. A theme's "icons" names its pack (true: the Series 7's); each is
+// loaded from the Atom the first time a theme with it is chosen, and kept. A
+// pack the Atom hasn't got (404) just means no pictures.
+const PACKS = { s7: "s7icons.json", modern: "modicons.json" };
+const packs = {};                                // name: an IconMatch, or null (loading, or not there)
+let icons = null, matcher = null;                // (the theme's pack; iconmatch.js: loading or loaded)
+const packOf = th => th.icons === true ? "s7" : th.icons || null;
 function iconsOn() { return !!icons && !!theme.icons; }
 function loadIcons() {
-  if (icons || iconsLoading || !theme.icons) return;
-  iconsLoading = true;
-  const s = document.createElement("script");
-  s.src = "/screen/iconmatch.js";
-  s.onload = () => fetch("/screen/s7icons.json", { credentials: "same-origin" })
+  const name = packOf(theme);
+  icons = name && packs[name] || null;
+  if (!name || name in packs) return;
+  packs[name] = null;
+  const go = () => fetch("/screen/" + (PACKS[name] || name + "icons.json"), { credentials: "same-origin" })
     .then(r => r.ok ? r.json() : Promise.reject(r.status))
-    .then(p => { icons = IconMatch.create(p); if (theme.icons && haveScreen) paintAll(); })
-    .catch(() => {}).finally(() => { iconsLoading = false; });
-  s.onerror = () => { iconsLoading = false; };
-  document.head.appendChild(s);
+    .then(p => { packs[name] = IconMatch.create(p); if (packOf(theme) === name) { icons = packs[name]; if (haveScreen) paintAll(); } })
+    .catch(() => {});
+  if (!matcher) {
+    matcher = new Promise((ok, no) => {
+      const s = document.createElement("script");
+      s.src = "/screen/iconmatch.js";
+      s.onload = ok;
+      s.onerror = () => { matcher = null; for (const k in packs) if (!packs[k]) delete packs[k]; no(); };
+      document.head.appendChild(s);
+    });
+  }
+  matcher.then(go, () => {});
 }
 function iconPass(x, y, w, h) {                  // after a rect is painted: its pictures (and those it touches)
   if (!iconsOn()) return;
@@ -414,9 +438,14 @@ function iconPass(x, y, w, h) {                  // after a rect is painted: its
 // Light grey (#cccccc) comes out as a checkerboard of greys 10 and 15, or as
 // one grey (12 or 13). A menu has a dialog's border but no title bar, so only a
 // border with a title bar counts: a miss leaves the plain greys, which is far
-// better than colouring someone's document.
+// better than colouring someone's document. And (eikscrlb, eikmenup):
+// - a selection: a solid black box with white writing and nothing black round it;
+// - a scroll bar: 23 wide, black down both sides, its arrows and thumb drawn
+//   as buttons, in a white (or light grey) shaft;
+// - a menu: a dialog's border round a white body, with no title bar.
 // It runs on the whole picture at most every 150 ms (a few ms on a phone).
-const R_TITLE = 1, R_TTEXT = 2, R_DLG = 3, R_TBAR = 4, R_FACE = 5, R_DIM = 6, R_SET = 7;
+const R_TITLE = 1, R_TTEXT = 2, R_DLG = 3, R_TBAR = 4, R_FACE = 5, R_DIM = 6, R_SET = 7,
+  R_SEL = 8, R_SHAFT = 9, R_SFACE = 10, R_MENU = 11;
 let roleTimer = 0, roleLast = 0;
 function rolesSoon() {
   // (a moment after the first change, so a burst of updates makes one pass)
@@ -428,6 +457,7 @@ function runRoles() {
   if (!theme.ui) return;
   roleLast = performance.now();
   findRoles(grey, W, H, role, roleStack);
+  if (roleOff.some(v => v)) for (let i = 0; i < role.length; i++) if (roleOff[role[i]]) role[i] = 0;   // (the parts the theme leaves grey)
   roleGrey.set(grey);
   for (let i = 0; i < grey.length; i++) px[i] = role[i] ? roleLut[role[i]] : lut[grey[i]];
   ctx.putImageData(img, 0, 0);
@@ -458,7 +488,7 @@ function findRoles(g, w, h, role, stack) {
   // the light grey round the edge of a rectangle, as [grey where x+y is even,
   // where it is odd], by a vote (a button's picture may touch its edge); or null
   const votes = new Int32Array(32);
-  function lightAt(x0, y0, x1, y1) {
+  function lightAt(x0, y0, x1, y1, solid) {   // (solid: grey 10 on its own counts too)
     votes.fill(0);
     let all = 0;
     const vote = (x, y) => { const v = g[y * w + x]; all++; if (v >= 10) votes[((x + y) & 1) * 16 + v]++; };
@@ -466,26 +496,37 @@ function findRoles(g, w, h, role, stack) {
     for (let y = y0 + 1; y < y1; y++) { vote(x0, y); if (x1 > x0) vote(x1, y); }
     let a = 10, b = 10;
     for (let v = 11; v < 16; v++) { if (votes[v] > votes[a]) a = v; if (votes[16 + v] > votes[16 + b]) b = v; }
-    const ok = (a === 10 && b === 15) || (a === 15 && b === 10) || (a === b && a >= 11 && a <= 13);
+    const ok = (a === 10 && b === 15) || (a === 15 && b === 10) || (a === b && a >= (solid ? 10 : 11) && a <= 13);
     return ok && votes[a] + votes[16 + b] >= .4 * all ? [a, b] : null;
   }
   // flood (4 ways) through pixels of the pattern p ([even, odd]) with no role
-  // yet, inside x0,y0..x1,y1, from the seeds; giving them role r
+  // yet, inside x0,y0..x1,y1, from the seeds; giving them role r. (A row at a
+  // time: a run along it, then the starts of the runs above and below it).
+  // How many it gave the role
   function flood(x0, y0, x1, y1, p, r, seeds) {
-    const a = p[0], b = p[1];
-    let sp = 0;
-    const push = (x, y) => {
-      const o = y * w + x;
-      if (role[o] === 0 && g[o] === ((x + y) & 1 ? b : a)) { role[o] = r; stack[sp++] = o; }
-    };
-    seeds(push);
+    const a = p[0], b = p[1], n = stack.length;
+    let sp = 0, filled = 0;
+    seeds((x, y) => { const o = y * w + x; if (role[o] === 0 && g[o] === ((x + y) & 1 ? b : a) && sp < n) stack[sp++] = o; });
     while (sp) {
-      const o = stack[--sp], y = (o / w) | 0, x = o - y * w, q = (x + y) & 1 ? a : b;   // (its neighbours' grey)
-      if (x > x0 && role[o - 1] === 0 && g[o - 1] === q) { role[o - 1] = r; stack[sp++] = o - 1; }
-      if (x < x1 && role[o + 1] === 0 && g[o + 1] === q) { role[o + 1] = r; stack[sp++] = o + 1; }
-      if (y > y0 && role[o - w] === 0 && g[o - w] === q) { role[o - w] = r; stack[sp++] = o - w; }
-      if (y < y1 && role[o + w] === 0 && g[o + w] === q) { role[o + w] = r; stack[sp++] = o + w; }
+      const o = stack[--sp];
+      if (role[o] !== 0) continue;
+      const y = (o / w) | 0, row = y * w, x = o - row;
+      let lx = x, rx = x;
+      while (lx > x0 && role[row + lx - 1] === 0 && g[row + lx - 1] === ((lx - 1 + y) & 1 ? b : a)) lx--;
+      while (rx < x1 && role[row + rx + 1] === 0 && g[row + rx + 1] === ((rx + 1 + y) & 1 ? b : a)) rx++;
+      role.fill(r, row + lx, row + rx + 1);
+      filled += rx - lx + 1;
+      for (let ny = y - 1; ny <= y + 1; ny += 2) {
+        if (ny < y0 || ny > y1) continue;
+        let run = false;
+        for (let k = lx, q = ny * w + lx; k <= rx; k++, q++) {
+          const m = role[q] === 0 && g[q] === ((k + ny) & 1 ? b : a);
+          if (m && !run && sp < n) stack[sp++] = q;
+          run = m;
+        }
+      }
     }
+    return filled;
   }
   const edges = (x0, y0, x1, y1) => push => {
     for (let x = x0; x <= x1; x++) { push(x, y0); push(x, y1); }
@@ -497,6 +538,82 @@ function findRoles(g, w, h, role, stack) {
     for (let y = y0; y <= y1; y++) for (let o = y * w + x0, e = y * w + x1; o <= e; o++) { if (blk(g[o])) ink++; else if (dark(g[o])) dim++; }
     if (ink || !dim) return;
     for (let y = y0; y <= y1; y++) for (let o = y * w + x0, e = y * w + x1; o <= e; o++) if (dark(g[o])) role[o] = R_DIM;
+  }
+  // the selections: a black box, square at its corners, 16 to the width and
+  // 9 to 40 high, with white (or light grey) writing (3% to half of it) and
+  // next to nothing else in it, and no black on any side (so not part of a
+  // picture or of a thicker shape); only its black gets the role, its writing
+  // stays as it is
+  // (Found from every 8th row, as each is at least 9 high: from a black pixel
+  // with no black on its left, up its left-hand side to its corner)
+  function selections() {
+    for (let ys = 8; ys + 1 < h; ys += 8) for (let x0 = 1, o = ys * w + 1; x0 + 16 < w; x0++, o++) {
+      if (g[o] > 1 || g[o - 1] <= 1) continue;
+      let y = ys;
+      while (y > 1 && g[(y - 1) * w + x0] <= 1 && g[(y - 1) * w + x0 - 1] > 1) y--;
+      const c = y * w + x0;
+      if (y < 1 || g[c - w] <= 1 || role[c] === R_SEL || ys - y > 40) continue;
+      let r = x0, b = ys;
+      while (r + 1 < w && g[c + r + 1 - x0] <= 1) r++;
+      if (r - x0 < 15 || r >= w - 1) continue;
+      while (b + 1 < h && g[(b + 1) * w + x0] <= 1) b++;
+      if (b - y < 8 || b - y > 40 || b >= h - 1) continue;
+      if (rowShare(b, x0, r, blk) < 1 || colShare(r, y, b, blk) < 1 || rowShare(y - 1, x0 - 1, r + 1, blk) > 0 ||
+          rowShare(b + 1, x0 - 1, r + 1, blk) > 0 || colShare(x0 - 1, y, b, blk) > 0 || colShare(r + 1, y, b, blk) > 0) continue;
+      let ink = 0, wh = 0;
+      for (let k = y; k <= b; k++) for (let q = k * w + x0, e = k * w + r; q <= e; q++) { if (g[q] <= 1) ink++; else if (g[q] >= 10) wh++; }
+      const all = (r - x0 + 1) * (b - y + 1);
+      if (ink < .5 * all || wh < .03 * all || all - ink - wh > .08 * all) continue;
+      for (let k = y; k <= b; k++) for (let q = k * w + x0, e = k * w + r; q <= e; q++) if (g[q] <= 1) role[q] = R_SEL;
+    }
+  }
+  // the scroll bars: columns x and x + 22 black for 40 rows or more; down it,
+  // rows black across (the lines between the parts), rows all one light grey
+  // or white (the shaft), and the rest the parts, each a button (white along
+  // its top and down its left, dark grey down its right) round a light grey
+  // face. Only a bar with a part like that counts
+  const sKind = new Uint8Array(h);              // per row: 1 black across, 2 shaft, 0 other
+  function scrollBar(x, ya, yb) {
+    const r = x + 22;
+    if (colShare(x + 1, ya, yb, blk) > .3) return;   // (inside a black shape)
+    for (let y = ya; y <= yb; y++) {
+      const o = y * w + x + 1, v = g[o];
+      let same = v >= 10;
+      for (let q = o + 1, e = y * w + r - 1; q <= e && same; q++) same = g[q] === v;
+      sKind[y] = rowShare(y, x, r, blk) >= .9 ? 1 : same ? 2 : 0;
+    }
+    const parts = [];
+    let shaft = 0;
+    for (let y = ya; y <= yb;) {
+      let e = y;
+      while (e < yb && sKind[e + 1] === sKind[y]) e++;
+      if (sKind[y] === 2) shaft++;
+      else if (sKind[y] === 0) {
+        if (e - y < 8 || rowShare(y, x + 1, r - 3, white) < .8 || colShare(x + 1, y, e, white) < .8 ||
+            Math.max(colShare(r - 1, y + 1, e - 1, dark), colShare(r - 2, y + 1, e - 1, dark)) < .6) return;
+        const p = lightAt(x + 3, y + 2, r - 3, e - 2, true);
+        if (!p) return;
+        parts.push([y, e, p]);
+      }
+      y = e + 1;
+    }
+    if (!parts.length) return;
+    for (const [y, e, p] of parts) flood(x + 3, y + 2, r - 3, e - 2, p, R_SFACE, edges(x + 3, y + 2, r - 3, e - 2));
+    if (shaft) for (let y = ya; y <= yb; y++) if (sKind[y] === 2) for (let q = y * w + x + 1, e = y * w + r - 1; q <= e; q++) role[q] = R_SHAFT;
+  }
+  // (found from every 39th row, as each is at least 40 high; sDone: per
+  // column, the last row a bar found there reached)
+  const sDone = new Int32Array(w);
+  function scrollBars() {
+    sDone.fill(-1);
+    for (let ys = 0; ys < h; ys += 39) for (let x = 0, o = ys * w; x + 22 < w; x++, o++) {
+      if (g[o] > 1 || g[o + 22] > 1 || sDone[x] >= ys) continue;
+      let ya = ys, yb = ys;
+      while (ya > 0 && g[o - (ys - ya + 1) * w] <= 1 && g[o - (ys - ya + 1) * w + 22] <= 1) ya--;
+      while (yb + 1 < h && g[o + (yb + 1 - ys) * w] <= 1 && g[o + (yb + 1 - ys) * w + 22] <= 1) yb++;
+      sDone[x] = yb;
+      if (yb - ya >= 39) scrollBar(x, ya, yb);
+    }
   }
   // the command buttons with their top-left corners in x0,y0..x1,y1 (their
   // border is distinctive enough to find them anywhere: in a dialog whose
@@ -584,37 +701,72 @@ function findRoles(g, w, h, role, stack) {
       for (let y = ya; y <= yb; y++) if (rsig(y * w + c)) k++;
       if (k >= .9 * n) r = c;
     }
-    if (r < 0) return;
+    if (r < 0) return false;
     let t0 = ya;                                 // the title bar's first row: under the grey line of the border
     if (rowShare(ya, x + 5, r - 5, mid) >= .9) t0 = ya + 1;
     if (ya >= 4 && (t0 === ya || rowShare(ya - 4, x + 4, r - 5, blk) < .9 || rowShare(ya - 3, x + 4, r - 5, blk) < .9 ||
-        rowShare(ya - 2, x + 4, r - 6, white) < .9 || rowShare(ya - 1, x + 4, r - 6, white) < .9)) return;
+        rowShare(ya - 2, x + 4, r - 6, white) < .9 || rowShare(ya - 1, x + 4, r - 6, white) < .9)) return false;
     if (yb < h - 1) {                            // the bottom border, unless it is off the screen
       let bot = false;
       for (let y = yb - 2; y <= yb + 6 && !bot; y++) bot = rowShare(y, x + 6, r - 6, dark) >= .8;
-      if (!bot) return;
+      if (!bot) return false;
     }
     // the title bar: light grey down its left margin, then the grey line, then the white body
     const p = lightAt(x + 5, t0, x + 9, Math.min(yb, t0 + 5));
-    if (!p) return;
+    if (!p) return false;
     const isP = o => g[o] === p[(o % w + ((o / w) | 0)) & 1];
     let tl = t0;
     while (tl <= yb && isP(tl * w + x + 5) && isP(tl * w + x + 6) && isP(tl * w + x + 7) && isP(tl * w + x + 8) && isP(tl * w + x + 9)) tl++;
     const th = tl - t0;
-    if (th < (ya >= 4 ? 8 : 3) || th > 30 || rowShare(tl, x + 5, r - 5, mid) < .9 || rowShare(tl + 1, x + 5, x + 9, white) < 1) return;
+    if (th < (ya >= 4 ? 8 : 3) || th > 30 || rowShare(tl, x + 5, r - 5, mid) < .9 || rowShare(tl + 1, x + 5, x + 9, white) < 1) return false;
     let light = 0, other = 0;                    // only light grey and its writing
     for (let y = t0; y < tl; y++) for (let o = y * w + x + 5, e = y * w + r - 5; o <= e; o++) { if (isP(o)) light++; else if (g[o] > 6) other++; }
     const all = th * (r - x - 9);
-    if (light < .6 * all || other > .01 * all) return;
+    if (light < .6 * all || other > .01 * all) return false;
     for (let y = t0; y < tl; y++) for (let o = y * w + x + 5, e = y * w + r - 5; o <= e; o++) role[o] = isP(o) ? R_TITLE : g[o] <= 6 ? R_TTEXT : 0;
     // the body's white, from its edges in: a white box inside (an edit box, in its own border) stays white
     flood(x + 5, tl + 1, r - 5, yb, WHITE, R_DLG, edges(x + 5, tl + 1, r - 5, yb));
+    return true;
   }
+  // a menu pane whose left border runs down column x from row ya to yb: a
+  // dialog's border round a white body, with no title bar. Its top may be
+  // only partly there (a menu bar's pane hangs from its title, which is
+  // narrower, and what is beside the title is someone else's), so the top is
+  // checked at its left and the right border in the pane's lower half; the
+  // white, from the left and the bottom, has to be most of it
+  function menu(x, ya, yb) {
+    if (ya < 4 || yb >= h - 1) return;
+    if (rowShare(ya - 4, x, x + 20, blk) < 1 || rowShare(ya - 3, x, x + 20, blk) < 1 || rowShare(ya - 2, x + 4, x + 20, white) < 1 ||
+        rowShare(ya - 1, x + 4, x + 20, white) < 1 || rowShare(ya, x + 4, x + 20, mid) < 1) return;
+    const y0 = (ya + yb) >> 1, n = yb - y0 + 1;
+    let r = -1;
+    for (let c = x + 40; c < w && r < 0; c++) {
+      if (!rsig(yb * w + c)) continue;
+      let k = 0;
+      for (let y = y0; y <= yb; y++) if (rsig(y * w + c)) k++;
+      if (k >= .9 * n) r = c;
+    }
+    if (r < 0) return;
+    let bot = false;
+    for (let y = yb - 2; y <= yb + 6 && !bot; y++) bot = rowShare(y, x + 6, r - 6, dark) >= .8;
+    if (!bot || rowShare(yb, x + 5, r - 5, white) < .5) return;
+    const t0 = ya + 1, all = (yb - t0 + 1) * (r - x - 9);
+    let k = 0;                                   // (a quick look first: white in every 4th pixel of every 4th row)
+    for (let y = t0; y <= yb; y += 4) for (let o = y * w + x + 5, e = y * w + r - 5; o <= e; o += 4) if (g[o] === 15) k++;
+    if (k * 16 < .5 * all) return;
+    if (flood(x + 5, t0, r - 5, yb, WHITE, R_MENU, push => {
+      for (let y = t0; y <= yb; y++) push(x + 5, y);
+      for (let c = x + 5; c <= r - 5; c++) push(c, yb);
+    }) < .4 * all)
+      for (let y = t0; y <= yb; y++) for (let o = y * w + x + 5, e = y * w + r - 5; o <= e; o++) if (role[o] === R_MENU) role[o] = 0;
+  }
+  scrollBars();
+  selections();
   for (let x = 0; x + 45 < w; x++) {
     let ya = -1;
     for (let y = 0; y <= h; y++) {
       if (y < h && lsig(y * w + x)) { if (ya < 0) ya = y; continue; }
-      if (ya >= 0 && y - ya >= 12) dialog(x, ya, y - 1);
+      if (ya >= 0 && y - ya >= 12 && !dialog(x, ya, y - 1)) menu(x, ya, y - 1);
       ya = -1;
     }
   }

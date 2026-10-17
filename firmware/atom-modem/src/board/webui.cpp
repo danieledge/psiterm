@@ -69,9 +69,10 @@ void WebUi::Begin(Modem& aModem, AtomHal& aHal)
 		iServer.sendHeader("Cache-Control", "max-age=86400");
 		iServer.send_P(200, "image/png", (const char*)kCastIcon512, kCastIcon512Len);
 		});
-	// the Series 7 theme's colour pictures (and their matcher), fetched only when it is chosen
+	// the Series 7 and Modern themes' colour pictures (and their matcher), fetched only when one is chosen
 	iServer.on("/screen/iconmatch.js", HTTP_GET, [this]() { CastAsset("text/javascript", kCastIconMatchGz, kCastIconMatchGzLen); });
 	iServer.on("/screen/s7icons.json", HTTP_GET, [this]() { CastAsset("application/json", kCastS7IconsGz, kCastS7IconsGzLen); });
+	iServer.on("/screen/modicons.json", HTTP_GET, [this]() { CastAsset("application/json", kCastModIconsGz, kCastModIconsGzLen); });
 	iServer.on("/screen/silk5mx.jpg", HTTP_GET, [this]()          // (the 5mx's face, for full screen: not gzipped)
 		{
 		if (!Allowed()) return;
@@ -265,6 +266,11 @@ void WebUi::CastAsset(const char* aType, const unsigned char* aData, unsigned aL
 	{
 	if (!Allowed())
 		return;
+	if (!aLen)                                   // (a pack this build was made without)
+		{
+		iServer.send(404, "text/plain", "Not found\n");
+		return;
+		}
 	iServer.sendHeader("Content-Encoding", "gzip");
 	iServer.sendHeader("Cache-Control", "max-age=604800");
 	iServer.send_P(200, aType, (const char*)aData, aLen);

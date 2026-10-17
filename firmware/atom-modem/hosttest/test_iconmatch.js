@@ -201,5 +201,164 @@ if (scan || previewDir) {
   if (scan) console.log("seen: " + JSON.stringify(counts));
 }
 
+// ---- the Modern theme's packs (tools/modicons.py) ----
+// src/cast/modicons.json, and a local pack (src/cast/modicons.local.json,
+// not in the repository) if there is one. Each must load, carry each
+// picture's 5mx side exactly as s7icons.json does, or as the spec's sides
+// file (tools/modicons/<spec>.sides.json, decoded from the built .aif and
+// .mbm files) does for pictures not in it, so it matches the same
+// pictures; paint something for each; and have every picture indexed. The
+// public pack must also find on the System screen the pictures the
+// Series 7 pack finds there, for those it has, and nothing else, and on
+// our programs' screens their toolbar pictures.
+const MOD_EXPECT = {
+  // (more than the Series 7 pack: Comms, which the Series 7 has no icon for)
+  "kern1/end.png": [
+    ["System/Apps/Comms/Comms.aif#48x48", 33, 138],
+  ],
+  "pmail/end.png": [
+    ["System/Apps/PsiMail/PsiMail.mbm#42", 575, 33],
+    ["System/Apps/PsiMail/PsiMail.mbm#46", 575, 107],
+    ["System/Apps/PsiMail/PsiMail.mbm#48", 575, 144],
+  ],
+  "cast10/end.png": [
+    ["System/Apps/PsiCast/PsiCast.mbm#0", 575, 33],
+    ["System/Apps/PsiCast/PsiCast.mbm#2", 575, 70],          // (a plain black shape)
+    ["System/Apps/PsiCast/PsiCast.mbm#4", 576, 108],
+    ["System/Apps/PsiCast/PsiCast.mbm#6", 575, 144],         // (black outlines round white)
+  ],
+  "dm-info/end.png": [
+    ["System/Apps/PsiMail/PsiMail.mbm#42", 575, 33],
+    ["System/Apps/PsiMail/PsiMail.mbm#44", 575, 70],         // (black outlines round white)
+    ["System/Apps/PsiMail/PsiMail.mbm#46", 575, 107],
+    ["System/Apps/PsiMail/PsiMail.mbm#48", 575, 144],
+  ],
+  "ds-info/end.png": [
+    ["System/Apps/PsiMail/PsiMail.mbm#0", 18, 135],          // (a folder in the tree)
+  ],
+};
+// every picture of a pack, drawn on a toolbar's dithered grey (15 and 10)
+// in rows across synthetic screens, must be found where it is drawn, and
+// nothing else (a picture drawn twice in a pack under two names may be
+// found as either)
+function syntheticCheck(label, mod, mm) {
+  const W = 640, H = 240, sides = new Map();
+  for (const e of mod.icons) sides.set(e.n, e.w + "x" + e.h + e.g + e.m);
+  let todo = mm.icons.filter(ic => !ic.inverted), screens = 0;
+  while (todo.length) {
+    const grey = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) grey[y * W + x] = (x + y) & 1 ? 10 : 15;
+    const placed = [];
+    let x = 4, y = 4, rowH = 0;
+    while (todo.length) {
+      const ic = todo[0];
+      if (x + ic.w + 4 > W) { x = 4; y += rowH + 4; rowH = 0; }
+      if (y + ic.h + 4 > H) break;
+      for (let j = 0; j < ic.w * ic.h; j++) if (ic.mask[j]) grey[(y + ((j / ic.w) | 0)) * W + x + j % ic.w] = ic.grey[j];
+      placed.push({ ic, x, y });
+      x += ic.w + 4; rowH = Math.max(rowH, ic.h); todo.shift();
+    }
+    screens++;
+    const hits = mm.find(grey, W, H);
+    for (const p of placed) {
+      checks++;
+      const same = sides.get(p.ic.name);
+      if (!hits.some(h => h.x === p.x && h.y === p.y && sides.get(h.icon.name) === same)) fail(`${label}: ${p.ic.name} (drawn alone) not found`);
+    }
+    for (const h of hits) {
+      checks++;
+      if (!placed.some(p => p.x === h.x && p.y === h.y && sides.get(p.ic.name) === sides.get(h.icon.name))) fail(`${label}: ${h.icon.name} found at ${h.x},${h.y}, where it was not drawn`);
+    }
+  }
+  return screens;
+}
+function checkModPack(label, modPath, sidesPath, screens) {
+  const mod = JSON.parse(fs.readFileSync(modPath, "utf8"));
+  const s7 = JSON.parse(fs.readFileSync(path.join(here, "..", "src", "cast", "s7icons.json"), "utf8"));
+  const sides = new Map(s7.icons.map(e => [e.n, e]));
+  if (fs.existsSync(sidesPath)) for (const [n, e] of Object.entries(JSON.parse(fs.readFileSync(sidesPath, "utf8")))) if (!sides.has(n)) sides.set(n, e);
+  checks++;
+  if (mod.format !== "psicast-iconpack" || mod.version !== 2 || Buffer.from(mod.palette, "base64").length !== 768) fail(`${label}: not a version 2 icon pack`);
+  for (const e of mod.icons) {
+    checks++;
+    const o = sides.get(e.n);
+    if (!o) { fail(`${label}: ${e.n} is in neither s7icons.json nor ${path.basename(sidesPath)}`); continue; }
+    if (o.w !== e.w || o.h !== e.h || o.g !== e.g || o.m !== e.m) fail(`${label}: ${e.n}: its 5mx side differs from its source's`);
+    const a = Buffer.from(e.a, "base64"), c = Buffer.from(e.c, "base64");
+    let na = 0; for (let i = 0; i < e.w * e.h; i++) na += (a[i >> 3] >> (i & 7)) & 1;
+    if (!na || na !== c.length) fail(`${label}: ${e.n}: ${na} painted pixels, ${c.length} colours`);
+  }
+  const mm = IconMatch.create(mod);
+  checks++;
+  if (mm.size !== mod.icons.length) fail(`${label}: ${mm.size} of ${mod.icons.length} pictures indexed`);
+  syntheticCheck(label, mod, mm);
+  const have = new Set(mod.icons.map(e => e.n));
+  for (const [rel, list, exact] of screens) {
+    if (!fs.existsSync(path.join(screensDir, rel))) continue;
+    const s = readPng(path.join(screensDir, rel));
+    const hits = mm.find(s.grey, s.w, s.h);
+    const want = list.filter(([n]) => have.has(n));
+    for (const [name, x, y] of want) {
+      checks++;
+      if (!hits.some(h => h.icon.name === name && h.x === x && h.y === y)) fail(`${label}: ${rel}: ${name} not found at ${x},${y}`);
+    }
+    checks++;
+    if (exact && hits.length !== want.length) fail(`${label}: ${rel}: ${hits.length} hits, ${want.length} expected`);
+    // painting: colour inside the pictures' own boxes only
+    const px = new Uint32Array(s.w * s.h);
+    mm.paint(px, s.w, hits, true);
+    let painted = 0, outside = 0;
+    for (let i = 0; i < px.length; i++) if (px[i]) {
+      painted++;
+      const x = i % s.w, y = (i / s.w) | 0;
+      if (!hits.some(h => x >= h.x && x < h.x + h.icon.w && y >= h.y + h.r0 && y < h.y + h.r1)) outside++;
+    }
+    checks++;
+    if (want.length && (!painted || outside)) fail(`${label}: ${rel}: ${painted} pixels painted, ${outside} outside the pictures`);
+  }
+  return { mod, have };
+}
+{
+  const cast = path.join(here, "..", "src", "cast"), specs = path.join(here, "..", "tools", "modicons");
+  const modPath = process.env.MODICONS || path.join(cast, "modicons.json");
+  if (!fs.existsSync(modPath)) console.log("(no " + modPath + ")");
+  else {
+    const screens = Object.keys(EXPECT).map(r => [r, EXPECT[r].concat(MOD_EXPECT[r] || []), true])
+      .concat(Object.keys(MOD_EXPECT).filter(r => !EXPECT[r]).map(r => [r, MOD_EXPECT[r], false]));
+    const { mod, have } = checkModPack("modicons.json", modPath, path.join(specs, "specs.sides.json"), screens);
+    const kern = (EXPECT["kern1/end.png"] || []).filter(([n]) => have.has(n)).length;
+    console.log(`modicons: ${mod.icons.length} pictures, ${kern} of them on the System screen`);
+    checks++;
+    if (fs.existsSync(path.join(screensDir, "kern1/end.png")) && kern < 10) fail(`modicons: only ${kern} of the System screen's pictures drawn`);
+  }
+  // the firmware's copy with the local pictures merged in (tools/mkcasticons.py
+  // writes it to casticons_local.h when there is a local pack): every
+  // picture of both packs, each with the colours it has in its own pack
+  const localH = path.join(cast, "casticons_local.h");
+  if (fs.existsSync(localH) && fs.existsSync(path.join(cast, "modicons.local.json"))) {
+    const hex = fs.readFileSync(localH, "utf8").match(/kCastModIconsGz\[\] = \{([^}]*)\}/)[1].match(/0x[0-9a-f]{2}/g);
+    const merged = JSON.parse(zlib.gunzipSync(Buffer.from(hex.map(h => parseInt(h, 16)))).toString());
+    const mm = IconMatch.create(merged), byName = new Map(mm.icons.map(ic => [ic.name, ic]));
+    let n = 0;
+    for (const f of ["modicons.json", "modicons.local.json"]) {
+      const one = IconMatch.create(JSON.parse(fs.readFileSync(path.join(cast, f), "utf8")));
+      for (const ic of one.icons) {
+        checks++; n++;
+        const m2 = byName.get(ic.name);
+        if (!m2 || Buffer.compare(Buffer.from(m2.rgba), Buffer.from(ic.rgba)) || Buffer.compare(Buffer.from(m2.grey), Buffer.from(ic.grey))) fail(`casticons_local.h: ${ic.name} not as in ${f}`);
+      }
+    }
+    checks++;
+    if (mm.size !== n) fail(`casticons_local.h: ${mm.size} pictures, ${n} expected`);
+    console.log(`casticons_local.h: ${mm.size} pictures, as in their packs`);
+  }
+  const localPath = path.join(cast, "modicons.local.json");
+  if (!fs.existsSync(localPath)) console.log("(no local pack: skipped)");
+  else {
+    const { mod } = checkModPack("modicons.local.json", localPath, path.join(specs, "specs_local.sides.json"), []);
+    console.log(`modicons.local: ${mod.icons.length} pictures`);
+  }
+}
+
 console.log(fails ? `test_iconmatch: ${fails} of ${checks} checks FAILED` : `test_iconmatch: all ${checks} checks passed`);
 process.exit(fails ? 1 : 0);

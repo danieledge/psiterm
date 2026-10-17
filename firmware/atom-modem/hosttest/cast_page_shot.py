@@ -55,10 +55,11 @@ def put_greys(ps, g):
 
 def draw_eikon(ps):
     """A 5mx screen drawn the way EIKON draws it, in 4 greys (the geometry of a
-    real one, from the emulator): a page of text, a dialog with its title bar
-    and a button, a menu (a dialog's border, no title bar) and the toolbar
-    with its buttons. #cccccc is a checkerboard of greys 10 and 15. Returns
-    the points the Series 7 theme's checks look at."""
+    real one, from the emulator): a page of text, a dialog with its title bar,
+    a selected prompt and a button, a menu (a dialog's border, no title bar),
+    a scroll bar (arrows, thumb, shaft) and the toolbar with its buttons.
+    #cccccc is a checkerboard of greys 10 and 15. Returns the points the
+    Series 7 and Modern themes' checks look at."""
     from PIL import Image, ImageDraw, ImageFont
     try:
         f = ImageFont.truetype("DejaVuSans.ttf", 11)
@@ -97,6 +98,17 @@ def draw_eikon(ps):
         if label:
             text(x + 8, y + 5, label)
 
+    def sbutton(x, y, b, arrow=0):                 # a scroll bar's arrow or thumb: 23 wide
+        box(x, y, x + 22, b, 0)
+        box(x + 1, y + 1, x + 21, b - 1, 15)
+        box(x + 20, y + 2, x + 21, b - 1, 5)
+        box(x + 2, b - 2, x + 21, b - 1, 5)
+        light(x + 3, y + 3, x + 19, b - 3)
+        for k in range(5):                         # (its arrow: up, or down)
+            yy = (y + 7 + k) if arrow < 0 else (b - 7 - k) if arrow > 0 else None
+            if yy is not None:
+                box(x + 11 - k, yy, x + 11 + k, yy, 0)
+
     def thick(x0, y0, r, b):                       # EThickDeepRaisedWithOutline
         box(x0, y0, r, b, 0)
         box(x0 + 2, y0 + 2, r - 2, b - 2, 15)
@@ -115,6 +127,18 @@ def draw_eikon(ps):
     box(65, 75, 454, 75, 10)                     # (the grey line under the title)
     text(80, 90, "PsiCast shows the screen on a phone")
     button(220, 160, 290, 182, "Continue")
+    text(80, 110, "Theme")                       # the selected prompt: black, white writing
+    for y in range(108, 125):
+        for x in range(76, 141):
+            g[y][x] = 0 if g[y][x] else 15
+    # a scroll bar down the page: its arrows, a white shaft, the thumb
+    box(530, 60, 530, 230, 0)
+    box(552, 60, 552, 230, 0)
+    box(531, 61, 551, 229, 15)
+    sbutton(530, 60, 83, -1)
+    sbutton(530, 120, 160)
+    sbutton(530, 184, 207, 1)
+    sbutton(530, 207, 230, 1)
     # a menu: the same border, no title
     thick(330, 4, 520, 44)
     text(342, 14, "Preferences...")
@@ -129,7 +153,9 @@ def draw_eikon(ps):
     put_greys(ps, g)
     return {"title": (70, 70), "titletext": next((x, y) for y in range(55, 75) for x in range(72, 200) if g[y][x] == 0),
             "body": (68, 140), "face": (224, 164), "tbar": (600, 3), "tface": (575, 30), "page": (5, 100),
-            "menu": (500, 30), "grey": g}
+            "menu": (500, 30), "sel": (76, 108), "seltext": next((x, y) for y in range(110, 124) for x in range(80, 140) if g[y][x] == 15),
+            "shaft": (540, 100), "sface": next((x, y) for x in range(540, 545) for y in (140,) if g[y][x] == 10),
+            "grey": g}
 
 
 def main():
@@ -219,7 +245,7 @@ def main():
             page.wait_for_timeout(300)
             page.screenshot(path=os.path.join(out, "4-settings.png"))
             shots.append("4-settings.png")
-            for t in ("amber", "green", "dark", "s7", "warm", "mint", "paper"):
+            for t in ("amber", "green", "dark", "s7", "modern", "warm", "mint", "paper"):
                 page.click('.sw[data-id="%s"]' % t)
                 page.wait_for_timeout(150)
                 page.locator("#frame").screenshot(path=os.path.join(out, "5-theme-%s.png" % t))
@@ -250,8 +276,39 @@ def main():
                                ("tbar", [200, 200, 200], "the toolbar is light grey"),
                                ("tface", [150, 150, 180], "the toolbar's buttons are blue-grey"),
                                ("page", [255, 255, 255], "the page stays white"),
-                               ("menu", [255, 255, 255], "a menu (no title bar) stays white")):
+                               ("menu", [255, 255, 255], "a menu (no title bar) stays white"),
+                               ("sel", [0, 0, 0], "a selection stays black"),
+                               ("shaft", [255, 255, 255], "a scroll bar's shaft stays white"),
+                               ("sface", [170, 170, 170], "a scroll bar's thumb stays grey")):
                 e2e.check(at(k) == c, "Series 7: %s (%r at %r)" % (what, at(k), pts[k]))
+            # the Modern theme: its own colours for the same parts, and for the
+            # selection, the scroll bar and the menu; the page is its greys
+            page.click('.sw[data-id="modern"]')
+            page.wait_for_timeout(600)
+            page.locator("#frame").screenshot(path=os.path.join(out, "5-theme-modern-dialog.png"))
+            shots.append("5-theme-modern-dialog.png")
+            got = page.evaluate(rgb)
+            stops = [[0, [29, 36, 51]], [5, [107, 115, 133]], [10, [228, 231, 236]], [15, [251, 250, 247]]]
+            def mrgb(v):
+                for a, b in zip(stops, stops[1:]):
+                    if a[0] <= v <= b[0]:
+                        return [round(a[1][i] + (b[1][i] - a[1][i]) * (v - a[0]) / (b[0] - a[0])) for i in range(3)]
+            for k, c, what in (("title", [31, 58, 95], "a dialog's title bar is deep navy"),
+                               ("titletext", [255, 255, 255], "its title is white"),
+                               ("body", [238, 241, 245], "the dialog is a cool light grey"),
+                               ("face", [221, 228, 238], "its button is blue-grey"),
+                               ("tbar", [227, 232, 239], "the toolbar is light blue-grey"),
+                               ("tface", [221, 228, 238], "the toolbar's buttons are blue-grey"),
+                               ("sel", [15, 118, 110], "a selection is teal"),
+                               ("seltext", [251, 250, 247], "its writing stays white"),
+                               ("shaft", [233, 237, 242], "a scroll bar's shaft is pale"),
+                               ("sface", [197, 207, 220], "its thumb and arrows are slate"),
+                               ("menu", [244, 246, 249], "a menu is near-white"),
+                               ("page", [251, 250, 247], "the page is the theme's paper")):
+                e2e.check(at(k) == c, "Modern: %s (%r at %r)" % (what, at(k), pts[k]))
+            g = pts["grey"]
+            bad = [(x, y) for y in range(0, 48) for x in range(0, 326) if got[y * 640 + x] != mrgb(g[y][x])]
+            e2e.check(not bad, "Modern: the page's writing is the theme's greys, nothing else (%r)" % bad[:3])
             # the pass itself, in this Chromium, on that screen: well under the 150 ms between passes
             src = open(os.path.join(HERE, "..", "src", "cast", "viewer.html")).read()
             code = src[src.index("const R_TITLE"):src.index("// ----- the frame's size")]
@@ -266,6 +323,12 @@ def main():
             print("cast_page_shot: the role pass takes %.2f ms" % ms)
             ps.fb[:] = saved
             ps.update()
+            # ...and on a screen with no EIKON parts, the Modern theme is its plain greys too
+            page.wait_for_timeout(600)
+            got = page.evaluate(rgb)
+            want = [v for byte in ps.fb for v in (byte & 15, byte >> 4)]
+            e2e.check(all(got[i] == mrgb(want[i]) for i in range(640 * 240)),
+                      "Modern: a screen with no dialog or toolbar is its plain greys")
             page.click('.sw[data-id="lcd"]')
             page.click("#bClose")
             # landscape
@@ -300,6 +363,9 @@ def main():
             page.wait_for_timeout(1200)
             page.screenshot(path=os.path.join(out, "9-psion-gone.png"))
             shots.append("9-psion-gone.png")
+            # (no Modern pack in this build: its 404 is expected, and harmless)
+            if "kCastModIconsGzLen = 0;" in open(os.path.join(HERE, "..", "src", "cast", "casticons.h")).read():
+                errors = [e for e in errors if not e.startswith("Failed to load resource")]
             e2e.check(not errors, "no script errors (%r)" % errors[:3])
             b.close()
     finally:
