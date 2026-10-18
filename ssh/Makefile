@@ -1,5 +1,11 @@
 # psissh.exe - Dropbear SSH client for the Psion Series 5mx
-SDK      := /home/claude/psion_cpp_sdk_linux
+#   make -C ssh SDK=/path/to/psion_cpp_sdk_linux
+# The shared layer (psiglue.cpp, tls13.c, ptlog.cpp, zlib, LibTomCrypt,
+# LibTomMath and Dropbear's curve25519) comes from psion-core, the core/
+# submodule. CORE is relative to this folder: compiling those sources by a
+# relative path keeps __FILE__ (LTC_ARGCHK) free of the machine's paths.
+SDK      ?= $(PSION_SDK)
+CORE     ?= ../core
 E        := $(SDK)/epoc_cpp_sdk/epoc32
 REL      := $(E)/release/marm/rel
 export PATH := /usr/bin:/bin:$(SDK)/gcc-3.0-psion-98r2-9/bin:$(E)/tools
@@ -11,12 +17,12 @@ CXX      := arm-pe-gcc
 
 ARCH     := -s -fomit-frame-pointer -O2 -fno-strict-aliasing -nostdinc -mcpu=arm710 -mapcs-32 -mshort-load-bytes -msoft-float
 DEFS     := -D__SYMBIAN32__ -D__PSISOFT32__ -D__GCC32__ -D__EPOC32__ -D__MARM__ -D__EXE__ -DNDEBUG
-INCS     := -I zlib -I compat -I db -I db/src -I db/libtomcrypt/src/headers -I db/libtommath -I $(E)/include/libc -I $(E)/include
+INCS     := -I $(CORE)/ssh -I $(CORE)/ssh/zlib -I compat -I db -I db/src -I $(CORE)/ssh/db/src -I $(CORE)/ssh/db/libtomcrypt/src/headers -I $(CORE)/ssh/db/libtommath -I $(E)/include/libc -I $(E)/include
 BASEC    := $(ARCH) $(DEFS) -std=gnu99 -fno-builtin -include compat/psicompat.h $(INCS)
 CFLAGS   := $(BASEC) -DDROPBEAR_CLIENT
 LTCFLAGS := $(BASEC) -DLTC_SOURCE
 LTMFLAGS := $(BASEC)
-CXXFLAGS := $(ARCH) $(DEFS) -Wno-ctor-dtor-privacy -fcheck-new -fvtable-thunks -I compat -I $(E)/include/libc -I $(E)/include
+CXXFLAGS := $(ARCH) $(DEFS) -Wno-ctor-dtor-privacy -fcheck-new -fvtable-thunks -I $(CORE)/ssh -I compat -I $(E)/include/libc -I $(E)/include
 
 DB_SRCS  := dbutil buffer dbhelpers signkey rsa dbrandom queue atomicio compat ltc_prng crypto_desc \
             curve25519 ed25519 dbmalloc dbctype common-session packet common-algo common-kex \
@@ -25,10 +31,10 @@ DB_SRCS  := dbutil buffer dbhelpers signkey rsa dbrandom queue atomicio compat l
             cli-runopts cli-chansession cli-channel cli-authinteract cli-readconf bignum dh_groups \
             signkey_ossh netio listener fake-rfc2553 cli-authpubkey gened25519 keyimport psi-keygen
 DB_OBJS  := $(addprefix obj/db/,$(addsuffix .o,$(DB_SRCS)))
-LTC_SRCS := $(shell sed 's|^libtomcrypt/|db/libtomcrypt/|' ltc_sources.txt)
-LTM_SRCS := $(shell sed 's|^libtommath/|db/libtommath/|' ltm_sources.txt)
-LTC_OBJS := $(patsubst db/%.c,obj/%.o,$(LTC_SRCS))
-LTM_OBJS := $(patsubst db/%.c,obj/%.o,$(LTM_SRCS))
+LTC_SRCS := $(shell sed 's|^libtomcrypt/|$(CORE)/ssh/db/libtomcrypt/|' $(CORE)/ssh/ltc_sources.txt)
+LTM_SRCS := $(shell sed 's|^libtommath/|$(CORE)/ssh/db/libtommath/|' $(CORE)/ssh/ltm_sources.txt)
+LTC_OBJS := $(patsubst $(CORE)/ssh/db/%.c,obj/%.o,$(LTC_SRCS))
+LTM_OBJS := $(patsubst $(CORE)/ssh/db/%.c,obj/%.o,$(LTM_SRCS))
 Z_SRCS   := adler32 crc32 deflate inflate inftrees inffast trees zutil
 Z_OBJS   := $(addprefix obj/zlib/,$(addsuffix .o,$(Z_SRCS)))
 GLUE_OBJS := obj/psiglue.o obj/psishim.o obj/tls13.o obj/bench.o obj/sftp.o obj/tmuxq.o obj/ptlog.o
@@ -39,24 +45,27 @@ obj/db/%.o: db/src/%.c compat/psicompat.h db/localoptions.h db/config.h
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CFLAGS) $< -o $@
 
-obj/db/curve25519.o: db/src/curve25519_gf32.h
+# (Dropbear's X25519 lives in core, shared with the TLS client)
+obj/db/curve25519.o: $(CORE)/ssh/db/src/curve25519.c $(CORE)/ssh/db/src/curve25519_gf32.h compat/psicompat.h db/localoptions.h db/config.h
+	@mkdir -p $(dir $@)
+	$(CC) -c $(CFLAGS) $< -o $@
 
-obj/libtomcrypt/%.o: db/libtomcrypt/%.c
+obj/libtomcrypt/%.o: $(CORE)/ssh/db/libtomcrypt/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(LTCFLAGS) $< -o $@
 
-obj/libtomcrypt/src/ciphers/aes/aes_enc.o: db/libtomcrypt/src/ciphers/aes/aes.c
+obj/libtomcrypt/src/ciphers/aes/aes_enc.o: $(CORE)/ssh/db/libtomcrypt/src/ciphers/aes/aes.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(LTCFLAGS) -DENCRYPT_ONLY $< -o $@
 
-obj/zlib/%.o: zlib/%.c
+obj/zlib/%.o: $(CORE)/ssh/zlib/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(LTMFLAGS) -DNO_GZIP $< -o $@
 
 obj/libz.a: $(Z_OBJS)
 	rm -f $@; arm-pe-ar rcs $@ $^
 
-obj/libtommath/%.o: db/libtommath/%.c
+obj/libtommath/%.o: $(CORE)/ssh/db/libtommath/%.c
 	@mkdir -p $(dir $@)
 	$(CC) -c $(LTMFLAGS) $< -o $@
 
@@ -64,27 +73,27 @@ obj/bench.o: bench/bench.c bench/rsa_vec.h
 	@mkdir -p obj
 	$(CC) -c $(CFLAGS) $< -o $@
 
-obj/psishim.o: psishim.c psishared.h tls13.h
+obj/psishim.o: psishim.c $(CORE)/ssh/psishared.h $(CORE)/ssh/tls13.h
 	@mkdir -p obj
 	$(CC) -c $(CFLAGS) $< -o $@
 
-obj/sftp.o: sftp.c psishared.h compat/psicompat.h
+obj/sftp.o: sftp.c $(CORE)/ssh/psishared.h compat/psicompat.h
 	@mkdir -p obj
 	$(CC) -c $(CFLAGS) $< -o $@
 
-obj/tmuxq.o: tmuxq.c psishared.h compat/psicompat.h
+obj/tmuxq.o: tmuxq.c $(CORE)/ssh/psishared.h compat/psicompat.h
 	@mkdir -p obj
 	$(CC) -c $(CFLAGS) $< -o $@
 
-obj/tls13.o: tls13.c tls13.h
+obj/tls13.o: $(CORE)/ssh/tls13.c $(CORE)/ssh/tls13.h
 	@mkdir -p obj
 	$(CC) -c $(CFLAGS) $< -o $@
 
-obj/psiglue.o: psiglue.cpp psishared.h psibell.h psilink.h
+obj/psiglue.o: $(CORE)/ssh/psiglue.cpp $(CORE)/ssh/psishared.h $(CORE)/ssh/psibell.h $(CORE)/ssh/psilink.h
 	@mkdir -p obj
 	$(CXX) -c $(CXXFLAGS) $< -o $@
 
-obj/ptlog.o: ptlog.cpp
+obj/ptlog.o: $(CORE)/ssh/ptlog.cpp
 	@mkdir -p obj
 	$(CXX) -c $(CXXFLAGS) $< -o $@
 

@@ -1,8 +1,11 @@
-# PsiTerm, PsiMail and PsiWeb
+# PsiTerm
 
-**Bringing a 1999 Psion Series 5mx into 2026:** SSH, modern IMAP email with
-TLS, two-way calendar sync and a web browser, as native EPOC apps for a 36 MHz
-palmtop.
+**An SSH terminal for the 1999 Psion Series 5mx:** tmux, vim, htop and
+Claude Code on a 36 MHz palmtop, as a native EPOC app that looks and behaves
+like the Psion's own programs. PsiTerm is part of a suite that brings the
+5mx into 2026: see [The suite](#the-suite) for PsiMail (email and calendar),
+PsiWeb (a web browser), PsiCast (screen sharing), PsiLinux, the PsiConnect
+modem firmware and PsiProxy.
 
 > **Alpha - pre-v1. Expect bugs!** The apps are new and changing fast. They
 > work well enough for daily SSH, tmux, Claude Code and email on a real 5mx,
@@ -16,41 +19,28 @@ palmtop.
 
 <p align="center"><img src="docs/screenshots/banner.png" alt="PsiTerm running vim inside tmux, with the tmux windows as tabs, above PsiMail's Inbox" width="640"></p>
 
-| App | What it is | Version | More |
-|---|---|---|---|
-| **PsiTerm** | An SSH terminal (xterm-256color) on a port of Dropbear: tmux, vim, htop and Claude Code on a palmtop, with file transfer | 0.95 | [below](#psiterm) |
-| **PsiMail** | Email for any IMAP/SMTP server with TLS (made for Fastmail), and a calendar that keeps the Agenda in step with CalDAV | 0.92 | [mail/README.md](mail/README.md) |
-| **PsiWeb** | A web browser (Links 2): HTML and CSS, no JavaScript | 0.76 | [web/README.md](web/README.md) |
-| **PsiProxy** (optional) | A small helper for a computer on your network. Not needed: it makes PsiWeb faster and lighter (TLS done on the computer, pages slimmed, pictures in 16 greys) - see [Do I need the proxy?](#the-proxy-optional) | - | [proxy/README.md](proxy/README.md) |
-| **Atom modem** | Firmware that turns an M5Stack Atom into a Wi-Fi modem tuned for the Psion | - | [firmware/atom-modem](firmware/atom-modem/README.md) |
-
-A companion project, [PsiLinux](https://github.com/danieledge/psilinux),
-brings Linux and Alpine Linux to the 5mx.
-
-All three apps look and behave like the Psion's own programs - EIKON toolbars,
-menus, dialogs and shortcuts, following Symbian's *EIKON Application Style
-Guide* - and they share one connection layer: a Wi-Fi modem on the serial
-port (`ATDT host:port`) or the Psion's own dial-up TCP/IP. Modern servers
-work: curve25519, Ed25519, ChaCha20-Poly1305 and TLS 1.3, all on the Psion's
-ARM710.
+PsiTerm 0.95. It shares one connection layer with the other apps
+([psion-core](https://github.com/danieledge/psion-core)): a Wi-Fi modem on
+the serial port (`ATDT host:port`) or the Psion's own dial-up TCP/IP. Modern
+servers work: curve25519, Ed25519, ChaCha20-Poly1305 and TLS 1.3, all on the
+Psion's ARM710.
 
 ## Contents
 
 - [Screenshots](#screenshots)
 - [What's new](#whats-new)
-- [PsiTerm](#psiterm) · [PsiMail](#psimail) · [PsiWeb](#psiweb)
+- [What it does](#what-it-does)
 - [Installing](#installing)
 - [Connecting](#connecting)
 - [Updates](#updates)
 - [Building from source](#building-from-source)
+- [The suite](#the-suite)
 - [Support](#support) · [Licence and credits](#licence-and-credits)
 
 ## Screenshots
 
 Taken in a Series 5mx emulator at the Psion's own 640x240 resolution. Tap or
 click one to see it full size.
-
-**PsiTerm**
 
 <table>
 <tr>
@@ -67,87 +57,44 @@ click one to see it full size.
 </tr>
 </table>
 
-**PsiMail**
-
-<table>
-<tr>
-<td><a href="docs/screenshots/psimail-mailbox.png"><img src="docs/screenshots/psimail-mailbox.png" alt="The Inbox: folder tree and message list, unread in bold" width="400"></a><br>Folders and messages</td>
-<td><a href="docs/screenshots/psimail-reader.png"><img src="docs/screenshots/psimail-reader.png" alt="Reading a message with a picture" width="400"></a><br>A message with a picture</td>
-</tr>
-<tr>
-<td><a href="docs/screenshots/psimail-newsletter.png"><img src="docs/screenshots/psimail-newsletter.png" alt="An HTML newsletter" width="400"></a><br>An HTML newsletter</td>
-<td><a href="docs/screenshots/psimail-invitation.png"><img src="docs/screenshots/psimail-invitation.png" alt="A meeting invitation with Accept, Tentative and Decline" width="400"></a><br>An invitation</td>
-</tr>
-<tr>
-<td><a href="docs/screenshots/psimail-calendar-week.png"><img src="docs/screenshots/psimail-calendar-week.png" alt="The calendar's week view" width="400"></a><br>The calendar: week</td>
-<td><a href="docs/screenshots/psimail-calendar-month.png"><img src="docs/screenshots/psimail-calendar-month.png" alt="The calendar's month view" width="400"></a><br>The calendar: month</td>
-</tr>
-<tr>
-<td><a href="docs/screenshots/psimail-contacts.png"><img src="docs/screenshots/psimail-contacts.png" alt="Adding addresses from Contacts while writing" width="400"></a><br>Addresses from Contacts</td>
-<td><a href="docs/screenshots/psimail-preferences.png"><img src="docs/screenshots/psimail-preferences.png" alt="Preferences" width="400"></a><br>Preferences</td>
-</tr>
-</table>
-
-More PsiMail screenshots are in [mail/README.md](mail/README.md).
-
 ## What's new
 
-**PsiTerm 0.95, PsiMail 0.92, PsiWeb 0.76**
+**PsiTerm 0.95**
 - **One shared proxy**, set once in Connection settings > Network > Use
-  proxy, for PsiWeb's pages, PsiMail's web pictures (if asked for) and Send
-  log. It is optional and off as standard, with no address built in.
-  [PsiProxy](proxy/README.md), the proxy made for these apps, is now in this
-  repository.
-- **Send log to server** in all three apps (PsiTerm: Tools > Debug; PsiMail:
-  Tools > Troubleshooting; PsiWeb: Tools) sends the app's log to your
-  PsiProxy when something goes wrong. PsiTerm now keeps a log too.
+  proxy, for the suite's web traffic and Send log. It is optional and off as
+  standard, with no address built in.
+  [PsiProxy](https://github.com/danieledge/psiproxy) is the proxy made for
+  these apps.
+- **Send log to server** (Tools > Debug) sends PsiTerm's log to your
+  PsiProxy when something goes wrong. PsiTerm now keeps a log.
 - **Psion Internet can stay connected** after use, until you disconnect
   (Connection settings > Network > After use, Psion Internet). It is the
   standard on a new Psion; anyone updating keeps the old idle hang-up until
   they change it.
 - Steadier dial-up: a connection the Psion only thinks is up is noticed and
   dialled again, and a second app shares the link instead of re-dialling.
-- PsiTerm's Get file and Send file browse in a file view of their own;
-  PsiWeb has Favourites and History.
+- Get file and Send file browse in a file view of their own.
 
 **PsiTerm 0.86**
 - **Snippets now have folders.** Each folder is a menu cascade, and a
   ready-made **Claude Code** folder holds that program's keys (Interrupt,
-  Rewind, Switch mode) and its /clear, /compact, /resume, /help commands —
+  Rewind, Switch mode) and its /clear, /compact, /resume, /help commands,
   all ordinary, editable snippets. The old fixed Keys > Claude Code menu is
   gone.
 - The **"SSH to" dialog** keeps its buttons on one bottom row, so it no longer
   leaves a tall empty gap.
-- Screen greys are tuned from Preferences across all three programs, and every
+- Screen greys are tuned from Preferences across all the programs, and every
   settings dialog fits the 640x240 screen.
 
-**Earlier PsiTerm**
+**Earlier**
 - 0.73: a **Files** button on the toolbar pops up Send file, Get file and Log
   to file; **tmux windows as tabs**, drawn as EIKON's own dialog page tabs in
   place of tmux's status line (tap one to switch, Ctrl+Tab for the next).
+- 0.72: file transfer over SFTP and a session log.
+- A **Test** button in Connection settings, and the
+  [PsiConnect modem firmware](https://github.com/danieledge/psiconnect).
 
-**PsiMail 0.74**
-- A **new message header**: the subject in large bold type, the sender and
-  date, To and Cc on one line, and the attachments as chips you tap to open.
-- **Pictures from the web only when you ask** ("Show them"), as first-party
-  mail programs do; tracking pixels are never fetched.
-- **Newsletters without the empty space**: hidden preheaders, spacers and
-  empty cells are left out.
-- **Quiet progress**: one busy message per job and one outcome, with every
-  step still available (Preferences > New mail > Show detailed progress).
-- The mail engine stays up when a busy program holds the Psion, and starts
-  again by itself if it stops. Help has a scroll bar.
-
-**Recently**
-- PsiTerm 0.72: file transfer over SFTP and a session log.
-- PsiMail 0.73: Undo, printing, new-mail alerts and a timed check,
-  invitations into the Agenda, contact cards into Contacts, progressive JPEG,
-  File > Save as Word file.
-- PsiMail 0.72: the **Email icon** below the screen can open PsiMail.
-- All three: a **Test** button in Connection settings, and new
-  [Atom modem firmware](firmware/atom-modem/README.md).
-
-## PsiTerm
+## What it does
 
 A native EPOC terminal (libvterm-based, xterm-256color) wrapping a port of the
 **Dropbear SSH** client. It connects through anything that behaves like a
@@ -209,48 +156,17 @@ and Claude Code - on a 1999 palmtop.
 - Signed over-the-air updates straight from GitHub (TLS 1.3 on a 36 MHz ARM)
 - An on-device crypto speed test (Tools > Debug)
 
-## PsiMail
-
-An email client made to replace the built-in Email program, for Fastmail or
-any IMAP/SMTP server with TLS, with the server's certificate checked. The full
-feature list, keys and settings are in [mail/README.md](mail/README.md).
-
-- Laid out like the built-in Email program: a folder tree with unread counts,
-  a message list with unread messages in bold, a rich-text reader, the
-  standard toolbar, and File / Edit / Message / View / Tools menus
-- HTML mail as rich text, pictures (JPEG, PNG and GIF, decoded on the
-  Psion), attachments opened in their own programs, links opened in PsiWeb
-- Write with bold, italic and underline; addresses from Contacts; files
-  attached; drafts; Undo for deletes, moves and archives; Print; Save as
-  Word file
-- Folders: create, rename, delete, move, archive; search on the server;
-  work offline and send later; up to 4 accounts
-- Invitations: Accept, Tentative or Decline, into the Agenda, with a reply to
-  the organiser; contact cards into Contacts
-- A calendar with week and month views, and two-way sync between the
-  Psion's Agenda and a CalDAV server such as Fastmail's
-- New-mail alerts and a timed check; the Email icon below the screen can
-  open PsiMail
-
-## PsiWeb
-
-[Links 2](http://links.twibright.com/) built with the 1999 EPOC R5
-toolchain: HTML and some CSS, JPEG, PNG and GIF pictures (only when asked),
-no JavaScript. Light sites suit it best (68k.news, FrogFind, DuckDuckGo Lite,
-text.npr.org). It browses on its own, https included; a proxy on your
-network - [PsiProxy](proxy/README.md) or
-[WebOne](https://github.com/atauenis/webone) - is optional, but makes https
-sites much quicker and lighter (see [The proxy](#the-proxy-optional)). PsiMail opens links and "View as web page" in it. See
-[web/README.md](web/README.md).
-
 ## Installing
 
-1. **Download** the apps you want from `dist/`:
-   [PsiTerm.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis),
-   [PsiMail.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiMail.sis),
-   [PsiWeb.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiWeb.sis)
-   (always the latest versions - see `dist/version.txt`,
-   `dist/PsiMail-version.txt` and `dist/PsiWeb-version.txt`).
+1. **Download**
+   [PsiTerm.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiTerm.sis)
+   from `dist/` (always the latest version: see `dist/version.txt`). The
+   same folder carries
+   [PsiMail.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiMail.sis)
+   and
+   [PsiWeb.sis](https://github.com/danieledge/psiterm/raw/main/dist/PsiWeb.sis),
+   because installed copies of those apps fetch their updates from here (see
+   [Updates](#updates)); their source is in their own repositories.
 2. **Copy** them to the Psion: the easiest way is a **CF card** in a PC card
    reader (for example into `D:\Install\`), or PsiWin.
 3. **Open** each .sis on the Psion and install to **D:** (the CF card) if you
@@ -258,26 +174,24 @@ sites much quicker and lighter (see [The proxy](#the-proxy-optional)). PsiMail o
 
 Each installer also offers the EPOC "Standard C Library" (ESTLIB.DLL), which
 the apps need and the 5mx ROM lacks - say OK if asked. Installing a newer
-version replaces the old one. Removing PsiMail leaves your mail where it
-is: it is yours.
+version replaces the old one.
 
 After that the apps **update themselves over the air**: Tools > Update
-PsiTerm (or PsiMail, PsiWeb) fetches the newest signed release from GitHub -
-see [Updates](#updates).
+PsiTerm fetches the newest signed release from GitHub - see
+[Updates](#updates).
 
-Then, in PsiTerm: Tools > Connection settings (see below), and SSH to
-(Shift+Ctrl+S) > New for your first server. In PsiMail the account dialog opens
-by itself the first time. `docs/FIRSTRUN.TXT` is a step-by-step first run
+Then: Tools > Connection settings (see below), and SSH to (Shift+Ctrl+S) >
+New for your first server. `docs/FIRSTRUN.TXT` is a step-by-step first run
 with a WiRSa modem, written for PsiTerm 0.35 (some menu names have changed
 since).
 
 ## Connecting
 
-All three apps share one set of connection settings (Tools > Connection
-settings in any of them). The serial port can be used by one program at a
-time, so the Psion's **Remote link must be off** (Ctrl+L on the System
-screen), and only one app uses the modem at once - File > Disconnect or Hang
-up frees it.
+All the apps share one set of connection settings (Tools > Connection
+settings in any of them, kept in `C:\System\Data\PsiLink.ini`). The serial
+port can be used by one program at a time, so the Psion's **Remote link must
+be off** (Ctrl+L on the System screen), and only one app uses the modem at
+once - File > Disconnect or Hang up frees it.
 
 **Test** (Ctrl+T) in Connection settings tries the settings shown, before OK:
 for a modem, whether it answers and at what baud rate, CTS and DCD, the
@@ -291,19 +205,16 @@ connection is up and names can be looked up (it asks before dialling).
   `ATDT host:port` and talk through the connection the modem makes. Set the
   baud rate to the modem's; 115200 with RTS/CTS flow control is fastest if
   the cable carries those lines, otherwise choose None.
-- **The Atom modem**: [`firmware/atom-modem`](firmware/atom-modem/README.md)
+- **The Atom modem**: [PsiConnect](https://github.com/danieledge/psiconnect)
   turns an M5Stack Atom on an Atomic RS232 Base into a Hayes-style Wi-Fi
   modem that works exactly like a WiRSa, plus **output pacing** so the Psion
   is never overrun even on a three-wire cable without RTS/CTS. Its README has
   the wiring, flashing, Wi-Fi set-up and the settings to use. It has a
-  small web proxy of its own (`192.168.7.1` on its PPP link, or `psiproxy`
-  through the modem), which serves PsiWeb's pages and PsiMail's web
-  pictures; it is not PsiProxy, so *Send log to server* still needs a
-  PsiProxy on a computer.
-
+  small web proxy of its own for PsiWeb and PsiMail; it is not PsiProxy, so
+  *Send log to server* still needs a PsiProxy on a computer.
 - **After use, Psion Internet** (Connection settings > Network): *Stays
   connected* (the standard on a new Psion) keeps the dial-up connection up
-  after use, for all three apps, until you disconnect; *Disconnects when
+  after use, for all the apps, until you disconnect; *Disconnects when
   idle* leaves it to the Psion's own idle time, as before. Anyone updating
   from an older version keeps *Disconnects when idle* until they change it.
   The modem route always hangs up after use.
@@ -311,90 +222,89 @@ connection is up and names can be looked up (it asks before dialling).
 ### The proxy (optional)
 
 **You do not need a proxy.** Connection settings > Network > **Use proxy** is
-off as standard, and no address is built in. SSH, mail, the calendar, web
-pages and updates all work without it, with the Psion doing its own TLS 1.3.
-A proxy is a program on a computer on your network that does the heavy work
-a 36 MHz Psion finds slow. [PsiProxy](proxy/README.md), in this repository,
-is the one made for these apps.
-
-**Do I need the proxy?**
-
-| App | Without the proxy | What the proxy adds |
-|---|---|---|
-| **PsiTerm** | Everything: SSH, SFTP, tmux, updates. PsiTerm never sends its connections through the proxy. | Only *Send log to server* (Tools > Debug). |
-| **PsiMail** | Everything: mail (IMAP/SMTP with its own TLS 1.3, certificates checked), the calendar (CalDAV), contacts, updates. Web pictures in HTML mail are fetched direct and decoded on the Psion. | With Preferences > Screen > *Web pictures via proxy*: web pictures are fetched by the computer and turned into small 16-grey pictures there - less to download, no TLS for the Psion, and formats the Psion cannot decode (WebP, AVIF) can be shown. If the proxy does not answer, they come direct. Also *Send log to server* (Tools > Troubleshooting). |
-| **PsiWeb** | Browses on its own: `http://` direct, `https://` with its own TLS 1.3 (certificates not checked). Pages and pictures arrive as the site sends them. | Every page goes through it. The computer does the TLS, so the Psion skips a handshake per site and can reach sites its own TLS cannot talk to. Pages are slimmed for a 640x240 screen (articles in one column, home pages as lists of headlines, site menus folded into one link), so there is less to fetch, draw and hold in memory. Pictures become 16-grey GIFs at most 320 pixels wide. One connection stays open, so the modem dials once. Updates from GitHub come through it too (still signature-checked). Also *Send log to server* (Tools). |
-
-*Send log to server* sends the app's log to your PsiProxy, to help find a
-fault. It is dimmed until a proxy is set. Logs go as plain HTTP and can hold
-host, account and site names, so send them only to your own PsiProxy.
-
-Any plain HTTP proxy, such as [WebOne](https://github.com/atauenis/webone),
-also works for PsiWeb's pages and PsiMail's web pictures, but only PsiProxy
-slims pages for the Psion and receives logs.
-
-**Setting it up** (full details in [proxy/README.md](proxy/README.md)):
-1. On a computer on your network with Python 3.10 or later, copy the
-   `proxy/` folder and install it:
-   `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`.
-2. Start it so the Psion can reach it:
-   `PSIPROXY_ADDR=0.0.0.0 .venv/bin/python psiproxyd.py`. It listens on port
-   **8081**. `psiproxy.service.example` is a systemd unit to keep it running.
-3. On the Psion, in any of the three apps: Tools > Connection settings >
-   Network > **Use proxy**: Yes, then the computer's address and port 8081.
-   The setting is shared by all three apps (`C:\System\Data\PsiLink.ini`), so
-   it is set once.
-4. In PsiMail, if you want web pictures through it: Tools > Preferences >
-   Screen > *Web pictures via proxy*: Yes.
-
-PsiProxy is an open forward proxy: keep it on a network you trust and never
-make it reachable from the internet. It can also load optional plug-ins of
-your own (see [proxy/README.md](proxy/README.md#plug-ins)).
+off as standard, and no address is built in. PsiTerm never sends its
+connections through a proxy: SSH, SFTP, tmux and updates all go direct. The
+only thing the proxy adds to PsiTerm is *Send log to server* (Tools > Debug),
+which sends PsiTerm's log to your own [PsiProxy](https://github.com/danieledge/psiproxy)
+to help find a fault. For what the proxy does for PsiMail and PsiWeb, see
+their READMEs. Logs go as plain HTTP and can hold host and account names, so
+send them only to your own PsiProxy.
 
 ## Updates
 
-Tools > Update PsiTerm, Update PsiMail and Update PsiWeb ask where to look
-(GitHub, its test builds, or a local server), download the newest release
-over the same modem or dial-up link, check it and offer to install it.
-From GitHub, each reads the version file in `dist/` on `main` (or `dev` for
-test builds); PsiTerm then fetches the release itself from that version's
-tag (`v0.95/dist/`), which never changes.
+Tools > Update PsiTerm asks where to look (GitHub, its test builds, or a
+local server), downloads the newest release over the same modem or dial-up
+link, checks it and offers to install it. From GitHub, it reads
+`dist/version.txt` on `main` (or `dev` for test builds), then fetches the
+release itself from that version's tag (`v0.95/dist/`), which never changes.
+PsiMail and PsiWeb read `dist/PsiMail-version.txt` and
+`dist/PsiWeb-version.txt` in this repository the same way, which is why their
+releases are published here.
 
-The Psion speaks a minimal TLS 1.3 client (`ssh/tls13.c`: X25519,
+The Psion speaks a minimal TLS 1.3 client (`core/ssh/tls13.c`: X25519,
 ChaCha20-Poly1305). Every release is signed with Ed25519, and each app checks
 the signature against the release key built into it before installing
 anything - so updates are trustworthy from GitHub or anywhere else. How
-releases are made and signed is in [docs/BUILDING.md](docs/BUILDING.md#updates-and-signing).
+releases are made and signed is in psion-core's
+[BUILDING.md](https://github.com/danieledge/psion-core/blob/main/docs/BUILDING.md#updates-and-signing).
 
 ## Building from source
 
-You need Linux, wine, and the EPOC R5 C++ SDK with the gcc 3.0 Psion
-toolchain ([psion_cpp_sdk_linux](https://github.com/static-void/psion_cpp_sdk_linux)).
+The shared layer (the connection code, TLS, zlib, the tools and the build
+container) is the [psion-core](https://github.com/danieledge/psion-core)
+submodule at `core/`, so clone with it:
 
 ```sh
-PSION_SDK=/path/to/psion_cpp_sdk_linux ./build.sh        # dist/PsiTerm.sis
-PSION_SDK=/path/to/psion_cpp_sdk_linux mail/build.sh     # dist/PsiMail.sis
-PSION_SDK=/path/to/psion_cpp_sdk_linux web/build.sh      # dist/PsiWeb.sis
+git clone --recurse-submodules https://github.com/danieledge/psiterm.git
+cd psiterm
+core/tools/docker/psibuild setup        # once: the build image and the SDK, beside the checkout
+core/tools/docker/psibuild "bash build.sh"   # dist/PsiTerm.sis
 ```
 
-[docs/BUILDING.md](docs/BUILDING.md) has the details, the source layout and
-the release steps; [mail/README.md](mail/README.md#how-it-works) and
-[web/README.md](web/README.md#how-it-fits-together) explain how PsiMail and
-PsiWeb are put together. [docs/TESTING.md](docs/TESTING.md) describes how
-the apps are tested: host tests, fuzzers, an ARM harness, the Psion emulator
-(including end-to-end network tests through a fake modem) and the device.
+Without Docker you need Linux, wine, and the EPOC R5 C++ SDK with the gcc
+3.0 Psion toolchain
+([psion_cpp_sdk_linux](https://github.com/static-void/psion_cpp_sdk_linux)):
+`PSION_SDK=/path/to/psion_cpp_sdk_linux ./build.sh`. This builds libvterm
+(`build_vterm.sh`), `psissh.exe` (`ssh/Makefile`: Dropbear plus `psishim.c`,
+`sftp.c` and `tmuxq.c`, with psiglue, TLS and the crypto libraries from
+core), the app (`app/`) and its toolbar pictures, and packages
+`dist/PsiTerm.sis`.
+
+psion-core's [BUILDING.md](https://github.com/danieledge/psion-core/blob/main/docs/BUILDING.md)
+has the layout, the stale-object warning and the release steps, and its
+[TESTING.md](https://github.com/danieledge/psion-core/blob/main/docs/TESTING.md)
+describes how the apps are tested. PsiTerm's own host tests are in
+`ssh/test/` (`Makefile.host` builds `psissh-host`, the real Dropbear client on
+a PC, for `e2e.py`, `sftp_test.py` and `update.py` against a throwaway sshd),
+and the emulator tools in `core/tools/emu/` run the real package on the real
+ROM (`node --experimental-strip-types core/tools/emu/mkcard.ts psiterm`, then
+`core/tools/emu/run.sh start`).
+
+## The suite
+
+| Repository | What it is |
+|---|---|
+| [psiterm](https://github.com/danieledge/psiterm) | PsiTerm, this one: SSH, SFTP, tmux tabs |
+| [psimail](https://github.com/danieledge/psimail) | PsiMail: IMAP/SMTP email with TLS, a calendar synced with the Agenda, contacts |
+| [psiweb](https://github.com/danieledge/psiweb) | PsiWeb: a web browser (Links 2) |
+| [psicast](https://github.com/danieledge/psicast) | PsiCast: the Psion's screen in a phone's browser, through the Atom |
+| [psilinux](https://github.com/danieledge/psilinux) | PsiLinux: Linux and Alpine Linux on the 5mx |
+| [psiconnect](https://github.com/danieledge/psiconnect) | PsiConnect: the Atom modem firmware |
+| [psiproxy](https://github.com/danieledge/psiproxy) | PsiProxy: the optional helper on a computer on your network |
+| [psion-core](https://github.com/danieledge/psion-core) | The shared code and tools, the `core/` submodule of each program |
+
+The suite's home page is [danieledge.github.io/psion](https://danieledge.github.io/psion/).
 
 ## Support
 
-If the apps bring your Psion back to life and you'd like to say thanks,
+If PsiTerm brings your Psion back to life and you'd like to say thanks,
 you can [buy me a coffee](https://buymeacoffee.com/danedge).
 
 ## Licence and credits
 
-MIT for the project's own code, PsiProxy included - see `LICENSE`. Bundled
-components keep their own licences - see [`THIRD-PARTY.md`](THIRD-PARTY.md):
-Dropbear SSH (with LibTomCrypt, LibTomMath and TweetNaCl), libvterm, zlib,
-picojpeg, the Terminus font, and - for PsiWeb only - Links 2 (GPL v2) with
-IJG libjpeg and libpng, which make `psiweb.exe` and `PsiWeb.sis` GPL v2.
+MIT for the project's own code - see `LICENSE`. Bundled components keep
+their own licences - see [`THIRD-PARTY.md`](THIRD-PARTY.md): Dropbear SSH
+(with LibTomCrypt, LibTomMath and TweetNaCl), libvterm, zlib and the
+Terminus font.
 
 (c) Dan Edge

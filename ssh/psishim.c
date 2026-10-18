@@ -26,7 +26,7 @@
 #undef signal
 #undef select
 
-#include "../db/libtomcrypt/src/headers/tomcrypt.h"
+#include "../core/ssh/db/libtomcrypt/src/headers/tomcrypt.h"
 #include "zlib.h"
 #include "tls13.h"
 #include "session.h"                 /* ses: the keepalive clock, for the switch-on probe */

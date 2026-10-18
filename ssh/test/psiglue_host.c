@@ -15,7 +15,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
-#include "../psishared.h"
+#include "../../core/ssh/psishared.h"
 #include <signal.h>
 
 static PsiShared g;

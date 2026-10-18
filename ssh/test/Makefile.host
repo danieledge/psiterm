@@ -5,18 +5,23 @@ DB_SRCS := dbutil buffer dbhelpers signkey rsa dbrandom queue atomicio compat lt
            cli-runopts cli-chansession cli-channel cli-authinteract cli-readconf bignum dh_groups \
            signkey_ossh netio listener fake-rfc2553 cli-authpubkey gened25519 keyimport psi-keygen
 OBJS := $(addprefix hobj/,$(addsuffix .o,$(DB_SRCS))) hobj/psishim.o hobj/tls13.o hobj/psiglue_host.o hobj/bench.o hobj/sftp.o hobj/tmuxq.o
+# (run in ssh/; CORE is the psion-core submodule; DS a Dropbear source tree
+# with libtomcrypt and libtommath built, for the host link)
+CORE ?= ../core
 CF := -O1 -g -std=gnu99 -w -DLOCALOPTIONS_H_EXISTS -D__EPOC32__ -DPSI_HOST_TEST -DDROPBEAR_CLIENT -include compat/psicompat.h \
-      -I test/hostcfg -I db -I db/src -I db/libtomcrypt/src/headers -I db/libtommath
-DS := /home/claude/dropbear-src
+      -I test/hostcfg -I $(CORE)/ssh -I db -I db/src -I $(CORE)/ssh/db/src -I $(CORE)/ssh/db/libtomcrypt/src/headers -I $(CORE)/ssh/db/libtommath
+DS ?= $(HOME)/dropbear-src
 psissh-host: $(OBJS)
 	gcc -o $@ $(OBJS) $(DS)/libtomcrypt/libtomcrypt.a $(DS)/libtommath/libtommath.a -lz
 hobj/%.o: db/src/%.c
 	@mkdir -p hobj; gcc -c $(CF) $< -o $@
-hobj/tls13.o: tls13.c
+hobj/curve25519.o: $(CORE)/ssh/db/src/curve25519.c
 	@mkdir -p hobj; gcc -c $(CF) $< -o $@
-hobj/sftp.o: sftp.c psishared.h
+hobj/tls13.o: $(CORE)/ssh/tls13.c
 	@mkdir -p hobj; gcc -c $(CF) $< -o $@
-hobj/tmuxq.o: tmuxq.c psishared.h
+hobj/sftp.o: sftp.c $(CORE)/ssh/psishared.h
+	@mkdir -p hobj; gcc -c $(CF) $< -o $@
+hobj/tmuxq.o: tmuxq.c $(CORE)/ssh/psishared.h
 	@mkdir -p hobj; gcc -c $(CF) $< -o $@
 hobj/psishim.o: psishim.c
 	@mkdir -p hobj; gcc -c $(CF) $< -o $@
@@ -25,19 +30,5 @@ hobj/psiglue_host.o: test/psiglue_host.c
 hobj/bench.o: bench/bench.c
 	@mkdir -p hobj; gcc -c $(CF) $< -o $@
 
-# Connection settings > Test: the pure part of pg_link_test (no EPOC calls)
-linktest: test/linktest.cpp psiglue.cpp pglinktest.h
-	g++ -Wall -O1 -g -DPG_LINK_TEST_ONLY -DPG_LINK_TEST_HOST -I test/stubinc -I . test/linktest.cpp -o $@
-
-# The shared link's last sign of life: when a failed probe may hang up the
-# link every program shares (pglinkseen.h)
-linkseentest: test/linkseentest.cpp pglinkseen.h
-	g++ -Wall -O1 -g test/linkseentest.cpp -o $@
-
-# PsiLink.ini, the shared connection settings: every version loads (psilink.h)
-psilinktest: test/psilinktest.cpp psilink.h
-	g++ -Wall -O1 -g test/psilinktest.cpp -o $@
-
-# psihold.exe found by reading \System\Apps\, not by program names (psilink.h)
-psiholdtest: test/psiholdtest.cpp psilink.h
-	g++ -Wall -O1 -g -fsanitize=address,undefined test/psiholdtest.cpp -o $@
+# (the link tests - linktest, linkseentest, psilinktest, psiholdtest - are in
+# core/ssh/test/Makefile.host)

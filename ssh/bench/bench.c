@@ -1,10 +1,10 @@
 /* bench.c - correctness + speed probes for the exact crypto code psissh
    uses, compiled with the Psion compiler. Run in an ARM emulator (and later
    on the device itself). */
-#include "../db/libtomcrypt/src/headers/tomcrypt.h"
+#include "../../core/ssh/db/libtomcrypt/src/headers/tomcrypt.h"
 #include "../db/libtommath/tommath.h"
 #include "rsa_vec.h"
-#include "../zlib/zlib.h"
+#include "../../core/ssh/zlib/zlib.h"
 
 void dropbear_curve25519_scalarmult(unsigned char *q, const unsigned char *n, const unsigned char *p);
 int dropbear_ed25519_verify(const unsigned char *m, unsigned long mlen, const unsigned char *s, unsigned long slen, const unsigned char *pk);

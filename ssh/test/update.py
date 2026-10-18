@@ -5,7 +5,7 @@ import subprocess, os, filecmp
 # the host build trusts test/update-test.key: sign the test release with it
 HERE = os.path.dirname(os.path.abspath(__file__))
 def sign(folder, version):
-    subprocess.run(["python3", os.path.join(HERE, "..", "..", "tools", "release", "sign.py") if os.path.exists(os.path.join(HERE, "..", "..", "tools", "release", "sign.py")) else "tools/release/sign.py",
+    subprocess.run(["python3", os.path.join(HERE, "..", "..", "core", "tools", "release", "sign.py"),   # (psion-core, the core/ submodule)
                     os.path.join(folder, "PsiTerm.sis"), version, "--key", os.path.join(HERE, "update-test.key")], check=True, capture_output=True)
 sign("/tmp/updsrv/psion", open("/tmp/updsrv/psion/version.txt").read().strip())
 
