@@ -9,21 +9,17 @@
 ssh/obj/
 ssh/hobj/
 ssh/psissh-host
-ssh/linktest
-ssh/psilinktest
-ssh/psiholdtest
-ssh/linkseentest
 ssh/emu/*.pe
 ssh/test/gf/gftest
-tools/sbtest/sbtest
-tools/drawtest/fbtest
-tools/shot/host
 pkg/psiterm.app
 pkg/psiterm.rsc
 pkg/psiterm.mbm
 pkg/psissh.exe
 pkg/psihold.exe
 pkg/STDLIB.SIS
+# the Terminus font and its licence come from core/pkg at build time
+pkg/psiterm.gdr
+pkg/terminus-licence.txt
 __pycache__/
 *.pyc
 
@@ -46,38 +42,30 @@ known_hosts
 .DS_Store
 *~
 *.swp
-tools/shot/host.raw
-tools/shot/host.screen
 .claude/
 
 # ---- kept out of this public repo ----------------------------------------
-# local additions: emulator tests and card makers (tools/emu/local/), and
-# other projects checked out here (list those in .git/info/exclude)
-/tools/emu/local/
+# local additions: the program's own emulator tests go in test/emu/; other
+# local builds in tools/docker/psibuild.local (run by core/tools/docker/psibuild all)
 /tools/docker/psibuild.local
-# the Atom firmware's extension modules, linked in for a build (firmware/atom-modem/src/ext.h)
-/firmware/atom-modem/ext/
 # packages other than the released apps', and the local-only combined suite
-# (only the three released apps' packages are published)
+# (only the three released apps' packages are published: PsiMail's and
+# PsiWeb's updaters read this repository's dist/ too)
 dist/*.sis
 !dist/PsiTerm.sis
 !dist/PsiMail.sis
 !dist/PsiWeb.sis
-# core dumps (qemu-user and others)
+# core dumps (qemu-user and others; core/ itself is the psion-core submodule)
 *.core
-core
 core.[0-9]*
 # local headers, logs, environment and PsiProxy's own config
 *_local.h
 *_local.*
 *.log
 *.log.old
-!experimental/kernel/results/*.log
 .env
 .env.*
 !.env.example
-proxy/psiproxy.env
-proxy/*.secret
 # WireGuard client configs and keys: they stay on your machine and the device
 wg*.conf
 *wireguard*.conf
