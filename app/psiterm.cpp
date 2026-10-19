@@ -88,7 +88,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.95");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.96");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -399,7 +399,44 @@ CTermView::~CTermView()
 	ReleaseFont();
 	if (iFontFileLoaded)
 		iCoeEnv->ScreenDevice()->RemoveFile(iFontFileId);
+	for (TInt f = 0; f < iExtraFonts; f++)
+		iCoeEnv->ScreenDevice()->RemoveFile(iExtraFontId[f]);
 	CloseSTDLIB();
+	}
+
+// (0.96) Fonts other programs installed: every .gdr in \System\Fonts\ on
+// a disk other than the ROM, added to the font server for as long as
+// PsiTerm runs (one the Psion has already loaded is only counted again), so
+// Other font... lists them even when the disk came after switch-on.
+void CTermView::LoadFontFolders()
+	{
+	RFs& fs = iCoeEnv->FsSession();
+	TDriveList drives;
+	if (fs.DriveList(drives) != KErrNone)
+		return;
+	for (TInt d = 0; d < KMaxDrives && iExtraFonts < KMaxExtraFonts; d++)
+		{
+		if (!drives[d] || d == EDriveZ)
+			continue;
+		TFileName path;
+		path.Format(_L("%c:\\System\\Fonts\\"), 'A' + d);
+		TFileName pattern(path);
+		pattern.Append(_L("*.gdr"));
+		CDir* dir = NULL;
+		if (fs.GetDir(pattern, KEntryAttNormal, ESortByName, dir) != KErrNone || !dir)
+			continue;
+		for (TInt i = 0; i < dir->Count() && iExtraFonts < KMaxExtraFonts; i++)
+			{
+			TFileName file(path);
+			if (file.Length() + (*dir)[i].iName.Length() > file.MaxLength())
+				continue;
+			file.Append((*dir)[i].iName);
+			TInt id;
+			if (iCoeEnv->ScreenDevice()->AddFile(file, id) == KErrNone)
+				iExtraFontId[iExtraFonts++] = id;
+			}
+		delete dir;
+		}
 	}
 
 void CTermView::ReleaseFont()
@@ -466,7 +503,8 @@ void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	if (iCoeEnv->ScreenDevice()->AddFile(fontFile, iFontFileId) == KErrNone)
 		iFontFileLoaded = ETrue;
 	}
-	SetFontL(iSettings.iZoom);
+	LoadFontFolders();
+	ApplyFontL();
 	ActivateL();
 	DrawNow();
 
@@ -501,10 +539,43 @@ void CTermView::ApplySerialSettings()
 		}
 	}
 
+// copies (or appends) as much of aFrom as fits. (ER5's Left() panics,
+// USER 22, when asked for more than the descriptor holds.)
+static void CopyClipped(TDes& aTo, const TDesC& aFrom, TBool aAppend = EFalse)
+	{
+	if (!aAppend)
+		aTo.Zero();
+	TInt n = aTo.MaxLength() - aTo.Length();
+	aTo.Append(aFrom.Ptr(), aFrom.Length() < n ? aFrom.Length() : n);
+	}
+
 // Zoom in / out cycle round the sizes rather than stopping at the ends
-// (EIKON style guide 7.3.7), so one key reaches every size
+// (EIKON style guide 7.3.7), so one key reaches every size. With a font
+// chosen in Other font... they step through that typeface's own sizes.
 void CTermView::ZoomBy(TInt aStep)
 	{
+	if (OtherFont())
+		{
+		TInt px[KMaxFontSizes];
+		TInt n = 0;
+		TBool prop;
+		CFontDialog::FaceHeights(iSettings.iFontName, px, n, prop);
+		if (n <= 1)
+			{
+			iEikonEnv->InfoMsg(_L("This font has only one size"));
+			return;
+			}
+		TInt at = 0;                          // the size in use, or the nearest
+		for (TInt i = 1; i < n; i++)
+			{
+			if (Abs(px[i] - iSettings.iFontPixels) < Abs(px[at] - iSettings.iFontPixels))
+				at = i;
+			}
+		at = (at + aStep + n) % n;
+		TBuf<24> name(iSettings.iFontName);
+		SetFaceL(name, px[at]);
+		return;
+		}
 	TInt z = (iSettings.iZoom + aStep + KZoomLevels) % KZoomLevels;
 	if (z != iSettings.iZoom)
 		SetFontL(z);
@@ -515,6 +586,7 @@ void CTermView::SetFontL(TInt aZoom)
 	if (aZoom < 0 || aZoom >= KZoomLevels)
 		aZoom = KDefaultZoom;
 	iSettings.iZoom = aZoom;
+	iSettings.iFontName.Zero();               // (the zoom levels, not Other font...)
 	ReleaseFont();
 	TInt pixels = KZoomPixels[aZoom];
 	TInt twips = iCoeEnv->ScreenDevice()->VerticalPixelsToTwips(pixels);
@@ -530,14 +602,105 @@ void CTermView::SetFontL(TInt aZoom)
 		TFontSpec spec(KFontCourier, twips);
 		iFont = iCoeEnv->CreateScreenFontL(spec);
 		}
+	MeasureFont();
+	}
 
-	// Cell = widest common glyph; every character is placed at its cell
-	// position so even a proportional font lines up.
-	iCellW = 1;
-	const TText probe[] = { 'M', 'W', 'm', 'w', '@', '#', '0' };
-	for (TUint i = 0; i < sizeof(probe) / sizeof(probe[0]); i++)
+// 0.96: any typeface the screen device knows, at one of its heights. The
+// Font menu's own choices (Terminus 12 to 18, Courier small) go back to the
+// zoom levels, so they behave exactly as before. A typeface that has gone
+// (a font file on a card that is out) falls back to the zoom level.
+void CTermView::SetFaceL(const TDesC& aName, TInt aPixels)
+	{
+	for (TInt z = 0; z < KZoomLevels; z++)
 		{
-		TInt w = iFont->CharWidthInPixels(probe[i]);
+		const TDesC& face = KZoomFace[z] == 0 ? (const TDesC&)KFontTerminus : (const TDesC&)KFontCourier;
+		if (KZoomPixels[z] == aPixels && aName.CompareF(face) == 0
+			&& (KZoomFace[z] != 0 || iFontFileLoaded))
+			{
+			SetFontL(z);
+			return;
+			}
+		}
+	CWsScreenDevice* dev = iCoeEnv->ScreenDevice();
+	TInt twips = 0;
+	TInt n = dev->NumTypefaces();
+	for (TInt t = 0; t < n && !twips; t++)
+		{
+		TTypefaceSupport ts;
+		dev->TypefaceSupport(ts, t);
+		if (ts.iTypeface.iName.CompareF(aName) != 0)
+			continue;
+		for (TInt h = 0; h < ts.iNumHeights; h++)
+			{
+			if (dev->FontHeightInPixels(t, h) == aPixels)
+				{
+				twips = dev->FontHeightInTwips(t, h);   // exactly that bitmap
+				break;
+				}
+			}
+		}
+	if (!twips)
+		twips = dev->VerticalPixelsToTwips(aPixels);
+	TFontSpec spec(aName, twips);
+	CFont* font = NULL;
+	TRAPD(err, font = iCoeEnv->CreateScreenFontL(spec));
+	if (err == KErrNone && font
+		&& font->FontSpecInTwips().iTypeface.iName.CompareF(aName) != 0)
+		{
+		iCoeEnv->ReleaseScreenFont(font);      // the font server gave another typeface
+		font = NULL;
+		}
+	if (!font)
+		{
+		TBuf<64> msg(_L("Font not found - "));
+		CopyClipped(msg, aName, ETrue);
+		iEikonEnv->InfoMsg(msg);
+		SetFontL(iSettings.iZoom);
+		return;
+		}
+	ReleaseFont();
+	iFont = font;
+	CopyClipped(iSettings.iFontName, aName);
+	iSettings.iFontPixels = aPixels;
+	MeasureFont();
+	}
+
+void CTermView::ApplyFontL()
+	{
+	if (OtherFont())
+		{
+		TBuf<24> name(iSettings.iFontName);
+		SetFaceL(name, iSettings.iFontPixels);
+		}
+	else
+		SetFontL(iSettings.iZoom);
+	}
+
+void CTermView::CurrentFace(TDes& aName, TInt& aPixels) const
+	{
+	if (OtherFont())
+		{
+		aName.Copy(iSettings.iFontName);
+		aPixels = iSettings.iFontPixels;
+		return;
+		}
+	if (iFont)
+		CopyClipped(aName, iFont->FontSpecInTwips().iTypeface.iName);
+	else
+		aName.Copy(KFontTerminus);
+	aPixels = KZoomPixels[iSettings.iZoom];
+	}
+
+// The terminal is a grid of cells. A cell is as wide as the font's widest
+// printable ASCII glyph (for a fixed-width font, every glyph). In a
+// proportional font each character is drawn centred in its own cell, so
+// the columns still line up: the letters are spaced out to fit.
+void CTermView::MeasureFont()
+	{
+	iCellW = 1;
+	for (TUint c = 0x21; c < 0x7F; c++)
+		{
+		TInt w = iFont->CharWidthInPixels(c);
 		if (w > iCellW)
 			iCellW = w;
 		}
@@ -622,7 +785,7 @@ void CTermView::SetTermRectL(const TRect& aRect)
 	if (aRect == Rect())
 		return;
 	SetRectL(aRect);
-	SetFontL(iSettings.iZoom);
+	ApplyFontL();
 	}
 
 // what the terminal would be at size aZoom in the room it has now (for the
@@ -632,7 +795,7 @@ void CTermView::SizeAtZoom(TInt aZoom, TInt& aCols, TInt& aRows) const
 	if (aZoom < 0 || aZoom >= KZoomLevels)
 		aZoom = KDefaultZoom;
 	TInt w = KZoomCellW[aZoom], h = KZoomCellH[aZoom];
-	if (aZoom == iSettings.iZoom && iCellW > 0 && iCellH > 0)
+	if (aZoom == iSettings.iZoom && !OtherFont() && iCellW > 0 && iCellH > 0)
 		{
 		w = iCellW;                          // the real font (Courier if Terminus is missing)
 		h = iCellH;
@@ -1404,7 +1567,7 @@ void CTermView::ApplyAppearanceL()
 	{
 	iBlinkHidden = EFalse;
 	iCacheValid = EFalse;
-	SetFontL(iSettings.iZoom);      // lays out again (status line on/off) and redraws
+	ApplyFontL();                   // lays out again (status line on/off) and redraws
 	StartTick();
 	// start screen switched on or off while not connected: show / drop it now
 	if (!iSshActive && !iReconnectWait && iSettings.iStartScreen)
@@ -2236,6 +2399,28 @@ void CTermView::DrawScrollIndicator(CWindowGc& aGc) const
 	aGc.DrawText(text, TPoint(x, y + iAscent));
 	}
 
+// One character in its cell. A fixed-width font's glyph fills the cell; a
+// proportional one's is centred in it and clipped to it, so a wide letter
+// never spills into the next column. Bold is drawn twice, a pixel apart.
+void CTermView::DrawInCell(CWindowGc& aGc, const TDesC& aText, const TRect& aCell, TBool aBold) const
+	{
+	if (iMono)
+		{
+		TPoint base(aCell.iTl.iX, aCell.iTl.iY + iAscent);
+		aGc.DrawText(aText, base);
+		if (aBold)
+			aGc.DrawText(aText, base + TPoint(1, 0));        // fake bold
+		return;
+		}
+	TInt w = iFont->TextWidthInPixels(aText) + (aBold ? 1 : 0);
+	TInt left = (aCell.Width() - w) / 2;
+	if (left < 0)
+		left = 0;
+	aGc.DrawText(aText, aCell, iAscent, CGraphicsContext::ELeft, left);
+	if (aBold)
+		aGc.DrawText(aText, aCell, iAscent, CGraphicsContext::ELeft, left + 1);
+	}
+
 // Draws a rectangle of cells. Runs of ordinary text that share colours and
 // attributes are drawn with one background fill and one DrawText, which is
 // many times faster on the Psion than a fill + text per character.
@@ -2324,15 +2509,14 @@ void CTermView::DrawCells(CWindowGc& aGc, TInt aRow0, TInt aCol0, TInt aRow1, TI
 					}
 				else
 					{
+					// (a proportional font: each letter centred in its cell)
 					for (TInt i = 0; i < run.Length(); i++)
 						{
 						if (run[i] == ' ')
 							continue;
 						TPtrC one(run.Mid(i, 1));
-						TPoint at(x0 + i * iCellW, base.iY);
-						aGc.DrawText(one, at);
-						if (bold)
-							aGc.DrawText(one, at + TPoint(1, 0));
+						TRect cell(x0 + i * iCellW, y0, x0 + (i + 1) * iCellW, y0 + iCellH);
+						DrawInCell(aGc, one, cell, bold);
 						}
 					}
 				}
@@ -2652,10 +2836,7 @@ void CTermView::DrawOneCell(CWindowGc& aGc, TInt aRow, TInt aCol, const TLook& a
 	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
 	aGc.SetPenColor(fgRgb);
-	TPoint base(box.iTl.iX, box.iTl.iY + iAscent);
-	aGc.DrawText(text, base);
-	if ((aLook.iFlags & KSbBold) || iSettings.iBold)
-		aGc.DrawText(text, base + TPoint(1, 0));        // fake bold
+	DrawInCell(aGc, text, box, (aLook.iFlags & KSbBold) || iSettings.iBold);
 	if (aLook.iFlags & KSbUnderline)
 		aGc.DrawLine(TPoint(box.iTl.iX, box.iBr.iY - 1), TPoint(box.iBr.iX, box.iBr.iY - 1));
 	if (aLook.iFlags & KSbStrike)
@@ -5383,6 +5564,225 @@ void CAppearanceDialog::PreLayoutDynInitL()
 	((CEikChoiceList*)Control(EPtDlgColourText))->SetCurrentItem((iSettings.iDisplay & KPtDisplayLightText) ? 1 : 0);
 	}
 
+// ----- View > Font > Other font... (0.96) -----------------------------------
+
+// widest printable ASCII glyph, and whether they are all that wide
+static TInt FontCellWidth(const CFont& aFont, TBool& aMono)
+	{
+	TInt widest = 1, first = aFont.CharWidthInPixels(' ');
+	aMono = ETrue;
+	for (TUint c = 0x21; c < 0x7F; c++)
+		{
+		TInt w = aFont.CharWidthInPixels(c);
+		if (w > widest)
+			widest = w;
+		if (w != first)
+			aMono = EFalse;
+		}
+	return widest;
+	}
+
+static void AddHeight(TInt* aPixels, TInt& aCount, TInt aPx)
+	{
+	if (aPx < 6 || aPx > 60)
+		return;                               // (Courier's 4 pixels can't be read)
+	TInt i;
+	for (i = 0; i < aCount; i++)
+		{
+		if (aPixels[i] == aPx)
+			return;                           // (the same height twice)
+		}
+	if (aCount >= KMaxFontSizes)
+		return;
+	for (i = aCount; i > 0 && aPixels[i - 1] > aPx; i--)
+		aPixels[i] = aPixels[i - 1];          // smallest first
+	aPixels[i] = aPx;
+	aCount++;
+	}
+
+TBool CFontDialog::FaceHeights(const TDesC& aName, TInt* aPixels, TInt& aCount, TBool& aProportional)
+	{
+	CWsScreenDevice* dev = CEikonEnv::Static()->ScreenDevice();
+	aCount = 0;
+	aProportional = EFalse;
+	TBool found = EFalse;
+	TInt n = dev->NumTypefaces();
+	for (TInt t = 0; t < n; t++)
+		{
+		TTypefaceSupport ts;
+		dev->TypefaceSupport(ts, t);
+		if (ts.iTypeface.iName.CompareF(aName) != 0)
+			continue;
+		found = ETrue;
+		aProportional = ts.iTypeface.IsProportional();
+		if (ts.iIsScalable)
+			{
+			// (none on the 5mx: its fonts are bitmaps) the usual sizes in range
+			static const TInt KSteps[] = { 8, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24, 27, 32 };
+			TInt lo = dev->VerticalTwipsToPixels(ts.iMinHeightInTwips);
+			TInt hi = dev->VerticalTwipsToPixels(ts.iMaxHeightInTwips);
+			for (TUint i = 0; i < sizeof(KSteps) / sizeof(KSteps[0]); i++)
+				{
+				if (KSteps[i] >= lo && KSteps[i] <= hi)
+					AddHeight(aPixels, aCount, KSteps[i]);
+				}
+			}
+		for (TInt h = 0; h < ts.iNumHeights; h++)
+			AddHeight(aPixels, aCount, dev->FontHeightInPixels(t, h));
+		}
+	return found;
+	}
+
+void CFontDialog::SetSizeAndPositionL(const TSize& aSize) { SetCornerAndSizeL(EHCenterVCenter, ClampToScreen(aSize)); }
+
+// Only typefaces with letters and figures can show a terminal. The 5mx's
+// ROM also has fonts of pictures and signs (Eikon, Symbol, Calc, Calcinv,
+// Digital, and Comms, whose letters have no width): those are left out.
+TBool CFontDialog::HasLetters(const TDesC& aName, const TTypefaceSupport& aSupport)
+	{
+	CWsScreenDevice* dev = iEikonEnv->ScreenDevice();
+	TInt twips = aSupport.iMaxHeightInTwips;
+	if (twips <= 0)
+		twips = dev->VerticalPixelsToTwips(12);
+	TFontSpec spec(aName, twips);
+	CFont* font = NULL;
+	if (dev->GetNearestFontInTwips(font, spec) != KErrNone || !font)
+		return EFalse;
+	TBool ok = font->FontSpecInTwips().iTypeface.iName.CompareF(aName) == 0;
+	static const char KTest[] = "AZaz09";
+	for (TInt i = 0; ok && KTest[i]; i++)
+		ok = font->CharWidthInPixels((TUint8)KTest[i]) > 0;
+	dev->ReleaseFont(font);
+	return ok;
+	}
+
+void CFontDialog::PreLayoutDynInitL()
+	{
+	// every typeface, once each, sorted by name
+	CWsScreenDevice* dev = iEikonEnv->ScreenDevice();
+	iFaceCount = 0;
+	TInt n = dev->NumTypefaces();
+	for (TInt t = 0; t < n && iFaceCount < KMaxFontFaces; t++)
+		{
+		TTypefaceSupport ts;
+		dev->TypefaceSupport(ts, t);
+		const TDesC& name = ts.iTypeface.iName;
+		if (name.Length() == 0 || (ts.iNumHeights <= 0 && !ts.iIsScalable))
+			continue;
+		TInt i;
+		TBool dup = EFalse;
+		for (i = 0; i < iFaceCount && !dup; i++)
+			dup = iFaceName[i].CompareF(name) == 0;
+		if (dup || !HasLetters(name, ts))
+			continue;
+		for (i = iFaceCount; i > 0 && iFaceName[i - 1].CompareF(name) > 0; i--)
+			iFaceName[i] = iFaceName[i - 1];
+		CopyClipped(iFaceName[i], name);
+		iFaceCount++;
+		}
+	CDesCArrayFlat* names = new(ELeave) CDesCArrayFlat(8);
+	CleanupStack::PushL(names);
+	TInt current = 0;
+	for (TInt i = 0; i < iFaceCount; i++)
+		{
+		names->AppendL(iFaceName[i]);
+		if (iFaceName[i].CompareF(iName) == 0)
+			current = i;
+		}
+	CEikChoiceList* list = (CEikChoiceList*)Control(EPtDlgFontFace);
+	list->SetArrayL(names);
+	list->SetArrayExternalOwnership(EFalse);
+	CleanupStack::Pop();
+	list->SetCurrentItem(current);
+	FillSizesL(iPixels);
+	}
+
+// the sizes of the typeface on show, each with the terminal it makes
+// ("12 pixels (106x20)"); the one nearest aWantPixels is chosen
+void CFontDialog::FillSizesL(TInt aWantPixels)
+	{
+	iSizeCount = 0;
+	TInt face = ((CEikChoiceList*)Control(EPtDlgFontFace))->CurrentItem();
+	TBool prop = EFalse;
+	if (face >= 0 && face < iFaceCount)
+		FaceHeights(iFaceName[face], iSizePixels, iSizeCount, prop);
+	CDesCArrayFlat* sizes = new(ELeave) CDesCArrayFlat(8);
+	CleanupStack::PushL(sizes);
+	CWsScreenDevice* dev = iEikonEnv->ScreenDevice();
+	TInt current = 0;
+	for (TInt i = 0; i < iSizeCount; i++)
+		{
+		// measure the real font: its cell and whether it is fixed-width
+		TInt cols = 0, rows = 0;
+		iSizeMono[i] = !prop;
+		TFontSpec spec(iFaceName[face], dev->VerticalPixelsToTwips(iSizePixels[i]));
+		CFont* font = NULL;
+		if (dev->GetNearestFontInTwips(font, spec) == KErrNone && font)
+			{
+			TBool mono;
+			TInt w = FontCellWidth(*font, mono);
+			iSizeMono[i] = mono;
+			TInt h = font->HeightInPixels();
+			cols = iRoom.iWidth / w;
+			rows = iRoom.iHeight / (h < 6 ? 6 : h);
+			dev->ReleaseFont(font);
+			}
+		if (cols > 160) cols = 160;
+		if (rows > 60) rows = 60;
+		if (cols < 20) cols = 20;
+		if (rows < 5) rows = 5;
+		TBuf<40> text;
+		text.Format(_L("%d pixels (%dx%d)"), iSizePixels[i], cols, rows);
+		sizes->AppendL(text);
+		if (Abs(iSizePixels[i] - aWantPixels) < Abs(iSizePixels[current] - aWantPixels))
+			current = i;
+		}
+	if (iSizeCount == 0)
+		sizes->AppendL(_L("No sizes"));
+	CEikChoiceList* list = (CEikChoiceList*)Control(EPtDlgFontSize);
+	list->SetArrayL(sizes);
+	list->SetArrayExternalOwnership(EFalse);
+	CleanupStack::Pop();
+	list->SetCurrentItem(current);
+	list->DrawNow();
+	ShowNoteL();
+	}
+
+void CFontDialog::ShowNoteL()
+	{
+	TInt i = ((CEikChoiceList*)Control(EPtDlgFontSize))->CurrentItem();
+	TBool mono = (i >= 0 && i < iSizeCount) ? iSizeMono[i] : ETrue;
+	CEikLabel* note = (CEikLabel*)Control(EPtDlgFontNote);
+	note->SetTextL(mono ? _L("A fixed-width font") : _L("Not a fixed-width font: letters are spaced out to fit"));
+	note->DrawNow();
+	}
+
+void CFontDialog::HandleControlStateChangeL(TInt aControlId)
+	{
+	if (aControlId == EPtDlgFontFace)
+		{
+		// keep the size near the one shown
+		TInt i = ((CEikChoiceList*)Control(EPtDlgFontSize))->CurrentItem();
+		FillSizesL((i >= 0 && i < iSizeCount) ? iSizePixels[i] : iPixels);
+		}
+	else if (aControlId == EPtDlgFontSize)
+		ShowNoteL();
+	}
+
+TBool CFontDialog::OkToExitL(TInt /*aButtonId*/)
+	{
+	TInt face = ((CEikChoiceList*)Control(EPtDlgFontFace))->CurrentItem();
+	TInt size = ((CEikChoiceList*)Control(EPtDlgFontSize))->CurrentItem();
+	if (face < 0 || face >= iFaceCount || size < 0 || size >= iSizeCount)
+		{
+		iEikonEnv->InfoMsg(_L("No font size"));
+		return EFalse;
+		}
+	CopyClipped(iName, iFaceName[face]);
+	iPixels = iSizePixels[size];
+	return ETrue;
+	}
+
 TBool CAppearanceDialog::OkToExitL(TInt aButtonId)
 	{
 	if (aButtonId == EPtBidGreys)
@@ -6037,6 +6437,8 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iPppStart.Copy(_L("ATDT777"));   // WiRSa and similar: dial 777 = PPP
 	aSettings.iToolbar = 1;       // shown the first time, as the style guide expects
 	aSettings.iDisplay = 0;       // Reading mode off, coloured text dark (docs/display.md)
+	aSettings.iFontName.Zero();   // the zoom levels (Terminus 12)
+	aSettings.iFontPixels = 0;
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
@@ -6125,6 +6527,19 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 													aSettings.iToolbar = data[pos + 9 + plen] ? 1 : 0;
 												if (pos + 10 + plen < data.Length())  // v14: display
 													aSettings.iDisplay = data[pos + 10 + plen] & (KPtDisplayReading | KPtDisplayLightText);
+												TInt fpos = pos + 11 + plen;           // v15 (0.96): Other font...
+												if (fpos < data.Length())
+													{
+													TInt flen = data[fpos];
+													if (flen > 0 && flen <= aSettings.iFontName.MaxLength()
+														&& fpos + 1 + flen < data.Length())
+														{
+														aSettings.iFontName.Copy(data.Mid(fpos + 1, flen));
+														aSettings.iFontPixels = data[fpos + 1 + flen];
+														if (aSettings.iFontPixels < 6)
+															aSettings.iFontName.Zero();   // (not a size we offer)
+														}
+													}
 												}
 											}
 										}
@@ -6182,6 +6597,10 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append(tmp);
 	data.Append((TUint8)(aSettings.iToolbar ? 1 : 0));   // v13 (older PsiTerms ignore it)
 	data.Append((TUint8)aSettings.iDisplay);              // v14: Reading mode, coloured text
+	tmp.Copy(aSettings.iFontName);                        // v15: Other font... (empty = none)
+	data.Append((TUint8)tmp.Length());
+	data.Append(tmp);
+	data.Append((TUint8)(aSettings.iFontPixels & 0xff));
 	SafeWrite(fs, KIniFile, data);
 	}
 
@@ -6516,7 +6935,10 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 			text.AppendFormat(_L(" (%dx%d)"), cols, rows);
 			aMenuPane->SetItemTextL(EPtCmdZoom0 + z, text);
 			}
-		aMenuPane->SetItemButtonState(EPtCmdZoom0 + s.iZoom, EEikMenuItemSymbolOn);
+		// (with Other font... in use, none of the five is ticked)
+		for (TInt i = 0; i < KZoomLevels; i++)
+			aMenuPane->SetItemButtonState(EPtCmdZoom0 + i,
+				(!iView->OtherFont() && i == s.iZoom) ? EEikMenuItemSymbolOn : 0);
 		}
 	else if (aMenuId == R_PT_VIEW_MENU)
 		{
@@ -6834,6 +7256,19 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		SaveSettings(s);
 		iView->DrawNow();
 		break;
+	case EPtCmdFontOther:                     // View > Font > Other font...
+		{
+		TBuf<24> name;
+		TInt pixels;
+		iView->CurrentFace(name, pixels);
+		CFontDialog* dlg = new(ELeave) CFontDialog(name, pixels, iView->TermRoom());
+		if (dlg->ExecuteLD(R_PT_FONT_DIALOG))
+			{
+			iView->SetFaceL(name, pixels);
+			SaveSettings(s);
+			}
+		break;
+		}
 	case EPtCmdZoomIn:
 	case EEikCmdZoomIn:                       // View menu, and the sidebar zoom buttons
 		iView->ZoomBy(1);

@@ -33,16 +33,6 @@
 
 ## Ideas
 
-- Choose the terminal font (user request, 19 Oct 2026: "Is it possible to
-  enhance PsiTerm to allow the user to pick a font? I like to use eMail Mono
-  font for terminal for instance."). Today the Font menu offers PsiTerm's
-  own Terminus (PsiTerm.gdr) and the ROM's Courier. Ideas: list every
-  monospaced font the Psion has (installed .gdr files in \System\Fonts\ as
-  well as ROM), and a host tool that turns a modern monospaced font (TTF/OTF,
-  or a BDF) into a .gdr at the zoom sizes, so a user can bring their own.
-  Check what "eMail Mono" is first: it may be a font the user has as a
-  .gdr already, or one to convert. Keep a cell grid fixed (monospace only)
-  and the 24-row size for full-screen apps.
 - Download URL...: fetch any https:// file to the Psion (TLS now works).
 - mosh (parked).
 - 16-grey icons for our apps (Dan, 17 Oct 2026): the 5mx shows 16 greys

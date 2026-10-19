@@ -139,7 +139,10 @@ and Claude Code - on a 1999 palmtop.
 - Auto-reconnect when a session drops (Psion switched off, Wi-Fi gone), with an
   optional per-server command on login such as `tmux new -A -s psion` to land
   back where you were
-- Terminus font in four sizes (plus Courier), optional bold, 16 greys
+- Terminus font in four sizes (plus Courier), optional bold, 16 greys. View >
+  Font > Other font... picks any font the Psion has (the ROM's, and any `.gdr`
+  in `\System\Fonts\` on any disk) at any of its sizes; a proportional font
+  is spaced out to keep the columns
 - The standard EIKON toolbar: SSH to (End SSH while connected), then the Send
   snippet, Keys and Files pop-ups (Files: Send file, Get file, Log to file),
   and the clock. The sidebar's zoom icons zoom the terminal (as View > Zoom

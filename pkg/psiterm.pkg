@@ -2,7 +2,7 @@
 ; PsiTerm: libvterm terminal.  psissh.exe: Dropbear SSH client.
 ; psihold.exe: holds the Psion Internet connection up after use ("Stay connected", ssh/psihold.cpp)
 &EN
-#{"PsiTerm"},(0x01000A77),0,95,0
+#{"PsiTerm"},(0x01000A77),0,96,0
 "psiterm.app"-"!:\System\Apps\PsiTerm\PsiTerm.app"
 "psiterm.rsc"-"!:\System\Apps\PsiTerm\PsiTerm.rsc"
 "psiterm.mbm"-"!:\System\Apps\PsiTerm\PsiTerm.mbm"

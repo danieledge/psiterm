@@ -120,6 +120,8 @@ enum TPsiTermCommands
 
 	// display work (docs/display.md): View > Reading mode (tick box)
 	EPtCmdReading,
+	// 0.96: View > Font > Other font... (any typeface the Psion has)
+	EPtCmdFontOther,
 
 	// 0.91: the file view (Get file / Send file), a view of the program's
 	// own with its own menus, shortcuts and toolbar (ptxfer.cpp)
@@ -196,7 +198,10 @@ enum TPsiTermDialogControls
 	EPtDlgLogExisting,
 	EPtDlgColourText,        // Preferences > Coloured text (docs/display.md)
 	EPtDlgFavList,           // Favourite folders (to 0.90)
-	EPtDlgGotoPath           // 0.91: the file view's Go to folder...
+	EPtDlgGotoPath,          // 0.91: the file view's Go to folder...
+	EPtDlgFontFace,          // 0.96: Other font... - the typeface,
+	EPtDlgFontSize,          // its size,
+	EPtDlgFontNote           // and whether it is fixed-width
 	};
 
 enum TPsiTermDialogButtons

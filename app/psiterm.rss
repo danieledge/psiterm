@@ -426,7 +426,23 @@ RESOURCE MENU_PANE r_pt_font_menu
 		MENU_ITEM { command=EPtCmdZoom1; txt="Terminus 12"; flags=EEikMenuItemRadioMiddle; },
 		MENU_ITEM { command=EPtCmdZoom2; txt="Terminus 14"; flags=EEikMenuItemRadioMiddle; },
 		MENU_ITEM { command=EPtCmdZoom3; txt="Terminus 16"; flags=EEikMenuItemRadioMiddle; },
-		MENU_ITEM { command=EPtCmdZoom4; txt="Terminus 18"; flags=EEikMenuItemRadioEnd; }
+		MENU_ITEM { command=EPtCmdZoom4; txt="Terminus 18"; flags=EEikMenuItemRadioEnd|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdFontOther; txt="Other font..."; }
+		};
+	}
+
+// View > Font > Other font... (0.96): any typeface the Psion has, at the
+// sizes it has. The note under the size says whether it is fixed-width.
+RESOURCE DIALOG r_pt_font_dialog
+	{
+	title="Font";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Font"; id=EPtDlgFontFace; control=CHOICELIST { maxdisplaychar=24; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Size"; id=EPtDlgFontSize; control=CHOICELIST { maxdisplaychar=24; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgFontNote; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Not a fixed-width font: letters are spaced out to fit"; }; }
 		};
 	}
 
