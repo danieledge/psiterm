@@ -73,6 +73,9 @@ struct TPsiSettings
 	// typeface and its height in pixels; the zoom keys step through its sizes.
 	TBuf<24> iFontName;   // (KMaxTypefaceNameLength)
 	TInt iFontPixels;
+	// v16 (0.97): Tools > Debug > Keep a log. 0 (the standard, and for
+	// older files) = no PsiTerm.log at all; 1 = psissh writes it
+	TInt iKeepLog;
 	};
 
 // TPsiSettings::iDisplay bits (all 0 is the standard)
@@ -900,6 +903,7 @@ private:
 	TBool iGreysOpen;                  // the greys screen is up (Reading mode stays off)
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
+	void HandleAttemptDimmedSelectionL(TInt aCommandId);   // (0.97) why Send log is dimmed
 	void HandleSwitchOnEventL(CCoeControl* aDestination);
 	void HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination);   // a backup is starting: close the log
 	TBool ConfirmDisconnectL(TInt aCommand);

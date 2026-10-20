@@ -1435,10 +1435,11 @@ int main(int argc, char **argv)
 	/* (0.89) the link log: C:\System\Data\PsiTerm.log. Opened here, before
 	   pg_init, so the serial port's own lines are in it. A new log for a
 	   session, an update or a screenshot upload; Send log only adds to it;
-	   the speed test and the key tools write none. */
+	   the speed test and the key tools write none. (0.97) Nothing at all
+	   unless the app's Tools > Debug > Keep a log is ticked (log_on). */
 	if (pg_attach() == 0) {
 		int m = pg_shared()->mode;
-		if (m == 0 || m == 2 || m == 3 || m == 6) {
+		if (pg_shared()->log_on && (m == 0 || m == 2 || m == 3 || m == 6)) {
 			pt_log_open(m == 6);
 			pg_set_link_log(pt_log);
 			pt_log(m == 6 ? "send log" : m == 2 ? "engine start: update" : m == 3 ? "engine start: upload" : "engine start: ssh");

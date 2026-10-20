@@ -132,6 +132,7 @@ enum TPsiTermCommands
 	EPtCmdBrClose,            // File > Close (Ctrl+E, Esc): back to the terminal
 	EPtCmdBrFavourite,        // Favourites > Favourite folder (Ctrl+F, tick box)
 	EPtCmdBrLast = EPtCmdBrFavourite,
+	EPtCmdKeepLog,            // 0.97: Tools > Debug > Keep a log (tick box; off as standard)
 
 	EPtCmdBrFav0 = 0x1380,    // ... + 7: go to favourite N (the Favourites menu)
 	EPtCmdSnippet0 = 0x1400,  // ... EPtCmdSnippet0 + KMaxSnippets - 1: send snippet N

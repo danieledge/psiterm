@@ -59,6 +59,12 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 0.97**
+- **No log unless you ask for one.** Tools > Debug > **Keep a log** is off
+  as standard, also for anyone updating: PsiTerm then writes no log file
+  at all. Tick it to keep PsiTerm.log again; *Send log to server* is dimmed
+  until it is ticked.
+
 **PsiTerm 0.95**
 - **One shared proxy**, set once in Connection settings > Network > Use
   proxy, for the suite's web traffic and Send log. It is optional and off as
@@ -66,7 +72,8 @@ click one to see it full size.
   [PsiProxy](https://github.com/danieledge/psiproxy) is the proxy made for
   these apps.
 - **Send log to server** (Tools > Debug) sends PsiTerm's log to your
-  PsiProxy when something goes wrong. PsiTerm now keeps a log.
+  PsiProxy when something goes wrong. (Since 0.97 the log is kept only
+  with Tools > Debug > Keep a log ticked.)
 - **Psion Internet can stay connected** after use, until you disconnect
   (Connection settings > Network > After use, Psion Internet). It is the
   standard on a new Psion; anyone updating keeps the old idle hang-up until
@@ -229,7 +236,8 @@ off as standard, and no address is built in. PsiTerm never sends its
 connections through a proxy: SSH, SFTP, tmux and updates all go direct. The
 only thing the proxy adds to PsiTerm is *Send log to server* (Tools > Debug),
 which sends PsiTerm's log to your own [PsiProxy](https://github.com/danieledge/psiproxy)
-to help find a fault. For what the proxy does for PsiMail and PsiWeb, see
+to help find a fault. PsiTerm keeps that log only while Tools > Debug >
+*Keep a log* is ticked (it is off as standard). For what the proxy does for PsiMail and PsiWeb, see
 their READMEs. Logs go as plain HTTP and can hold host and account names, so
 send them only to your own PsiProxy.
 

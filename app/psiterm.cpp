@@ -61,6 +61,7 @@ const TInt KDefaultZoom = 1;             // Terminus 6x12: 106 x 20
 const TInt KZoomCellW[KZoomLevels] = { 6, 6, 8, 8, 10 };
 const TInt KZoomCellH[KZoomLevels] = { 8, 12, 14, 16, 18 };
 _LIT(KIniFile, "C:\\System\\Apps\\PsiTerm\\PsiTerm.ini");
+_LIT(KPtLogOff, "Logging is off - turn on Tools > Debug > Keep a log");   // (0.97)
 _LIT(KHostsFile, "C:\\System\\Apps\\PsiTerm\\Hosts.dat");
 _LIT(KSnippetsFile, "C:\\System\\Apps\\PsiTerm\\Snippets.dat");
 _LIT8(KHangupEscape, "+++");
@@ -88,7 +89,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.96");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.97");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -3934,6 +3935,7 @@ void CTermView::LaunchSshL(TInt aMode)
 	Mem::Copy(iShared->entropy, iEntropy, PSI_ENTROPY_SIZE);
 	iShared->entropy_len = PSI_ENTROPY_SIZE;
 	iShared->mode = aMode;
+	iShared->log_on = iSettings.iKeepLog ? 1 : 0;   // (0.97) psissh writes PsiTerm.log only then
 	iEverLoggedIn = EFalse;
 	iLastState = -1;
 	{
@@ -5544,7 +5546,7 @@ TBool CConnDialog::OkToExitL(TInt aButtonId)
 	if (link.iKeepUp && iSettings.iNetMode)
 		{
 		TFileName near(iEikonEnv->EikAppUi()->Application()->AppFullName());
-		PsiHoldStart(fs, near);
+		PsiHoldStart(fs, near, iSettings.iKeepLog);   // (its PsiHold.log only with Keep a log)
 		}
 	return ETrue;
 	}
@@ -6439,6 +6441,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iDisplay = 0;       // Reading mode off, coloured text dark (docs/display.md)
 	aSettings.iFontName.Zero();   // the zoom levels (Terminus 12)
 	aSettings.iFontPixels = 0;
+	aSettings.iKeepLog = 0;       // v16 (0.97): no log unless Tools > Debug > Keep a log
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
@@ -6539,6 +6542,9 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 														if (aSettings.iFontPixels < 6)
 															aSettings.iFontName.Zero();   // (not a size we offer)
 														}
+													TInt kpos = fpos + 1 + flen + 1;   // v16 (0.97): Keep a log
+													if (kpos < data.Length())
+														aSettings.iKeepLog = data[kpos] == 1;
 													}
 												}
 											}
@@ -6601,6 +6607,7 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append((TUint8)tmp.Length());
 	data.Append(tmp);
 	data.Append((TUint8)(aSettings.iFontPixels & 0xff));
+	data.Append((TUint8)(aSettings.iKeepLog ? 1 : 0));    // v16 (0.97): Keep a log
 	SafeWrite(fs, KIniFile, data);
 	}
 
@@ -6788,10 +6795,11 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		return;
 		}
 	if (aMenuId == R_PT_DEBUG_MENU)           // (0.89) Send log needs the shared proxy
-		{
+		{                                     // (0.97) and a log: Keep a log ticked
 		TPsiLink link;
-		aMenuPane->SetItemDimmed(EPtCmdSendLog,
+		aMenuPane->SetItemDimmed(EPtCmdSendLog, !iView->Settings().iKeepLog ||
 			!link.Load(iCoeEnv->FsSession()) || !link.ProxyUsable() || iView->SendingLog());
+		aMenuPane->SetItemButtonState(EPtCmdKeepLog, iView->Settings().iKeepLog ? EEikMenuItemSymbolOn : 0);
 		return;
 		}
 	if (aMenuId == R_PT_FILES_POPUP)          // the toolbar's Files: as the File menu
@@ -6947,6 +6955,22 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPtCmdToolbar, s.iToolbar ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPtCmdReading, (s.iDisplay & KPtDisplayReading) ? EEikMenuItemSymbolOn : 0);
 		}
+	}
+
+// (0.97) a dimmed Send log to server: say why
+void CPsiTermAppUi::HandleAttemptDimmedSelectionL(TInt aCommandId)
+	{
+	if (aCommandId != EPtCmdSendLog)
+		{
+		CEikAppUi::HandleAttemptDimmedSelectionL(aCommandId);
+		return;
+		}
+	if (!iView->Settings().iKeepLog)
+		iEikonEnv->InfoMsg(KPtLogOff);
+	else if (iView->SendingLog())
+		iEikonEnv->InfoMsg(_L("Not available while the log is being sent"));
+	else
+		iEikonEnv->InfoMsg(_L("Not available - set a proxy in Connection settings"));
 	}
 
 void CPsiTermAppUi::HandleCommandL(TInt aCommand)
@@ -7122,9 +7146,21 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		break;
 		}
 	case EPtCmdSendLog:
+		if (!s.iKeepLog)                      // (0.97) nothing kept, nothing to send
+			{
+			iEikonEnv->InfoMsg(KPtLogOff);
+			break;
+			}
 		if (!ConfirmDisconnectL(aCommand))
 			break;
 		iView->StartSendLogL();
+		break;
+	case EPtCmdKeepLog:                       // (0.97) Tools > Debug > Keep a log
+		// Off as standard. psissh reads it when it starts: a session that
+		// is running carries on as it began. What is in PsiTerm.log stays.
+		s.iKeepLog = !s.iKeepLog;
+		SaveSettings(s);
+		iEikonEnv->InfoMsg(s.iKeepLog ? _L("Keeping a log") : _L("Not keeping a log"));
 		break;
 	case EPtCmdScreenshot: iView->ScreenshotL(); break;
 	case EPtCmdCopy:     iView->CopySelectionL(); break;

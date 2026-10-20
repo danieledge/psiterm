@@ -235,7 +235,8 @@ RESOURCE MENU_PANE r_pt_debug_menu
 		MENU_ITEM { command=EPtCmdCheckTabs; txt="Check tmux tabs"; },
 		MENU_ITEM { command=EPtCmdScreenshot; txt="Screenshot"; },
 		MENU_ITEM { command=EPtCmdSendSize; txt="Type screen size"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdSendLog; txt="Send log to server"; }
+		MENU_ITEM { command=EPtCmdSendLog; txt="Send log to server"; },
+		MENU_ITEM { command=EPtCmdKeepLog; txt="Keep a log"; flags=EEikMenuItemCheckBox; }
 		};
 	}
 
