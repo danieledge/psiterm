@@ -3729,7 +3729,8 @@ void CTermView::StartSendLogL()
 		return;
 		}
 	TPsiLink link;
-	// (not the Atom's own proxy: it has no /_putlog; then PsiDevBox.ini, if set)
+	// (behind the Atom's own proxy: PsiDevBox.ini if set, else the Atom's, which
+	// passes it on to a PsiProxy or says it has none: psishim.c run_putlog)
 	if (!link.Load(iCoeEnv->FsSession()) || !link.ProxyUsable() ||
 		!link.DevBox(iCoeEnv->FsSession(), iLogHost, iLogPort))
 		{
@@ -4399,6 +4400,8 @@ void CTermView::SshProcessEnded()
 		TBuf<128> m;
 		if (type != EExitPanic && !killed && logState == PSI_LOG_SENT)
 			m.Copy(_L("Log sent"));
+		else if (type != EExitPanic && !killed && logWhy.Length() >= 5 && logWhy.Left(5) == _L("Needs"))
+			m.Copy(logWhy);                  // "Needs PsiProxy on a computer" (the Atom's own proxy answered)
 		else
 			{
 			m.Copy(_L("Could not send log - "));

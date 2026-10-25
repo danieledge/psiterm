@@ -30,6 +30,7 @@
 #include "zlib.h"
 #include "tls13.h"
 #include "session.h"                 /* ses: the keepalive clock, for the switch-on probe */
+#include "../core/ssh/pgdevbox.h"    /* /_putlog: only PsiProxy's answer counts */
 #include <termios.h>
 #include <sys/uio.h>
 #ifdef PSI_HOST_TEST
@@ -1257,9 +1258,11 @@ fail:
 
    Each log follows a "==== name ====" line. If there is more than
    LOG_MAX the front is cut, so the newest lines survive. The files are
-   read in 1 KB pieces. Only the reply's status line is read; 200 is
-   success. How it went goes to the app in log_state / log_msg. Exit code
-   12 = sent. */
+   read in 1 KB pieces. The reply's status line, headers and first line
+   are read: only PsiProxy's "Log saved: ..." is success; the Atom modem's
+   own proxy (501 and "X-PsiConnect: no-psiproxy", or an older Atom's
+   status page) is "Needs PsiProxy on a computer" (pgdevbox.h). How it went
+   goes to the app in log_state / log_msg. Exit code 12 = sent. */
 #define LOG_MAX (1000L * 1024)
 
 static void log_end(int state, const char *fmt, ...)
@@ -1310,7 +1313,7 @@ static int run_putlog(void)
 	PsiShared *s = pg_shared();
 	char req[400], why[96], line[200];
 	long sold, scur, ho, hc, total, cut, skip_old = 0, skip_cur = 0;
-	int n = 0, c, status = 0, i, ok;
+	int n = 0, c, status = 0, i, ok, part = 0, nopp = 0, saved = 0;
 
 	s->proxy_host[sizeof(s->proxy_host) - 1] = 0;
 	s->version[sizeof(s->version) - 1] = 0;
@@ -1350,7 +1353,7 @@ static int run_putlog(void)
 	}
 	sprintf(req, "POST /_putlog?app=PsiTerm&ver=%.15s HTTP/1.0\r\nHost: %.64s:%d\r\nUser-Agent: PsiTerm/%.15s\r\n"
 		"Content-Type: text/plain\r\nContent-Length: %ld\r\nConnection: close\r\n\r\n",
-		s->version, s->proxy_host, s->proxy_port, s->version, total);
+		s->version, pg_devbox_hostname(s->proxy_host), s->proxy_port, s->version, total);
 	ok = pg_serial_write(req, (int)strlen(req)) == (int)strlen(req);
 	if (ok && ho > 0) ok = pg_serial_write(hdr_old, (int)ho) == (int)ho;
 	if (ok && sold > 0) ok = putlog_file(1, skip_old, sold) == 0;
@@ -1361,34 +1364,51 @@ static int run_putlog(void)
 		log_end(PSI_LOG_FAILED, pg_quit_requested() ? "stopped" : "the connection was lost");
 		return 2;
 	}
-	/* the status line; anything else in the reply is ignored and garbage is "not a web proxy" */
-	for (i = 0; i < 400 && !status; i++) {
+	/* the status line (garbage is "not a web proxy"), the headers, then the
+	   body's first line; the rest is ignored. part: 0 status, 1 headers, 2 body */
+	for (i = 0; i < 2000 && part < 3; i++) {
 		unsigned char ch;
 		int r = io_read(&ch, 1, 30000);
 		if (r != 1) {
+			if (part == 2 || (part == 1 && r != -2)) break;   /* (the body, or the reply, ends with the connection) */
 			pg_hangup();
 			log_end(PSI_LOG_FAILED, r == -2 ? "stopped" : "no reply from the proxy");
 			return 2;
 		}
 		c = ch;
 		if (c == '\r') continue;
-		if (c != '\n') { if (n < (int)sizeof(line) - 1) line[n++] = (char)c; continue; }
-		line[n] = 0;
-		if (n == 0) continue;                /* (modem CONNECT leftovers) */
-		n = 0;
-		if (strncmp(line, "HTTP/", 5) || !strchr(line, ' ')) {
-			pg_hangup();
-			log_end(PSI_LOG_FAILED, "not a web proxy");
-			return 2;
+		if (c != '\n') {
+			if (n < (int)sizeof(line) - 1) line[n++] = (char)c;
+			if (part == 2 && n >= 9) break;  /* (enough to tell "Log saved") */
+			continue;
 		}
-		status = atoi(strchr(line, ' ') + 1);
+		line[n] = 0;
+		if (part == 0) {
+			if (n == 0) continue;            /* (modem CONNECT leftovers) */
+			if (strncmp(line, "HTTP/", 5) || !strchr(line, ' ')) {
+				pg_hangup();
+				log_end(PSI_LOG_FAILED, "not a web proxy");
+				return 2;
+			}
+			status = atoi(strchr(line, ' ') + 1);
+			part = 1;
+		} else if (part == 1) {
+			if (n == 0) part = 2;
+			else if (pg_no_psiproxy_line(line)) nopp = 1;
+		} else
+			part = 3;
+		n = 0;
 	}
+	if (part == 2) { line[n] = 0; n = 0; }   /* (a first line with no line end) */
+	saved = part >= 2 && pg_putlog_saved(line);
 	pg_hangup();
-	if (status == 200) {
+	ok = pg_psiproxy_answer(status, nopp, saved);
+	if (ok == PG_ANSWER_OK) {
 		log_end(PSI_LOG_SENT, "log sent (%ld bytes)", total);
 		return 12;
 	}
-	if (status == 413) log_end(PSI_LOG_FAILED, "the log is too big");
+	if (ok == PG_ANSWER_NEEDS) log_end(PSI_LOG_FAILED, PG_NEEDS_PSIPROXY);
+	else if (status == 413) log_end(PSI_LOG_FAILED, "the log is too big");
 	else log_end(PSI_LOG_FAILED, "the proxy said %d", status);
 	return 2;
 }

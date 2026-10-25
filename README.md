@@ -221,7 +221,8 @@ connection is up and names can be looked up (it asks before dialling).
   is never overrun even on a three-wire cable without RTS/CTS. Its README has
   the wiring, flashing, Wi-Fi set-up and the settings to use. It has a
   small web proxy of its own for PsiWeb and PsiMail; it is not PsiProxy, so
-  *Send log to server* still needs a PsiProxy on a computer.
+  *Send log to server* still needs a PsiProxy on a computer: set it in the
+  modem's Web proxy settings (AT$PU) and the log goes through the Atom.
 - **After use, Psion Internet** (Connection settings > Network): *Stays
   connected* (the standard on a new Psion) keeps the dial-up connection up
   after use, for all the apps, until you disconnect; *Disconnects when
