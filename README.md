@@ -70,7 +70,7 @@ click one to see it full size.
   proxy, for the suite's web traffic and Send log. It is optional and off as
   standard, with no address built in.
   [PsiProxy](https://github.com/danieledge/psiproxy) is the proxy made for
-  these apps.
+  these apps. [Choosing your setup](https://github.com/danieledge/psion-core/blob/main/docs/SETUP.md) compares the set-ups.
 - **Send log to server** (Tools > Debug) sends PsiTerm's log to your
   PsiProxy when something goes wrong. (Since 0.97 the log is kept only
   with Tools > Debug > Keep a log ticked.)
