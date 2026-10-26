@@ -59,6 +59,16 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 0.98**
+- **Runs on the netBook.** SSH no longer stops with KERN-EXEC 3 while
+  setting up encryption on a Psion netBook (or Series 7). The compiler's
+  helper routines ended with an instruction the netBook's StrongARM does
+  not have; they are now linked without it. The Series 5mx is unaffected.
+- **Send log to server through the Atom modem.** With the shared proxy set
+  to the Atom's own (`psiproxy`), Send log goes through the modem to
+  PsiProxy when the modem knows where it is (firmware 2.7, `AT$PU`), and
+  otherwise says "Needs PsiProxy on a computer".
+
 **PsiTerm 0.97**
 - **No log unless you ask for one.** Tools > Debug > **Keep a log** is off
   as standard, also for anyone updating: PsiTerm then writes no log file
