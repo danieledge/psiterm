@@ -68,6 +68,14 @@ struct TPsiSettings
 	TBuf<40> iPppStart;   // Psion Internet: sent to the modem first (empty = nothing)
 	TInt iToolbar;        // 1 = the toolbar is showing (0.71: saved as one more byte, v13)
 	TInt iDisplay;        // v14 (docs/display.md): KPtDisplay* bits
+	// v15 (0.96): View > Font > Other font... An empty name is the standard:
+	// the zoom levels (Terminus and Courier small, iZoom). Otherwise the
+	// typeface and its height in pixels; the zoom keys step through its sizes.
+	TBuf<24> iFontName;   // (KMaxTypefaceNameLength)
+	TInt iFontPixels;
+	// v16 (0.97): Tools > Debug > Keep a log. 0 (the standard, and for
+	// older files) = no PsiTerm.log at all; 1 = psissh writes it
+	TInt iKeepLog;
 	};
 
 // TPsiSettings::iDisplay bits (all 0 is the standard)
@@ -398,6 +406,36 @@ private:
 	TBool iFinished;
 	};
 
+// View > Font > Other font... (0.96): every typeface the screen device
+// knows (the ROM's, those in \System\Fonts\ on any disk, and PsiTerm's own
+// Terminus) and the sizes each one has. Sets iFontName / iFontPixels, or
+// the zoom level when the choice is one of the Font menu's own.
+const TInt KMaxFontFaces = 40;
+const TInt KMaxFontSizes = 16;
+class CFontDialog : public CEikDialog
+	{
+public:
+	CFontDialog(TDes& aName, TInt& aPixels, const TSize& aRoom) : iName(aName), iPixels(aPixels), iRoom(aRoom) {}
+	// the heights in pixels typeface aName has, smallest first (ETrue if found)
+	static TBool FaceHeights(const TDesC& aName, TInt* aPixels, TInt& aCount, TBool& aProportional);
+private:
+	void SetSizeAndPositionL(const TSize& aSize);
+	void PreLayoutDynInitL();
+	void HandleControlStateChangeL(TInt aControlId);
+	TBool OkToExitL(TInt aButtonId);
+	TBool HasLetters(const TDesC& aName, const TTypefaceSupport& aSupport);
+	void FillSizesL(TInt aWantPixels);  // the sizes of the typeface shown
+	void ShowNoteL();
+	TDes& iName;                       // in: the font in use; out: the choice
+	TInt& iPixels;
+	TSize iRoom;                       // the terminal's room, for "columns x rows"
+	TInt iFaceCount;
+	TBuf<24> iFaceName[KMaxFontFaces]; // sorted by name
+	TInt iSizeCount;
+	TInt iSizePixels[KMaxFontSizes];
+	TBool iSizeMono[KMaxFontSizes];
+	};
+
 // Baud rate, flow control, link type
 class CConnDialog : public CEikDialog
 	{
@@ -496,7 +534,12 @@ public:
 	void ResetTerminal();
 	void ApplySerialSettings();
 	void SerialClose() { if (iSerial) iSerial->Close(); }   // Connection settings > Test
-	void SetFontL(TInt aZoom);
+	void SetFontL(TInt aZoom);         // one of the zoom levels (Terminus, Courier small)
+	void SetFaceL(const TDesC& aName, TInt aPixels);   // 0.96: any typeface
+	void ApplyFontL();                 // the font in the settings, again
+	TBool OtherFont() const { return iSettings.iFontName.Length() > 0; }
+	void CurrentFace(TDes& aName, TInt& aPixels) const;   // the font in use
+	TSize TermRoom() const { return TSize(Rect().Width(), Rect().Height() - iStatusH); }
 	void ZoomBy(TInt aStep);
 	void SetTermRectL(const TRect& aRect);   // the toolbar came or went: lay out again
 	void SizeAtZoom(TInt aZoom, TInt& aCols, TInt& aRows) const;   // for the Font menu
@@ -606,6 +649,9 @@ private:
 	void AddDamage(TInt aRow0, TInt aCol0, TInt aRow1, TInt aCol1);
 	void FeedTerminal(const TUint8* aBytes, TInt aLen);
 	void ReleaseFont();
+	void MeasureFont();
+	void LoadFontFolders();
+	void DrawInCell(CWindowGc& aGc, const TDesC& aText, const TRect& aCell, TBool aBold) const;                // cell size and iMono for iFont, then Layout
 	void WriteToHost(const TDesC8& aBytes);
 	void LaunchSshL(TInt aMode = 0);
 	void PumpSsh();
@@ -637,6 +683,9 @@ private:
 	TBool iMono;          // every glyph is exactly iCellW wide: draw whole runs
 	TInt iFontFileId;     // PsiTerm.gdr (Spleen) added to the font server
 	TBool iFontFileLoaded;
+	enum { KMaxExtraFonts = 16 };
+	TInt iExtraFontId[KMaxExtraFonts];   // (0.96) fonts in \System\Fonts\ on the disks
+	TInt iExtraFonts;
 	CWindowGc* iPaintGc;  // non-NULL while BeginPaint..EndPaint is active
 
 	// scrollback: lines pushed off the top of the screen
@@ -854,6 +903,7 @@ private:
 	TBool iGreysOpen;                  // the greys screen is up (Reading mode stays off)
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
+	void HandleAttemptDimmedSelectionL(TInt aCommandId);   // (0.97) why Send log is dimmed
 	void HandleSwitchOnEventL(CCoeControl* aDestination);
 	void HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination);   // a backup is starting: close the log
 	TBool ConfirmDisconnectL(TInt aCommand);

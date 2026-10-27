@@ -59,14 +59,31 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 0.98**
+- **Runs on the netBook.** SSH no longer stops with KERN-EXEC 3 while
+  setting up encryption on a Psion netBook (or Series 7). The compiler's
+  helper routines ended with an instruction the netBook's StrongARM does
+  not have; they are now linked without it. The Series 5mx is unaffected.
+- **Send log to server through the Atom modem.** With the shared proxy set
+  to the Atom's own (`psiproxy`), Send log goes through the modem to
+  PsiProxy when the modem knows where it is (firmware 2.7, `AT$PU`), and
+  otherwise says "Needs PsiProxy on a computer".
+
+**PsiTerm 0.97**
+- **No log unless you ask for one.** Tools > Debug > **Keep a log** is off
+  as standard, also for anyone updating: PsiTerm then writes no log file
+  at all. Tick it to keep PsiTerm.log again; *Send log to server* is dimmed
+  until it is ticked.
+
 **PsiTerm 0.95**
 - **One shared proxy**, set once in Connection settings > Network > Use
   proxy, for the suite's web traffic and Send log. It is optional and off as
   standard, with no address built in.
   [PsiProxy](https://github.com/danieledge/psiproxy) is the proxy made for
-  these apps.
+  these apps. [Choosing your setup](https://github.com/danieledge/psion-core/blob/main/docs/SETUP.md) compares the set-ups.
 - **Send log to server** (Tools > Debug) sends PsiTerm's log to your
-  PsiProxy when something goes wrong. PsiTerm now keeps a log.
+  PsiProxy when something goes wrong. (Since 0.97 the log is kept only
+  with Tools > Debug > Keep a log ticked.)
 - **Psion Internet can stay connected** after use, until you disconnect
   (Connection settings > Network > After use, Psion Internet). It is the
   standard on a new Psion; anyone updating keeps the old idle hang-up until
@@ -139,7 +156,10 @@ and Claude Code - on a 1999 palmtop.
 - Auto-reconnect when a session drops (Psion switched off, Wi-Fi gone), with an
   optional per-server command on login such as `tmux new -A -s psion` to land
   back where you were
-- Terminus font in four sizes (plus Courier), optional bold, 16 greys
+- Terminus font in four sizes (plus Courier), optional bold, 16 greys. View >
+  Font > Other font... picks any font the Psion has (the ROM's, and any `.gdr`
+  in `\System\Fonts\` on any disk) at any of its sizes; a proportional font
+  is spaced out to keep the columns
 - The standard EIKON toolbar: SSH to (End SSH while connected), then the Send
   snippet, Keys and Files pop-ups (Files: Send file, Get file, Log to file),
   and the clock. The sidebar's zoom icons zoom the terminal (as View > Zoom
@@ -211,7 +231,8 @@ connection is up and names can be looked up (it asks before dialling).
   is never overrun even on a three-wire cable without RTS/CTS. Its README has
   the wiring, flashing, Wi-Fi set-up and the settings to use. It has a
   small web proxy of its own for PsiWeb and PsiMail; it is not PsiProxy, so
-  *Send log to server* still needs a PsiProxy on a computer.
+  *Send log to server* still needs a PsiProxy on a computer: set it in the
+  modem's Web proxy settings (AT$PU) and the log goes through the Atom.
 - **After use, Psion Internet** (Connection settings > Network): *Stays
   connected* (the standard on a new Psion) keeps the dial-up connection up
   after use, for all the apps, until you disconnect; *Disconnects when
@@ -226,7 +247,8 @@ off as standard, and no address is built in. PsiTerm never sends its
 connections through a proxy: SSH, SFTP, tmux and updates all go direct. The
 only thing the proxy adds to PsiTerm is *Send log to server* (Tools > Debug),
 which sends PsiTerm's log to your own [PsiProxy](https://github.com/danieledge/psiproxy)
-to help find a fault. For what the proxy does for PsiMail and PsiWeb, see
+to help find a fault. PsiTerm keeps that log only while Tools > Debug >
+*Keep a log* is ticked (it is off as standard). For what the proxy does for PsiMail and PsiWeb, see
 their READMEs. Logs go as plain HTTP and can hold host and account names, so
 send them only to your own PsiProxy.
 
