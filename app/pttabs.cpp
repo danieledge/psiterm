@@ -30,6 +30,16 @@ static TRgb Gray4(TInt aLevel)
 	return TRgb::Gray4(aLevel);  // 0 black, 1 dark grey, 2 light grey, 3 white
 	}
 
+// A tab's colours. On the 5mx, EIKON's greys; on a colour screen (Series 7,
+// netBook) the strip is the Series 7's title-band navy, as PsiTerm's status
+// line, with the current tab in the terminal's own colours: black bevels
+// and a grey dialog face looked out of place against a coloured theme.
+struct TTabLook
+	{
+	TRgb iFace, iInk;            // the tab and its text
+	TRgb iEdge, iShade, iLight;  // outline, shadow inside the right edge, highlight
+	};
+
 static const CFont* TabFont()
 	{
 	return CEikonEnv::Static()->NormalFont();     // the dialog font
@@ -193,24 +203,24 @@ void CTermView::LayoutTabs(const CFont& aFont, TInt aLeft, TInt aRight)
 // line, to join the page): its outline, shadow and (on the current one)
 // highlight, and its text, clipped with "..." to fit
 static void DrawOneTab(CWindowGc& aGc, const CFont& aFont, TInt aL, TInt aR, TInt aTop,
-	TInt aBottom, TInt aBase, TBool aCurrent, const TDesC& aText, TRgb aFace, TRgb aInk)
+	TInt aBottom, TInt aBase, TBool aCurrent, const TDesC& aText, const TTabLook& aLook)
 	{
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	aGc.SetBrushColor(aFace);
+	aGc.SetBrushColor(aLook.iFace);
 	aGc.DrawRect(TRect(aL + 1, aTop + 1, aR, aBottom + 1));
 	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-	aGc.SetPenColor(Gray4(0));
+	aGc.SetPenColor(aLook.iEdge);
 	aGc.DrawLine(TPoint(aL, aTop), TPoint(aR + 1, aTop));
 	aGc.DrawLine(TPoint(aL, aTop), TPoint(aL, aBottom + 1));
 	aGc.DrawLine(TPoint(aR, aTop), TPoint(aR, aBottom + 1));
-	aGc.SetPenColor(Gray4(1));
+	aGc.SetPenColor(aLook.iShade);
 	aGc.DrawLine(TPoint(aR - 1, aTop + 1), TPoint(aR - 1, aBottom + 1));
 	if (aCurrent)
 		{
 		aGc.DrawLine(TPoint(aR - 2, aTop + 2), TPoint(aR - 2, aBottom + 1));
-		aGc.SetPenColor(Gray4(2));
+		aGc.SetPenColor(aLook.iLight);
 		aGc.DrawLine(TPoint(aL + 2, aTop + 2), TPoint(aR - 2, aTop + 2));
 		aGc.DrawLine(TPoint(aL + 2, aTop + 2), TPoint(aL + 2, aBottom + 1));
 		}
@@ -220,18 +230,18 @@ static void DrawOneTab(CWindowGc& aGc, const CFont& aFont, TInt aL, TInt aR, TIn
 	TInt room = aR - aL + 1 - KTabExtraW;
 	if (aFont.TextWidthInPixels(shown) > room)
 		TextUtils::ClipToFit(shown, aFont, room);
-	aGc.SetPenColor(aInk);
+	aGc.SetPenColor(aLook.iInk);
 	aGc.DrawText(shown, TPoint(aL + KTabTextX, aBase));
 	}
 
 // a scroll arrow: an unselected tab with a black triangle
-static void DrawArrow(CWindowGc& aGc, TInt aL, TInt aTop, TInt aBottom, TBool aRight, TRgb aFace)
+static void DrawArrow(CWindowGc& aGc, TInt aL, TInt aTop, TInt aBottom, TBool aRight, const TTabLook& aLook)
 	{
 	TInt r = aL + KTabArrowW - 1;
-	DrawOneTab(aGc, *TabFont(), aL, r, aTop, aBottom, 0, EFalse, KNullDesC, aFace, aFace);
+	DrawOneTab(aGc, *TabFont(), aL, r, aTop, aBottom, 0, EFalse, KNullDesC, aLook);
 	TInt cy = (aTop + aBottom) / 2;
 	TInt cx = (aL + r) / 2;
-	aGc.SetPenColor(Gray4(0));
+	aGc.SetPenColor(aLook.iInk);
 	for (TInt i = 0; i < 4; i++)
 		{
 		TInt x = aRight ? cx - 2 + i : cx + 2 - i;   // (the tip points out)
@@ -256,10 +266,34 @@ void CTermView::DrawTabs(CWindowGc& aGc) const
 		DrawCells(aGc, iTabHideRow, 0, iTabHideRow + 1, iCols);
 		return;
 		}
-	CEikonEnv* env = CEikonEnv::Static();
-	TRgb face = env->ControlColor(EEikColorDialogBackground, *this);
-	TRgb ink = env->ControlColor(EEikColorDialogText, *this);
-	aGc.SetBrushColor(face);
+	TTabLook look, cur;
+	TRgb band;                                  // the strip behind the tabs
+	if (iColour)
+		{
+		band = TRgb(0, 0, 128);
+		look.iFace = TRgb(40, 48, 160);
+		look.iInk = TRgb(224, 228, 255);
+		look.iEdge = TRgb(0, 0, 72);
+		look.iShade = TRgb(24, 30, 120);
+		look.iLight = look.iFace;
+		cur.iFace = Grey(15);                   // the page: the theme's paper
+		cur.iInk = Grey(0);
+		cur.iEdge = look.iEdge;
+		cur.iShade = cur.iLight = cur.iFace;    // (flat: no bevel)
+		}
+	else
+		{
+		CEikonEnv* env = CEikonEnv::Static();
+		band = look.iFace = env->ControlColor(EEikColorDialogBackground, *this);
+		look.iInk = env->ControlColor(EEikColorDialogText, *this);
+		look.iEdge = Gray4(0);
+		look.iShade = Gray4(1);
+		look.iLight = Gray4(2);
+		cur = look;
+		cur.iFace = Grey(15);                   // the terminal's own colours
+		cur.iInk = Grey(0);
+		}
+	aGc.SetBrushColor(band);
 	aGc.DrawRect(strip);
 	const CFont* f = TabFont();
 	aGc.UseFont(f);
@@ -269,7 +303,7 @@ void CTermView::DrawTabs(CWindowGc& aGc) const
 	TInt bottom = iOriginY0 + iTabStripH - 1;   // the page's top line
 	TInt base = bottom - 3 - f->DescentInPixels();
 	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-	aGc.SetPenColor(Gray4(0));
+	aGc.SetPenColor(look.iEdge);
 	aGc.DrawLine(TPoint(0, bottom), TPoint(width, bottom));
 	TBuf<40> label;
 	TInt curTab = -1;
@@ -284,18 +318,18 @@ void CTermView::DrawTabs(CWindowGc& aGc) const
 			}
 		TabLabel(label, iTabs[i]);
 		DrawOneTab(aGc, *f, iTabs[i].iX0, iTabs[i].iX1, top + KTabRaise, bottom - 1, base,
-			EFalse, label, face, ink);
+			EFalse, label, look);
 		}
 	if (iTabArrowL >= 0)
-		DrawArrow(aGc, iTabArrowL, top + KTabRaise, bottom - 1, EFalse, face);
+		DrawArrow(aGc, iTabArrowL, top + KTabRaise, bottom - 1, EFalse, look);
 	if (iTabArrowR >= 0)
-		DrawArrow(aGc, iTabArrowR, top + KTabRaise, bottom - 1, ETrue, face);
+		DrawArrow(aGc, iTabArrowR, top + KTabRaise, bottom - 1, ETrue, look);
 	if (curTab >= 0)
 		{
 		// the terminal's own colours, so the tab joins it as a page
 		TabLabel(label, iTabs[curTab]);
 		DrawOneTab(aGc, *f, iTabs[curTab].iX0, iTabs[curTab].iX1, top, bottom, base,
-			ETrue, label, Grey(15), Grey(0));
+			ETrue, label, cur);
 		}
 	aGc.UseFont(iFont);
 	}
