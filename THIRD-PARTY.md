@@ -6,6 +6,7 @@
 | [libvterm](https://www.leonerd.org.uk/code/libvterm/) (upstream `934bc2fb`, Psion changes in `docs/patches/libvterm-psion.diff`) | `libvterm/` | MIT - see `libvterm/LICENSE` |
 | [zlib](https://zlib.net/) | `core/ssh/zlib/` (psion-core) | zlib licence - see `core/ssh/zlib/LICENSE` |
 | [Terminus Font](https://terminus-font.sourceforge.net/) (converted to EPOC format) | `core/tools/fonts/`, `core/pkg/psiterm.gdr` (psion-core); installed with PsiTerm | SIL Open Font License 1.1 - see `core/pkg/terminus-licence.txt` |
+| [Spleen](https://github.com/fcambus/spleen), [Gohufont](https://font.gohu.org/) and [Cozette](https://github.com/slavfox/Cozette) (converted to EPOC format, in the same `psiterm.gdr`) | `core/tools/fonts/src/`, `core/pkg/psiterm.gdr` (psion-core); installed with PsiTerm | BSD 2-clause, WTFPL and MIT - see `core/pkg/font-licences.txt` |
 | EPOC C Standard Library (`stdlib.sis`, ESTLIB.DLL) from the Psion EPOC R5 C++ SDK | embedded in `dist/PsiTerm.sis` (not in this repository) | Psion's redistributable runtime, shipped with apps that use it as the SDK directs |
 
 Dropbear is vendored from upstream commit `59870ad4` (2026-08-31) with Psion

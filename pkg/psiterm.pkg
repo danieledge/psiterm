@@ -1,8 +1,8 @@
-; PsiTerm 0.87 installer for Psion Series 5mx (EPOC R5)
+; PsiTerm installer for the Psion Series 5mx, Series 7 and netBook (EPOC R5)
 ; PsiTerm: libvterm terminal.  psissh.exe: Dropbear SSH client.
 ; psihold.exe: holds the Psion Internet connection up after use ("Stay connected", ssh/psihold.cpp)
 &EN
-#{"PsiTerm"},(0x01000A77),0,98,0
+#{"PsiTerm"},(0x01000A77),0,99,0
 "psiterm.app"-"!:\System\Apps\PsiTerm\PsiTerm.app"
 "psiterm.rsc"-"!:\System\Apps\PsiTerm\PsiTerm.rsc"
 "psiterm.mbm"-"!:\System\Apps\PsiTerm\PsiTerm.mbm"
@@ -11,6 +11,7 @@
 "psiterm.aif"-"!:\System\Apps\PsiTerm\PsiTerm.aif"
 "psiterm.gdr"-"!:\System\Apps\PsiTerm\PsiTerm.gdr"
 "terminus-licence.txt"-"!:\System\Apps\PsiTerm\Terminus-licence.txt"
+"font-licences.txt"-"!:\System\Apps\PsiTerm\Font-licences.txt"
 ; PsiTerm's own files (settings, saved servers, snippets, the key list, the
 ; random seed, the SSH known_hosts): not installed, kept across upgrades,
 ; removed with the program so nothing is left behind (makesis FN)

@@ -27,7 +27,9 @@ void SbPush(TTermSb* aSb, const TSbCell* aLine, int aCols)
 		aCols = 0;
 	// drop trailing blank cells: most lines are short
 	while (aCols > 0 && (aLine[aCols - 1].iCh == 0 || aLine[aCols - 1].iCh == ' ')
-		&& (aLine[aCols - 1].iGrey & 0x0f) == 15 && !(aLine[aCols - 1].iFlags & (KSbUnderline | KSbStrike)))
+		&& ((aLine[aCols - 1].iFlags & KSbColour) ? ((aLine[aCols - 1].iFlags & KSbDefBg) && aLine[aCols - 1].iBg == 0)
+			: aLine[aCols - 1].iBg == 15)
+		&& !(aLine[aCols - 1].iFlags & (KSbUnderline | KSbStrike)))
 		aCols--;
 	TSbCell* dst = aSb->iCells + aSb->iHead * aSb->iMaxCols;
 	for (int i = 0; i < aCols; i++)

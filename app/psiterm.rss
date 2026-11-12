@@ -427,7 +427,8 @@ RESOURCE MENU_PANE r_pt_font_menu
 		MENU_ITEM { command=EPtCmdZoom1; txt="Terminus 12"; flags=EEikMenuItemRadioMiddle; },
 		MENU_ITEM { command=EPtCmdZoom2; txt="Terminus 14"; flags=EEikMenuItemRadioMiddle; },
 		MENU_ITEM { command=EPtCmdZoom3; txt="Terminus 16"; flags=EEikMenuItemRadioMiddle; },
-		MENU_ITEM { command=EPtCmdZoom4; txt="Terminus 18"; flags=EEikMenuItemRadioEnd|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdZoom4; txt="Terminus 18"; flags=EEikMenuItemRadioMiddle; },
+		MENU_ITEM { command=EPtCmdZoom5; txt="Terminus 24"; flags=EEikMenuItemRadioEnd|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdFontOther; txt="Other font..."; }
 		};
 	}
@@ -722,6 +723,12 @@ RESOURCE ARRAY r_pt_theme_array
 	items={ LBUF { txt="Classic"; }, LBUF { txt="Inverted (light on dark)"; }, LBUF { txt="High contrast"; }, LBUF { txt="Soft"; } };
 	}
 
+// the same four themes on a colour screen (Series 7, netBook)
+RESOURCE ARRAY r_pt_theme_colour_array
+	{
+	items={ LBUF { txt="Light"; }, LBUF { txt="Dark"; }, LBUF { txt="High contrast"; }, LBUF { txt="Soft"; } };
+	}
+
 RESOURCE ARRAY r_pt_cursor_array
 	{
 	items={ LBUF { txt="Block"; }, LBUF { txt="Underline"; }, LBUF { txt="Bar"; } };
@@ -774,7 +781,7 @@ RESOURCE DIALOG r_pt_about_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout1; control=LABEL { standard_font=EEikLabelFontLegend; txt="PsiTerm 0.13"; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout2; control=LABEL { txt="SSH terminal for the Psion Series 5mx - (c) 2026 Dan Edge"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout2; control=LABEL { txt="SSH terminal for the Psion Series 5mx and Series 7 - (c) 2026 Dan Edge"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAboutStatus; control=LABEL { standard_font=EEikLabelFontAnnotation; reserve_length=48; txt="-"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout4; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Dropbear SSH (c) Matt Johnston, libvterm (c) Paul Evans - MIT"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout6; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="LibTomCrypt, LibTomMath, TweetNaCl - public domain"; }; },

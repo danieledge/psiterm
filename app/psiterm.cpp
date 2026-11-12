@@ -46,20 +46,68 @@ _LIT(KLddName, "ECOMM");
 _LIT(KCsyName, "ECUART");
 _LIT(KPortName, "COMM::0");
 _LIT(KFontCourier, "Courier");
-_LIT(KFontTerminus, "Terminus");         // from PsiTerm.gdr, next to the app
 _LIT(KFontFile, "PsiTerm.gdr");
 
-// Zoom levels, smallest first: typeface (0 = Terminus, 1 = the ROM's Courier)
-// and pixel height. The sidebar zoom buttons step through these. The one
-// Courier size is the only one with 24+ rows, for apps like btop.
-const TInt KZoomLevels = 5;
-const TInt KZoomFace[KZoomLevels] = { 1, 0, 0, 0, 0 };
-const TInt KZoomPixels[KZoomLevels] = { 8, 12, 14, 16, 18 };
-const TInt KDefaultZoom = 1;             // Terminus 6x12: 106 x 20
-// each size's cell, for the Font menu's "columns x rows" (SetFontL measures
-// the real font; these are what Courier small and Terminus 12-18 come to)
-const TInt KZoomCellW[KZoomLevels] = { 6, 6, 8, 8, 10 };
-const TInt KZoomCellH[KZoomLevels] = { 8, 12, 14, 16, 18 };
+// Zoom levels, smallest first: level 0 is the ROM's Courier small (the only
+// size with 24+ rows on the 5mx, for apps like btop), then the sizes of the
+// typeface chosen in Preferences, all from PsiTerm.gdr (psion-core
+// tools/fonts/mkgd.py). The sidebar zoom buttons step through them.
+const TInt KMaxZoomLevels = 6;
+const TInt KCourierPixels = 8;
+const TInt KCourierCellW = 6;
+const TInt KDefaultZoom = 1;             // Terminus 6x12: 106 x 20 on the 5mx
+struct TPtFace
+	{
+	const TText* iName;                  // the typeface name in PsiTerm.gdr
+	TInt iSizes;
+	TInt iPixels[KMaxZoomLevels - 1];
+	TInt iCellW[KMaxZoomLevels - 1];     // (for the Font menu's "columns x rows")
+	};
+const TInt KFaceCount = 4;
+static const TPtFace KFaces[KFaceCount] =
+	{
+	{ _S("Terminus"), 5, { 12, 14, 16, 18, 24 }, { 6, 8, 8, 10, 12 } },
+	{ _S("Spleen"), 3, { 12, 16, 24, 0, 0 }, { 6, 8, 12, 0, 0 } },
+	{ _S("Gohufont"), 2, { 11, 14, 0, 0, 0 }, { 6, 8, 0, 0, 0 } },
+	{ _S("Cozette"), 1, { 13, 0, 0, 0, 0 }, { 6, 0, 0, 0, 0 } }
+	};
+
+static const TPtFace& Face(TInt aFace)
+	{
+	return KFaces[(aFace >= 0 && aFace < KFaceCount) ? aFace : 0];
+	}
+
+TInt CTermView::ZoomLevels(TInt aFace)
+	{
+	return 1 + Face(aFace).iSizes;
+	}
+
+TInt CTermView::ZoomPixels(TInt aFace, TInt aZoom)
+	{
+	if (aZoom <= 0 || aZoom >= ZoomLevels(aFace))
+		return KCourierPixels;
+	return Face(aFace).iPixels[aZoom - 1];
+	}
+
+void CTermView::ZoomName(TInt aFace, TInt aZoom, TDes& aName)
+	{
+	if (aZoom <= 0 || aZoom >= ZoomLevels(aFace))
+		{
+		aName.Copy(_L("Courier small"));
+		return;
+		}
+	aName.Copy(TPtrC(Face(aFace).iName));
+	aName.AppendFormat(_L(" %d"), ZoomPixels(aFace, aZoom));
+	}
+
+TInt CTermView::ZoomNearest(TInt aFace, TInt aPixels)
+	{
+	TInt best = 1;
+	for (TInt z = 2; z < ZoomLevels(aFace); z++)
+		if (Abs(ZoomPixels(aFace, z) - aPixels) < Abs(ZoomPixels(aFace, best) - aPixels))
+			best = z;
+	return best;
+	}
 _LIT(KIniFile, "C:\\System\\Apps\\PsiTerm\\PsiTerm.ini");
 _LIT(KPtLogOff, "Logging is off - turn on Tools > Debug > Keep a log");   // (0.97)
 _LIT(KHostsFile, "C:\\System\\Apps\\PsiTerm\\Hosts.dat");
@@ -67,6 +115,9 @@ _LIT(KSnippetsFile, "C:\\System\\Apps\\PsiTerm\\Snippets.dat");
 _LIT8(KHangupEscape, "+++");
 _LIT8(KHangupCommand, "ATH\r");
 
+// (colour screens) a cell's colour is an xterm colour 0..255, or one of these
+const TInt KColDefFg = 256;           // the theme's text colour
+const TInt KColDefBg = 257;           // the theme's paper colour
 const TInt KMoreDataTimeout = 25000;   // microseconds to wait for more bytes
 _LIT(KSshExeName, "psissh.exe");
 _LIT(KSeedFile, "C:\\System\\Apps\\PsiTerm\\ssh_seed.bin");
@@ -89,7 +140,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.98");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "0.99");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -101,6 +152,12 @@ static TBps BaudFromIndex(TInt aIndex)
 	case 3: return EBps57600;
 	default: return EBps115200;
 		}
+	}
+
+// A colour screen (the Series 7, the netBook): 256 colours, 640x480.
+static TBool PtColourScreen()
+	{
+	return CEikonEnv::Static()->ScreenDevice()->DisplayMode() >= EColor16;
 	}
 
 static TPtrC LeftSafe(const TDesC& aText, TInt aMax)
@@ -383,6 +440,7 @@ CTermView::~CTermView()
 	iSshRinger.Close();
 	delete iWatcher;
 	delete iShotTimer;
+	delete iBenchTimer;
 	delete iPendingIdle;
 	delete iTick;
 	delete iReconnectTimer;
@@ -453,8 +511,17 @@ void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	{
 	iSettings = aSettings;
 	iTabRow = -1;
+	{
+	TTimeIntervalMicroSeconds32 period;
+	iTickUsReal = (UserHal::TickPeriod(period) == KErrNone && period.Int() > 0) ? period.Int() : 15625;
+	}
 	iForeground = ETrue;                     // (until a focus event says otherwise)
-	CreateBackedUpWindowL(iCoeEnv->RootWin(), EGray16);
+	// The window takes the screen's own mode: 16 greys on the 5mx, 256
+	// colours on the Series 7 and netBook. A grey window on a colour screen
+	// costs a conversion of every pixel drawn, and shows no colour.
+	TDisplayMode mode = iCoeEnv->ScreenDevice()->DisplayMode();
+	iColour = (mode >= EColor16);
+	CreateBackedUpWindowL(iCoeEnv->RootWin(), iColour ? mode : EGray16);
 	SetRectL(aRect);
 	EnableDragEvents();                      // pen drag selects text
 
@@ -513,6 +580,71 @@ void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	ShowWelcome();
 	ApplySerialSettings();
 	StartTick();
+
+	// A developer's drawing benchmark: runs a few seconds after the start
+	// when a file Bench.txt sits beside the app (never in a release).
+	{
+	TParse parse;
+	parse.Set(CEikonEnv::Static()->EikAppUi()->Application()->AppFullName(), NULL, NULL);
+	TFileName bench(parse.DriveAndPath());
+	bench.Append(_L("Bench.txt"));
+	TEntry e;
+	if (iCoeEnv->FsSession().Entry(bench, e) == KErrNone)
+		{
+		iBenchTimer = CPeriodic::New(CActive::EPriorityLow);
+		if (iBenchTimer)
+			iBenchTimer->Start(3000000, 3000000, TCallBack(BenchCallback, this));
+		}
+	}
+	}
+
+TInt CTermView::BenchCallback(TAny* aSelf)
+	{
+	CTermView* self = (CTermView*)aSelf;
+	self->iBenchTimer->Cancel();
+	self->RunBench();
+	return 0;
+	}
+
+// Times the drawing paths, in ms, and prints the results in the terminal:
+// "echo" is 200 typed characters drawn one at a time (each with its own
+// paint, as a keystroke's echo is), "scroll" 120 lines of coloured output,
+// "redraw" 10 whole-window redraws.
+void CTermView::RunBench()
+	{
+	TTimeIntervalMicroSeconds32 period;
+	TInt tickUs = (UserHal::TickPeriod(period) == KErrNone && period.Int() > 0) ? period.Int() : 15625;
+	TBuf8<16> one;
+	TUint t0 = User::TickCount();
+	FeedTerminal((const TUint8*)"\x1b[H\x1b[J", 6);
+	for (TInt i = 0; i < 200; i++)
+		{
+		TUint8 ch = (TUint8)('a' + i % 26);
+		if (i % 60 == 59)
+			FeedTerminal((const TUint8*)"\r\n", 2);
+		else
+			FeedTerminal(&ch, 1);
+		iCoeEnv->WsSession().GetFocusWindowGroup();       // each key's echo reaches the screen
+		}
+	TUint t1 = User::TickCount();
+	_LIT8(KLine, "\x1b[34mdrwxr-xr-x\x1b[0m  5 dan dan 4096 Nov 12 09:41 \x1b[1;32mpsiterm\x1b[0m/ \x1b[31mred\x1b[0m \x1b[43mbg\x1b[0m\r\n");
+	for (TInt i = 0; i < 120; i++)
+		FeedTerminal(KLine().Ptr(), KLine().Length());
+	iCoeEnv->WsSession().GetFocusWindowGroup();
+	TUint t2 = User::TickCount();
+	for (TInt i = 0; i < 10; i++)
+		{
+		DrawNow();
+		iCoeEnv->WsSession().GetFocusWindowGroup();   // (a reply: the server has drawn it all)
+		}
+	TUint t3 = User::TickCount();
+	TBuf8<200> r;
+	TInt echo = (TInt)(t1 - t0) * (tickUs / 100) / 10, scroll = (TInt)(t2 - t1) * (tickUs / 100) / 10,
+		redraw = (TInt)(t3 - t2) * (tickUs / 100) / 10;
+	r.Format(_L8("\r\n[bench %dx%d cell %dx%d mode %d tick %dus] echo %d ms (%d per key), scroll %d ms, redraw %d ms (%d each)\r\n"),
+		iCols, iRows, iCellW, iCellH, (TInt)iCoeEnv->ScreenDevice()->DisplayMode(), tickUs,
+		echo, echo / 200, scroll, redraw, redraw / 10);
+	LocalMessage(r);
 	}
 
 void CTermView::ApplySerialSettings()
@@ -577,46 +709,66 @@ void CTermView::ZoomBy(TInt aStep)
 		SetFaceL(name, px[at]);
 		return;
 		}
-	TInt z = (iSettings.iZoom + aStep + KZoomLevels) % KZoomLevels;
+	TInt n = ZoomLevels(iSettings.iFace);
+	TInt z = (iSettings.iZoom + aStep + n) % n;
 	if (z != iSettings.iZoom)
 		SetFontL(z);
 	}
 
 void CTermView::SetFontL(TInt aZoom)
 	{
-	if (aZoom < 0 || aZoom >= KZoomLevels)
+	if (aZoom < 0 || aZoom >= ZoomLevels(iSettings.iFace))
 		aZoom = KDefaultZoom;
 	iSettings.iZoom = aZoom;
 	iSettings.iFontName.Zero();               // (the zoom levels, not Other font...)
 	ReleaseFont();
-	TInt pixels = KZoomPixels[aZoom];
-	TInt twips = iCoeEnv->ScreenDevice()->VerticalPixelsToTwips(pixels);
-	if (KZoomFace[aZoom] == 0)
+	// (by pixels: the Series 7's screen has other twips to the pixel, and a
+	// lookup in twips there gave the next size down)
+	TInt pixels = ZoomPixels(iSettings.iFace, aZoom);
+	CWsScreenDevice* dev = iCoeEnv->ScreenDevice();
+	CFont* font = NULL;
+	if (aZoom > 0)
 		{
-		TFontSpec spec(KFontTerminus, twips);
-		iFont = iCoeEnv->CreateScreenFontL(spec);
-		if (iFont->FontSpecInTwips().iTypeface.iName.CompareF(KFontTerminus) != 0)
-			ReleaseFont();                  // not installed: use Courier instead
+		TPtrC face(Face(iSettings.iFace).iName);
+		TFontSpec spec(face, pixels);
+		if (dev->GetNearestFontInPixels(font, spec) == KErrNone)
+			{
+			iFont = font;
+			if (iFont->FontSpecInTwips().iTypeface.iName.CompareF(face) != 0)
+				ReleaseFont();              // not installed: use Courier instead
+			}
 		}
 	if (!iFont)
 		{
-		TFontSpec spec(KFontCourier, twips);
-		iFont = iCoeEnv->CreateScreenFontL(spec);
+		TFontSpec spec(KFontCourier, pixels);
+		User::LeaveIfError(dev->GetNearestFontInPixels(font, spec));
+		iFont = font;
 		}
 	MeasureFont();
 	}
 
 // 0.96: any typeface the screen device knows, at one of its heights. The
-// Font menu's own choices (Terminus 12 to 18, Courier small) go back to the
+// Font menu's own choices (the typeface's sizes, Courier small) go back to the
 // zoom levels, so they behave exactly as before. A typeface that has gone
 // (a font file on a card that is out) falls back to the zoom level.
 void CTermView::SetFaceL(const TDesC& aName, TInt aPixels)
 	{
-	for (TInt z = 0; z < KZoomLevels; z++)
+	// (0.99) one of PsiTerm.gdr's typefaces becomes the zoom levels' font:
+	// the Font menu and the zoom keys then step through its sizes
+	for (TInt f = 0; f < KFaceCount && iFontFileLoaded; f++)
 		{
-		const TDesC& face = KZoomFace[z] == 0 ? (const TDesC&)KFontTerminus : (const TDesC&)KFontCourier;
-		if (KZoomPixels[z] == aPixels && aName.CompareF(face) == 0
-			&& (KZoomFace[z] != 0 || iFontFileLoaded))
+		if (aName.CompareF(TPtrC(KFaces[f].iName)) == 0)
+			{
+			iSettings.iFace = f;
+			SetFontL(ZoomNearest(f, aPixels));
+			return;
+			}
+		}
+	for (TInt z = 0; z < ZoomLevels(iSettings.iFace); z++)
+		{
+		TPtrC face(z == 0 ? TPtrC(KFontCourier) : TPtrC(Face(iSettings.iFace).iName));
+		if (ZoomPixels(iSettings.iFace, z) == aPixels && aName.CompareF(face) == 0
+			&& (z == 0 || iFontFileLoaded))
 			{
 			SetFontL(z);
 			return;
@@ -688,8 +840,8 @@ void CTermView::CurrentFace(TDes& aName, TInt& aPixels) const
 	if (iFont)
 		CopyClipped(aName, iFont->FontSpecInTwips().iTypeface.iName);
 	else
-		aName.Copy(KFontTerminus);
-	aPixels = KZoomPixels[iSettings.iZoom];
+		aName.Copy(TPtrC(Face(iSettings.iFace).iName));
+	aPixels = ZoomPixels(iSettings.iFace, iSettings.iZoom);
 	}
 
 // The terminal is a grid of cells. A cell is as wide as the font's widest
@@ -793,9 +945,10 @@ void CTermView::SetTermRectL(const TRect& aRect)
 // Font menu: the counts change with the toolbar)
 void CTermView::SizeAtZoom(TInt aZoom, TInt& aCols, TInt& aRows) const
 	{
-	if (aZoom < 0 || aZoom >= KZoomLevels)
+	if (aZoom < 0 || aZoom >= ZoomLevels(iSettings.iFace))
 		aZoom = KDefaultZoom;
-	TInt w = KZoomCellW[aZoom], h = KZoomCellH[aZoom];
+	TInt w = aZoom ? Face(iSettings.iFace).iCellW[aZoom - 1] : KCourierCellW;
+	TInt h = ZoomPixels(iSettings.iFace, aZoom);
 	if (aZoom == iSettings.iZoom && !OtherFont() && iCellW > 0 && iCellH > 0)
 		{
 		w = iCellW;                          // the real font (Courier if Terminus is missing)
@@ -1094,9 +1247,28 @@ int CTermView::CbPushLine(int aCols, const VTermScreenCell* aCells, void* aUser)
 		self->CellColours(c, fg, bg);
 		TUint ch = c.chars[0];
 		line[i].iCh = (ch == (TUint)-1 || ch > 0xFFFF) ? 0xFFFF : (unsigned short)ch;
-		line[i].iGrey = (unsigned char)((fg << 4) | bg);
-		line[i].iFlags = (unsigned char)((c.attrs.bold ? KSbBold : 0) | (c.attrs.underline ? KSbUnderline : 0)
-			| (c.attrs.strike ? KSbStrike : 0) | (c.width > 1 ? KSbWide : 0));
+		TUint flags = (c.attrs.bold ? KSbBold : 0) | (c.attrs.underline ? KSbUnderline : 0)
+			| (c.attrs.strike ? KSbStrike : 0) | (c.width > 1 ? KSbWide : 0);
+		if (self->iColour)
+			{
+			// the theme's colours as flags, so a theme change re-colours them:
+			// then 0 is the usual one (text for iFg, paper for iBg), 1 the
+			// other (reverse video)
+			flags |= KSbColour;
+			if (fg >= KColDefFg)
+				{
+				flags |= KSbDefFg;
+				fg = (fg == KColDefFg) ? 0 : 1;
+				}
+			if (bg >= KColDefFg)
+				{
+				flags |= KSbDefBg;
+				bg = (bg == KColDefBg) ? 0 : 1;
+				}
+			}
+		line[i].iFg = (unsigned char)fg;
+		line[i].iBg = (unsigned char)bg;
+		line[i].iFlags = (unsigned char)flags;
 		}
 	SbPush(&self->iSb, line, aCols);
 	self->iLinesPushed++;
@@ -1212,6 +1384,8 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 		RingSsh();                       // (0.81) psissh may be waiting on its doorbell
 		PumpFast();                      // ...and the echo is on its way
 		iUserAt = User::TickCount();
+		if (!iEchoAt)
+			iEchoAt = iUserAt ? iUserAt : 1;
 		if (iTick && iTickUs != KTickUs && TickBusy())
 			StartTick();
 		return;
@@ -1375,6 +1549,9 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 			TBuf<24> user;
 			user.Copy(LeftSafe(iSettings.iSshUser, 20));
 			aText.Format(_L("\x95 %S@%S   SSH"), &user, &host);
+			// (with Keep a log on) how long a key takes to come back
+			if (iSettings.iKeepLog && iEchoLast)
+				aText.AppendFormat(_L("   echo %d ms, avg %d"), iEchoLast, iEchoAvg);
 			}
 		else aText.Append(_L("Starting SSH..."));
 		}
@@ -1405,12 +1582,13 @@ void CTermView::DrawStatus(CWindowGc& aGc) const
 	TRect bar(Rect().iTl.iX, Rect().iBr.iY - iStatusH, Rect().iBr.iX, Rect().iBr.iY);
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	aGc.SetBrushColor(Grey(4));
+	// (a colour screen: the Series 7's own title-band navy)
+	aGc.SetBrushColor(iColour ? TRgb(0, 0, 128) : Grey(4));
 	aGc.DrawRect(bar);
 	aGc.UseFont(font);
 	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-	aGc.SetPenColor(Grey(15));
+	aGc.SetPenColor(iColour ? KRgbWhite : Grey(15));
 	TInt y = bar.iTl.iY + 2 + font->AscentInPixels();
 	TPtrC left(text.Left(split));
 	TPtrC right(text.Mid(split));
@@ -2350,7 +2528,9 @@ void CTermView::ShowWelcome()
 		AppendUtf8(w, 0x2590);
 		w.Append(_L8("\x1b[7m            \x1b[0m"));
 		AppendUtf8(w, 0x258C);
-		w.Append(_L8("   \x1b[90mSSH for the Psion Series 5mx\x1b[0m\r\n"));
+		w.Append(_L8("   \x1b[90mSSH for the Psion "));
+		w.Append(iColour ? _L8("Series 7 and netBook") : _L8("Series 5mx"));
+		w.Append(_L8("\x1b[0m\r\n"));
 		for (TInt n = 0; n < pad; n++)
 			w.Append(' ');
 		w.Append(_L8(" "));
@@ -2367,7 +2547,9 @@ void CTermView::ShowWelcome()
 		{
 		w.Append(_L8("\r\n  \x1b[7m PsiTerm "));
 		AppendText(w, ver, ver.Length());
-		w.Append(_L8(" \x1b[0m  SSH for the Psion Series 5mx\r\n\r\n  \x1b[90mShift+Ctrl+S: SSH to a saved server\x1b[0m\r\n"));
+		w.Append(_L8(" \x1b[0m  SSH for the Psion "));
+		w.Append(iColour ? _L8("Series 7 and netBook") : _L8("Series 5mx"));
+		w.Append(_L8("\r\n\r\n  \x1b[90mShift+Ctrl+S: SSH to a saved server\x1b[0m\r\n"));
 		}
 	LocalMessage(w);
 	delete buf;
@@ -2492,13 +2674,13 @@ void CTermView::DrawCells(CWindowGc& aGc, TInt aRow0, TInt aCol0, TInt aRow1, TI
 			aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 			TInt tf, tb;
 			ThemePair(fg, bg, tf, tb);
-			aGc.SetBrushColor(TRgb::Gray16(tb));
+			aGc.SetBrushColor(Ink(tb));
 			aGc.DrawRect(TRect(x0, y0, x1, y0 + iCellH));
 			if (!ink && !ul && !st)
 				continue;
 			aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
 			aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-			aGc.SetPenColor(TRgb::Gray16(tf));
+			aGc.SetPenColor(Ink(tf));
 			if (ink)
 				{
 				TPoint base(x0, y0 + iAscent);
@@ -2569,16 +2751,20 @@ TBool CTermView::GetLook(TInt aRow, TInt aCol, TLook& aLook) const
 			const TSbCell& c = sb[aCol];
 			aLook.iCh = (c.iCh == 0xFFFF) ? (TUint)-1 : c.iCh;
 			aLook.iWidth = (c.iFlags & KSbWide) ? 2 : 1;
-			aLook.iFg = c.iGrey >> 4;
-			aLook.iBg = c.iGrey & 0x0f;
+			aLook.iFg = c.iFg;
+			aLook.iBg = c.iBg;
+			if (c.iFlags & KSbDefFg)
+				aLook.iFg = c.iFg ? KColDefBg : KColDefFg;
+			if (c.iFlags & KSbDefBg)
+				aLook.iBg = c.iBg ? KColDefFg : KColDefBg;
 			aLook.iFlags = c.iFlags & (KSbBold | KSbUnderline | KSbStrike);
 			}
 		else
 			{
 			aLook.iCh = 0;
 			aLook.iWidth = 1;
-			aLook.iFg = 0;
-			aLook.iBg = 15;
+			aLook.iFg = iColour ? KColDefFg : 0;
+			aLook.iBg = iColour ? KColDefBg : 15;
 			aLook.iFlags = 0;
 			}
 		}
@@ -2633,6 +2819,85 @@ TInt CTermView::TextByte(const TLook& aLook) const
 	return byte;
 	}
 
+// ----- colour screens (the Series 7 and netBook: 640x480, 256 colours) ------
+// Cells hold xterm colour numbers 0..255, or KColDefFg/KColDefBg for the
+// theme's own text and paper colours. Themes are applied when drawing
+// (ThemePair).
+
+// xterm's 16 standard colours
+static const TUint8 KAnsiRgb[16][3] = {
+	{ 0, 0, 0 }, { 205, 0, 0 }, { 0, 205, 0 }, { 205, 205, 0 }, { 0, 0, 238 }, { 205, 0, 205 },
+	{ 0, 205, 205 }, { 229, 229, 229 }, { 127, 127, 127 }, { 255, 0, 0 }, { 0, 255, 0 },
+	{ 255, 255, 0 }, { 92, 92, 255 }, { 255, 0, 255 }, { 0, 255, 255 }, { 255, 255, 255 } };
+
+static TInt XtermRgb(TInt aIdx)
+	{
+	if (aIdx < 16)
+		return (KAnsiRgb[aIdx][0] << 16) | (KAnsiRgb[aIdx][1] << 8) | KAnsiRgb[aIdx][2];
+	if (aIdx < 232)
+		{
+		TInt i = aIdx - 16;
+		TInt r = i / 36, g = (i / 6) % 6, b = i % 6;
+		r = r ? 55 + r * 40 : 0;
+		g = g ? 55 + g * 40 : 0;
+		b = b ? 55 + b * 40 : 0;
+		return (r << 16) | (g << 8) | b;
+		}
+	TInt v = 8 + (aIdx - 232) * 10;
+	return (v << 16) | (v << 8) | v;
+	}
+
+// the xterm colour nearest an RGB one: from the 6x6x6 cube or the greys
+static TInt CubeStep(TInt aV) { return aV < 48 ? 0 : aV < 115 ? 1 : (aV - 35) / 40; }
+static TInt NearestXterm(TInt aR, TInt aG, TInt aB)
+	{
+	TInt qr = CubeStep(aR), qg = CubeStep(aG), qb = CubeStep(aB);
+	TInt cr = qr ? 55 + qr * 40 : 0, cg = qg ? 55 + qg * 40 : 0, cb = qb ? 55 + qb * 40 : 0;
+	TInt avg = (aR + aG + aB) / 3;
+	TInt gi = avg > 238 ? 23 : (avg < 8 ? 0 : (avg - 3) / 10);
+	if (gi > 23) gi = 23;
+	TInt gv = 8 + gi * 10;
+	TInt dc = (aR - cr) * (aR - cr) + (aG - cg) * (aG - cg) + (aB - cb) * (aB - cb);
+	TInt dg = (aR - gv) * (aR - gv) + (aG - gv) * (aG - gv) + (aB - gv) * (aB - gv);
+	return dg < dc ? 232 + gi : 16 + qr * 36 + qg * 6 + qb;
+	}
+
+static TInt RgbLum(TInt aRgb)
+	{
+	return (((aRgb >> 16) & 255) * 77 + ((aRgb >> 8) & 255) * 150 + (aRgb & 255) * 29) >> 8;
+	}
+
+// a VTermColor as a cell's colour code (colour screens)
+static TInt ColourCode(const VTermScreen* aScreen, const VTermColor& aCol, TBool aFg)
+	{
+	if (aFg ? VTERM_COLOR_IS_DEFAULT_FG(&aCol) : VTERM_COLOR_IS_DEFAULT_BG(&aCol))
+		return aFg ? KColDefFg : KColDefBg;
+	if (VTERM_COLOR_IS_INDEXED(&aCol))
+		return aCol.indexed.idx;
+	VTermColor c = aCol;
+	vterm_screen_convert_color_to_rgb(aScreen, &c);
+	return NearestXterm(c.rgb.red, c.rgb.green, c.rgb.blue);
+	}
+
+// The themes on a colour screen: Light (black on white, as the Series 7's
+// own programs), Dark (light grey on black, what most terminal colour
+// schemes are made for), High contrast and Soft (dark grey on light grey).
+TInt CTermView::ColourRgb(TInt aCode, TBool aFg) const
+	{
+	if (aCode == KColDefFg || aCode == KColDefBg)
+		{
+		TBool paper = (aCode == KColDefBg);
+		switch (iSettings.iTheme)
+			{
+		case 1: return paper ? 0x000000 : 0xE5E5E5;
+		case 3: return paper ? 0xEEEEEE : 0x333333;
+		default: return paper ? 0xFFFFFF : 0x000000;
+			}
+		}
+	(void)aFg;
+	return XtermRgb(aCode & 255);
+	}
+
 // Colour -> one of 16 greys. The Psion screen is dark-on-light, so text
 // colours are kept dark enough to read and backgrounds are kept light
 // unless they are genuinely dark. With the grey calibration on (docs/
@@ -2662,6 +2927,16 @@ void CTermView::SetGreys(const PsiGrey& aGrey)
 
 void CTermView::CellColours(const VTermScreenCell& aCell, TInt& aFg, TInt& aBg) const
 	{
+	if (iColour)
+		{
+		aFg = ColourCode(iScreen, aCell.fg, ETrue);
+		aBg = ColourCode(iScreen, aCell.bg, EFalse);
+		if (aCell.attrs.reverse)
+			{
+			TInt t = aFg; aFg = aBg; aBg = t;
+			}
+		return;
+		}
 	TInt fg = 0;
 	TInt bg = 15;
 	TBool fgDefault = VTERM_COLOR_IS_DEFAULT_FG(&aCell.fg);
@@ -2714,14 +2989,14 @@ void CTermView::DrawOneCell(CWindowGc& aGc, TInt aRow, TInt aCol, const TLook& a
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 	TInt tf, tb;
 	ThemePair(fg, bg, tf, tb);
-	aGc.SetBrushColor(TRgb::Gray16(tb));
+	aGc.SetBrushColor(Ink(tb));
 	aGc.DrawRect(box);
 
 	TUint ch = aLook.iCh;
 	if (IsBlankChar(ch))
 		return;
 
-	TRgb fgRgb = TRgb::Gray16(tf);
+	TRgb fgRgb = Ink(tf);
 
 	// Box drawing: real lines
 	TInt seg = PsiBoxSegments(ch);
@@ -2767,15 +3042,16 @@ void CTermView::DrawOneCell(CWindowGc& aGc, TInt aRow, TInt aCol, const TLook& a
 		{
 		TRect r = box;
 		TInt level = fg;
+		TInt mix = 4;                         // quarters of the text colour (4 = all)
 		switch (ch)
 			{
 		case 0x2580: r.iBr.iY = box.iTl.iY + iCellH / 2; break;           // upper half
 		case 0x2584: r.iTl.iY = box.iTl.iY + iCellH / 2; break;           // lower half
 		case 0x258C: r.iBr.iX = box.iTl.iX + iCellW / 2; break;           // left half
 		case 0x2590: r.iTl.iX = box.iTl.iX + iCellW / 2; break;           // right half
-		case 0x2591: level = (fg * 1 + bg * 3) / 4; break;                // light shade
-		case 0x2592: level = (fg + bg) / 2; break;                        // medium shade
-		case 0x2593: level = (fg * 3 + bg * 1) / 4; break;                // dark shade
+		case 0x2591: level = (fg * 1 + bg * 3) / 4; mix = 1; break;       // light shade
+		case 0x2592: level = (fg + bg) / 2; mix = 2; break;               // medium shade
+		case 0x2593: level = (fg * 3 + bg * 1) / 4; mix = 3; break;       // dark shade
 		case 0x2594: r.iBr.iY = box.iTl.iY + (iCellH + 7) / 8; break;   // upper eighth
 		case 0x2595: r.iTl.iX = box.iBr.iX - (iCellW + 7) / 8; break;   // right eighth
 		default:
@@ -2785,7 +3061,7 @@ void CTermView::DrawOneCell(CWindowGc& aGc, TInt aRow, TInt aCol, const TLook& a
 				static const TUint8 KQuad[10] = { 4, 8, 1, 13, 9, 7, 11, 2, 6, 14 };
 				TInt q = KQuad[ch - 0x2596];
 				TInt mx = box.iTl.iX + iCellW / 2, my = box.iTl.iY + iCellH / 2;
-				aGc.SetBrushColor(Grey(level));
+				aGc.SetBrushColor(iColour ? fgRgb : Grey(level));
 				if (q & 1) aGc.DrawRect(TRect(box.iTl.iX, box.iTl.iY, mx, my));
 				if (q & 2) aGc.DrawRect(TRect(mx, box.iTl.iY, box.iBr.iX, my));
 				if (q & 4) aGc.DrawRect(TRect(box.iTl.iX, my, mx, box.iBr.iY));
@@ -2798,7 +3074,16 @@ void CTermView::DrawOneCell(CWindowGc& aGc, TInt aRow, TInt aCol, const TLook& a
 				r.iBr.iX = box.iTl.iX + (iCellW * (TInt)(0x2590 - ch)) / 8;
 			break;                                                        // 0x2588 = full block
 			}
-		aGc.SetBrushColor(Grey(level));
+		if (iColour)
+			{
+			// a shade: the text colour mixed with the paper's
+			TInt r0 = (tf >> 16) & 255, g0 = (tf >> 8) & 255, b0 = tf & 255;
+			TInt r1 = (tb >> 16) & 255, g1 = (tb >> 8) & 255, b1 = tb & 255;
+			aGc.SetBrushColor(TRgb((r0 * mix + r1 * (4 - mix)) / 4, (g0 * mix + g1 * (4 - mix)) / 4,
+				(b0 * mix + b1 * (4 - mix)) / 4));
+			}
+		else
+			aGc.SetBrushColor(Grey(level));
 		aGc.DrawRect(r);
 		return;
 		}
@@ -2861,10 +3146,82 @@ TInt CTermView::Theme(TInt aGrey) const
 		}
 	}
 
+TRgb CTermView::Grey(TInt aGrey) const
+	{
+	if (!iColour)
+		return TRgb::Gray16(Theme(aGrey));
+	if (aGrey < 0) aGrey = 0;
+	if (aGrey > 15) aGrey = 15;
+	TInt ink = ColourRgb(KColDefFg, ETrue), paper = ColourRgb(KColDefBg, EFalse);
+	if (iSettings.iTheme == 2)
+		{
+		ink = 0x000000;
+		paper = 0xFFFFFF;
+		}
+	TInt rgb[3];
+	for (TInt i = 0; i < 3; i++)
+		{
+		TInt a = (ink >> (16 - 8 * i)) & 255, b = (paper >> (16 - 8 * i)) & 255;
+		rgb[i] = a + (b - a) * aGrey / 15;
+		}
+	return TRgb(rgb[0], rgb[1], rgb[2]);
+	}
+
 // Text and background together: in high contrast the darker of the two
 // becomes black and the other white, so text can never vanish.
 void CTermView::ThemePair(TInt aFg, TInt aBg, TInt& aThemedFg, TInt& aThemedBg) const
 	{
+	if (iColour)
+		{
+		TInt f = ColourRgb(aFg, ETrue), b = ColourRgb(aBg, EFalse);
+		TInt lf = RgbLum(f), lb = RgbLum(b);
+		if (iSettings.iTheme == 2)                    // high contrast: black and white
+			{
+			if (f != b)
+				{
+				TBool darkText = lf < lb || (lf == lb && aFg == KColDefFg);
+				f = darkText ? 0x000000 : 0xFFFFFF;
+				b = darkText ? 0xFFFFFF : 0x000000;
+				}
+			}
+		else if (f != b && (aFg != KColDefFg || aBg != KColDefBg))
+			{
+			// keep coloured text readable on its paper: yellow on white is
+			// darkened, dark blue on black lightened, the hue kept (the
+			// theme's own pair is left as it is)
+			const TInt KMinDiff = 80;
+			TInt diff = lf - lb;
+			if (diff < 0) diff = -diff;
+			if (diff < KMinDiff)
+				{
+				TInt r = (f >> 16) & 255, g = (f >> 8) & 255, bl = f & 255;
+				if (lb >= 128)
+					{
+					TInt want = lb - KMinDiff;
+					if (lf > 0)
+						{
+						r = r * want / lf; g = g * want / lf; bl = bl * want / lf;
+						}
+					}
+				else
+					{
+					TInt want = lb + KMinDiff;          // mix with white up to it
+					if (lf < 255)
+						{
+						TInt t = (want - lf) * 256 / (255 - lf);
+						r += ((255 - r) * t) >> 8; g += ((255 - g) * t) >> 8; bl += ((255 - bl) * t) >> 8;
+						}
+					}
+				if (r > 255) r = 255;
+				if (g > 255) g = 255;
+				if (bl > 255) bl = 255;
+				f = (r << 16) | (g << 8) | bl;
+				}
+			}
+		aThemedFg = f;
+		aThemedBg = b;
+		return;
+		}
 	if (iSettings.iTheme == 2 && aFg != aBg)
 		{
 		aThemedFg = aFg < aBg ? 0 : 15;
@@ -2893,6 +3250,29 @@ void CTermView::DrawCursor(CWindowGc& aGc) const
 		box.iTl.iY = box.iBr.iY - (iCellH >= 12 ? 2 : 1) - iCellH / 12;
 	else if (iSettings.iCursor == 2)                   // bar
 		box.iBr.iX = box.iTl.iX + 2;
+	if (iColour)
+		{
+		// (inverting a 256-colour screen gives a random colour) the cell in
+		// reverse for a block, a bar or line in the text colour otherwise
+		TLook look;
+		if (!GetLook(iCurRow, iCurCol, look))
+			return;
+		if (iSettings.iCursor == 0)
+			{
+			TLook rev = look;
+			rev.iFg = look.iBg;
+			rev.iBg = look.iFg;
+			DrawOneCell(aGc, iCurRow, iCurCol, rev);
+			return;
+			}
+		TInt tf, tb;
+		ThemePair(look.iFg, look.iBg, tf, tb);
+		aGc.SetPenStyle(CGraphicsContext::ENullPen);
+		aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+		aGc.SetBrushColor(Ink(tf));
+		aGc.DrawRect(box);
+		return;
+		}
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 	aGc.SetDrawMode(CGraphicsContext::EDrawModeNOTSCREEN);
@@ -4184,6 +4564,13 @@ void CTermView::PumpSsh()
 			if (iLog)
 				iLog->Write(buf, n);           // File > Log to file
 			}
+		if (iEchoAt)
+			{
+			TInt ms = (TInt)(User::TickCount() - iEchoAt) * (iTickUsReal / 100) / 10;
+			iEchoAt = 0;
+			iEchoLast = ms;
+			iEchoAvg = iEchoAvg ? (iEchoAvg * 7 + ms) / 8 : ms;
+			}
 		}
 	if (paint)
 		EndPaint();
@@ -5405,7 +5792,7 @@ void CAboutDialog::PreLayoutDynInitL()
 	// the (c) sign (0xa9 in the Psion's fonts, as PsiMail's About has it)
 	// rather than the resource's "(c)"; the lines keep their resource
 	// lengths, as these are shorter
-	TBuf<80> who(_L("SSH terminal for the Psion Series 5mx - "));
+	TBuf<80> who(_L("SSH terminal for the Psion Series 5mx and Series 7 - "));
 	who.Append(TChar(0xa9));
 	who.Append(_L(" 2026 Dan Edge"));
 	SetLabelL(EPtDlgAbout2, who);
@@ -5561,12 +5948,22 @@ void CAppearanceDialog::SetSizeAndPositionL(const TSize& aSize) { SetCornerAndSi
 
 void CAppearanceDialog::PreLayoutDynInitL()
 	{
+	if (PtColourScreen())
+		{
+		// the greys settings mean nothing on a colour screen; the themes
+		// have colour names
+		((CEikChoiceList*)Control(EPtDlgTheme))->SetArrayL(R_PT_THEME_COLOUR_ARRAY);
+		DeleteLine(EPtDlgColourText);
+		if (ButtonPanel())
+			ButtonPanel()->MakeButtonVisible(EPtBidGreys, EFalse);
+		}
 	((CEikChoiceList*)Control(EPtDlgTheme))->SetCurrentItem(iSettings.iTheme);
 	((CEikChoiceList*)Control(EPtDlgCursor))->SetCurrentItem(iSettings.iCursor);
 	((CEikChoiceList*)Control(EPtDlgBlink))->SetCurrentItem(iSettings.iBlink ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgBell))->SetCurrentItem(iSettings.iBell ? 0 : 1);
 	((CEikChoiceList*)Control(EPtDlgStartScreen))->SetCurrentItem(iSettings.iStartScreen ? 1 : 0);
-	((CEikChoiceList*)Control(EPtDlgColourText))->SetCurrentItem((iSettings.iDisplay & KPtDisplayLightText) ? 1 : 0);
+	if (!PtColourScreen())
+		((CEikChoiceList*)Control(EPtDlgColourText))->SetCurrentItem((iSettings.iDisplay & KPtDisplayLightText) ? 1 : 0);
 	}
 
 // ----- View > Font > Other font... (0.96) -----------------------------------
@@ -5720,9 +6117,9 @@ void CFontDialog::FillSizesL(TInt aWantPixels)
 		// measure the real font: its cell and whether it is fixed-width
 		TInt cols = 0, rows = 0;
 		iSizeMono[i] = !prop;
-		TFontSpec spec(iFaceName[face], dev->VerticalPixelsToTwips(iSizePixels[i]));
+		TFontSpec spec(iFaceName[face], iSizePixels[i]);
 		CFont* font = NULL;
-		if (dev->GetNearestFontInTwips(font, spec) == KErrNone && font)
+		if (dev->GetNearestFontInPixels(font, spec) == KErrNone && font)
 			{
 			TBool mono;
 			TInt w = FontCellWidth(*font, mono);
@@ -5800,6 +6197,8 @@ TBool CAppearanceDialog::OkToExitL(TInt aButtonId)
 	iSettings.iBlink = ((CEikChoiceList*)Control(EPtDlgBlink))->CurrentItem() == 1;
 	iSettings.iBell = ((CEikChoiceList*)Control(EPtDlgBell))->CurrentItem() == 1 ? 0 : 1;
 	iSettings.iStartScreen = ((CEikChoiceList*)Control(EPtDlgStartScreen))->CurrentItem() == 1;
+	if (PtColourScreen())
+		return ETrue;                    // (the line is not there: PreLayoutDynInitL)
 	if (((CEikChoiceList*)Control(EPtDlgColourText))->CurrentItem() == 1)
 		iSettings.iDisplay |= KPtDisplayLightText;
 	else
@@ -5981,7 +6380,8 @@ void CPsiTermAppUi::UpdateReading(TBool aEnterOnly)
 	{
 	if (!iView)
 		return;
-	TBool want = iForeground && (iView->Settings().iDisplay & KPtDisplayReading) && !iGreysOpen;
+	TBool want = iForeground && (iView->Settings().iDisplay & KPtDisplayReading) && !iGreysOpen
+		&& !PtColourScreen();                 // (a grey-screen setting)
 	if (want)
 		iReading.Enter(iCoeEnv->FsSession(), KUidPsiTerm);
 	else if (!aEnterOnly)
@@ -6431,7 +6831,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iAutoReconnect = 1;
 	aSettings.iStartCmd.Zero();
 	aSettings.iUpdSource = 0;
-	aSettings.iTheme = 0;
+	aSettings.iTheme = PtColourScreen() ? 1 : 0;   // (colour: Dark, what terminal colours are made for)
 	aSettings.iCursor = 0;
 	aSettings.iBlink = 0;
 	aSettings.iStatus = 1;
@@ -6445,6 +6845,11 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iFontName.Zero();   // the zoom levels (Terminus 12)
 	aSettings.iFontPixels = 0;
 	aSettings.iKeepLog = 0;       // v16 (0.97): no log unless Tools > Debug > Keep a log
+	// v17 (0.99): Spleen 16 on a colour screen (the Series 7's 480 rows have
+	// room for it: 71x26), Terminus 12 on the 5mx as before
+	aSettings.iFace = PtColourScreen() ? 1 : 0;
+	if (PtColourScreen())
+		aSettings.iZoom = 2;
 	RFs& fs = iCoeEnv->FsSession();
 	RFile file;
 	if (file.Open(fs, KIniFile, EFileRead) != KErrNone)
@@ -6455,12 +6860,13 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	TBuf8<512> data;
 	if (file.Read(data) == KErrNone && data.Length() >= 3)
 		{
+		aSettings.iFace = 0;          // (files before v17: Terminus, as they had)
 		if (data[0] <= 4) aSettings.iBaudIndex = data[0];
 		aSettings.iRtsCts = (data[1] != 0);
 		// zoom: 32+level since 0.12 (Terminus); 0.11 stored 16+level of its
 		// Spleen/Courier list; earlier versions 0=small 1=large
 		static const TUint8 KFrom011[5] = { 0, 0, 1, 1, 3 };
-		if (data[2] >= 32 && data[2] < 32 + KZoomLevels)
+		if (data[2] >= 32 && data[2] < 32 + KMaxZoomLevels)
 			aSettings.iZoom = data[2] - 32;
 		else if (data[2] >= 16 && data[2] < 21)
 			aSettings.iZoom = KFrom011[data[2] - 16];
@@ -6548,6 +6954,8 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 													TInt kpos = fpos + 1 + flen + 1;   // v16 (0.97): Keep a log
 													if (kpos < data.Length())
 														aSettings.iKeepLog = data[kpos] == 1;
+													if (kpos + 1 < data.Length())      // v17 (0.99): Typeface
+														aSettings.iFace = data[kpos + 1] < KFaceCount ? data[kpos + 1] : 0;
 													}
 												}
 											}
@@ -6561,6 +6969,8 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 			}
 		}
 	file.Close();
+	if (aSettings.iZoom >= CTermView::ZoomLevels(aSettings.iFace))
+		aSettings.iZoom = CTermView::ZoomLevels(aSettings.iFace) - 1;
 	UseSharedLink(fs, aSettings);
 	}
 
@@ -6611,6 +7021,7 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append(tmp);
 	data.Append((TUint8)(aSettings.iFontPixels & 0xff));
 	data.Append((TUint8)(aSettings.iKeepLog ? 1 : 0));    // v16 (0.97): Keep a log
+	data.Append((TUint8)aSettings.iFace);                 // v17 (0.99): Typeface
 	SafeWrite(fs, KIniFile, data);
 	}
 
@@ -6935,28 +7346,42 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 	TPsiSettings& s = iView->Settings();
 	if (aMenuId == R_PT_FONT_MENU)
 		{
-		// "Terminus 12 (95x20)": the counts depend on the toolbar
-		static const TText* const KFace[KZoomLevels] =
-			{ _S("Courier small"), _S("Terminus 12"), _S("Terminus 14"), _S("Terminus 16"), _S("Terminus 18") };
-		for (TInt z = 0; z < KZoomLevels; z++)
+		// "Terminus 12 (95x20)": the counts depend on the toolbar. The
+		// typeface (Preferences) has up to five sizes: the rest go.
+		TInt levels = CTermView::ZoomLevels(s.iFace);
+		for (TInt z = 0; z < KMaxZoomLevels; z++)
 			{
+			TInt cmd = (z < 5) ? EPtCmdZoom0 + z : EPtCmdZoom5;
+			if (z >= levels)
+				{
+				aMenuPane->DeleteMenuItem(cmd);
+				continue;
+				}
 			TInt cols, rows;
 			iView->SizeAtZoom(z, cols, rows);
-			TBuf<40> text(KFace[z]);
+			TBuf<40> text;
+			CTermView::ZoomName(s.iFace, z, text);
 			text.AppendFormat(_L(" (%dx%d)"), cols, rows);
-			aMenuPane->SetItemTextL(EPtCmdZoom0 + z, text);
+			aMenuPane->SetItemTextL(cmd, text);
+			// (with Other font... in use, none is ticked)
+			aMenuPane->SetItemButtonState(cmd, (!iView->OtherFont() && z == s.iZoom) ? EEikMenuItemSymbolOn : 0);
+			if (z == levels - 1)             // the last size ends the radio group, above Other font...
+				aMenuPane->ItemData(cmd).iFlags = (aMenuPane->ItemData(cmd).iFlags & ~EEikMenuItemRadioMiddle)
+					| EEikMenuItemSeparatorAfter | EEikMenuItemRadioEnd;
 			}
-		// (with Other font... in use, none of the five is ticked)
-		for (TInt i = 0; i < KZoomLevels; i++)
-			aMenuPane->SetItemButtonState(EPtCmdZoom0 + i,
-				(!iView->OtherFont() && i == s.iZoom) ? EEikMenuItemSymbolOn : 0);
 		}
 	else if (aMenuId == R_PT_VIEW_MENU)
 		{
 		aMenuPane->SetItemButtonState(EPtCmdBold, s.iBold ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPtCmdStatusLine, s.iStatus ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPtCmdToolbar, s.iToolbar ? EEikMenuItemSymbolOn : 0);
-		aMenuPane->SetItemButtonState(EPtCmdReading, (s.iDisplay & KPtDisplayReading) ? EEikMenuItemSymbolOn : 0);
+		if (PtColourScreen())
+			{
+			aMenuPane->DeleteMenuItem(EPtCmdReading);     // (a grey-screen setting: docs/display.md)
+			aMenuPane->ItemData(EPtCmdToolbar).iFlags |= EEikMenuItemSeparatorAfter;
+			}
+		else
+			aMenuPane->SetItemButtonState(EPtCmdReading, (s.iDisplay & KPtDisplayReading) ? EEikMenuItemSymbolOn : 0);
 		}
 	}
 
@@ -7272,7 +7697,8 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdZoom2:
 	case EPtCmdZoom3:
 	case EPtCmdZoom4:
-		iView->SetFontL(aCommand - EPtCmdZoom0);
+	case EPtCmdZoom5:
+		iView->SetFontL(aCommand == EPtCmdZoom5 ? 5 : aCommand - EPtCmdZoom0);
 		SaveSettings(s);
 		break;
 	case EPtCmdConnSettings:

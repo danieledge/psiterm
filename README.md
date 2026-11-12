@@ -59,6 +59,22 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 0.99**
+- **Colour on the Series 7 and netBook.** PsiTerm shows the server's colours
+  (all 256; full 24-bit colour comes out as the nearest of them) on the
+  640x480 colour screen, and uses the whole of it. Themes there: Dark (the
+  standard), Light, High contrast and Soft. Coloured text that would be hard
+  to read on the paper (yellow on white, dark blue on black) is made lighter
+  or darker, keeping its colour. The status line is the Series 7's navy.
+  Reading mode and Screen greys belong to the 5mx's grey screen, so a colour
+  screen does not show them. The 5mx draws exactly as before.
+- **New typefaces.** Besides Terminus (now also at 24 pixels) PsiTerm has
+  Spleen (12, 16 and 24), Gohufont (11 and 14) and Cozette (13). Pick one in
+  View > Font > Other font...: the Font menu and the zoom keys then go round
+  its sizes. A new Series 7 install starts in Spleen 16 (71x29).
+- **Echo time.** With Tools > Debug > Keep a log on, the status line shows
+  how long a key takes to come back from the server, to help find slowness.
+
 **PsiTerm 0.98**
 - **Runs on the netBook.** SSH no longer stops with KERN-EXEC 3 while
   setting up encryption on a Psion netBook (or Series 7). The compiler's
@@ -156,10 +172,11 @@ and Claude Code - on a 1999 palmtop.
 - Auto-reconnect when a session drops (Psion switched off, Wi-Fi gone), with an
   optional per-server command on login such as `tmux new -A -s psion` to land
   back where you were
-- Terminus font in four sizes (plus Courier), optional bold, 16 greys. View >
-  Font > Other font... picks any font the Psion has (the ROM's, and any `.gdr`
-  in `\System\Fonts\` on any disk) at any of its sizes; a proportional font
-  is spaced out to keep the columns
+- Four typefaces: Terminus (12 to 24), Spleen, Gohufont and Cozette, plus
+  Courier; optional bold; 16 greys on the 5mx, 256 colours on the Series 7
+  and netBook. View > Font > Other font... picks any font the Psion has (the
+  ROM's, and any `.gdr` in `\System\Fonts\` on any disk) at any of its sizes;
+  a proportional font is spaced out to keep the columns
 - The standard EIKON toolbar: SSH to (End SSH while connected), then the Send
   snippet, Keys and Files pop-ups (Files: Send file, Get file, Log to file),
   and the clock. The sidebar's zoom icons zoom the terminal (as View > Zoom
@@ -327,6 +344,6 @@ you can [buy me a coffee](https://buymeacoffee.com/danedge).
 MIT for the project's own code - see `LICENSE`. Bundled components keep
 their own licences - see [`THIRD-PARTY.md`](THIRD-PARTY.md): Dropbear SSH
 (with LibTomCrypt, LibTomMath and TweetNaCl), libvterm, zlib and the
-Terminus font.
+Terminus, Spleen, Gohufont and Cozette fonts.
 
 (c) Dan Edge

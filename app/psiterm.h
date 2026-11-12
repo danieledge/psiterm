@@ -45,7 +45,7 @@ struct TPsiSettings
 	{
 	TInt iBaudIndex;   // 0=9600 1=19200 2=38400 3=57600 4=115200
 	TInt iRtsCts;      // 0=none 1=RTS/CTS
-	TInt iZoom;        // 0..4, see KZoomLevels in psiterm.cpp
+	TInt iZoom;        // 0 (Courier small) .. the typeface's sizes, see KFaces in psiterm.cpp
 	TBuf<100> iSshHost;
 	TBuf<60> iSshUser;
 	TInt iSshPort;
@@ -76,6 +76,9 @@ struct TPsiSettings
 	// v16 (0.97): Tools > Debug > Keep a log. 0 (the standard, and for
 	// older files) = no PsiTerm.log at all; 1 = psissh writes it
 	TInt iKeepLog;
+	// v17 (0.99): the zoom levels' typeface, chosen with View > Font >
+	// Other font...: 0 Terminus, 1 Spleen, 2 Gohufont, 3 Cozette (PsiTerm.gdr)
+	TInt iFace;
 	};
 
 // TPsiSettings::iDisplay bits (all 0 is the standard)
@@ -543,6 +546,12 @@ public:
 	void ZoomBy(TInt aStep);
 	void SetTermRectL(const TRect& aRect);   // the toolbar came or went: lay out again
 	void SizeAtZoom(TInt aZoom, TInt& aCols, TInt& aRows) const;   // for the Font menu
+	// the zoom levels of the typeface in Preferences: 0 is Courier small,
+	// then the typeface's sizes, smallest first
+	static TInt ZoomLevels(TInt aFace);
+	static TInt ZoomPixels(TInt aFace, TInt aZoom);
+	static void ZoomName(TInt aFace, TInt aZoom, TDes& aName);   // "Spleen 16"
+	static TInt ZoomNearest(TInt aFace, TInt aPixels);           // the level nearest a height
 	void LocalMessage(const TDesC8& aText);
 	// Debug screen: output goes to a text window instead of the terminal
 	void BeginDebugL(const TDesC& aTitle);
@@ -695,8 +704,17 @@ private:
 	CHostList* iHosts;        // owned by the app UI; the welcome screen lists them
 	// appearance
 	TInt Theme(TInt aGrey) const;                   // theme mapping of a grey 0..15
-	TRgb Grey(TInt aGrey) const { return TRgb::Gray16(Theme(aGrey)); }
+	// a grey 0 (the theme's text) .. 15 (its paper); on a colour screen a
+	// mix of the two
+	TRgb Grey(TInt aGrey) const;
 	void ThemePair(TInt aFg, TInt aBg, TInt& aThemedFg, TInt& aThemedBg) const;
+	// a themed colour from ThemePair as the pen or brush: a grey, or on a
+	// colour screen 0xRRGGBB
+	TRgb Ink(TInt aThemed) const
+		{ return iColour ? TRgb((aThemed >> 16) & 255, (aThemed >> 8) & 255, aThemed & 255) : TRgb::Gray16(aThemed); }
+	// (colour screens) an xterm colour 0..255, or KColDefFg/KColDefBg, as 0xRRGGBB
+	TInt ColourRgb(TInt aCode, TBool aFg) const;
+	TBool iColour;            // a colour screen (the Series 7, the netBook): cells hold xterm colours
 	TUint8 iGreyCal[256];     // 8-bit grey -> level, from the calibration (ssh/psigrey.h)
 	TBool iGreyOn;            // the calibration is on (else the old mapping, exactly)
 	TInt iStatusH;            // status line height in pixels (0 = off)
@@ -828,6 +846,12 @@ private:
 	void PumpQuiet();
 	static TInt BellCallback(TAny* aSelf);
 	TUint iUserAt;            // tick of the last key typed (tmux window list: how often)
+	// (0.99) the echo time, shown on the status line with Keep a log on: from
+	// a key going to psissh to the next output coming back, in ms
+	TUint iEchoAt;            // tick the key went (0 = none waiting)
+	TInt iEchoLast;
+	TInt iEchoAvg;            // a running average (the last 8 or so)
+	TInt iTickUsReal;         // UserHal::TickPeriod (1/64 s on the 5mx and Series 7)
 	TUint8 iEntropy[PSI_ENTROPY_SIZE];
 	TInt iEntropyPos;
 	TInt iEntropyFill;
@@ -847,6 +871,9 @@ private:
 	static TInt PendingCallback(TAny* aSelf);
 	void AppendDebug(const TDesC8& aText);
 	CPeriodic* iShotTimer;    // screenshot a moment after the menu closes
+	CPeriodic* iBenchTimer;   // the drawing benchmark (Bench.txt beside the app)
+	static TInt BenchCallback(TAny* aSelf);
+	void RunBench();
 	void TakeScreenshotL();
 	void ShotDir(TDes& aDir);
 	TInt iEntropyMode;        // what to launch once the randomness is gathered

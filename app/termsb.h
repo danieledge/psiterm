@@ -7,11 +7,16 @@
 struct TSbCell
 	{
 	unsigned short iCh;       // Unicode code point (0 = empty)
-	unsigned char iGrey;      // fg grey << 4 | bg grey
-	unsigned char iFlags;     // KSbBold | KSbUnderline | KSbStrike | KSbWide
+	unsigned char iFg;        // text: a grey 0..15, or on a colour screen an xterm colour 0..255
+	unsigned char iBg;        // paper: the same
+	unsigned char iFlags;     // KSbBold | KSbUnderline | KSbStrike | KSbWide | KSbDef*
 	};
 
-enum { KSbBold = 1, KSbUnderline = 2, KSbStrike = 4, KSbWide = 8 };
+// KSbDefFg/KSbDefBg: on a colour screen (KSbColour), the theme's own
+// colours: then iFg/iBg are 0 for the usual one (text, paper) and 1 for the
+// other (reverse video), so a theme change re-colours the history too.
+enum { KSbBold = 1, KSbUnderline = 2, KSbStrike = 4, KSbWide = 8, KSbDefFg = 16, KSbDefBg = 32,
+	KSbColour = 64 };
 
 struct TTermSb
 	{

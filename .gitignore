@@ -17,9 +17,10 @@ pkg/psiterm.mbm
 pkg/psissh.exe
 pkg/psihold.exe
 pkg/STDLIB.SIS
-# the Terminus font and its licence come from core/pkg at build time
+# the fonts and their licences come from core/pkg at build time
 pkg/psiterm.gdr
 pkg/terminus-licence.txt
+pkg/font-licences.txt
 __pycache__/
 *.pyc
 

@@ -40,8 +40,8 @@ python3 "$CORE/tools/mkicons.py" "$HERE/build/icons" "$HERE/app/pticons.h"
 
 echo "== package"
 cp "$REL/psiterm.app" "$REL/psiterm.rsc" "$REL/psissh.exe" "$HERE/build/icons/psiterm.mbm" "$HERE/build/psihold/psihold.exe" "$HERE/pkg/"
-# the Terminus font and its licence (core/pkg; git-ignored here)
-cp "$CORE/pkg/psiterm.gdr" "$CORE/pkg/terminus-licence.txt" "$HERE/pkg/"
+# the fonts (Terminus, Spleen, Gohufont, Cozette) and their licences (core/pkg; git-ignored here)
+cp "$CORE/pkg/psiterm.gdr" "$CORE/pkg/terminus-licence.txt" "$CORE/pkg/font-licences.txt" "$HERE/pkg/"
 # the EPOC C library (ESTLIB.DLL) is not in the 5mx ROM: embed the SDK's
 # redistributable stdlib.sis so a fresh Psion gets it too
 install -m 644 "$REL/stdlib.sis" "$HERE/pkg/STDLIB.SIS"   # (the SDK copy is read-only)

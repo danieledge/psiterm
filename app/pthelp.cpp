@@ -49,8 +49,11 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "drag up or down scrolls; Shift with the pen still selects text.\n"
 	  "\n"
 	  "The zoom icons on the sidebar, or View > Zoom in and Zoom out (Shift+Ctrl+M), go round the "
-	  "five sizes - Terminus 12, 14, 16 and 18 and a small Courier - and View > Font picks one. "
-	  "View > Font > Other font... picks any font the Psion has, at any of its sizes; the zoom keys "
+	  "sizes of the terminal's typeface and a small Courier, and View > Font picks one. PsiTerm has "
+	  "four typefaces: Terminus (12, 14, 16, 18 and 24), Spleen (12, 16 and 24), Gohufont (11 and 14) "
+	  "and Cozette (13). Choose one in View > Font > Other font...; the Font menu and the zoom keys "
+	  "then go round its sizes. The 5mx starts in Terminus 12, the Series 7 in Spleen 16. "
+	  "Other font... also picks any other font the Psion has, at any of its sizes; the zoom keys "
 	  "then go round that font's sizes. A font that is not fixed-width has its letters spaced out to "
 	  "fit the columns. Fonts other programs installed (.gdr files in \\System\\Fonts\\) are listed "
 	  "too. View > Bold text draws bold where the server asks; "
@@ -179,6 +182,14 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "screen, Ctrl+L) and close PsiMail or PsiWeb's connection first." },
 
 	{ "Screen & greys",
+	  "On the Series 7 and netBook, PsiTerm shows the server's colours, all 256 of them (colours "
+	  "beyond those come out as the nearest). Tools > Preferences > Theme: Dark (the standard: light "
+	  "text on black, what most terminal colour schemes are made for), Light (black on white, as the "
+	  "Series 7's own programs), High contrast (black and white only) or Soft. Coloured text too "
+	  "close to the paper's brightness is made lighter or darker, keeping its colour, so it can "
+	  "always be read. Reading mode and Screen greys are for the 5mx's grey screen, so they are not "
+	  "there on a colour one.\n"
+	  "\n"
 	  "View > Reading mode raises the screen's contrast and keeps the backlight on while PsiTerm is in "
 	  "front. Your own contrast and backlight come back when PsiTerm goes to the background or closes, "
 	  "or the Psion is switched off; the next key turns it on again. If you change the contrast "
