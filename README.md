@@ -59,6 +59,15 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 1.00**
+- **More colour themes on the Series 7 and netBook.** Besides Dark, Light,
+  High contrast and Soft: Slate, Clean, Dracula, Nord, Solarized Dark, One
+  Dark, Gruvbox Dark, Monokai, Tokyo Night, Homebrew and Matrix (Tools >
+  Preferences > Theme). Each has its own 16 standard colours.
+- **tmux tabs in colour.** On a colour screen the tab strip is navy, like the
+  status line, and the current window's tab takes the theme's colours. The
+  5mx's tabs are unchanged.
+
 **PsiTerm 0.99**
 - **Colour on the Series 7 and netBook.** PsiTerm shows the server's colours
   (all 256; full 24-bit colour comes out as the nearest of them) on the

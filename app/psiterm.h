@@ -57,7 +57,7 @@ struct TPsiSettings
 	TBuf<100> iStartCmd;  // optional command run on login, e.g. tmux new -A -s psion
 	TInt iUpdSource;      // 0 = GitHub (HTTPS, default), 1 = the local server iUpdHost
 	// 0.35 appearance and keys
-	TInt iTheme;          // 0 classic, 1 inverted (light on dark), 2 high contrast, 3 soft
+	TInt iTheme;          // 0 classic, 1 inverted (light on dark), 2 high contrast, 3 soft; colour screens: 4.. Muxedo's (KMuxThemes)
 	TInt iCursor;         // 0 block, 1 underline, 2 bar
 	TInt iBlink;          // 1 = blinking cursor
 	TInt iStatus;         // 1 = status line at the bottom

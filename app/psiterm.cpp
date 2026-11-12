@@ -140,7 +140,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "0.99");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.00");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -2879,14 +2879,66 @@ static TInt ColourCode(const VTermScreen* aScreen, const VTermColor& aCol, TBool
 	return NearestXterm(c.rgb.red, c.rgb.green, c.rgb.blue);
 	}
 
+// The themes from Muxedo (1.0), after the first four: the text and paper
+// colours, and the 16 standard colours in xterm's order. Colours 16..255
+// stay xterm's in every theme.
+struct TPtColourTheme
+	{
+	TInt iFg, iBg;
+	TInt iAnsi[16];
+	};
+
+static const TPtColourTheme KMuxThemes[] = {
+	{ 0xCBCCC6, 0x1C1E26,  // Slate
+	  { 0x1C1E26, 0xEF6B73, 0x87D96C, 0xFFCC66, 0x6CB6FF, 0xD4BFFF, 0x95E6CB, 0xCBCCC6,
+	    0x6B7280, 0xF28779, 0xA6E22E, 0xFFD580, 0x7DC4FF, 0xE0C0FF, 0xA8F0D0, 0xFFFFFF } },
+	{ 0x5CC97C, 0x141728,  // Clean
+	  { 0x141728, 0xE05B57, 0x5CC97C, 0xE7EBED, 0x225388, 0xEE7B79, 0x478FEF, 0xD6DDE0,
+	    0x4C5860, 0xE16866, 0x5CC97C, 0xFFFFFF, 0x346BAF, 0xEE7B79, 0x5D9FEF, 0xFFFFFF } },
+	{ 0xF8F8F2, 0x282A36,  // Dracula
+	  { 0x21222C, 0xFF5555, 0x50FA7B, 0xF1FA8C, 0xBD93F9, 0xFF79C6, 0x8BE9FD, 0xF8F8F2,
+	    0x6272A4, 0xFF6E6E, 0x69FF94, 0xFFFFA5, 0xD6ACFF, 0xFF92DF, 0xA4FFFF, 0xFFFFFF } },
+	{ 0xD8DEE9, 0x2E3440,  // Nord
+	  { 0x3B4252, 0xBF616A, 0xA3BE8C, 0xEBCB8B, 0x81A1C1, 0xB48EAD, 0x88C0D0, 0xE5E9F0,
+	    0x4C566A, 0xBF616A, 0xA3BE8C, 0xEBCB8B, 0x81A1C1, 0xB48EAD, 0x8FBCBB, 0xECEFF4 } },
+	{ 0x839496, 0x002B36,  // Solarized Dark
+	  { 0x073642, 0xDC322F, 0x859900, 0xB58900, 0x268BD2, 0xD33682, 0x2AA198, 0xEEE8D5,
+	    0x586E75, 0xCB4B16, 0x586E75, 0x657B83, 0x839496, 0x6C71C4, 0x93A1A1, 0xFDF6E3 } },
+	{ 0xABB2BF, 0x282C34,  // One Dark
+	  { 0x282C34, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xABB2BF,
+	    0x5C6370, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xFFFFFF } },
+	{ 0xEBDBB2, 0x282828,  // Gruvbox Dark
+	  { 0x282828, 0xCC241D, 0x98971A, 0xD79921, 0x458588, 0xB16286, 0x689D6A, 0xA89984,
+	    0x928374, 0xFB4934, 0xB8BB26, 0xFABD2F, 0x83A598, 0xD3869B, 0x8EC07C, 0xEBDBB2 } },
+	{ 0xFCFCFA, 0x2D2A2E,  // Monokai
+	  { 0x403E41, 0xFF6188, 0xA9DC76, 0xFFD866, 0xFC9867, 0xAB9DF2, 0x78DCE8, 0xFCFCFA,
+	    0x727072, 0xFF6188, 0xA9DC76, 0xFFD866, 0xFC9867, 0xAB9DF2, 0x78DCE8, 0xFCFCFA } },
+	{ 0xC0CAF5, 0x1A1B26,  // Tokyo Night
+	  { 0x15161E, 0xF7768E, 0x9ECE6A, 0xE0AF68, 0x7AA2F7, 0xBB9AF7, 0x7DCFFF, 0xA9B1D6,
+	    0x414868, 0xF7768E, 0x9ECE6A, 0xE0AF68, 0x7AA2F7, 0xBB9AF7, 0x7DCFFF, 0xC0CAF5 } },
+	{ 0x00FF00, 0x000000,  // Homebrew
+	  { 0x000000, 0x990000, 0x00A600, 0x999900, 0x0000B2, 0xB200B2, 0x00A6B2, 0xBFBFBF,
+	    0x666666, 0xE50000, 0x00D900, 0xE5E500, 0x0000FF, 0xE500E5, 0x00E5E5, 0xE5E5E5 } },
+	{ 0x00FF41, 0x0D0208,  // Matrix
+	  { 0x0D0208, 0xFF0000, 0x00FF41, 0xFFFF00, 0x0000FF, 0xFF00FF, 0x00FFFF, 0x00FF41,
+	    0x003B00, 0xFF5555, 0x55FF55, 0xFFFF55, 0x5555FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF } } };
+
+const TInt KPtFirstMuxTheme = 4;
+const TInt KPtColourThemes = KPtFirstMuxTheme + sizeof(KMuxThemes) / sizeof(KMuxThemes[0]);
+
 // The themes on a colour screen: Light (black on white, as the Series 7's
 // own programs), Dark (light grey on black, what most terminal colour
-// schemes are made for), High contrast and Soft (dark grey on light grey).
+// schemes are made for), High contrast, Soft (dark grey on light grey),
+// then Muxedo's (KMuxThemes).
 TInt CTermView::ColourRgb(TInt aCode, TBool aFg) const
 	{
+	const TPtColourTheme* mux = iSettings.iTheme >= KPtFirstMuxTheme && iSettings.iTheme < KPtColourThemes
+		? &KMuxThemes[iSettings.iTheme - KPtFirstMuxTheme] : 0;
 	if (aCode == KColDefFg || aCode == KColDefBg)
 		{
 		TBool paper = (aCode == KColDefBg);
+		if (mux)
+			return paper ? mux->iBg : mux->iFg;
 		switch (iSettings.iTheme)
 			{
 		case 1: return paper ? 0x000000 : 0xE5E5E5;
@@ -2895,6 +2947,8 @@ TInt CTermView::ColourRgb(TInt aCode, TBool aFg) const
 			}
 		}
 	(void)aFg;
+	if (mux && (aCode & 255) < 16)
+		return mux->iAnsi[aCode & 255];
 	return XtermRgb(aCode & 255);
 	}
 
@@ -3188,8 +3242,9 @@ void CTermView::ThemePair(TInt aFg, TInt aBg, TInt& aThemedFg, TInt& aThemedBg) 
 			{
 			// keep coloured text readable on its paper: yellow on white is
 			// darkened, dark blue on black lightened, the hue kept (the
-			// theme's own pair is left as it is)
-			const TInt KMinDiff = 80;
+			// theme's own pair is left as it is). Muxedo's themes were made
+			// for a phone's screen: on the Series 7's they get more.
+			const TInt KMinDiff = iSettings.iTheme >= KPtFirstMuxTheme ? 110 : 80;
 			TInt diff = lf - lb;
 			if (diff < 0) diff = -diff;
 			if (diff < KMinDiff)
@@ -6918,7 +6973,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 									pos++;
 									if (pos + 4 < data.Length())  // v8: appearance, tmux
 										{
-										aSettings.iTheme = data[pos] <= 3 ? data[pos] : 0;
+										aSettings.iTheme = data[pos] < (PtColourScreen() ? KPtColourThemes : 4) ? data[pos] : 0;
 										aSettings.iCursor = data[pos + 1] <= 2 ? data[pos + 1] : 0;
 										aSettings.iBlink = data[pos + 2] ? 1 : 0;
 										aSettings.iStatus = data[pos + 3] ? 1 : 0;

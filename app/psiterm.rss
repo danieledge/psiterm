@@ -723,10 +723,14 @@ RESOURCE ARRAY r_pt_theme_array
 	items={ LBUF { txt="Classic"; }, LBUF { txt="Inverted (light on dark)"; }, LBUF { txt="High contrast"; }, LBUF { txt="Soft"; } };
 	}
 
-// the same four themes on a colour screen (Series 7, netBook)
+// the same four themes on a colour screen (Series 7, netBook), then
+// Muxedo's, in the order of KMuxThemes in psiterm.cpp
 RESOURCE ARRAY r_pt_theme_colour_array
 	{
-	items={ LBUF { txt="Light"; }, LBUF { txt="Dark"; }, LBUF { txt="High contrast"; }, LBUF { txt="Soft"; } };
+	items={ LBUF { txt="Light"; }, LBUF { txt="Dark"; }, LBUF { txt="High contrast"; }, LBUF { txt="Soft"; },
+		LBUF { txt="Slate"; }, LBUF { txt="Clean"; }, LBUF { txt="Dracula"; }, LBUF { txt="Nord"; },
+		LBUF { txt="Solarized Dark"; }, LBUF { txt="One Dark"; }, LBUF { txt="Gruvbox Dark"; },
+		LBUF { txt="Monokai"; }, LBUF { txt="Tokyo Night"; }, LBUF { txt="Homebrew"; }, LBUF { txt="Matrix"; } };
 	}
 
 RESOURCE ARRAY r_pt_cursor_array
