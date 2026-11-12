@@ -59,6 +59,30 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 1.01**
+- **tmux as Muxedo has it.** tmux > tmux settings... sets the defaults:
+  start in tmux on logging in, the session's name, a session of the Psion's
+  own (grouped with the main one: the same windows, but its own size and
+  current window), tmux options set on attach (standard: `window-size latest`
+  and `aggressive-resize on`, so a bigger screen on the same session is not
+  squeezed), the prefix key, and a note when the server has no tmux. Each
+  saved server can override any of them (SSH to > Edit > tmux...); a
+  server's Command on login still overrides everything.
+- **tmux > Sessions...** lists tmux's sessions: switch to one, or make,
+  rename or close one.
+- **More window and pane commands:** Close window, Even layout, Pane to
+  window, Close pane. Window and pane commands now go to tmux on a channel
+  of their own, so they work whatever has the keyboard (vim's insert mode,
+  a prompt). Rename window asks for the name in a dialog.
+- **tmux history.** View > Scroll > tmux history brings the pane's own
+  history into PsiTerm's scrollback.
+- **tmux tabs fixed on more servers.** Where a server runs commands without
+  a UTF-8 locale, tmux sent its window list in a form PsiTerm could not
+  read, so the tabs fell back to reading the status line; and after the
+  Psion's tick count passed 2^31 PsiTerm stopped asking tmux at all.
+- **Snippets in a new tmux window.** A snippet can run in a new window of
+  its own (Manage snippets > Edit > Run in).
+
 **PsiTerm 1.00**
 - **More colour themes on the Series 7 and netBook.** Besides Dark, Light,
   High contrast and Soft: Slate, Clean, Dracula, Nord, Solarized Dark, One

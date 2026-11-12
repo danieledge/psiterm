@@ -71,12 +71,15 @@ static int is_detached(const struct Channel *c)
 /* the shared text: "C" lines are the clients (when each was last active and
    its session), "W" lines the windows of every session (the name last, as
    it may hold anything), then tmux's status settings. A tab is a real tab. */
+/* (1.01) tmux -u: with no UTF-8 locale (an exec channel often has no LANG)
+   tmux 3.4 prints the tabs in -F's output as '_', and nothing parses */
 #define TQ_PATH  "PATH=\\\"\\$PATH:/usr/local/bin:/opt/homebrew/bin:/opt/local/bin\\\"; "
 #define TQ_LIST \
-	"tmux list-clients -F 'C\t#{client_activity}\t#{session_id}' 2>/dev/null; " \
-	"tmux list-windows -a -F 'W\t#{session_id}\t#{window_index}\t#{window_active}\t#{window_name}' 2>/dev/null; " \
-	"tmux show-options -g status 2>/dev/null; " \
-	"tmux show-options -g status-position 2>/dev/null"
+	"tmux -u list-clients -F 'C\t#{client_activity}\t#{session_id}' 2>/dev/null; " \
+	"tmux -u list-windows -a -F 'W\t#{session_id}\t#{window_index}\t#{window_active}\t#{window_name}' 2>/dev/null; " \
+	"tmux -u list-sessions -F 'S\t#{session_id}\t#{session_attached}\t#{session_windows}\t#{session_name}' 2>/dev/null; " \
+	"tmux -u show-options -g status 2>/dev/null; " \
+	"tmux -u show-options -g status-position 2>/dev/null"
 
 static int valid_sid(const char *p)
 {
@@ -85,6 +88,52 @@ static int valid_sid(const char *p)
 	for (p++; *p; p++, n++)
 		if (*p < '0' || *p > '9') return 0;
 	return n > 0 && n < 8;
+}
+
+/* (PsiTerm 1.01) PSI_TQ_RUN: the commands in tq_cmd, ';' between them, as
+   "tmux <command>" each, into aOut. They are the person's own settings and
+   menu commands, run as themselves; still, only plain printable text, and
+   nothing the user's shell would read inside the double quotes (" \ `), so
+   each reaches tmux as written. A $ only as a session id in single quotes,
+   '$3' (escaped here, as for SELECT). 0 if there is anything else, or none. */
+static int build_run(char *aOut, int aMax)
+{
+	PsiShared *s = sh();
+	char cmd[sizeof(s->tq_cmd)];
+	int i, n = 0, any = 0;
+	char *p, *e;
+	memcpy(cmd, s->tq_cmd, sizeof(cmd));
+	cmd[sizeof(cmd) - 1] = 0;
+	for (i = 0; cmd[i]; i++) {
+		unsigned char c = (unsigned char)cmd[i];
+		if (c < 0x20 || c > 0x7e || c == '"' || c == '\\' || c == '`')
+			return 0;
+		if (c == '$' && (i == 0 || cmd[i - 1] != '\'' || cmd[i + 1] < '0' || cmd[i + 1] > '9'))
+			return 0;
+	}
+	aOut[0] = 0;
+	for (p = cmd; *p; p = e) {
+		int len, k;
+		e = strchr(p, ';');
+		if (!e) e = p + strlen(p);
+		while (p < e && *p == ' ') p++;
+		len = (int)(e - p);
+		while (len > 0 && p[len - 1] == ' ') len--;
+		if (*e) e++;
+		if (len == 0) continue;
+		if (len >= 5 && memcmp(p, "tmux ", 5) == 0) { p += 5; len -= 5; }   /* (written out in full) */
+		if (n + 2 * len + 24 >= aMax) return 0;
+		memcpy(aOut + n, "tmux -u ", 8);
+		n += 8;
+		for (k = 0; k < len; k++) {
+			if (p[k] == '$') aOut[n++] = '\\';
+			aOut[n++] = p[k];
+		}
+		memcpy(aOut + n, " 2>/dev/null; ", 15);  /* (with its 0) */
+		n += 14;
+		any = 1;
+	}
+	return any;
 }
 
 /* the whole command line for the request, or 0 if its arguments are bad */
@@ -99,8 +148,27 @@ static int build_command(char *cmd, int max)
 		if (!valid_sid(sid) || s->tq_idx < 0 || s->tq_idx > 9999)
 			return 0;
 		/* ($ is escaped for the user's shell, which reads the double quotes) */
-		n = snprintf(cmd, max, "sh -c \"" TQ_PATH "tmux select-window -t '\\$%s:%d' 2>/dev/null; " TQ_LIST "\"",
+		n = snprintf(cmd, max, "sh -c \"" TQ_PATH "tmux -u select-window -t '\\$%s:%d' 2>/dev/null; " TQ_LIST "\"",
 			sid + 1, s->tq_idx);
+	} else if (op == PSI_TQ_RUN) {
+		char run[400];
+		if (!build_run(run, sizeof(run)))
+			return 0;
+		n = snprintf(cmd, max, "sh -c \"" TQ_PATH "%s" TQ_LIST "\"", run);
+	} else if (op == PSI_TQ_HISTORY) {
+		/* the pane of the session PsiTerm shows (else tmux's own choice),
+		   its history joined into whole lines, into a file SFTP then gets */
+		char sid[16], target[24];
+		int lines = s->tq_idx;
+		memcpy(sid, s->tq_sid, sizeof(sid));
+		sid[sizeof(sid) - 1] = 0;
+		if (lines < 1 || lines > 20000)
+			return 0;
+		target[0] = 0;
+		if (valid_sid(sid))
+			snprintf(target, sizeof(target), "-t '\\$%s' ", sid + 1);
+		n = snprintf(cmd, max, "sh -c \"" TQ_PATH "tmux -u capture-pane -p -J %s-S -%d -E -1 > .psiterm-history.txt 2>/dev/null; " TQ_LIST "\"",
+			target, lines);
 	} else if (op == PSI_TQ_LIST) {
 		n = snprintf(cmd, max, "sh -c \"" TQ_PATH TQ_LIST "\"");
 	} else {
@@ -319,7 +387,7 @@ void psi_tq_loop(void)
 		}
 		op = s->tq_op;
 		serving = s->tq_req;
-		if (op != PSI_TQ_LIST && op != PSI_TQ_SELECT) {
+		if (op != PSI_TQ_LIST && op != PSI_TQ_SELECT && op != PSI_TQ_RUN && op != PSI_TQ_HISTORY) {
 			finish(PSI_TQ_FAILED);
 			return;
 		}

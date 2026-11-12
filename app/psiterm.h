@@ -101,12 +101,14 @@ const TInt KMaxSnipFolders = 8;
 
 struct TSnippet
 	{
+	TSnippet() : iEnter(0), iKey(0), iNewWin(0) {}
 	TBuf<24> iName;
 	TBuf<120> iText;
 	TInt iEnter;          // 1 = press Enter after the text
 	TInt iKey;            // Shift+Ctrl hotkey: 0 none, else a letter from KSnippetKeys
 	                      // (digits were allowed before 0.79; a saved digit loads as none)
 	TBuf<24> iFolder;     // folder name, or empty for the top level (0.86)
+	TInt iNewWin;         // 1.01: 1 = run it in a new tmux window (as Muxedo's)
 	};
 
 class CSnippetList : public CBase
@@ -253,6 +255,39 @@ private:
 // ---------------------------------------------------------------------------
 const TInt KMaxHosts = 16;
 
+// ---------------------------------------------------------------------------
+// tmux (1.01, as Muxedo): starting in tmux, the session, the options set on
+// attach. The defaults are in Tmux.ini (tmux > tmux settings...); each saved
+// server can override any of them (SSH server > tmux...). pttmux.cpp
+// ---------------------------------------------------------------------------
+const TInt KTmuxSessionLen = 16;   // (a grouped command must fit 127 characters)
+const TInt KTmuxHistoryLines = 1000;   // tmux history: asked of tmux (the scrollback keeps 300)
+
+struct TPtTmux
+	{
+	TPtTmux() : iStart(0), iOwn(0), iOpts(0), iWarn(0) {}
+	// the defaults: 0 no, 1 yes. A server's own: 0 use the default, 1 yes, 2 no
+	TInt iStart;          // start in tmux when there is no command on login
+	TBuf<KTmuxSessionLen> iSession;   // a server's own: empty = the default
+	TInt iOwn;            // a session of the Psion's own, grouped with iSession
+	TInt iOpts;           // set iOptions on attach
+	TBuf<120> iOptions;   // tmux commands, ';' between them. A server's: empty = the default
+	TInt iWarn;           // (the defaults only) say so when the server has no tmux
+	};
+
+void PtTmuxLoad(RFs& aFs, TPtTmux& aTmux);
+TInt PtTmuxSave(RFs& aFs, const TPtTmux& aTmux);
+// the settings for one server: its own where it has them, else the defaults
+void PtTmuxEffective(const TPtTmux& aDefaults, const TPtTmux& aServer, TPtTmux& aOut);
+// the command that starts (or rejoins) tmux, from effective settings
+void PtTmuxStartCommand(const TPtTmux& aTmux, TDes& aCommand);
+// a name tmux will get as typed: no quotes, $, \ or ` (psissh refuses those)
+TBool PtTmuxTextOk(const TDesC& aText, TBool aName);
+// the settings dialog: the defaults (aDefaults 0, with the prefix key) or a
+// server's own over aDefaults. ETrue on OK.
+TBool PtTmuxSettingsL(TPtTmux& aTmux, const TPtTmux* aDefaults, TInt* aPrefix);
+void PtHostTmuxL(TPtTmux& aServer, const TPtTmux& aDefaults);   // SSH server > tmux...
+
 struct THostEntry
 	{
 	TBuf<24> iName;
@@ -264,6 +299,7 @@ struct THostEntry
 	TInt iAuth;           // log in with: 0 = SSH key, 1 = password (ask), 2 = saved password,
 	                      // 3 = SSH key, then the saved password
 	TInt iKeyId;          // which key (TSshKey::iId); 0 = the first one
+	TPtTmux iTmux;        // 1.01: this server's tmux settings (all "use the default" to start)
 	};
 
 // ---------------------------------------------------------------------------
@@ -490,6 +526,7 @@ class CHostEditDialog : public CEikDialog
 	{
 public:
 	CHostEditDialog(THostEntry& aEntry, CKeyList& aKeys);
+	const TPtTmux* iDefaults;   // for its tmux... button (the defaults it shows)
 private:
 	void SetSizeAndPositionL(const TSize& aSize);
 	void PreLayoutDynInitL();
@@ -570,6 +607,16 @@ public:
 	void StartSshL();
 	void SetSshPassword(const TDesC& aPassword) { iSshPassword.Copy(aPassword); }
 	void SetLoginCommand(const TDesC& aCommand) { iLoginCmd.Copy(aCommand); }
+	// 1.01: this connection's tmux settings (pttmux.cpp)
+	void SetTmux(const TPtTmux& aTmux);
+	void SendSnippet(const TSnippet& aSnippet);   // here, or in a new tmux window
+	TBool TmuxRun(const TDesC8& aCommands);     // tmux commands on the query channel
+	TBool TmuxCanRun() const;                   // ...possible now
+	void TmuxRunThenType(const TDesC8& aCommands, const TDesC& aText, TBool aEnter);
+	void TmuxHistoryL();                        // tmux's history into the scrollback
+	TInt TmuxSessions(TDes8* aIds, TDes* aNames, TInt* aWindows, TInt* aAttached, TInt aMax) const;
+	const TDesC8& TmuxSid() const { return iQSid; }
+	TInt TmuxCurrentWindow(TDes& aName) const;  // -1 = not known
 	void SetKeyBase(const TDesC& aBase) { iKeyBase.Copy(aBase); }
 	void StartSpeedTestL();
 	void StartUpdateL();
@@ -793,6 +840,27 @@ private:
 	TBool iQBarTop;           // status-position top
 	TInt iQBarLines;          // the status setting: 0 off, 1 on, 2... lines
 	TUint iTqPrefixAt;        // when the tmux prefix key was last typed
+	// 1.01 (pttmux.cpp): commands to run on the channel, this connection's
+	// settings, tmux's sessions, and what to do when a command has run
+	TBuf8<256> iTqRun;        // commands waiting to be posted (PSI_TQ_RUN)
+	TInt iTqRunOp;            // PSI_TQ_RUN or PSI_TQ_HISTORY
+	TInt iTqSentOp;           // the op in flight
+	TPtTmux iTmuxCfg;
+	TBool iTmuxOptsSent;
+	TBool iTmuxWarned;
+	TBuf<120> iTqAfterText;   // typed once the commands have run (a snippet in a new window)
+	TBool iTqAfterEnter;
+	TBool iTqAfterPending;
+	enum { KMaxTmuxSessions = 12 };
+	TBuf8<12> iQSessId[KMaxTmuxSessions];
+	TBuf<24> iQSessName[KMaxTmuxSessions];
+	TInt iQSessWin[KMaxTmuxSessions];
+	TInt iQSessAtt[KMaxTmuxSessions];
+	TInt iQSessCount;
+	TInt iHistState;          // 0 none, 1 asking tmux, 2 fetching the file
+	void TmuxRunDone(TInt aOp, TInt aResult);
+	void TmuxHistoryTick();
+	void TmuxHistoryLoadL();
 	void TmuxQueryReset();
 	void TmuxQueryKick();                // something changed: ask again soon
 	void TmuxQueryTick();                // every tick: post, collect
@@ -889,7 +957,7 @@ private:
 	TBuf<96> iPendKeyBase;
 	TBuf<24> iPendKeyName;
 	TBuf<96> iPendKeySrc;
-	TBuf<100> iLoginCmd;      // the connected host's command on login
+	TBuf<127> iLoginCmd;      // the connected host's command on login (or the tmux one)
 	TBuf8<64> iSshPassword;   // saved password for the next launch, then wiped
 	// auto-reconnect
 	TBuf8<64> iReconnectPw;   // the saved password of this session (RAM only)
@@ -969,6 +1037,11 @@ private:
 	void ConnectHostL(TInt aIndex);
 	TBool EditSnippetL(TSnippet& aEntry, TInt aSelf);
 	void SendTmux(TUint aKey);
+	// 1.01 (pttmux.cpp): the tmux defaults (Tmux.ini) and the commands
+	TPtTmux iTmux;
+	void TmuxSessionsL();
+	void TmuxSettingsL();
+	void TmuxCommandL(TInt aCommand);
 	};
 
 class CPsiTermDocument : public CEikDocument

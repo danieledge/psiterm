@@ -300,7 +300,8 @@ RESOURCE MENU_PANE r_pt_scroll_menu
 		{
 		MENU_ITEM { command=EPtCmdScrollUp; txt="Back"; extratxt="Shift+Pg Up"; },
 		MENU_ITEM { command=EPtCmdScrollDown; txt="Forward"; extratxt="Shift+Pg Dn"; },
-		MENU_ITEM { command=EPtCmdScrollEnd; txt="To live screen"; }
+		MENU_ITEM { command=EPtCmdScrollEnd; txt="To live screen"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxHistory; txt="tmux history"; }
 		};
 	}
 
@@ -352,9 +353,10 @@ RESOURCE MENU_PANE r_pt_tmux_menu
 		MENU_ITEM { command=EPtCmdTmuxDetach; txt="Detach"; extratxt="d"; },
 		MENU_ITEM { command=EPtCmdTmuxMouse; txt="Switch mouse mode"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdTmuxTabs; txt="Windows as tabs"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxSessions; txt="Sessions..."; },
 		MENU_ITEM { cascade=r_pt_tmux_win_menu; txt="Windows"; },
-		MENU_ITEM { cascade=r_pt_tmux_pane_menu; txt="Panes"; },
-		MENU_ITEM { cascade=r_pt_tmux_prefix_menu; txt="Prefix key"; }
+		MENU_ITEM { cascade=r_pt_tmux_pane_menu; txt="Panes"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxSettings; txt="tmux settings..."; }
 		};
 	}
 
@@ -366,7 +368,8 @@ RESOURCE MENU_PANE r_pt_tmux_win_menu
 		MENU_ITEM { command=EPtCmdTmuxNext; txt="Next window"; extratxt="Ctrl+Tab"; },
 		MENU_ITEM { command=EPtCmdTmuxPrev; txt="Previous window"; extratxt="Shift+Ctrl+Tab"; },
 		MENU_ITEM { command=EPtCmdTmuxChoose; txt="Choose window"; extratxt="w"; },
-		MENU_ITEM { command=EPtCmdTmuxRename; txt="Rename window"; extratxt=","; }
+		MENU_ITEM { command=EPtCmdTmuxRename; txt="Rename window..."; extratxt=","; },
+		MENU_ITEM { command=EPtCmdTmuxCloseWin; txt="Close window"; extratxt="&"; }
 		};
 	}
 
@@ -377,7 +380,10 @@ RESOURCE MENU_PANE r_pt_tmux_pane_menu
 		MENU_ITEM { command=EPtCmdTmuxSplitH; txt="Split top/bottom"; extratxt="\""; },
 		MENU_ITEM { command=EPtCmdTmuxSplitV; txt="Split left/right"; extratxt="%"; },
 		MENU_ITEM { command=EPtCmdTmuxPane; txt="Next pane"; extratxt="o"; },
-		MENU_ITEM { command=EPtCmdTmuxZoom; txt="Zoom pane"; extratxt="z"; }
+		MENU_ITEM { command=EPtCmdTmuxZoom; txt="Zoom pane"; extratxt="z"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxEven; txt="Even layout"; },
+		MENU_ITEM { command=EPtCmdTmuxBreak; txt="Pane to window"; extratxt="!"; },
+		MENU_ITEM { command=EPtCmdTmuxClosePane; txt="Close pane"; extratxt="x"; }
 		};
 	}
 
@@ -677,6 +683,7 @@ RESOURCE DIALOG r_pt_snippet_edit_dialog
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgSnipHint; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="\\n presses Enter, \\t Tab, \\e Esc; ^C sends Ctrl+C"; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Folder"; id=EPtDlgSnipFolder; control=EDWIN { width=22; maxlength=24; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Then press Enter"; id=EPtDlgSnipEnter; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Run in"; id=EPtDlgSnipNewWin; control=CHOICELIST { array_id=r_pt_snip_where_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Shortcut key"; id=EPtDlgSnipKey; control=CHOICELIST { maxdisplaychar=14; }; }
 		};
 	}
@@ -742,7 +749,7 @@ RESOURCE DIALOG r_pt_host_edit_dialog
 	{
 	title="SSH server";
 	flags=EEikDialogFlagWait;
-	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	buttons=r_pt_host_edit_buttons;
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgName; control=EDWIN { width=22; maxlength=24; }; },
@@ -1092,4 +1099,83 @@ RESOURCE ARRAY r_pt_log_text_array
 RESOURCE ARRAY r_pt_log_existing_array
 	{
 	items={ LBUF { txt="Add to the end"; }, LBUF { txt="Replace it"; } };
+	}
+
+// SSH server: tmux... opens this server's own tmux settings (1.01)
+RESOURCE DLG_BUTTONS r_pt_host_edit_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPtBidTmux; button=CMBUT { txt="tmux..."; }; hotkey='T'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="OK"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+// tmux settings (1.01, as Muxedo's): the defaults (tmux > tmux settings...)
+// or one server's own (SSH server > tmux..., which hides the last two lines
+// and offers "Use default" in each choice). The choices are filled in by
+// pttmux.cpp.
+RESOURCE DIALOG r_pt_tmux_dialog
+	{
+	title="tmux settings";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Start in tmux"; id=EPtDlgTmuxStart; control=CHOICELIST { array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Session"; id=EPtDlgTmuxSession; control=EDWIN { width=12; maxlength=16; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Own session for this Psion"; id=EPtDlgTmuxOwn; control=CHOICELIST { array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Set options on attach"; id=EPtDlgTmuxOpts; control=CHOICELIST { array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Options"; id=EPtDlgTmuxOptions; control=EDWIN { width=17; maxlength=120; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Prefix key"; id=EPtDlgTmuxPrefix; control=CHOICELIST { array_id=r_pt_tmux_prefix_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Say if tmux is missing"; id=EPtDlgTmuxWarn; control=CHOICELIST { array_id=r_pt_empty_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pt_tmux_prefix_array
+	{
+	items={ LBUF { txt="Ctrl+B (standard)"; }, LBUF { txt="Ctrl+A"; } };
+	}
+
+// tmux > Sessions... (1.01): tmux's sessions on this server
+RESOURCE DIALOG r_pt_tmux_sessions_dialog
+	{
+	title="tmux sessions";
+	flags=EEikDialogFlagWait;
+	buttons=r_pt_tmux_sessions_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Session"; id=EPtDlgTmuxSessList; control=CHOICELIST { maxdisplaychar=30; array_id=r_pt_empty_array; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pt_tmux_sessions_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPtBidNew; button=CMBUT { txt="New"; }; hotkey='N'; },
+		DLG_BUTTON { id=EPtBidTmuxRename; button=CMBUT { txt="Rename"; }; hotkey='R'; },
+		DLG_BUTTON { id=EPtBidTmuxClose; button=CMBUT { txt="Close"; }; hotkey='C'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Switch"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+// a name for a tmux session or window (the title is set: New session...)
+RESOURCE DIALOG r_pt_tmux_name_dialog
+	{
+	title="Name";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgTmuxName; control=EDWIN { width=20; maxlength=24; }; }
+		};
+	}
+
+// Snippet > Run in (1.01)
+RESOURCE ARRAY r_pt_snip_where_array
+	{
+	items={ LBUF { txt="This window"; }, LBUF { txt="A new tmux window"; } };
 	}

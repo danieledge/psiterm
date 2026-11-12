@@ -157,6 +157,7 @@ static void xfer_tick(void)
 /* tmux query test hook: PSI_TQ names a script, run once logged in, one
    request at a time as PsiTerm posts them. Results go to PSI_TQ_OUT (default
    /tmp/psitq.out). Lines:  list     select <session id, e.g. $0> <window index>
+   run <tmux commands>     history <session id> <lines>     (1.01)
    sleep <seconds>     quit */
 static FILE* gTqIn;
 static FILE* gTqOut;
@@ -192,6 +193,8 @@ static void tq_tick(void)
 		if (sscanf(line, "sleep %d", &n) == 1) { gTqWake = now_us() + n * 1000000LL; return; }
 		if (!strcmp(line, "list")) g.tq_op = PSI_TQ_LIST;
 		else if (sscanf(line, "select %99s %d", a, &n) == 2) { g.tq_op = PSI_TQ_SELECT; snprintf(g.tq_sid, sizeof(g.tq_sid), "%s", a); g.tq_idx = n; }
+		else if (!strncmp(line, "run ", 4)) { g.tq_op = PSI_TQ_RUN; snprintf(g.tq_cmd, sizeof(g.tq_cmd), "%s", line + 4); }
+		else if (sscanf(line, "history %99s %d", a, &n) == 2) { g.tq_op = PSI_TQ_HISTORY; snprintf(g.tq_sid, sizeof(g.tq_sid), "%s", a); g.tq_idx = n; }
 		else continue;
 		snprintf(gTqCmd, sizeof(gTqCmd), "%s", line);
 		g.tq_req++;

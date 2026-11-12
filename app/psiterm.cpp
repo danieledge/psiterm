@@ -140,7 +140,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.00");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.01");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -1673,6 +1673,7 @@ void CTermView::Tick()
 		LocalMessage(msg);
 		}
 	TmuxQueryTick();
+	TmuxHistoryTick();                   // (1.01) tmux history: its file has come
 	ParseTmuxTabs();
 	if (iStatusH)
 		{
@@ -2033,6 +2034,13 @@ void CTermView::CheckTabsL()
 			iQBarTop ? "top" : "bottom", iQBarLines, (TInt)(User::TickCount() - iQAt) / 64);
 	q.Append(_L8("\r\n"));
 	LocalMessage(q);
+	// (1.01) the channel's counts, and what waits to be run
+	if (iShared)
+		{
+		q.Format(_L8("Queries asked %d, answered %d, in flight %d (op %d), waiting %d bytes, sessions %d\r\n"),
+			(TInt)iShared->tq_req, (TInt)iShared->tq_ack, (TInt)iTqSent, iTqSentOp, iTqRun.Length(), iQSessCount);
+		LocalMessage(q);
+		}
 	}
 	if (iTabCount == 1)
 		m.Format(_L8("\r\nFound: row %d, 1 window:"), iTabRow + 1);
@@ -2176,7 +2184,15 @@ TBool CTermView::TmuxQueryPost(TInt aOp, TInt aIndex)
 	if (!s || !iSshActive || iTqSent)
 		return EFalse;
 	s->tq_op = aOp;
-	if (aOp == PSI_TQ_SELECT)
+	if (aOp == PSI_TQ_RUN)
+		{
+		TInt n = iTqRun.Length() < (TInt)sizeof(s->tq_cmd) - 1 ? iTqRun.Length() : (TInt)sizeof(s->tq_cmd) - 1;
+		Mem::Copy(s->tq_cmd, iTqRun.Ptr(), n);
+		s->tq_cmd[n] = 0;
+		}
+	if (aOp == PSI_TQ_HISTORY)
+		s->tq_idx = aIndex;
+	if (aOp == PSI_TQ_SELECT || aOp == PSI_TQ_HISTORY)
 		{
 		TInt n = iQSid.Length() < (TInt)sizeof(s->tq_sid) - 1 ? iQSid.Length() : (TInt)sizeof(s->tq_sid) - 1;
 		Mem::Copy(s->tq_sid, iQSid.Ptr(), n);
@@ -2187,6 +2203,7 @@ TBool CTermView::TmuxQueryPost(TInt aOp, TInt aIndex)
 	s->tq_req = req;                           // last: psissh starts now
 	RingSsh();
 	iTqSent = req ? req : 1;
+	iTqSentOp = aOp;
 	iTqStartedAt = User::TickCount();
 	return ETrue;
 	}
@@ -2236,6 +2253,7 @@ void CTermView::TmuxQueryDone()
 	// status settings
 	TBuf8<16> best, only;
 	TInt bestAct = -1, sessions = 0;
+	iQSessCount = 0;
 	TBool top = EFalse;
 	TInt barLines = 1;
 	while (TmuxNextLine(rest, line))
@@ -2260,6 +2278,20 @@ void CTermView::TmuxQueryDone()
 				{
 				only.Copy(sid);
 				sessions++;
+				}
+			}
+		else if (line.Length() > 2 && line[0] == 'S' && line[1] == '\t' && iQSessCount < KMaxTmuxSessions)
+			{
+			// (1.01) a session: id, clients attached, windows, name
+			TPtrC8 sid, att, win, name;
+			if (TmuxField(line, 1, 4, sid) && sid.Length() < 12 && TmuxField(line, 2, 4, att)
+				&& TmuxField(line, 3, 4, win) && TmuxField(line, 4, 4, name))
+				{
+				iQSessId[iQSessCount] = sid;
+				TmuxName(name, iQSessName[iQSessCount]);
+				iQSessWin[iQSessCount] = TmuxNumber(win);
+				iQSessAtt[iQSessCount] = TmuxNumber(att);
+				iQSessCount++;
 				}
 			}
 		else if (line.Length() >= 16 && line.Left(16) == _L8("status-position "))
@@ -2304,6 +2336,12 @@ void CTermView::TmuxQueryDone()
 		iQCount = 0;
 		iTqState = 3;                        // no tmux (or none we can tell is ours)
 		iTqNone++;
+		// (1.01) tmux was to start, and after a few answers there is none
+		if (iTmuxCfg.iWarn && !iTmuxWarned && iTqNone >= 3 && iLoginCmd.FindF(_L("tmux")) >= 0)
+			{
+			iTmuxWarned = ETrue;
+			iEikonEnv->InfoMsg(_L("tmux is not on this server"));
+			}
 		return;
 		}
 	TInt cur = 0;
@@ -2321,13 +2359,26 @@ void CTermView::TmuxQueryDone()
 	iQBarLines = barLines;
 	iTqState = 1;
 	iTqNone = 0;
+	// (1.01) tmux is there: its options, once a connection (tmux settings)
+	if (!iTmuxOptsSent)
+		{
+		iTmuxOptsSent = ETrue;
+		if (iTmuxCfg.iOpts && iTmuxCfg.iOptions.Length())
+			{
+			TBuf8<120> o;
+			o.Copy(iTmuxCfg.iOptions);
+			TmuxRun(o);
+			}
+		}
 	}
 
 void CTermView::TmuxQueryTick()
 	{
 	PsiShared* s = iShared;
 	TUint now = User::TickCount();
-	if (!s || !iSshActive || !iSettings.iTmuxTabs || !SshLoggedIn() || iReconnectWait)
+	// (1.01: tmux commands go on the channel even with Windows as tabs off)
+	if (!s || !iSshActive || (!iSettings.iTmuxTabs && !iTqRun.Length() && !iTqSent && !iTmuxCfg.iOpts)
+		|| !SshLoggedIn() || iReconnectWait)
 		return;
 	if (iTqSent)
 		{
@@ -2335,6 +2386,8 @@ void CTermView::TmuxQueryTick()
 			{
 			iTqSent = 0;
 			TmuxQueryDone();
+			if (iTqSentOp == PSI_TQ_RUN || iTqSentOp == PSI_TQ_HISTORY)
+				TmuxRunDone(iTqSentOp, s->tq_result);
 			}
 		else if ((TInt)(now - iTqStartedAt) > 40 * 64)
 			iTqSent = 0;                     // never answered (psissh gives up itself after 25 s)
@@ -2342,7 +2395,21 @@ void CTermView::TmuxQueryTick()
 			return;
 		}
 	if (iTqState == 2)
+		{
+		iTqRun.Zero();                       // (the server will not run commands)
+		iTqAfterPending = EFalse;
 		return;
+		}
+	if (iTqRun.Length() && (!iTqStartedAt || (TInt)(now - iTqStartedAt) >= 20))
+		{
+		TInt op = iTqRunOp ? iTqRunOp : PSI_TQ_RUN;
+		if (TmuxQueryPost(op, op == PSI_TQ_HISTORY ? KTmuxHistoryLines : 0))
+			{
+			iTqRun.Zero();
+			iTqKickAt = 0;
+			}
+		return;
+		}
 	if (iTqPendingSel >= 0 && ExactReady())
 		{
 		TInt i = iTqPendingSel;
@@ -2352,10 +2419,14 @@ void CTermView::TmuxQueryTick()
 		}
 	if (!iForeground)
 		return;                              // (0.81) not drawn: asked again on coming back (SetForeground)
+	if (!iSettings.iTmuxTabs && iTmuxOptsSent)
+		return;                              // (tabs off: asked only until the options are set)
 	TBool kick = iTqKickAt && (TInt)(now - iTqKickAt) >= 0;
-	if (!kick && (TInt)(now - iTqDueAt) < 0)
+	// (0 = not set: due now. A plain now - 0 is "negative" once the tick
+	// count passes 2^31, which an emulator's can from the start)
+	if (!kick && iTqDueAt && (TInt)(now - iTqDueAt) < 0)
 		return;
-	if ((TInt)(now - iTqStartedAt) < 20)
+	if (iTqStartedAt && (TInt)(now - iTqStartedAt) < 20)
 		return;                              // (not again within 1/3 s)
 	if (TmuxQueryPost(PSI_TQ_LIST, 0))
 		{
@@ -3521,7 +3592,7 @@ TKeyResponse CTermView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aT
 		TInt idx = iSnippets->FindKey(key);
 		if (idx >= 0)
 			{
-			SendSnippetText(iSnippets->At(idx).iText, iSnippets->At(idx).iEnter);
+			SendSnippet(iSnippets->At(idx));
 			return EKeyWasConsumed;
 			}
 		}
@@ -5043,7 +5114,7 @@ void CHostList::Load()
 	RFile file;
 	if (file.Open(iFs, KHostsFile, EFileRead) != KErrNone)
 		return;
-	HBufC8* buf = HBufC8::New(KMaxHosts * 400 + 16);
+	HBufC8* buf = HBufC8::New(KMaxHosts * 560 + 16);
 	if (!buf)
 		{
 		file.Close();
@@ -5095,6 +5166,21 @@ void CHostList::Load()
 		if (err != KErrNone)
 			break;
 		}
+	// (1.01) the hosts' tmux settings, if this file has them
+	if (pos + 3 <= data.Length() && data[pos] == 'P' && data[pos + 1] == 'X' && data[pos + 2] >= 1)
+		{
+		pos += 3;
+		for (TInt i = 0; i < iEntries->Count() && pos + 3 <= data.Length(); i++)
+			{
+			TPtTmux& t = (*iEntries)[i].iTmux;
+			t.iStart = data[pos] <= 2 ? data[pos] : 0;
+			t.iOwn = data[pos + 1] <= 2 ? data[pos + 1] : 0;
+			t.iOpts = data[pos + 2] <= 2 ? data[pos + 2] : 0;
+			pos += 3;
+			if (!GetStr(data, pos, t.iSession) || !GetStr(data, pos, t.iOptions))
+				break;
+			}
+		}
 	data.FillZ();
 	delete buf;
 	if (iLast >= iEntries->Count())
@@ -5103,7 +5189,7 @@ void CHostList::Load()
 
 TInt CHostList::Save()
 	{
-	HBufC8* buf = HBufC8::New(KMaxHosts * 400 + 16);
+	HBufC8* buf = HBufC8::New(KMaxHosts * 560 + 16);
 	if (!buf)
 		return KErrNoMemory;
 	TPtr8 data(buf->Des());
@@ -5136,6 +5222,20 @@ TInt CHostList::Save()
 		PutStr(data, e.iCommand);
 		data.Append((TUint8)e.iAuth);
 		data.Append((TUint8)e.iKeyId);
+		}
+	// (1.01) after the hosts, where older PsiTerms do not look: "PX" 1, then
+	// each host's tmux settings (start, own, options on; session, options)
+	data.Append('P');
+	data.Append('X');
+	data.Append(1);
+	for (TInt i = 0; i < iEntries->Count(); i++)
+		{
+		const TPtTmux& t = (*iEntries)[i].iTmux;
+		data.Append((TUint8)t.iStart);
+		data.Append((TUint8)t.iOwn);
+		data.Append((TUint8)t.iOpts);
+		PutStr(data, t.iSession);
+		PutStr(data, t.iOptions);
 		}
 	TInt r = SafeWrite(iFs, KHostsFile, data);
 	data.FillZ();
@@ -5379,7 +5479,7 @@ void CSnippetList::Load()
 			iLast = 0;
 		return;
 		}
-	HBufC8* buf = HBufC8::New(KMaxSnippets * 200 + 16);
+	HBufC8* buf = HBufC8::New(KMaxSnippets * 202 + 16);
 	if (!buf)
 		{
 		file.Close();
@@ -5411,6 +5511,12 @@ void CSnippetList::Load()
 			if (err != KErrNone)
 				break;
 			}
+		if (ver == 2 && pos + 3 <= data.Length() && data[pos] == 'P' && data[pos + 1] == 'X' && data[pos + 2] >= 1)
+			{
+			pos += 3;                        // (1.01) the flags
+			for (TInt i = 0; i < iEntries->Count() && pos < data.Length(); i++)
+				(*iEntries)[i].iNewWin = data[pos++] & 1;
+			}
 		if (ver == 1)
 			{
 			// one-time migration: everyone gets the Claude Code folder, then save as v2
@@ -5426,7 +5532,7 @@ void CSnippetList::Load()
 
 TInt CSnippetList::Save()
 	{
-	HBufC8* buf = HBufC8::New(KMaxSnippets * 200 + 16);
+	HBufC8* buf = HBufC8::New(KMaxSnippets * 202 + 16);
 	if (!buf)
 		return KErrNoMemory;
 	TPtr8 data(buf->Des());
@@ -5444,6 +5550,13 @@ TInt CSnippetList::Save()
 		data.Append((TUint8)s.iKey);
 		PutStr(data, s.iFolder);
 		}
+	// (1.01) after them, where older PsiTerms do not look: "PX" 1, then a
+	// byte of flags each (1 = run in a new tmux window)
+	data.Append('P');
+	data.Append('X');
+	data.Append(1);
+	for (TInt j = 0; j < iEntries->Count(); j++)
+		data.Append((TUint8)((*iEntries)[j].iNewWin ? 1 : 0));
 	TInt r = SafeWrite(iFs, KSnippetsFile, data);
 	delete buf;
 	iChanged = EFalse;
@@ -5576,6 +5689,7 @@ void CSnippetEditDialog::PreLayoutDynInitL()
 	SetEdwinTextL(EPtDlgSnipText, &iEntry.iText);
 	SetEdwinTextL(EPtDlgSnipFolder, &iEntry.iFolder);   // blank = top level
 	((CEikChoiceList*)Control(EPtDlgSnipEnter))->SetCurrentItem(iEntry.iEnter ? 1 : 0);
+	((CEikChoiceList*)Control(EPtDlgSnipNewWin))->SetCurrentItem(iEntry.iNewWin ? 1 : 0);
 	CDesCArrayFlat* keys = new(ELeave) CDesCArrayFlat(8);
 	CleanupStack::PushL(keys);
 	for (TInt i = 0; i < SnippetKeyCount(); i++)
@@ -5625,6 +5739,7 @@ TBool CSnippetEditDialog::OkToExitL(TInt /*aButtonId*/)
 		iEntry.iName = LeftSafe(text, iEntry.iName.MaxLength());
 	iEntry.iText = text;
 	iEntry.iEnter = ((CEikChoiceList*)Control(EPtDlgSnipEnter))->CurrentItem() == 1;
+	iEntry.iNewWin = ((CEikChoiceList*)Control(EPtDlgSnipNewWin))->CurrentItem() == 1;
 	iEntry.iKey = key;
 	iEntry.iFolder = folder;
 	return ETrue;
@@ -5695,7 +5810,7 @@ TBool CHostListDialog::OkToExitL(TInt aButtonId)
 // ----- add / edit one host ---------------------------------------------------
 
 CHostEditDialog::CHostEditDialog(THostEntry& aEntry, CKeyList& aKeys)
-	: iEntry(aEntry), iKeys(aKeys)
+	: iDefaults(0), iEntry(aEntry), iKeys(aKeys)
 	{
 	}
 
@@ -5749,8 +5864,15 @@ void CHostEditDialog::PreLayoutDynInitL()
 	list->SetCurrentItem(current);
 	}
 
-TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
+TBool CHostEditDialog::OkToExitL(TInt aButtonId)
 	{
+	if (aButtonId == EPtBidTmux)
+		{
+		// (1.01) this server's tmux settings: kept with it when it is saved
+		if (iDefaults)
+			PtHostTmuxL(iEntry.iTmux, *iDefaults);
+		return EFalse;
+		}
 	TBuf<108> host;
 	TBuf<60> user;
 	GetEdwinText(host, EPtDlgHost);
@@ -6374,6 +6496,7 @@ void CPsiTermAppUi::ConstructL()
 	LoadSettings(settings);
 	iHosts = CHostList::NewL(iCoeEnv->FsSession());
 	iHosts->Load();
+	PtTmuxLoad(iCoeEnv->FsSession(), iTmux);     // 1.01: tmux settings
 	if (iHosts->Count() == 0 && settings.iSshUser.Length() > 0)
 		{
 		// carry over the host from PsiTerm 0.3's single "SSH to" setting
@@ -6741,6 +6864,7 @@ CPsiTermAppUi::~CPsiTermAppUi()
 TBool CPsiTermAppUi::EditHostL(THostEntry& aEntry)
 	{
 	CHostEditDialog* dlg = new(ELeave) CHostEditDialog(aEntry, *iKeys);
+	dlg->iDefaults = &iTmux;
 	return dlg->ExecuteLD(R_PT_HOST_EDIT_DIALOG) != 0;
 	}
 
@@ -7131,7 +7255,15 @@ void CPsiTermAppUi::ConnectHostL(TInt aIndex)
 	s.iSshPort = e.iPort;
 	SaveSettings(s);
 	iView->SetSshPassword(e.iPassword);
-	iView->SetLoginCommand(e.iCommand);
+	// (1.01) the server's command on login; if it has none and tmux is to
+	// start (tmux settings, or the server's own), the tmux command
+	TPtTmux tmux;
+	PtTmuxEffective(iTmux, e.iTmux, tmux);
+	TBuf<127> login(e.iCommand);
+	if (login.Length() == 0 && tmux.iStart)
+		PtTmuxStartCommand(tmux, login);
+	iView->SetLoginCommand(login);
+	iView->SetTmux(tmux);
 	TFileName base;
 	if (e.iAuth == 0 || e.iAuth == 3)
 		{
@@ -7223,7 +7355,7 @@ void CPsiTermAppUi::ManageSnippetsL()
 			iSnippets->iLast = index;
 			iSnippets->Save();
 			const TSnippet& e = iSnippets->At(index);
-			iView->SendSnippetText(e.iText, e.iEnter);
+			iView->SendSnippet(e);
 			return;
 			}
 			}
@@ -7378,15 +7510,16 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 				iView->Settings().iTmuxTabs ? EEikMenuItemSymbolOn : 0);
 		if (!iView->SshLoggedIn())
 			{
-			static const TInt KTmux[] = { EPtCmdTmuxCopy, EPtCmdTmuxDetach, EPtCmdTmuxMouse };
+			static const TInt KTmux[] = { EPtCmdTmuxCopy, EPtCmdTmuxDetach, EPtCmdTmuxMouse,
+				EPtCmdTmuxSessions };
 			static const TInt KWin[] = { EPtCmdTmuxNew, EPtCmdTmuxNext, EPtCmdTmuxPrev,
-				EPtCmdTmuxChoose, EPtCmdTmuxRename };
+				EPtCmdTmuxChoose, EPtCmdTmuxRename, EPtCmdTmuxCloseWin };
 			static const TInt KPane[] = { EPtCmdTmuxSplitH, EPtCmdTmuxSplitV, EPtCmdTmuxPane,
-				EPtCmdTmuxZoom };
+				EPtCmdTmuxZoom, EPtCmdTmuxEven, EPtCmdTmuxBreak, EPtCmdTmuxClosePane };
 			const TInt* ids = KTmux;
-			TInt n = 3;
-			if (aMenuId == R_PT_TMUX_WIN_MENU) { ids = KWin; n = 5; }
-			else if (aMenuId == R_PT_TMUX_PANE_MENU) { ids = KPane; n = 4; }
+			TInt n = 4;
+			if (aMenuId == R_PT_TMUX_WIN_MENU) { ids = KWin; n = 6; }
+			else if (aMenuId == R_PT_TMUX_PANE_MENU) { ids = KPane; n = 7; }
 			for (TInt i = 0; i < n; i++)
 				aMenuPane->SetItemDimmed(ids[i], ETrue);
 			}
@@ -7488,10 +7621,11 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		{
 		TInt i = aCommand - EPtCmdSnippet0;
 		if (i < iSnippets->Count())
-			iView->SendSnippetText(iSnippets->At(i).iText, iSnippets->At(i).iEnter);
+			iView->SendSnippet(iSnippets->At(i));
 		return;
 		}
-	if (((aCommand >= EPtCmdTmuxNew && aCommand <= EPtCmdTmuxDetach) || aCommand == EPtCmdTmuxMouse)
+	if (((aCommand >= EPtCmdTmuxNew && aCommand <= EPtCmdTmuxDetach) || aCommand == EPtCmdTmuxMouse
+		|| (aCommand >= EPtCmdTmuxSessions && aCommand <= EPtCmdTmuxHistory && aCommand != EPtCmdTmuxSettings))
 		&& !iView->SshLoggedIn())
 		{
 		iEikonEnv->InfoMsg(_L("Not available - SSH is not connected"));
@@ -7677,7 +7811,17 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		break;
 		}
 	// tmux: the prefix, then the command key
-	case EPtCmdTmuxNew:     SendTmux('c'); break;
+	case EPtCmdTmuxNew:
+	case EPtCmdTmuxRename:
+	case EPtCmdTmuxCloseWin:
+	case EPtCmdTmuxClosePane:
+	case EPtCmdTmuxEven:
+	case EPtCmdTmuxBreak:
+		TmuxCommandL(aCommand);              // (1.01: tmux commands, else the keys)
+		break;
+	case EPtCmdTmuxSessions:  TmuxSessionsL(); break;
+	case EPtCmdTmuxSettings:  TmuxSettingsL(); break;
+	case EPtCmdTmuxHistory:   iView->TmuxHistoryL(); break;
 	case EPtCmdTmuxNext:    SendTmux('n'); break;
 	case EPtCmdTmuxPrev:    SendTmux('p'); break;
 	case EPtCmdTmuxChoose:  SendTmux('w'); break;
@@ -7686,7 +7830,6 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdTmuxPane:    SendTmux('o'); break;
 	case EPtCmdTmuxZoom:    SendTmux('z'); break;
 	case EPtCmdTmuxCopy:    SendTmux('['); break;
-	case EPtCmdTmuxRename:  SendTmux(','); break;
 	case EPtCmdTmuxDetach:  SendTmux('d'); break;
 	case EPtCmdCheckTabs:
 		iView->CheckTabsL();
