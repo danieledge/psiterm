@@ -751,7 +751,9 @@ public:
 	TBool TmuxCanRun() const;                   // ...possible now
 	void TmuxRunThenType(const TDesC8& aCommands, const TDesC& aText, TBool aEnter);
 	void TmuxHistoryL();                        // tmux's history into the scrollback
-	TInt TmuxSessions(TDes8* aIds, TDes* aNames, TInt* aWindows, TInt* aAttached, TInt aMax) const;
+	// (the arrays as their own TBuf types: a TDes8* steps by a bare
+	// descriptor's size, not the buffer's, and wrote over the first one)
+	TInt TmuxSessions(TBuf8<12>* aIds, TBuf<24>* aNames, TInt* aWindows, TInt* aAttached, TInt aMax) const;
 	const TDesC8& TmuxSid() const { return iQSid; }
 	TInt TmuxCurrentWindow(TDes& aName) const;  // -1 = not known
 	void SetKeyBase(const TDesC& aBase) { iKeyBase.Copy(aBase); }

@@ -78,6 +78,12 @@ RESOURCE TOOLBAR r_pt_toolbar
 			flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight;
 			control=MNBUT { popout=r_pt_files_popup; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Files"; };
 			},
+		// (1.04) a taller screen's (the netBook's): Home, the Start view, and
+		// Edit file on server. A 5mx's 240 pixels have no room: ConstructL
+		// takes them off there (the Start view: File > SSH to...; the editor:
+		// Files > Edit file on server...)
+		TBAR_BUTTON { id=EPtCmdSsh; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Home"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPtCmdEditFile; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Edit\nfile"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
 		TBAR_CTRL
 			{
 			type=EEikCtSpacer;
@@ -1309,6 +1315,8 @@ RESOURCE TOOLBAR r_pt_start_toolbar
 			},
 		TBAR_BUTTON { id=EPtCmdStConnect; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="SSH to"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
 		TBAR_BUTTON { id=EPtCmdStNew; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="New\nserver"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		// (1.04) a taller screen's (the netBook's) only: OpenStartL takes it off a 5mx
+		TBAR_BUTTON { id=EPtCmdStEdit; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Edit\nserver"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
 		TBAR_BUTTON { id=EPtCmdStPin; behavior=EEikButLatches; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Pin"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
 		TBAR_BUTTON { id=EPtCmdStTerminal; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Termi-\nnal"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
 		TBAR_CTRL

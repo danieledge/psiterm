@@ -170,7 +170,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.04");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.05");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -3100,6 +3100,7 @@ static const TPtColourTheme KMuxThemes[] = {
 	    0x003B00, 0xFF5555, 0x55FF55, 0xFFFF55, 0x5555FF, 0xFF55FF, 0x55FFFF, 0xFFFFFF } } };
 
 const TInt KPtFirstMuxTheme = 4;
+const TInt KPtThemeClean = KPtFirstMuxTheme + 1;   // (1.04) a colour screen's default
 const TInt KPtColourThemes = KPtFirstMuxTheme + sizeof(KMuxThemes) / sizeof(KMuxThemes[0]);
 
 // The themes on a colour screen: Light (black on white, as the Series 7's
@@ -6694,6 +6695,17 @@ void CPsiTermAppUi::ConstructL()
 	iSnippets->Load();
 	if (iSnippets->iChanged)            // fresh defaults, or a version-1 file migrated to v2
 		iSnippets->Save();
+	// (1.04) Home and Edit file only where there is room for them (6 buttons,
+	// the label and the clock need about 310 pixels; a 5mx has 240)
+	if (iToolBar && iEikonEnv->ScreenDevice()->SizeInPixels().iHeight < 320)
+		{
+		TInt at = iToolBar->IndexById(EPtCmdSsh);
+		if (at >= 0)
+			{
+			iToolBar->DeleteControl(at, 2);
+			TRAP_IGNORE(iToolBar->LayoutControlsL());
+			}
+		}
 	TRAPD(pics, ToolbarPicturesL());
 	(void)pics;                              // (no PsiTerm.mbm: words only)
 	if (iToolBar && !settings.iToolbar)
@@ -6805,6 +6817,8 @@ void CPsiTermAppUi::ToolbarPicturesL()
 	ButtonPictureL(iToolBar, EPtCmdTbSnippets, EMbmToolSnippets);
 	ButtonPictureL(iToolBar, EPtCmdTbKeys, EMbmToolKeys);
 	ButtonPictureL(iToolBar, EPtCmdTbFiles, EMbmToolFiles);
+	ButtonPictureL(iToolBar, EPtCmdSsh, EMbmToolSsh);         // (taller screens only)
+	ButtonPictureL(iToolBar, EPtCmdEditFile, EMbmToolNew);
 	}
 
 // the first button: SSH to... when idle, End SSH while a session is up (as
@@ -7204,7 +7218,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iAutoReconnect = 1;
 	aSettings.iStartCmd.Zero();
 	aSettings.iUpdSource = 0;
-	aSettings.iTheme = PtColourScreen() ? 1 : 0;   // (colour: Dark, what terminal colours are made for)
+	aSettings.iTheme = PtColourScreen() ? KPtThemeClean : 0;   // (1.04: colour: Clean, before that Dark)
 	aSettings.iCursor = 0;
 	aSettings.iBlink = 0;
 	aSettings.iStatus = 1;
@@ -7329,6 +7343,11 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 														aSettings.iKeepLog = data[kpos] == 1;
 													if (kpos + 1 < data.Length())      // v17 (0.99): Typeface
 														aSettings.iFace = data[kpos + 1] < KFaceCount ? data[kpos + 1] : 0;
+													// v18 (1.04): Clean the colour screen's default; a file
+													// from before it still on the old default, Dark, moves
+													// to Clean once (a theme chosen since is kept)
+													if (kpos + 2 >= data.Length() && PtColourScreen() && aSettings.iTheme == 1)
+														aSettings.iTheme = KPtThemeClean;
 													}
 												}
 											}
@@ -7400,6 +7419,7 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append((TUint8)(aSettings.iFontPixels & 0xff));
 	data.Append((TUint8)(aSettings.iKeepLog ? 1 : 0));    // v16 (0.97): Keep a log
 	data.Append((TUint8)aSettings.iFace);                 // v17 (0.99): Typeface
+	data.Append((TUint8)1);                               // v18 (1.04): Clean is the colour default
 	SafeWrite(fs, KIniFile, data);
 	}
 

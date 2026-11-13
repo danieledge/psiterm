@@ -25,6 +25,7 @@ enum TPtIconId
 	EMbmToolSave = 38, EMbmToolSaveMask = 39,
 	EMbmToolFind = 40, EMbmToolFindMask = 41,
 	EMbmToolGoto = 42, EMbmToolGotoMask = 43,
-	EMbmCount = 44
+	EMbmToolEditSrv = 44, EMbmToolEditSrvMask = 45,
+	EMbmCount = 46
 	};
 #endif

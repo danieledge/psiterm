@@ -73,7 +73,10 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "\n"
 	  "The toolbar on the right has SSH to (End SSH while connected), then Send snippet, Keys and "
 	  "Files, which each pop up a list. Files has Send file, Get file and Log to file, as on the "
-	  "File menu. View > Show toolbar (Shift+Ctrl+B) hides it: the terminal takes "
+	  "File menu. On a taller screen (the netBook's) two more follow: Home, the Start view, with "
+	  "every connection still up (its Terminal button comes back), and Edit file, the file on the "
+	  "server in PsiTerm's editor; the Start view's toolbar has Edit server there too. "
+	  "View > Show toolbar (Shift+Ctrl+B) hides it: the terminal takes "
 	  "its room - 106 columns instead of 95 in Terminus 12, 80 instead of 71 in Terminus 14 and 16, "
 	  "64 instead of 57 in Terminus 18 - and programs on the server reflow, even mid-session. "
 	  "PsiTerm remembers the choice." },

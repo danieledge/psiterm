@@ -1011,7 +1011,8 @@ static void ServerKey(CTermView& aTerm, TDes8& aKey)
 	}
 
 // this server's recent files, newest first
-static TInt RecentForServerL(CTermView& aTerm, TDes8* aPaths, TInt aMax)
+// (aPaths as TBuf8<512>*: a TDes8* would step by a bare descriptor's size)
+static TInt RecentForServerL(CTermView& aTerm, TBuf8<512>* aPaths, TInt aMax)
 	{
 	CDesC8ArrayFlat* a = new(ELeave) CDesC8ArrayFlat(8);
 	CleanupStack::PushL(a);

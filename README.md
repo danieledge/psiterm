@@ -59,6 +59,19 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 1.05**
+- **tmux > Sessions... works again.** With two or more tmux sessions it
+  closed PsiTerm (USER 19 or 23); the editor's File > Recent had the same fault
+  with two or more recent files.
+- **A colour screen starts in the Clean theme** (Dark before). A Psion still on
+  the old default moves to Clean once; a theme you chose is kept.
+- **On the netBook's taller screen** the toolbar has Home (the Start view, with
+  every connection still up) and Edit file, and the Start view's has Edit
+  server. A Series 5mx has room for neither and is unchanged.
+- **Dial-up errors in words.** "No Internet connection is chosen as the
+  default - set one in Control panel > Internet" rather than "error -3006",
+  and the same for the login refusals.
+
 **PsiTerm 1.04**
 - **Several connections at once.** Over Psion Internet PsiTerm keeps up to
   four SSH connections open. Connect to another server from the Start view

@@ -788,7 +788,7 @@ void CTermView::TmuxHistoryLoadL()
 	iEikonEnv->InfoMsg(m);
 	}
 
-TInt CTermView::TmuxSessions(TDes8* aIds, TDes* aNames, TInt* aWindows, TInt* aAttached, TInt aMax) const
+TInt CTermView::TmuxSessions(TBuf8<12>* aIds, TBuf<24>* aNames, TInt* aWindows, TInt* aAttached, TInt aMax) const
 	{
 	TInt n = 0;
 	for (; n < iQSessCount && n < aMax; n++)

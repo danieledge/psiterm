@@ -816,9 +816,21 @@ void CPsiTermAppUi::OpenStartL()
 		CleanupStack::Pop();
 		iStartBar = bar;
 		iStartBar->MakeVisible(EFalse);
+		// (1.04) Edit server only where there is room (a 5mx's 240 pixels
+		// hold four buttons and the clock)
+		if (iEikonEnv->ScreenDevice()->SizeInPixels().iHeight < 320)
+			{
+			TInt at = iStartBar->IndexById(EPtCmdStEdit);
+			if (at >= 0)
+				{
+				iStartBar->DeleteControl(at, 1);
+				TRAP_IGNORE(iStartBar->LayoutControlsL());
+				}
+			}
 		TRAP_IGNORE(
 			ButtonPictureL(iStartBar, EPtCmdStConnect, EMbmToolSsh);
 			ButtonPictureL(iStartBar, EPtCmdStNew, EMbmToolNew);
+			ButtonPictureL(iStartBar, EPtCmdStEdit, EMbmToolEditSrv);
 			ButtonPictureL(iStartBar, EPtCmdStPin, EMbmToolPin);
 			ButtonPictureL(iStartBar, EPtCmdStTerminal, EMbmToolTerm);
 			);
