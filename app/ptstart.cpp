@@ -74,6 +74,42 @@ static void WhenText(TUint32 aSecs, TDes& aOut)
 		aOut.Format(_L("%02d/%02d/%02d"), d.Day() + 1, (TInt)d.Month() + 1, d.Year() % 100);
 	}
 
+// "Just now", "12 min ago", "3 h ago", "Yesterday", "4 days ago", "12 Nov"
+static void RelativeWhen(TUint32 aSecs, TDes& aOut)
+	{
+	aOut.Zero();
+	if (!aSecs)
+		{
+		aOut.Copy(_L("New"));
+		return;
+		}
+	TUint32 now = PtNowSeconds();
+	TInt ago = now > aSecs ? (TInt)(now - aSecs) : 0;
+	TTime t = Epoch2000() + TTimeIntervalSeconds((TInt)aSecs);
+	TTime n;
+	n.HomeTime();
+	TInt days = n.DaysFrom(t).Int();
+	TDateTime d = t.DateTime(), nd = n.DateTime();
+	TBool today = d.Day() == nd.Day() && d.Month() == nd.Month() && d.Year() == nd.Year();
+	if (ago < 60)
+		aOut.Copy(_L("Just now"));
+	else if (ago < 3600)
+		aOut.Format(_L("%d min ago"), ago / 60);
+	else if (today)
+		aOut.Format(_L("%d h ago"), ago / 3600);
+	else if (days <= 1)
+		aOut.Copy(_L("Yesterday"));
+	else if (days < 7)
+		aOut.Format(_L("%d days ago"), days);
+	else
+		{
+		static const TText* const KMon[] = { _S("Jan"), _S("Feb"), _S("Mar"), _S("Apr"), _S("May"), _S("Jun"),
+			_S("Jul"), _S("Aug"), _S("Sep"), _S("Oct"), _S("Nov"), _S("Dec") };
+		TPtrC mon(KMon[(TInt)d.Month()]);
+		aOut.Format(_L("%d %S"), d.Day() + 1, &mon);
+		}
+	}
+
 static const TText* ResultText(TInt aResult)
 	{
 	switch (aResult)
@@ -91,10 +127,10 @@ static TRgb ResultColour(TInt aResult)
 	{
 	switch (aResult)
 		{
-	case EPtResultLoggedIn: return TRgb(0, 150, 0);
+	case EPtResultLoggedIn: return TRgb(0, 153, 0);
 	case EPtResultNoAnswer:
-	case EPtResultLost:     return TRgb(220, 140, 0);
-	default:                return TRgb(200, 0, 0);
+	case EPtResultLost:     return TRgb(255, 153, 0);
+	default:                return TRgb(204, 0, 0);
 		}
 	}
 
@@ -144,25 +180,24 @@ void CPtStartView::SizeChanged()
 	}
 
 // Columns and rows for the width and height there are
+// Rows and their heights for the room there is
 void CPtStartView::Layout()
 	{
 	const CFont* f = iEikonEnv->NormalFont();
 	const CFont* small = iEikonEnv->AnnotationFont();
-	TInt w = Rect().Width(), h = Rect().Height();
-	iBandH = f->HeightInPixels() + 6;
-	iHeadH = small->HeightInPixels() + 4;
-	iRowH = f->HeightInPixels() + 4;
-	// the details: a line on the 5mx, four on a taller screen
-	iFootH = h >= 400 ? 4 * (small->HeightInPixels() + 4) + 8 : small->HeightInPixels() + 6;
-	iListY = iBandH + iHeadH;
-	iRows = (h - iListY - iFootH) / iRowH;
+	const CFont* title = iEikonEnv->TitleFont();
+	TInt h = Rect().Height();
+	TBool tall = h >= 400;
+	iBandH = title->HeightInPixels() + (tall ? 18 : 8);
+	iSecH = small->HeightInPixels() + (tall ? 10 : 4);
+	// two lines a server: the name, then user@address
+	iRowH = f->HeightInPixels() + small->HeightInPixels() + (tall ? 16 : 6);
+	iFootH = tall ? 4 * (small->HeightInPixels() + 4) + 22 : small->HeightInPixels() + 6;
+	iListY = iBandH;
+	iFootY = h - iFootH;
+	iRows = (iFootY - iListY) / iRowH;
 	if (iRows < 1)
 		iRows = 1;
-	iFootY = iListY + iRows * iRowH;
-	iColName = 22;
-	iColAddr = iColName + w * 26 / 100;
-	iColLast = w - w * 22 / 100;
-	iColEnd = w - 4;
 	}
 
 // Pinned first (in saved order), then the rest, most recently used first
@@ -175,6 +210,7 @@ void CPtStartView::ReloadL(TInt aSelectHost)
 		if (iHosts.At(i).iFlags & KPtHostPinned)
 			iOrder[iCount++] = i;
 	TInt first = iCount;
+	iPinned = iCount;
 	for (TInt i = 0; i < n && iCount < KMaxHosts; i++)
 		{
 		if (iHosts.At(i).iFlags & KPtHostPinned)
@@ -195,14 +231,12 @@ void CPtStartView::ReloadL(TInt aSelectHost)
 		if (iOrder[r] == keep)
 			iSel = r;
 	Layout();
+	if (iTop >= iCount)
+		iTop = 0;
 	if (iSel < iTop)
 		iTop = iSel;
-	if (iSel >= iTop + iRows)
-		iTop = iSel - iRows + 1;
-	if (iTop > iCount - iRows)
-		iTop = iCount - iRows;
-	if (iTop < 0)
-		iTop = 0;
+	while (iTop < iSel && LastVisible(iTop) < iSel)
+		iTop++;
 	DrawDeferred();
 	}
 
@@ -224,8 +258,8 @@ void CPtStartView::Move(TInt aTo)
 	iSel = aTo;
 	if (iSel < iTop)
 		iTop = iSel;
-	if (iSel >= iTop + iRows)
-		iTop = iSel - iRows + 1;
+	while (iTop < iSel && LastVisible(iTop) < iSel)
+		iTop++;
 	iHosts.iLast = Current();
 	DrawNow();
 	Command(EPtCmdStSync);                   // (the toolbar's Pin)
@@ -278,16 +312,51 @@ void CPtStartView::HandlePointerEventL(const TPointerEvent& aEvent)
 	{
 	if (aEvent.iType != TPointerEvent::EButton1Down)
 		return;
-	TInt y = aEvent.iPosition.iY - Rect().iTl.iY;
-	if (y < iListY || y >= iFootY)
-		return;
-	TInt r = iTop + (y - iListY) / iRowH;
-	if (r >= iCount)
+	TInt r = HitTest(aEvent.iPosition.iY - Rect().iTl.iY);
+	if (r < 0)
 		return;
 	if (r == iSel)
 		Command(EPtCmdStConnect);   // (a tap on the highlight connects)
 	else
 		Move(r);
+	}
+
+// The headings: "Pinned" over the pinned servers and "Recent" over the
+// rest, when there are both
+TBool CPtStartView::HeadBefore(TInt aRow) const
+	{
+	return iPinned > 0 && iPinned < iCount && (aRow == 0 || aRow == iPinned);
+	}
+
+TInt CPtStartView::LastVisible(TInt aTop) const
+	{
+	TInt y = iListY, last = aTop;
+	for (TInt r = aTop; r < iCount; r++)
+		{
+		if (HeadBefore(r))
+			y += iSecH;
+		if (y + iRowH > iFootY)
+			break;
+		y += iRowH;
+		last = r;
+		}
+	return last;
+	}
+
+TInt CPtStartView::HitTest(TInt aY) const
+	{
+	TInt y = iListY;
+	for (TInt r = iTop; r < iCount; r++)
+		{
+		if (HeadBefore(r))
+			y += iSecH;
+		if (y + iRowH > iFootY)
+			break;
+		if (aY >= y && aY < y + iRowH)
+			return r;
+		y += iRowH;
+		}
+	return -1;
 	}
 
 // "SSH key "Psion"", and what runs on login
@@ -330,177 +399,310 @@ void CPtStartView::Summary(TInt aHost, TDes& aLogin, TDes& aOnLogin) const
 		}
 	}
 
-void CPtStartView::DrawRow(CWindowGc& aGc, TInt aRow) const
+// ---- drawing: a light page, as a modern phone's list - a large title,
+// two-line rows with a badge, soft rounded highlights. On the 5mx in greys;
+// on the Series 7 with colour (each server's badge its own).
+
+// the look's colours: the 5mx's greys, or the Series 7's
+struct TStartLook
 	{
-	TInt r = aRow - iTop;
-	if (r < 0 || r >= iRows)
-		return;
-	TRect row(Rect().iTl.iX, Rect().iTl.iY + iListY + r * iRowH, Rect().iBr.iX, Rect().iTl.iY + iListY + (r + 1) * iRowH);
-	TBool sel = (aRow == iSel) && aRow < iCount;
-	TRgb paper = KRgbWhite, ink = KRgbBlack, grey = TRgb::Gray16(7);
-	if (sel)
+	TRgb iPaper, iInk, iSoft, iFaint, iRule, iHigh, iAccent;
+	};
+
+static void Look(TBool aColour, TStartLook& aLook)
+	{
+	if (aColour)
 		{
-		paper = iColour ? TRgb(0, 0, 128) : KRgbBlack;
-		ink = KRgbWhite;
-		grey = iColour ? TRgb(200, 200, 255) : TRgb::Gray16(12);
+		// (the Series 7's 256 colours: the 6x6x6 cube, in steps of 51, and
+		// its greys - anything else rounds to the nearest, often white)
+		aLook.iPaper = KRgbWhite;
+		aLook.iInk = TRgb(0, 0, 0);
+		aLook.iSoft = TRgb(102, 102, 153);
+		aLook.iFaint = TRgb(153, 153, 153);
+		aLook.iRule = TRgb(221, 221, 221);
+		aLook.iHigh = TRgb(204, 204, 255);
+		aLook.iAccent = TRgb(51, 51, 204);
 		}
+	else
+		{
+		aLook.iPaper = KRgbWhite;
+		aLook.iInk = KRgbBlack;
+		aLook.iSoft = TRgb::Gray16(6);
+		aLook.iFaint = TRgb::Gray16(9);
+		aLook.iRule = TRgb::Gray16(13);
+		aLook.iHigh = TRgb::Gray16(13);
+		aLook.iAccent = KRgbBlack;
+		}
+	}
+
+// a server's badge colour (Series 7): from its name, so it keeps it
+static TRgb BadgeColour(const TDesC& aName)
+	{
+	static const TUint8 KBadge[8][3] = {     // (the palette's own colours)
+		{ 51, 51, 204 }, { 0, 153, 153 }, { 204, 102, 0 }, { 204, 0, 51 },
+		{ 0, 102, 204 }, { 102, 51, 204 }, { 0, 153, 102 }, { 102, 102, 102 } };
+	TUint h = 0;
+	for (TInt i = 0; i < aName.Length(); i++)
+		h = h * 31 + (aName[i] | 0x20);
+	const TUint8* c = KBadge[h % 8];
+	return TRgb(c[0], c[1], c[2]);
+	}
+
+void CPtStartView::DrawHead(CWindowGc& aGc, TInt aY, TInt aRow) const
+	{
+	TStartLook l;
+	Look(iColour, l);
+	const CFont* small = iEikonEnv->AnnotationFont();
+	TRect r = Rect();
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	aGc.SetBrushColor(paper);
+	aGc.SetBrushColor(l.iPaper);
+	aGc.DrawRect(TRect(r.iTl.iX, r.iTl.iY + aY, r.iBr.iX, r.iTl.iY + aY + iSecH));
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.UseFont(small);
+	aGc.SetPenColor(l.iFaint);
+	TPtrC t(aRow == 0 ? _L("PINNED") : _L("RECENT"));
+	aGc.DrawText(t, TPoint(r.iTl.iX + 10, r.iTl.iY + aY + iSecH - 3 - small->DescentInPixels()));
+	aGc.DiscardFont();
+	}
+
+void CPtStartView::DrawRow(CWindowGc& aGc, TInt aY, TInt aRow) const
+	{
+	TStartLook l;
+	Look(iColour, l);
+	TRect r = Rect();
+	TRect row(r.iTl.iX, r.iTl.iY + aY, r.iBr.iX, r.iTl.iY + aY + iRowH);
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(l.iPaper);
 	aGc.DrawRect(row);
 	if (aRow >= iCount)
 		return;
 	const THostEntry& e = iHosts.At(iOrder[aRow]);
+	TBool sel = (aRow == iSel);
+	TBool tall = iRowH >= 40;
+	TInt pad = tall ? 8 : 4;
+	// the highlight: a soft rounded card, an accent bar at its left
+	TRect card(row.iTl.iX + pad, row.iTl.iY + 1, row.iBr.iX - pad - 4, row.iBr.iY - 1);
+	if (sel)
+		{
+		aGc.SetBrushColor(l.iHigh);
+		aGc.DrawRoundRect(card, TSize(6, 6));
+		aGc.SetBrushColor(l.iAccent);
+		aGc.DrawRect(TRect(card.iTl.iX, card.iTl.iY + 4, card.iTl.iX + 3, card.iBr.iY - 4));
+		}
+	// the badge: a rounded square with the name's first letter
 	const CFont* f = iEikonEnv->NormalFont();
-	aGc.UseFont(f);
+	const CFont* small = iEikonEnv->AnnotationFont();
+	TInt bs = iRowH - (tall ? 16 : 10);
+	TInt bx = card.iTl.iX + (tall ? 12 : 9), by = row.iTl.iY + (iRowH - bs) / 2;
+	TRect badge(bx, by, bx + bs, by + bs);
+	aGc.SetBrushColor(iColour ? BadgeColour(e.iName) : TRgb::Gray16(sel ? 3 : 5));
+	aGc.DrawRoundRect(badge, TSize(bs / 4, bs / 4));
+	TBuf<2> init;
+	if (e.iName.Length())
+		{
+		TChar c = e.iName[0];
+		c.UpperCase();
+		init.Append(c);
+		}
 	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-	TInt base = row.iTl.iY + 2 + f->AscentInPixels();
-	TInt x0 = Rect().iTl.iX;
-	// the pin
-	if ((e.iFlags & KPtHostPinned) && iStar && iStarMask)
+	aGc.UseFont(f);
+	aGc.SetPenColor(KRgbWhite);
+	aGc.DrawText(init, TPoint(bx + (bs - f->TextWidthInPixels(init)) / 2, by + (bs + f->AscentInPixels()) / 2 - 1));
+	// the name, and user@address under it
+	TInt tx = bx + bs + (tall ? 12 : 8);
+	TInt right = card.iBr.iX - 8;
+	TBuf<40> when;
+	RelativeWhen(e.iLastUsed, when);
+	TInt ww = small->TextWidthInPixels(when);
+	TInt dot = (e.iLastResult != EPtResultNever) ? 8 : 0;
+	TInt nameY = row.iTl.iY + (iRowH - f->HeightInPixels() - small->HeightInPixels() - 2) / 2 + f->AscentInPixels();
+	TInt subY = nameY + f->DescentInPixels() + 2 + small->AscentInPixels();
+	TBuf<120> t(Upto(e.iName, 40));
+	TextUtils::ClipToFit(t, *f, right - ww - dot - 16 - tx);
+	aGc.SetPenColor(l.iInk);
+	aGc.DrawText(t, TPoint(tx, nameY));
+	if (iColour && (e.iFlags & KPtHostPinned) && !sel)
 		{
-		TSize sz = iStar->SizeInPixels();
-		TPoint at(x0 + 3, row.iTl.iY + (iRowH - sz.iHeight) / 2);
-		if (sel || iColour)
-			{
-			// (on a highlight, or in colour: a filled mark that reads on it)
-			aGc.SetPenStyle(CGraphicsContext::ENullPen);
-			aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-			aGc.SetBrushColor(iColour ? TRgb(240, 170, 0) : KRgbWhite);
-			TInt cy = row.iTl.iY + iRowH / 2;
-			aGc.DrawEllipse(TRect(x0 + 5, cy - 5, x0 + 16, cy + 6));
-			aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
-			aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-			}
-		else
-			aGc.BitBltMasked(at, iStar, TRect(sz), iStarMask, ETrue);
+		// (pinned: a small accent mark after the name)
+		TInt px = tx + f->TextWidthInPixels(t) + 6;
+		aGc.SetPenStyle(CGraphicsContext::ENullPen);
+		aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+		aGc.SetBrushColor(TRgb(255, 153, 0));
+		aGc.DrawEllipse(TRect(px, nameY - f->AscentInPixels() / 2 - 3, px + 6, nameY - f->AscentInPixels() / 2 + 3));
+		aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+		aGc.SetPenStyle(CGraphicsContext::ESolidPen);
 		}
-	TBuf<120> t;
-	aGc.SetPenColor(ink);
-	t.Copy(Upto(e.iName, 40));
-	TextUtils::ClipToFit(t, *f, iColAddr - iColName - 8);
-	aGc.DrawText(t, TPoint(x0 + iColName, base));
-	aGc.SetPenColor(grey);
+	aGc.UseFont(small);
 	t.Copy(Upto(e.iUser, 40));
 	t.Append('@');
 	t.Append(Upto(e.iHost, 60));
 	if (e.iPort > 0 && e.iPort != 22)
 		t.AppendFormat(_L(":%d"), e.iPort);
-	TextUtils::ClipToFit(t, *f, iColLast - iColAddr - 8);
-	aGc.DrawText(t, TPoint(x0 + iColAddr, base));
-	WhenText(e.iLastUsed, t);
-	TInt lx = x0 + iColLast;
-	if (iColour && e.iLastResult != EPtResultNever)
+	TextUtils::ClipToFit(t, *small, right - tx);
+	aGc.SetPenColor(l.iSoft);
+	aGc.DrawText(t, TPoint(tx, subY));
+	// when, and how it went (a dot: filled for logged in, a ring if not)
+	aGc.SetPenColor(l.iFaint);
+	aGc.DrawText(when, TPoint(right - ww, nameY));
+	if (dot)
 		{
-		// how it went, as a coloured mark before the time
-		aGc.SetPenStyle(CGraphicsContext::ENullPen);
-		aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-		aGc.SetBrushColor(ResultColour(e.iLastResult));
-		TInt cy = row.iTl.iY + iRowH / 2;
-		aGc.DrawRect(TRect(lx - 12, cy - 4, lx - 4, cy + 4));
+		TInt cx = right - ww - 9, cy = nameY - small->AscentInPixels() / 2 - 1;
+		TRect d(cx - 3, cy - 3, cx + 4, cy + 4);
+		TBool good = e.iLastResult == EPtResultLoggedIn;
+		if (iColour)
+			{
+			aGc.SetPenStyle(CGraphicsContext::ENullPen);
+			aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+			aGc.SetBrushColor(ResultColour(e.iLastResult));
+			}
+		else if (good)
+			{
+			aGc.SetPenStyle(CGraphicsContext::ENullPen);
+			aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+			aGc.SetBrushColor(TRgb::Gray16(5));
+			}
+		else
+			aGc.SetPenColor(TRgb::Gray16(4));
+		aGc.DrawEllipse(d);
 		aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
 		aGc.SetPenStyle(CGraphicsContext::ESolidPen);
 		}
-	aGc.SetPenColor(grey);
-	TextUtils::ClipToFit(t, *f, iColEnd - lx);
-	aGc.DrawText(t, TPoint(lx, base));
 	aGc.DiscardFont();
 	}
 
-// Below the list: the highlighted server's details
-void CPtStartView::DrawDetail(CWindowGc& aGc) const
+// Nothing saved yet: a picture and the way in, in the middle
+void CPtStartView::DrawEmpty(CWindowGc& aGc) const
 	{
-	TRect foot(Rect().iTl.iX, Rect().iTl.iY + iFootY, Rect().iBr.iX, Rect().iBr.iY);
+	TStartLook l;
+	Look(iColour, l);
+	TRect r = Rect();
+	const CFont* f = iEikonEnv->NormalFont();
+	const CFont* small = iEikonEnv->AnnotationFont();
+	TInt cx = (r.iTl.iX + r.iBr.iX) / 2;
+	TInt mid = r.iTl.iY + (iListY + iFootY) / 2;
+	// a small terminal: a rounded screen with a prompt
+	TRect scr(cx - 26, mid - 40, cx + 26, mid - 6);
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	aGc.SetBrushColor(KRgbWhite);
-	aGc.DrawRect(foot);
-	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-	aGc.SetPenColor(TRgb::Gray16(8));
-	aGc.DrawLine(foot.iTl, TPoint(foot.iBr.iX, foot.iTl.iY));
-	const CFont* f = iEikonEnv->AnnotationFont();
-	aGc.UseFont(f);
+	aGc.SetBrushColor(iColour ? l.iAccent : TRgb::Gray16(4));
+	aGc.DrawRoundRect(scr, TSize(8, 8));
 	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
-	TInt x = foot.iTl.iX + 6, w = foot.Width() - 12;
-	TInt lh = f->HeightInPixels() + 4;
-	TInt y = foot.iTl.iY + 3 + f->AscentInPixels();
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.SetPenColor(KRgbWhite);
+	aGc.UseFont(f);
+	aGc.DrawText(_L(">_"), TPoint(scr.iTl.iX + 10, scr.iTl.iY + 6 + f->AscentInPixels()));
+	aGc.SetPenColor(l.iInk);
+	TPtrC a(_L("No servers yet"));
+	aGc.DrawText(a, TPoint(cx - f->TextWidthInPixels(a) / 2, mid + 6 + f->AscentInPixels()));
+	aGc.UseFont(small);
+	aGc.SetPenColor(l.iSoft);
+	TPtrC b(_L("Ctrl+N adds one - Ctrl+G connects to an address"));
+	aGc.DrawText(b, TPoint(cx - small->TextWidthInPixels(b) / 2, mid + 10 + f->HeightInPixels() + small->AscentInPixels()));
+	aGc.DiscardFont();
+	}
+
+// Below the list: the highlighted server (a line on the 5mx; a card on a
+// taller screen)
+void CPtStartView::DrawDetail(CWindowGc& aGc) const
+	{
+	TStartLook l;
+	Look(iColour, l);
+	TRect r = Rect();
+	TRect foot(r.iTl.iX, r.iTl.iY + iFootY, r.iBr.iX, r.iBr.iY);
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(l.iPaper);
+	aGc.DrawRect(foot);
 	TInt h = Current();
 	if (h < 0)
-		{
-		aGc.SetPenColor(TRgb::Gray16(5));
-		aGc.DrawText(_L("No saved servers - Ctrl+N creates one"), TPoint(x, y));
-		aGc.DiscardFont();
 		return;
-		}
+	const CFont* f = iEikonEnv->AnnotationFont();
 	const THostEntry& e = iHosts.At(h);
 	TBuf<80> login;
 	TBuf<130> onLogin;
 	Summary(h, login, onLogin);
-	TBuf<40> when;
-	WhenText(e.iLastUsed, when);
 	TBuf<200> t;
+	TInt lh = f->HeightInPixels() + 4;
 	if (iFootH < 3 * lh)
 		{
-		// the 5mx: one line
-		t.Copy(Upto(e.iHost, 60));
-		if (e.iPort > 0 && e.iPort != 22)
-			t.AppendFormat(_L(":%d"), e.iPort);
-		t.Append(_L(" - "));
-		t.Append(login);
+		// the 5mx: a quiet line - how it logs in, what it runs, how it went
+		aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+		aGc.SetPenColor(l.iRule);
+		aGc.DrawLine(TPoint(foot.iTl.iX + 8, foot.iTl.iY), TPoint(foot.iBr.iX - 8, foot.iTl.iY));
+		t.Copy(login);
 		if (onLogin.Length())
 			{
-			t.Append(_L(" - runs "));
+			t.Append(_L("  -  runs "));
 			t.Append(Upto(onLogin, 60));
 			}
 		if (e.iLastResult != EPtResultNever)
 			{
-			t.Append(_L(" - last: "));
+			t.Append(_L("  -  last time "));
 			t.Append(TPtrC(ResultText(e.iLastResult)));
 			}
-		aGc.SetPenColor(TRgb::Gray16(5));
-		TextUtils::ClipToFit(t, *f, w);
-		aGc.DrawText(t, TPoint(x, y));
+		aGc.UseFont(f);
+		aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+		aGc.SetPenColor(l.iSoft);
+		TextUtils::ClipToFit(t, *f, foot.Width() - 20);
+		aGc.DrawText(t, TPoint(foot.iTl.iX + 10, foot.iTl.iY + 3 + f->AscentInPixels()));
 		aGc.DiscardFont();
 		return;
 		}
-	// a taller screen: label and value, in two columns
-	TInt col2 = w / 2;
-	TInt lw = f->TextWidthInPixels(_L("On login ")) + 4;
-	struct TLine { const TText* iLabel; TInt iCol; TInt iRow; };
-	const TLine lines[] = {
-		{ _S("Server"), 0, 0 }, { _S("Address"), 0, 1 }, { _S("On login"), 0, 2 },
-		{ _S("Last"), 1, 0 }, { _S("Login"), 1, 1 } };
-	for (TUint i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+	// a taller screen: a card of details
+	TRect card(foot.iTl.iX + 8, foot.iTl.iY + 6, foot.iBr.iX - 12, foot.iBr.iY - 8);
+	aGc.SetBrushColor(iColour ? TRgb(238, 238, 238) : TRgb::Gray16(14));
+	aGc.DrawRoundRect(card, TSize(8, 8));
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.UseFont(f);
+	TInt x = card.iTl.iX + 12, col2 = card.Width() / 2;
+	TInt y = card.iTl.iY + 6 + f->AscentInPixels();
+	TInt lw = f->TextWidthInPixels(_L("On login")) + 10;
+	TBuf<40> when;
+	WhenText(e.iLastUsed, when);
+	for (TInt i = 0; i < 5; i++)
 		{
-		TInt lx = x + lines[i].iCol * col2;
-		TInt ly = y + lines[i].iRow * lh;
-		TInt room = (lines[i].iCol == 0 && lines[i].iRow == 2) ? w - lw : col2 - lw - 8;
-		aGc.SetPenColor(TRgb::Gray16(6));
-		aGc.DrawText(TPtrC(lines[i].iLabel), TPoint(lx, ly));
+		TInt lx = x + (i >= 3 ? col2 : 0);
+		TInt ly = y + (i >= 3 ? i - 3 : i) * lh;
+		TInt room = i == 2 ? card.Width() - lw - 24 : col2 - lw - 16;
+		const TText* label = i == 0 ? _S("Server") : i == 1 ? _S("Address") : i == 2 ? _S("On login")
+			: i == 3 ? _S("Last") : _S("Login");
+		aGc.SetPenColor(l.iFaint);
+		aGc.DrawText(TPtrC(label), TPoint(lx, ly));
 		t.Zero();
-		switch (i)
+		if (i == 0)
+			t.Copy(Upto(e.iName, 40));
+		else if (i == 1)
 			{
-		case 0: t.Copy(Upto(e.iName, 40)); break;
-		case 1:
 			t.Copy(Upto(e.iUser, 40));
 			t.Append('@');
 			t.Append(Upto(e.iHost, 60));
 			if (e.iPort > 0 && e.iPort != 22)
 				t.AppendFormat(_L(":%d"), e.iPort);
-			break;
-		case 2: if (onLogin.Length()) t.Copy(onLogin); else t.Copy(_L("(a shell)")); break;
-		case 3:
+			}
+		else if (i == 2)
+			{
+			if (onLogin.Length())
+				t.Copy(onLogin);
+			else
+				t.Copy(_L("a shell"));
+			}
+		else if (i == 3)
+			{
 			t.Copy(when);
 			if (e.iLastResult != EPtResultNever)
 				{
 				t.Append(_L(" - "));
 				t.Append(TPtrC(ResultText(e.iLastResult)));
 				}
-			break;
-		default: t.Copy(login); break;
 			}
-		aGc.SetPenColor(i == 3 && iColour && e.iLastResult != EPtResultNever ? ResultColour(e.iLastResult) : KRgbBlack);
+		else
+			t.Copy(login);
+		aGc.SetPenColor(i == 3 && iColour && e.iLastResult != EPtResultNever ? ResultColour(e.iLastResult) : l.iInk);
 		TextUtils::ClipToFit(t, *f, room);
 		aGc.DrawText(t, TPoint(lx + lw, ly));
 		}
@@ -510,60 +712,69 @@ void CPtStartView::DrawDetail(CWindowGc& aGc) const
 void CPtStartView::Draw(const TRect& /*aRect*/) const
 	{
 	CWindowGc& gc = SystemGc();
+	TStartLook l;
+	Look(iColour, l);
 	TRect r = Rect();
-	const CFont* f = iEikonEnv->NormalFont();
-	const CFont* small = iEikonEnv->AnnotationFont();
-	// the title band: as the file view's
-	TRect band(r.iTl, TPoint(r.iBr.iX, r.iTl.iY + iBandH));
 	gc.SetPenStyle(CGraphicsContext::ENullPen);
 	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	gc.SetBrushColor(iColour ? TRgb(0, 0, 128) : TRgb::Gray16(4));
-	gc.DrawRect(band);
+	gc.SetBrushColor(l.iPaper);
+	gc.DrawRect(r);
+	// the title: large, on the page itself; the count and the connection
+	// quietly at the right
+	const CFont* title = iEikonEnv->TitleFont();
+	const CFont* small = iEikonEnv->AnnotationFont();
 	gc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	gc.SetPenStyle(CGraphicsContext::ESolidPen);
-	gc.SetPenColor(KRgbWhite);
-	gc.UseFont(f);
-	TInt by = band.iTl.iY + 3 + f->AscentInPixels();
-	gc.DrawText(_L("Saved servers"), TPoint(r.iTl.iX + 6, by));
+	gc.UseFont(title);
+	gc.SetPenColor(l.iInk);
+	TInt ty = r.iTl.iY + (iBandH - title->HeightInPixels()) / 2 + title->AscentInPixels();
+	gc.DrawText(_L("Servers"), TPoint(r.iTl.iX + 12, ty));
 	TBuf<80> state;
 	if (iTerm.SshActive())
 		{
-		state.Copy(_L("SSH: "));
-		state.Append(Upto(iTerm.Settings().iSshHost, 40));
+		state.Copy(_L("Connected to "));
+		state.Append(Upto(iTerm.Settings().iSshHost, 30));
 		}
+	else if (iCount == 1)
+		state.Copy(_L("1 saved"));
 	else
-		state.Copy(_L("Not connected"));
+		state.Format(_L("%d saved"), iCount);
 	gc.UseFont(small);
-	gc.DrawText(state, TPoint(r.iBr.iX - 6 - small->TextWidthInPixels(state), band.iTl.iY + 3 + small->AscentInPixels() + (f->AscentInPixels() - small->AscentInPixels())));
-	// the column heads
-	TRect head(r.iTl.iX, band.iBr.iY, r.iBr.iX, band.iBr.iY + iHeadH);
-	gc.SetPenStyle(CGraphicsContext::ENullPen);
-	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	gc.SetBrushColor(KRgbWhite);
-	gc.DrawRect(head);
-	gc.SetBrushStyle(CGraphicsContext::ENullBrush);
-	gc.SetPenStyle(CGraphicsContext::ESolidPen);
-	gc.SetPenColor(TRgb::Gray16(6));
-	TInt hy = head.iTl.iY + 2 + small->AscentInPixels();
-	gc.DrawText(_L("Name"), TPoint(r.iTl.iX + iColName, hy));
-	gc.DrawText(_L("Address"), TPoint(r.iTl.iX + iColAddr, hy));
-	gc.DrawText(_L("Last used"), TPoint(r.iTl.iX + iColLast, hy));
-	gc.SetPenColor(TRgb::Gray16(8));
-	gc.DrawLine(TPoint(r.iTl.iX, head.iBr.iY - 1), TPoint(r.iBr.iX, head.iBr.iY - 1));
+	gc.SetPenColor(iTerm.SshActive() && iColour ? TRgb(0, 150, 0) : l.iFaint);
+	gc.DrawText(state, TPoint(r.iBr.iX - 14 - small->TextWidthInPixels(state), ty));
 	gc.DiscardFont();
-	for (TInt i = 0; i < iRows; i++)
-		DrawRow(gc, iTop + i);
-	// a scroll mark when there are more rows than fit
-	if (iCount > iRows)
+	if (iCount == 0)
 		{
-		TInt top = r.iTl.iY + iListY, h = iRows * iRowH;
-		TInt y0 = top + h * iTop / iCount, y1 = top + h * (iTop + iRows) / iCount;
+		DrawEmpty(gc);
+		return;
+		}
+	// the rows, with their headings
+	TInt y = iListY;
+	for (TInt row = iTop; row < iCount; row++)
+		{
+		if (HeadBefore(row))
+			{
+			if (y + iSecH + iRowH > iFootY)
+				break;
+			DrawHead(gc, y, row);
+			y += iSecH;
+			}
+		if (y + iRowH > iFootY)
+			break;
+		DrawRow(gc, y, row);
+		y += iRowH;
+		}
+	// more above or below: a thin bar at the right
+	if (iTop > 0 || LastVisible(iTop) < iCount - 1)
+		{
+		TInt top = r.iTl.iY + iListY + 2, h = iFootY - iListY - 4;
+		TInt y0 = top + h * iTop / iCount, y1 = top + h * (LastVisible(iTop) + 1) / iCount;
 		gc.SetPenStyle(CGraphicsContext::ENullPen);
 		gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-		gc.SetBrushColor(TRgb::Gray16(10));
-		gc.DrawRect(TRect(r.iBr.iX - 4, top, r.iBr.iX, top + h));
-		gc.SetBrushColor(TRgb::Gray16(4));
-		gc.DrawRect(TRect(r.iBr.iX - 4, y0, r.iBr.iX, y1));
+		gc.SetBrushColor(l.iRule);
+		gc.DrawRoundRect(TRect(r.iBr.iX - 5, top, r.iBr.iX - 2, top + h), TSize(2, 2));
+		gc.SetBrushColor(l.iFaint);
+		gc.DrawRoundRect(TRect(r.iBr.iX - 5, y0, r.iBr.iX - 2, y1), TSize(2, 2));
 		}
 	DrawDetail(gc);
 	}

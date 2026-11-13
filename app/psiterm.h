@@ -307,6 +307,18 @@ struct TPtTmux
 	TInt iWarn;           // (the defaults only) say so when the server has no tmux
 	};
 
+// (1.02, ptmd.cpp) Markdown, formatted, for the editor
+class CRichText;
+class CGraphicsDevice;
+struct TPtMdStyle
+	{
+	CGraphicsDevice* iDevice;   // for pixels -> twips
+	TBuf<24> iBody;             // the text's typeface
+	TBuf<24> iMono;             // code's (the terminal's)
+	TInt iBodyPx, iMonoPx;
+	TRgb iPaper, iInk, iSoft, iFaint, iHead, iLink, iRule, iCodeBack;
+	};
+void PtRenderMarkdownL(CRichText& aRt, const TDesC& aSrc, const TPtMdStyle& aStyle, CArrayFix<TInt>& aLineOfPara);
 TUint32 PtNowSeconds();     // (1.02, ptstart.cpp) seconds since 1 Jan 2000, local; never 0
 void PtTmuxLoad(RFs& aFs, TPtTmux& aTmux);
 TInt PtTmuxSave(RFs& aFs, const TPtTmux& aTmux);
@@ -379,8 +391,13 @@ private:
 	void SizeChanged();
 	void Layout();
 	void Move(TInt aTo);
-	void DrawRow(CWindowGc& aGc, TInt aRow) const;
+	TBool HeadBefore(TInt aRow) const;      // a "Pinned" / "Recent" heading above this row
+	TInt LastVisible(TInt aTop) const;       // the last row that fits from aTop
+	TInt HitTest(TInt aY) const;             // the row at aY (view co-ordinates), or -1
+	void DrawHead(CWindowGc& aGc, TInt aY, TInt aRow) const;
+	void DrawRow(CWindowGc& aGc, TInt aY, TInt aRow) const;
 	void DrawDetail(CWindowGc& aGc) const;
+	void DrawEmpty(CWindowGc& aGc) const;
 	void Summary(TInt aHost, TDes& aLogin, TDes& aOnLogin) const;
 	CHostList& iHosts;
 	CKeyList& iKeys;
@@ -390,8 +407,8 @@ private:
 	TInt iOrder[KMaxHosts];   // rows -> host indices
 	TInt iCount;
 	TInt iSel, iTop;
-	TInt iBandH, iHeadH, iRowH, iRows, iListY, iFootY, iFootH;
-	TInt iColName, iColAddr, iColLast, iColEnd;
+	TInt iPinned;             // how many are pinned (the first rows)
+	TInt iBandH, iSecH, iRowH, iRows, iListY, iFootY, iFootH;
 	CFbsBitmap* iStar;
 	CFbsBitmap* iStarMask;
 	};

@@ -19,6 +19,8 @@
 #include "ptxfer.h"
 #include "pticons.h"
 #include <eikgted.h>
+#include <eikrted.h>
+#include <txtrich.h>
 #include <eikedwin.h>
 #include <eikedwin.hrh>
 #include <eikcfdlg.h>
@@ -139,12 +141,23 @@ private:
 	TBool iWrap;
 	TInt iFontStep;           // which of the typeface's sizes
 	HBufC* iLoaded;           // the text fetched, until the editor has it
+	// (Markdown: the formatted view, in an editor of its own over the source's)
+	TBool iMarkdown;
+	TBool iFormatted;
+	CEikRichTextEditor* iRich;
+	CArrayFixFlat<TInt>* iParaLine;   // formatted paragraph -> source line
+	void RenderL();
+	void ToSourceL();                 // the source, at the line the formatted view was on
+	void MdStyle(TPtMdStyle& aStyle) const;
+	CEikGlobalTextEditor* Active() const { return iFormatted && iRich ? (CEikGlobalTextEditor*)iRich : iEd; }
 	};
 
 CPtEditView::~CPtEditView()
 	{
+	delete iRich;
 	delete iEd;
 	delete iLoaded;
+	delete iParaLine;
 	}
 
 void CPtEditView::ConstructL(const TRect& aRect)
@@ -190,7 +203,106 @@ void CPtEditView::ShowL()
 void CPtEditView::FocusChanged(TDrawNow /*aDrawNow*/)
 	{
 	if (iEd)
-		iEd->SetFocus(IsFocused());
+		iEd->SetFocus(IsFocused() && !(iFormatted && iRich));
+	if (iRich)
+		iRich->SetFocus(IsFocused() && iFormatted);
+	}
+
+// ---- Markdown, formatted (ptmd.cpp builds it) --------------------------------
+
+void CPtEditView::MdStyle(TPtMdStyle& aStyle) const
+	{
+	TInt px = 0;
+	iTerm.EditorFont(iFontStep, aStyle.iMono, px);
+	aStyle.iDevice = iEikonEnv->ScreenDevice();
+	aStyle.iBody.Copy(_L("Arial"));
+	aStyle.iBodyPx = px + 1;
+	aStyle.iMonoPx = px;
+	if (iColour)
+		{
+		aStyle.iPaper = KRgbWhite;
+		aStyle.iInk = KRgbBlack;
+		aStyle.iSoft = TRgb(102, 102, 102);
+		aStyle.iFaint = TRgb(153, 153, 153);
+		aStyle.iHead = TRgb(0, 0, 102);
+		aStyle.iLink = TRgb(0, 102, 204);
+		aStyle.iRule = TRgb(204, 204, 204);
+		aStyle.iCodeBack = TRgb(238, 238, 238);
+		}
+	else
+		{
+		aStyle.iPaper = KRgbWhite;
+		aStyle.iInk = KRgbBlack;
+		aStyle.iSoft = TRgb::Gray16(5);
+		aStyle.iFaint = TRgb::Gray16(8);
+		aStyle.iHead = KRgbBlack;
+		aStyle.iLink = KRgbBlack;
+		aStyle.iRule = TRgb::Gray16(10);
+		aStyle.iCodeBack = TRgb::Gray16(14);
+		}
+	}
+
+// The formatted view, from the source now in the editor; it shows the
+// paragraph made from the source line the cursor is on
+void CPtEditView::RenderL()
+	{
+	if (!iEd)
+		return;
+	if (!iParaLine)
+		iParaLine = new(ELeave) CArrayFixFlat<TInt>(32);
+	if (!iRich)
+		{
+		iRich = new(ELeave) CEikRichTextEditor;
+		iRich->ConstructL(NULL, 0, 0, EEikEdwinOwnsWindow | EEikEdwinInclusiveSizeFixed
+			| EEikEdwinNoAutoSelection | EEikEdwinReadOnly);
+		iRich->SetRectL(TextRect());
+		iRich->ActivateL();
+		}
+	HBufC* src = iEd->GetTextInHBufL();
+	if (!src)
+		src = HBufC::NewL(0);
+	CleanupStack::PushL(src);
+	TPtMdStyle st;
+	MdStyle(st);
+	PtRenderMarkdownL(*iRich->RichText(), *src, st, *iParaLine);
+	CleanupStack::PopAndDestroy();
+	iRich->HandleTextChangedL();
+	iRich->SetWordWrapL(ETrue);
+	// where the source's cursor is
+	TInt pos = iEd->CursorPos();
+	TInt srcLine = iEd->Text()->ParagraphNumberForPos(pos);
+	TInt para = 0;
+	for (TInt i = 0; i < iParaLine->Count(); i++)
+		if ((*iParaLine)[i] <= srcLine)
+			para = i;
+	TInt len = 0;
+	TInt at = iRich->RichText()->CharPosOfParagraph(len, para);
+	iRich->SetCursorPosL(at < 0 ? 0 : at, EFalse);
+	iFormatted = ETrue;
+	iRich->MakeVisible(ETrue);
+	iEd->MakeVisible(EFalse);
+	FocusChanged(ENoDrawNow);
+	iRich->DrawNow();
+	}
+
+void CPtEditView::ToSourceL()
+	{
+	if (!iFormatted || !iRich)
+		{
+		iFormatted = EFalse;
+		return;
+		}
+	TInt pos = iRich->CursorPos();
+	TInt para = iRich->RichText()->ParagraphNumberForPos(pos);
+	TInt line = (iParaLine && para >= 0 && para < iParaLine->Count()) ? (*iParaLine)[para] : 0;
+	iFormatted = EFalse;
+	iRich->MakeVisible(EFalse);
+	iEd->MakeVisible(ETrue);
+	TInt len = 0;
+	TInt at = iEd->Text()->CharPosOfParagraph(len, line);
+	iEd->SetCursorPosL(at < 0 ? 0 : at, EFalse);
+	FocusChanged(ENoDrawNow);
+	iEd->DrawNow();
 	}
 
 // the fetched text into the editor
@@ -208,6 +320,8 @@ void CPtEditView::ShowTextL()
 	iEd->SetCursorPosL(0, EFalse);
 	iModified = EFalse;
 	iEd->DrawNow();
+	if (iMarkdown && iFormatted)
+		RenderL();                               // (1.02: Markdown opens formatted)
 	if (iReadOnly)
 		iEikonEnv->InfoMsg(_L("Opened read only - it has characters the Psion can't show"));
 	}
@@ -220,9 +334,10 @@ void CPtEditView::SetViewRectL(const TRect& aRect)
 
 void CPtEditView::SizeChanged()
 	{
-	if (!iEd)
-		return;
-	TRAP_IGNORE(iEd->SetRectL(TextRect()));
+	if (iEd)
+		TRAP_IGNORE(iEd->SetRectL(TextRect()));
+	if (iRich)
+		TRAP_IGNORE(iRich->SetRectL(TextRect()));
 	}
 
 // The terminal's typeface (PsiTerm.gdr), at the size nearest the terminal's
@@ -243,6 +358,12 @@ void CPtEditView::ApplyFontL()
 	pf->iLeftMarginInTwips = 0;
 	pf->iSpaceBeforeInTwips = 0;           // (a line of a file is a paragraph here: no gaps)
 	pf->iSpaceAfterInTwips = 0;
+	// (and the line exactly the font's height: the standard leaves a gap
+	// under each line of the terminal's fonts)
+	pf->iLineSpacingInTwips = iEikonEnv->ScreenDevice()->VerticalPixelsToTwips(px);
+	pf->iLineSpacingControl = CParaFormat::ELineSpacingExactlyInTwips;
+	pm.SetAttrib(EAttLineSpacing);
+	pm.SetAttrib(EAttLineSpacingControl);
 	pm.SetAttrib(EAttLeftMargin);
 	pm.SetAttrib(EAttSpaceBefore);
 	pm.SetAttrib(EAttSpaceAfter);
@@ -258,6 +379,11 @@ TBool CPtEditView::LoadL(const TDesC8& aRemote)
 	TInt slash = iRemote.LocateReverse('/');
 	PtUtf8ToText(slash >= 0 ? iRemote.Mid(slash + 1) : TPtrC8(iRemote), iName);
 	PtUtf8ToText(slash > 0 ? iRemote.Left(slash) : TPtrC8(_L8("~")), iFolder);
+	TBool md = (iName.Length() > 3 && iName.Right(3).CompareF(_L(".md")) == 0)
+		|| (iName.Length() > 9 && iName.Right(9).CompareF(_L(".markdown")) == 0);
+	if (md && !iMarkdown)
+		iFormatted = ETrue;                      // (opened formatted the first time)
+	iMarkdown = md;
 	TInt r = PtRunXferL(iTerm, PSI_XOP_GET, iRemote, KEditTmp, _L("Opening file"), _L("Getting the file..."));
 	if (r != PSI_XFER_OK)
 		{
@@ -562,10 +688,24 @@ void CPtEditView::GotoLineL()
 
 TKeyResponse CPtEditView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType)
 	{
+	TUint code = aKeyEvent.iCode;
+	TBool editKey = (code >= 0x20 && code < 0x100) || code == EKeyBackspace || code == EKeyDelete
+		|| code == EKeyEnter || code == EKeyTab;
+	if (iFormatted && iRich)
+		{
+		// the formatted view moves about; typing goes to the source, at
+		// the line the cursor is on
+		if (aType != EEventKey || !editKey || (aKeyEvent.iModifiers & EModifierCtrl))
+			return iRich->OfferKeyEventL(aKeyEvent, aType);
+		if (iReadOnly)
+			return EKeyWasConsumed;
+		ToSourceL();
+		iEikonEnv->InfoMsg(_L("Editing the text - Ctrl+P formats it again"));
+		}
 	if (aType == EEventKey && !iReadOnly && !(aKeyEvent.iModifiers & EModifierCtrl))
 		{
 		TUint c = aKeyEvent.iCode;
-		if ((c >= 0x20 && c < 0x100) || c == EKeyBackspace || c == EKeyDelete || c == EKeyEnter || c == EKeyTab)
+		if (editKey)
 			{
 			if (!iModified)
 				{
@@ -652,7 +792,10 @@ void CPtEditView::DrawStatus(CWindowGc& aGc) const
 	TBuf<120> t;
 	TPtrC lang(Language(iName));
 	TPtrC ends(iCrLf ? _L("CR LF") : _L("LF"));
-	t.Format(_L("Ln %d, Col %d    %d lines    %S    %S    UTF-8"), line, col, lines, &lang, &ends);
+	if (iFormatted && iRich)
+		t.Format(_L("Formatted - Ctrl+P shows the text    %d lines    %S    %S    UTF-8"), lines, &lang, &ends);
+	else
+		t.Format(_L("Ln %d, Col %d    %d lines    %S    %S    UTF-8"), line, col, lines, &lang, &ends);
 	const CFont* small = iEikonEnv->AnnotationFont();
 	aGc.UseFont(small);
 	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
@@ -692,7 +835,12 @@ void CPtEditView::InitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 			}
 		}
 	else if (aMenuId == R_PT_EDIT_VIEW_MENU)
+		{
 		aMenuPane->SetItemButtonState(EPtCmdEdWrap, iWrap ? EEikMenuItemSymbolOn : 0);
+		aMenuPane->SetItemButtonState(EPtCmdEdFormatted, iFormatted ? EEikMenuItemSymbolOn : 0);
+		if (!iMarkdown)
+			aMenuPane->SetItemDimmed(EPtCmdEdFormatted, ETrue);
+		}
 	else if (aMenuId == R_PT_EDIT_ENDINGS_MENU)
 		aMenuPane->SetItemButtonState(iCrLf ? EPtCmdEdCrLf : EPtCmdEdLf, EEikMenuItemSymbolOn);
 	}
@@ -701,6 +849,10 @@ void CPtEditView::CommandL(TInt aCommand)
 	{
 	if (!iEd)
 		return;
+	// (editing commands work on the text: out of the formatted view first)
+	if (iFormatted && (aCommand == EPtCmdEdUndo || aCommand == EPtCmdEdCut || aCommand == EPtCmdEdPaste
+		|| aCommand == EPtCmdEdReplace || aCommand == EPtCmdEdGoto || aCommand == EPtCmdEdSelectAll))
+		ToSourceL();
 	switch (aCommand)
 		{
 	case EPtCmdEdSave:     SaveL(EFalse); break;
@@ -716,15 +868,27 @@ void CPtEditView::CommandL(TInt aCommand)
 		iModified = ETrue;
 		DrawNow();
 		break;
-	case EPtCmdEdCopy:     iEd->ClipboardL(CEikEdwin::ECopy); break;
+	case EPtCmdEdCopy:     Active()->ClipboardL(CEikEdwin::ECopy); break;
 	case EPtCmdEdPaste:
 		iEd->ClipboardL(CEikEdwin::EPaste);
 		iModified = ETrue;
 		DrawNow();
 		break;
 	case EPtCmdEdSelectAll: iEd->SelectAllL(); break;
-	case EPtCmdEdFind:     iEd->RunFindDialogL(); break;
-	case EPtCmdEdFindNext: iEd->RunFindAgainDialogL(); break;
+	case EPtCmdEdFind:     Active()->RunFindDialogL(); break;
+	case EPtCmdEdFindNext: Active()->RunFindAgainDialogL(); break;
+	case EPtCmdEdFormatted:
+		if (!iMarkdown)
+			{
+			iEikonEnv->InfoMsg(_L("Only Markdown (.md) files are formatted"));
+			break;
+			}
+		if (iFormatted)
+			ToSourceL();
+		else
+			RenderL();
+		DrawNow();
+		break;
 	case EPtCmdEdReplace:
 		iEd->RunReplaceDialogL();
 		iModified = ETrue;
@@ -752,6 +916,8 @@ void CPtEditView::CommandL(TInt aCommand)
 		if (iFontStep >= n) iFontStep = n - 1;
 		ApplyFontL();
 		iEd->DrawNow();
+		if (iFormatted)
+			RenderL();
 		break;
 		}
 	case EPtCmdEdLf:

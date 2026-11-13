@@ -59,6 +59,19 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 1.03**
+- **A modern Start view.** A light page with a large title: your servers in
+  two-line rows (the name, then user@address) with a badge of each one's
+  initial, grouped under Pinned and Recent, when you last used each ("2 h
+  ago") and how it went (a dot). A soft rounded highlight; on the Series 7,
+  each server's badge its own colour, and a card of details below.
+- **Markdown, formatted.** A .md file opens formatted in the editor:
+  headings, bold, italic, `code`, code blocks, lists with bullets, numbered
+  lists, task boxes, quotes, rules and links. View > Formatted (Ctrl+P)
+  switches to the text to edit it (or just start typing: the text opens at
+  that line), and back.
+- The editor's text lines sit closer, one line a row.
+
 **PsiTerm 1.02**
 - **The Start view.** PsiTerm opens on your saved servers (as Muxedo's
   landing page): pinned ones first, then the rest by when you last used

@@ -170,6 +170,7 @@ enum TPsiTermCommands
 	EPtCmdEdWrap,             // View > Wrap to screen (Ctrl+W, tick box)
 	EPtCmdEdZoomIn,
 	EPtCmdEdZoomOut,
+	EPtCmdEdFormatted,        // View > Formatted (Ctrl+P, tick box: Markdown)
 	EPtCmdEdLf,               // Tools > Line endings > LF
 	EPtCmdEdCrLf,             //                      > CR LF
 	EPtCmdEdLast = EPtCmdEdCrLf,

@@ -1376,6 +1376,7 @@ RESOURCE HOTKEYS r_pt_edit_hotkeys
 		HOTKEY { command=EPtCmdEdCopy; key='c'; },
 		HOTKEY { command=EPtCmdEdClose; key='e'; },
 		HOTKEY { command=EPtCmdEdFind; key='f'; },
+		HOTKEY { command=EPtCmdEdFormatted; key='p'; },
 		HOTKEY { command=EPtCmdEdFindNext; key='g'; },
 		HOTKEY { command=EPtCmdEdGoto; key='l'; },
 		HOTKEY { command=EPtCmdEdZoomIn; key='m'; },
@@ -1447,6 +1448,7 @@ RESOURCE MENU_PANE r_pt_edit_view_menu
 	items=
 		{
 		MENU_ITEM { command=EPtCmdEdGoto; txt="Go to line..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdEdFormatted; txt="Formatted"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPtCmdEdWrap; txt="Wrap to screen"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPtCmdToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdEdZoomIn; txt="Zoom in"; },
