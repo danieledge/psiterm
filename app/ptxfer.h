@@ -73,9 +73,10 @@ public:
 	// 0.91: what the file view chose, for after it has closed
 	TInt iBrowseResult;                // EPtBrowse*
 	TUint iPickSize;                   // Get: the file's size
+	TBool iEditMode;                   // (1.02) the file view is choosing a file to edit
 	};
 
-enum { EPtBrowseNone, EPtBrowseGet, EPtBrowseSendHere };
+enum { EPtBrowseNone, EPtBrowseGet, EPtBrowseSendHere, EPtBrowseEdit };
 
 // ---------------------------------------------------------------------------
 // 0.91: Get file / Send file's file view. While browsing, the program's
@@ -113,6 +114,12 @@ void PtBrowseFinishedL(CTermView& aView);
 
 // File menu commands
 void PtSendFileL(CTermView& aView);
+// (1.02) the editor (ptedit.cpp) and what it uses of ptxfer.cpp's
+void PtEditFileL(CTermView& aView);    // File > Files > Edit file on server...
+TInt PtRunXferL(CTermView& aView, TInt aOp, const TDesC8& aRemote, const TDesC& aLocal,
+	const TDesC& aTitle, const TDesC& aWhat);
+void PtXferFailed(TInt aResult, CTermView& aView);
+void PtUtf8ToText(const TDesC8& aIn, TDes& aOut);
 void PtGetFileL(CTermView& aView);
 void PtLogCommandL(CTermView& aView);
 TBool PtLogging(const CTermView& aView);

@@ -37,10 +37,6 @@
 static void UseSharedLink(RFs& aFs, TPsiSettings& aSettings);
 static void SaveSharedLink(RFs& aFs, const TPsiSettings& aSettings);
 
-#ifndef TRAP_IGNORE
-#define TRAP_IGNORE(s) { TInt _ignored; TRAP(_ignored, s); }
-#endif
-
 _LIT(KPddName, "EUART1");
 _LIT(KLddName, "ECOMM");
 _LIT(KCsyName, "ECUART");
@@ -75,6 +71,40 @@ static const TPtFace KFaces[KFaceCount] =
 static const TPtFace& Face(TInt aFace)
 	{
 	return KFaces[(aFace >= 0 && aFace < KFaceCount) ? aFace : 0];
+	}
+
+// (1.02) the editor's font: the terminal's typeface, at one of its sizes
+// (aStep; -1 = the size nearest the terminal's)
+TInt CTermView::EditorFontSteps() const
+	{
+	return Face(iSettings.iFace).iSizes;
+	}
+
+TInt CTermView::EditorFontStep(TInt aPixels) const
+	{
+	const TPtFace& f = Face(iSettings.iFace);
+	TInt best = 0;
+	for (TInt i = 1; i < f.iSizes; i++)
+		{
+		TInt d = f.iPixels[i] - aPixels, db = f.iPixels[best] - aPixels;
+		if ((d < 0 ? -d : d) < (db < 0 ? -db : db))
+			best = i;
+		}
+	return best;
+	}
+
+void CTermView::EditorFont(TInt aStep, TDes& aFace, TInt& aPixels) const
+	{
+	const TPtFace& f = Face(iSettings.iFace);
+	aFace.Copy(TPtrC(f.iName));
+	if (aStep < 0)
+		{
+		TInt px = ZoomPixels(iSettings.iFace, iSettings.iZoom);
+		aStep = EditorFontStep(px > 0 ? px : f.iPixels[0]);
+		}
+	if (aStep >= f.iSizes)
+		aStep = f.iSizes - 1;
+	aPixels = f.iPixels[aStep];
 	}
 
 TInt CTermView::ZoomLevels(TInt aFace)
@@ -140,7 +170,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.01");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.02");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -417,6 +447,7 @@ CTermView::CTermView()
 
 CTermView::~CTermView()
 	{
+	delete iRecent;
 	delete iLog;                         // (flushes and closes the log file)
 	delete iXferMem;
 	if (iSshActive && iShared)
@@ -511,6 +542,7 @@ void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	{
 	iSettings = aSettings;
 	iTabRow = -1;
+	iRecent = CPtRecent::NewL(iCoeEnv->FsSession());   // (1.02) recent commands
 	{
 	TTimeIntervalMicroSeconds32 period;
 	iTickUsReal = (UserHal::TickPeriod(period) == KErrNone && period.Int() > 0) ? period.Int() : 15625;
@@ -1332,6 +1364,8 @@ int CTermView::CbSetTermProp(VTermProp aProp, VTermValue* aVal, void* aUser)
 		}
 	else if (aProp == VTERM_PROP_MOUSE)
 		self->iMouseMode = aVal->number;    // e.g. tmux with "set -g mouse on"
+	else if (aProp == VTERM_PROP_ALTSCREEN)
+		self->iAltScreen = aVal->boolean;   // (1.02) recent commands are not kept there
 	return 1;
 	}
 
@@ -1626,13 +1660,18 @@ void CTermView::Tick()
 		if (iLog)
 			iLog->Flush();
 		TInt bstate = (iSshActive && iShared) ? iShared->state : -1;
+		if (bstate >= 0 && bstate != PSI_STATE_EXITED)
+			iConnStage = bstate;             // (1.02) how far this connection got
 		if (bstate != iLastState)
 			{
 			iLastState = bstate;
 			iStateSince = User::TickCount();
 			}
-		if (SshLoggedIn())
+		if (SshLoggedIn() && !iEverLoggedIn)
+			{
 			iEverLoggedIn = ETrue;
+			TRAP_IGNORE(((CPsiTermAppUi*)iEikonEnv->EikAppUi())->HostOutcomeL(EPtResultLoggedIn));
+			}
 		return;
 		}
 	if (iSettings.iBlink && iCurVisible && iScrollOffset == 0)
@@ -1652,13 +1691,18 @@ void CTermView::Tick()
 	if (iLog)
 		iLog->Flush();                   // the log reaches the disk within half a second
 	TInt state = (iSshActive && iShared) ? iShared->state : -1;
+	if (state >= 0 && state != PSI_STATE_EXITED)
+		iConnStage = state;                  // (1.02) how far this connection got
 	if (state != iLastState)
 		{
 		iLastState = state;
 		iStateSince = User::TickCount();
 		}
-	if (SshLoggedIn())
-		iEverLoggedIn = ETrue;
+	if (SshLoggedIn() && !iEverLoggedIn)
+		{
+		iEverLoggedIn = ETrue;               // (1.02: the Start view shows it)
+		TRAP_IGNORE(((CPsiTermAppUi*)iEikonEnv->EikAppUi())->HostOutcomeL(EPtResultLoggedIn));
+		}
 	// typed to the modem but nothing came back (the WiRSa echoes what it
 	// is sent): say what to check, once per burst of typing
 	if (!iSshActive && iLastTx && !iNoReplyShown && User::TickCount() - iLastTx > 192)
@@ -3613,6 +3657,8 @@ TKeyResponse CTermView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aT
 	TInt vm = VTERM_MOD_NONE;
 	if (mods & EModifierShift) vm |= VTERM_MOD_SHIFT;
 	if (mods & EModifierCtrl) vm |= VTERM_MOD_CTRL;
+	if (code != EKeyMenu)
+		RecentKey(code, mods);               // (1.02) the command line being typed
 
 	switch (code)
 		{
@@ -4444,6 +4490,7 @@ void CTermView::LaunchSshL(TInt aMode)
 	iShared->mode = aMode;
 	iShared->log_on = iSettings.iKeepLog ? 1 : 0;   // (0.97) psissh writes PsiTerm.log only then
 	iEverLoggedIn = EFalse;
+	iConnStage = PSI_STATE_STARTING;
 	iLastState = -1;
 	{
 	// the key to offer (SSH), or where a new / imported key goes (4, 5)
@@ -4969,10 +5016,20 @@ void CTermView::SshProcessEnded()
 			iReconnectTries = 0;
 			iReconnectPw.FillZ();
 			iReconnectPw.Zero();
+			// (1.02) how it went, for the Start view
+			TInt outcome = iEverLoggedIn ? (iUserQuit ? EPtResultLoggedIn : EPtResultLost)
+				: iConnStage == PSI_STATE_AUTH ? EPtResultRefused : iConnStage == PSI_STATE_KEYEX ? EPtResultSecure
+				: EPtResultNoAnswer;
+			if (!iUserQuit || !iEverLoggedIn)
+				TRAP_IGNORE(((CPsiTermAppUi*)iEikonEnv->EikAppUi())->HostOutcomeL(outcome));
 			if (iPendingCmd)
 				;
 			else if (iEverLoggedIn || iUserQuit)
+				{
 				ShowWelcome();                   // back to the start screen
+				if (iUserQuit && iSettings.iStartScreen)
+					((CPsiTermAppUi*)iEikonEnv->EikAppUi())->StartSoon();   // (1.02) and the Start view
+				}
 			else
 				{
 				// never got in: keep the messages that say why on screen
@@ -5169,6 +5226,7 @@ void CHostList::Load()
 	// (1.01) the hosts' tmux settings, if this file has them
 	if (pos + 3 <= data.Length() && data[pos] == 'P' && data[pos + 1] == 'X' && data[pos + 2] >= 1)
 		{
+		TInt tver = data[pos + 2];
 		pos += 3;
 		for (TInt i = 0; i < iEntries->Count() && pos + 3 <= data.Length(); i++)
 			{
@@ -5179,6 +5237,14 @@ void CHostList::Load()
 			pos += 3;
 			if (!GetStr(data, pos, t.iSession) || !GetStr(data, pos, t.iOptions))
 				break;
+			if (tver >= 2 && pos + 6 <= data.Length())
+				{
+				THostEntry& h = (*iEntries)[i];
+				h.iFlags = data[pos] & KPtHostPinned;
+				h.iLastUsed = data[pos + 1] | (data[pos + 2] << 8) | (data[pos + 3] << 16) | ((TUint32)data[pos + 4] << 24);
+				h.iLastResult = data[pos + 5] <= EPtResultLost ? data[pos + 5] : 0;
+				pos += 6;
+				}
 			}
 		}
 	data.FillZ();
@@ -5223,11 +5289,12 @@ TInt CHostList::Save()
 		data.Append((TUint8)e.iAuth);
 		data.Append((TUint8)e.iKeyId);
 		}
-	// (1.01) after the hosts, where older PsiTerms do not look: "PX" 1, then
+	// (1.01) after the hosts, where older PsiTerms do not look: "PX" 2, then
 	// each host's tmux settings (start, own, options on; session, options)
+	// and (1.02, version 2) its pin, when it was last used, how that went
 	data.Append('P');
 	data.Append('X');
-	data.Append(1);
+	data.Append(2);
 	for (TInt i = 0; i < iEntries->Count(); i++)
 		{
 		const TPtTmux& t = (*iEntries)[i].iTmux;
@@ -5236,6 +5303,11 @@ TInt CHostList::Save()
 		data.Append((TUint8)t.iOpts);
 		PutStr(data, t.iSession);
 		PutStr(data, t.iOptions);
+		const THostEntry& h = (*iEntries)[i];
+		data.Append((TUint8)h.iFlags);
+		for (TInt b = 0; b < 4; b++)
+			data.Append((TUint8)(h.iLastUsed >> (8 * b)));
+		data.Append((TUint8)h.iLastResult);
 		}
 	TInt r = SafeWrite(iFs, KHostsFile, data);
 	data.FillZ();
@@ -5511,11 +5583,21 @@ void CSnippetList::Load()
 			if (err != KErrNone)
 				break;
 			}
+		// (1.02) on the Snippets menu: as before, the top-level ones, unless
+		// the file says (version 2 of its flags)
+		for (TInt i = 0; i < iEntries->Count(); i++)
+			(*iEntries)[i].iPinned = (*iEntries)[i].iFolder.Length() == 0;
 		if (ver == 2 && pos + 3 <= data.Length() && data[pos] == 'P' && data[pos + 1] == 'X' && data[pos + 2] >= 1)
 			{
+			TInt fver = data[pos + 2];
 			pos += 3;                        // (1.01) the flags
 			for (TInt i = 0; i < iEntries->Count() && pos < data.Length(); i++)
-				(*iEntries)[i].iNewWin = data[pos++] & 1;
+				{
+				TInt fl = data[pos++];
+				(*iEntries)[i].iNewWin = fl & 1;
+				if (fver >= 2)
+					(*iEntries)[i].iPinned = (fl >> 1) & 1;
+				}
 			}
 		if (ver == 1)
 			{
@@ -5550,13 +5632,14 @@ TInt CSnippetList::Save()
 		data.Append((TUint8)s.iKey);
 		PutStr(data, s.iFolder);
 		}
-	// (1.01) after them, where older PsiTerms do not look: "PX" 1, then a
-	// byte of flags each (1 = run in a new tmux window)
+	// (1.01) after them, where older PsiTerms do not look: "PX" 2, then a
+	// byte of flags each (1 = run in a new tmux window; 1.02: 2 = on the
+	// Snippets menu)
 	data.Append('P');
 	data.Append('X');
-	data.Append(1);
+	data.Append(2);
 	for (TInt j = 0; j < iEntries->Count(); j++)
-		data.Append((TUint8)((*iEntries)[j].iNewWin ? 1 : 0));
+		data.Append((TUint8)(((*iEntries)[j].iNewWin ? 1 : 0) | ((*iEntries)[j].iPinned ? 2 : 0)));
 	TInt r = SafeWrite(iFs, KSnippetsFile, data);
 	delete buf;
 	iChanged = EFalse;
@@ -5595,7 +5678,7 @@ TBool CSnippetList::HasFolder(const TDesC& aName) const
 // style guide's shortcuts are all Ctrl+letter or Shift+Ctrl+letter (0.79
 // dropped 1-9 and 0). A saved snippet on a key no longer here loses its key
 // when loaded (0.71 took B for View > Show toolbar; a digit loads as none).
-static const char KSnippetKeys[] = "FGIJLNOQRWXYZ";
+static const char KSnippetKeys[] = "FGIJLNQWXYZ";   // (1.02: O and R went to Edit file on server and Recent commands)
 
 TInt SnippetKeyCount()
 	{
@@ -5690,6 +5773,7 @@ void CSnippetEditDialog::PreLayoutDynInitL()
 	SetEdwinTextL(EPtDlgSnipFolder, &iEntry.iFolder);   // blank = top level
 	((CEikChoiceList*)Control(EPtDlgSnipEnter))->SetCurrentItem(iEntry.iEnter ? 1 : 0);
 	((CEikChoiceList*)Control(EPtDlgSnipNewWin))->SetCurrentItem(iEntry.iNewWin ? 1 : 0);
+	((CEikChoiceList*)Control(EPtDlgSnipPinned))->SetCurrentItem(iEntry.iPinned ? 1 : 0);
 	CDesCArrayFlat* keys = new(ELeave) CDesCArrayFlat(8);
 	CleanupStack::PushL(keys);
 	for (TInt i = 0; i < SnippetKeyCount(); i++)
@@ -5740,6 +5824,7 @@ TBool CSnippetEditDialog::OkToExitL(TInt /*aButtonId*/)
 	iEntry.iText = text;
 	iEntry.iEnter = ((CEikChoiceList*)Control(EPtDlgSnipEnter))->CurrentItem() == 1;
 	iEntry.iNewWin = ((CEikChoiceList*)Control(EPtDlgSnipNewWin))->CurrentItem() == 1;
+	iEntry.iPinned = ((CEikChoiceList*)Control(EPtDlgSnipPinned))->CurrentItem() == 1;
 	iEntry.iKey = key;
 	iEntry.iFolder = folder;
 	return ETrue;
@@ -6547,6 +6632,10 @@ void CPsiTermAppUi::ConstructL()
 	TPsiReading::Recover(iCoeEnv->FsSession(), iCoeEnv->WsSession(), KUidPsiTerm);
 	iForeground = ETrue;
 	UpdateReading();
+	// (1.02) PsiTerm opens on the Start view (Preferences > Start screen)
+	iConnHost = -1;
+	if (settings.iStartScreen)
+		StartSoon();
 	}
 
 // ----- Reading mode and the grey calibration (docs/display.md) ------------------
@@ -6673,7 +6762,7 @@ TRect CPsiTermAppUi::TermRect(TBool aToolbar) const
 // change) in SetTermRectL.
 void CPsiTermAppUi::ShowToolBarL(TBool aShow)
 	{
-	CEikToolBar* bar = iBrowse ? iBrowseBar : iToolBar;   // (0.91: the file view has its own)
+	CEikToolBar* bar = iBrowse ? iBrowseBar : iEdit ? iEditBar : iStart ? iStartBar : iToolBar;   // (0.91, 1.02: the file view, editor and Start view have their own)
 	if (!bar || !iView)
 		return;
 	if (bar->IsVisible() != aShow)
@@ -6686,6 +6775,9 @@ void CPsiTermAppUi::ShowToolBarL(TBool aShow)
 	iView->SetTermRectL(TermRect(aShow));
 	if (iBrowse)
 		iBrowse->SetViewRectL(TermRect(aShow));
+	if (iStart)
+		iStart->SetViewRectL(TermRect(aShow));
+	EditorRectL(TermRect(aShow));
 	}
 
 // ----- 0.91: the file view (Get file / Send file; ptxfer.cpp) ----------------------
@@ -6718,7 +6810,8 @@ void CPsiTermAppUi::OpenBrowseL(TBool aSend)
 	if (iBrowseBar)
 		{
 		// the third button: Get, or Send here
-		TPtrC act(aSend ? _L("Send\nhere") : _L("Get"));
+		TBool edit = !aSend && iView->iXferMem && iView->iXferMem->iEditMode;   // (1.02)
+		TPtrC act(aSend ? _L("Send\nhere") : edit ? _L("Edit") : _L("Get"));
 		TRAPD(perr, ButtonPictureL(iBrowseBar, EPtCmdBrAct, aSend ? EMbmToolSendHere : EMbmToolGet, &act));
 		if (perr != KErrNone)
 			{
@@ -6842,6 +6935,15 @@ void CPsiTermAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
 CPsiTermAppUi::~CPsiTermAppUi()
 	{
 	iReading.Leave(iCoeEnv->FsSession(), KUidPsiTerm);   // the user's contrast and backlight back
+	if (iStart)
+		{
+		if (iStartStacked)
+			RemoveFromStack(iStart);
+		delete iStart;
+		}
+	delete iStartBar;
+	delete iStartIdle;
+	DeleteEditor();
 	if (iBrowse)
 		{
 		if (iBrowseStacked)
@@ -7246,9 +7348,20 @@ void CPsiTermAppUi::ConnectHostL(TInt aIndex)
 	{
 	if (iView->SshActive() || aIndex < 0 || aIndex >= iHosts->Count())
 		return;
-	const THostEntry& e = iHosts->At(aIndex);
+	THostEntry& h = iHosts->At(aIndex);
+	h.iLastUsed = PtNowSeconds();            // (1.02) the Start view's Last used
 	iHosts->iLast = aIndex;
 	iHosts->Save();
+	CloseStart();
+	iConnHost = aIndex;
+	THostEntry e = h;
+	ConnectEntryL(e);
+	e.iPassword.FillZ();
+	}
+
+// (1.02) a saved server, or one typed in SSH to address...
+void CPsiTermAppUi::ConnectEntryL(const THostEntry& e)
+	{
 	TPsiSettings& s = iView->Settings();
 	s.iSshHost = e.iHost;
 	s.iSshUser = e.iUser;
@@ -7327,6 +7440,27 @@ void CPsiTermAppUi::ManageSnippetsL()
 				}
 			break;
 			}
+		case EPtBidCopy:
+			{
+			// (1.02, Muxedo's Duplicate) a new snippet, the same but its name
+			if (iSnippets->Count() >= KMaxSnippets)
+				{
+				iEikonEnv->InfoMsg(_L("Snippet list is full - delete one first"));
+				break;
+				}
+			TSnippet e = iSnippets->At(index);
+			e.iKey = 0;                          // (a key is one snippet's)
+			TBuf<24> name(LeftSafe(e.iName, 19));
+			name.Append(_L(" copy"));
+			e.iName = name;
+			if (EditSnippetL(e, -1))
+				{
+				iSnippets->AddL(e);
+				iSnippets->iLast = iSnippets->Count() - 1;
+				iSnippets->Save();
+				}
+			break;
+			}
 		case EPtBidEdit:
 			{
 			TSnippet e = iSnippets->At(index);
@@ -7370,6 +7504,51 @@ TBool CPsiTermAppUi::EditSnippetL(TSnippet& aEntry, TInt aSelf)
 
 void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 	{
+	// 1.02: the editor's menus
+	if (aMenuId == R_PT_EDIT_RECENT_MENU)
+		{
+		EditorRecentMenuL(aMenuPane);
+		return;
+		}
+	if (aMenuId == R_PT_EDIT_FILE_MENU || aMenuId == R_PT_EDIT_EDIT_MENU || aMenuId == R_PT_EDIT_ENDINGS_MENU)
+		{
+		EditorMenuPaneL(aMenuId, aMenuPane);
+		return;
+		}
+	if (aMenuId == R_PT_EDIT_VIEW_MENU)
+		{
+		EditorMenuPaneL(aMenuId, aMenuPane);
+		aMenuPane->SetItemButtonState(EPtCmdToolbar, iView->Settings().iToolbar ? EEikMenuItemSymbolOn : 0);
+		return;
+		}
+	// 1.02: the Start view's menus
+	if (aMenuId == R_PT_START_EDIT_MENU || aMenuId == R_PT_START_FILE_MENU || aMenuId == R_PT_START_VIEW_MENU)
+		{
+		TInt cur = iStart ? iStart->Current() : -1;
+		if (aMenuId == R_PT_START_EDIT_MENU)
+			{
+			if (cur < 0)
+				{
+				aMenuPane->SetItemDimmed(EPtCmdStEdit, ETrue);
+				aMenuPane->SetItemDimmed(EPtCmdStDelete, ETrue);
+				aMenuPane->SetItemDimmed(EPtCmdStPin, ETrue);
+				}
+			else
+				aMenuPane->SetItemButtonState(EPtCmdStPin,
+					(iHosts->At(cur).iFlags & KPtHostPinned) ? EEikMenuItemSymbolOn : 0);
+			}
+		else if (aMenuId == R_PT_START_FILE_MENU)
+			{
+			if (iView->SshActive())
+				{
+				aMenuPane->SetItemDimmed(EPtCmdStConnect, ETrue);
+				aMenuPane->SetItemDimmed(EPtCmdStAddress, ETrue);
+				}
+			}
+		else
+			aMenuPane->SetItemButtonState(EPtCmdToolbar, iView->Settings().iToolbar ? EEikMenuItemSymbolOn : 0);
+		return;
+		}
 	// 0.91: the file view's menus
 	if (aMenuId == R_PT_BROWSE_GET_FILE_MENU || aMenuId == R_PT_BROWSE_SEND_FILE_MENU
 		|| aMenuId == R_PT_BROWSE_FAV_MENU)
@@ -7428,17 +7607,19 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		CleanupStack::PushL(folders);
 		iSnippets->FoldersL(*folders);
 		TInt nFolders = folders->Count();
-		if (nFolders > KMenuSnippets)
-			nFolders = KMenuSnippets;
-		TInt rootSlots = KMenuSnippets - nFolders;      // folders always get a slot
+		// (1.02) Recent commands... is the second item: one slot less
+		const TInt KSlots = KMenuSnippets - 1;
+		if (nFolders > KSlots)
+			nFolders = KSlots;
+		TInt rootSlots = KSlots - nFolders;             // folders always get a slot
 		if (iSnippets->Count() > 0)
-			aMenuPane->ItemData(EPtCmdSnippets).iFlags |= EEikMenuItemSeparatorAfter;
+			aMenuPane->ItemData(EPtCmdRecent).iFlags |= EEikMenuItemSeparatorAfter;
 		TInt shown = 0;
 		for (TInt i = 0; i < iSnippets->Count() && shown < rootSlots; i++)
 			{
 			const TSnippet& sn = iSnippets->At(i);
-			if (sn.iFolder.Length() != 0)
-				continue;                               // in a folder: shown in its cascade
+			if (!sn.iPinned)
+				continue;                               // (1.02) only those on the menu; the rest in their folders
 			CEikMenuPane::TItem::SData item;
 			item.iCommandId = EPtCmdSnippet0 + i;
 			item.iCascadeId = 0;
@@ -7612,6 +7793,12 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		}
 	else if (browseCmd)
 		return;
+	// 1.02: the editor's commands, then the Start view's (some also work
+	// from the terminal)
+	if (EditorCommandL(aCommand))
+		return;
+	if (StartCommandL(aCommand))
+		return;
 	if (aCommand >= EPtCmdHost0 && aCommand < EPtCmdHost0 + KMaxHosts)
 		{
 		ConnectHostL(aCommand - EPtCmdHost0);
@@ -7634,6 +7821,8 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	switch (aCommand)
 		{
 	case EEikCmdExit:
+		if (iEdit && !CloseEditorL())
+			return;                           // (1.02: changes not saved, and saving failed)
 		Exit();
 		return;
 	case EPtCmdToolbar:                       // View > Show toolbar (tick box)
@@ -7655,14 +7844,14 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			iView->DisconnectSsh();           // (End SSH: as the File menu's)
 			}
 		else
-			SshToL();
+			OpenStartL();                     // (1.02: the Start view)
 		break;
 	case EPtCmdTbSnippets:
 	case EPtCmdTbKeys:
 	case EPtCmdTbFiles:
 		ToolbarPopupL(aCommand);
 		break;
-	case EPtCmdSsh:     SshToL(); break;
+	case EPtCmdSsh:     OpenStartL(); break;   // (1.02: the Start view, not the pop-up list)
 	case EPtCmdSshDisconnect:               // File > End SSH (Shift+Ctrl+D)
 		if (!iView->SshActive())
 			iEikonEnv->InfoMsg(_L("Nothing to end - SSH is not connected"));
@@ -7799,6 +7988,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		break;
 		}
 	case EPtCmdSnippets:    ManageSnippetsL(); break;
+	case EPtCmdRecent:      RecentCommandsL(); break;   // (1.02, ptrecent.cpp)
 	case EPtCmdHelp:        HelpL(); break;
 	case EPtCmdAppearance:
 		{

@@ -142,10 +142,42 @@ enum TPsiTermCommands
 	EPtCmdTmuxEven,           // Panes > Even layout
 	EPtCmdTmuxBreak,          // Panes > Pane to window
 	EPtCmdTmuxHistory,        // View > Scroll > tmux history
+	// 1.02: the Start view (ptstart.cpp)
+	EPtCmdStConnect,          // File > SSH to server (Enter)
+	EPtCmdStAddress,          // File > SSH to address... (Ctrl+G)
+	EPtCmdStNew,              // Edit > Create new server... (Ctrl+N)
+	EPtCmdStEdit,             // Edit > Server details... (Ctrl+I)
+	EPtCmdStDelete,           // Edit > Delete server (Ctrl+D)
+	EPtCmdStPin,              // Edit > Pin to top (Ctrl+P, tick box)
+	EPtCmdStTerminal,         // View > Show terminal (Ctrl+Q)
+	EPtCmdStSync,             // (no menu) the highlight moved: the toolbar's Pin follows it
+	EPtCmdRecent,             // Snippets > Recent commands... (Shift+Ctrl+R)
+	// 1.02: the editor (ptedit.cpp)
+	EPtCmdEditFile,           // File > Files > Edit file on server... (Shift+Ctrl+O)
+	EPtCmdEdSave,             // File > Save (Ctrl+S)
+	EPtCmdEdSaveCopy,         // File > Save copy on Psion...
+	EPtCmdEdRevert,           // File > Revert to saved
+	EPtCmdEdClose,            // File > Close (Ctrl+E)
+	EPtCmdEdUndo,
+	EPtCmdEdCut,
+	EPtCmdEdCopy,
+	EPtCmdEdPaste,
+	EPtCmdEdSelectAll,
+	EPtCmdEdFind,             // Edit > Find... (Ctrl+F)
+	EPtCmdEdFindNext,         // Edit > Find next (Ctrl+G)
+	EPtCmdEdReplace,          // Edit > Replace... (Ctrl+R)
+	EPtCmdEdGoto,             // View > Go to line... (Ctrl+L)
+	EPtCmdEdWrap,             // View > Wrap to screen (Ctrl+W, tick box)
+	EPtCmdEdZoomIn,
+	EPtCmdEdZoomOut,
+	EPtCmdEdLf,               // Tools > Line endings > LF
+	EPtCmdEdCrLf,             //                      > CR LF
+	EPtCmdEdLast = EPtCmdEdCrLf,
 
 	EPtCmdBrFav0 = 0x1380,    // ... + 7: go to favourite N (the Favourites menu)
 	EPtCmdSnippet0 = 0x1400,  // ... EPtCmdSnippet0 + KMaxSnippets - 1: send snippet N
-	EPtCmdHost0 = 0x1500      // ... + KMaxHosts - 1: connect to saved host N (welcome screen)
+	EPtCmdHost0 = 0x1500,     // ... + KMaxHosts - 1: connect to saved host N (welcome screen)
+	EPtCmdEdRecent0 = 0x1600  // (1.02) ... + 5: the editor's File > Recent
 	};
 
 enum TPsiTermDialogControls
@@ -273,5 +305,18 @@ enum TPtTmuxControls
 	EPtDlgSnipNewWin,          // Snippet: Run in (this window / a new tmux window)
 	EPtBidTmux,               // SSH server > tmux...
 	EPtBidTmuxRename,
-	EPtBidTmuxClose
+	EPtBidTmuxClose,
+	EPtDlgQuickAddr,          // (1.02) SSH to address...
+	EPtDlgQuickAuth,
+	EPtDlgQuickSave,
+	EPtDlgRecentList,         // (1.02) Recent commands...
+	EPtDlgRecentOn,
+	EPtDlgRecentNote,
+	EPtBidSaveSnippet,
+	EPtBidCopy,               // (1.02) Manage snippets: Copy
+	EPtDlgSnipPinned,         // (1.02) Snippet > Menu > On the Snippets menu
+	EPtPageSnipMain,
+	EPtPageSnipMenu,
+	EPtDlgGotoLine,           // (1.02) the editor's Go to line
+	EPtDlgGotoOf
 	};

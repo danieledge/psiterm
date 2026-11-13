@@ -8,6 +8,11 @@
 #include <eikappui.h>
 #include <eikapp.h>
 #include <eikdoc.h>
+
+// ER5 has TRAP but not TRAP_IGNORE
+#ifndef TRAP_IGNORE
+#define TRAP_IGNORE(s) { TInt _ignored; TRAP(_ignored, s); }
+#endif
 #include <eikenv.h>
 #include <eikmenup.h>
 #include <eikcmds.hrh>
@@ -101,7 +106,7 @@ const TInt KMaxSnipFolders = 8;
 
 struct TSnippet
 	{
-	TSnippet() : iEnter(0), iKey(0), iNewWin(0) {}
+	TSnippet() : iEnter(0), iKey(0), iNewWin(0), iPinned(1) {}
 	TBuf<24> iName;
 	TBuf<120> iText;
 	TInt iEnter;          // 1 = press Enter after the text
@@ -109,6 +114,33 @@ struct TSnippet
 	                      // (digits were allowed before 0.79; a saved digit loads as none)
 	TBuf<24> iFolder;     // folder name, or empty for the top level (0.86)
 	TInt iNewWin;         // 1.01: 1 = run it in a new tmux window (as Muxedo's)
+	TInt iPinned;         // 1.02: 1 = on the Snippets menu (and the toolbar's pop-up)
+	};
+
+// (1.02, ptrecent.cpp) Snippets > Recent commands...: the command lines
+// typed at a shell prompt, per server (History.dat)
+struct TPtRecentItem
+	{
+	TBuf<80> iServer;     // user@host:port
+	TBuf<120> iCmd;
+	};
+
+class CPtRecent : public CBase
+	{
+public:
+	static CPtRecent* NewL(RFs& aFs);
+	~CPtRecent();
+	void Load();
+	TInt Save();
+	void AddL(const TDesC& aServer, const TDesC& aCmd);
+	TInt ForServer(const TDesC& aServer, TInt* aIndices, TInt aMax) const;   // newest first
+	const TPtRecentItem& At(TInt aIndex) const { return (*iItems)[aIndex]; }
+	void Delete(TInt aIndex) { iItems->Delete(aIndex); }
+	TBool iOn;            // Remember commands
+private:
+	CPtRecent(RFs& aFs) : iFs(aFs) {}
+	RFs& iFs;
+	CArrayFixFlat<TPtRecentItem>* iItems;
 	};
 
 class CSnippetList : public CBase
@@ -275,6 +307,7 @@ struct TPtTmux
 	TInt iWarn;           // (the defaults only) say so when the server has no tmux
 	};
 
+TUint32 PtNowSeconds();     // (1.02, ptstart.cpp) seconds since 1 Jan 2000, local; never 0
 void PtTmuxLoad(RFs& aFs, TPtTmux& aTmux);
 TInt PtTmuxSave(RFs& aFs, const TPtTmux& aTmux);
 // the settings for one server: its own where it has them, else the defaults
@@ -288,8 +321,21 @@ TBool PtTmuxTextOk(const TDesC& aText, TBool aName);
 TBool PtTmuxSettingsL(TPtTmux& aTmux, const TPtTmux* aDefaults, TInt* aPrefix);
 void PtHostTmuxL(TPtTmux& aServer, const TPtTmux& aDefaults);   // SSH server > tmux...
 
+// (1.02) how the last connection to a saved server went (the Start view)
+enum TPtHostResult
+	{
+	EPtResultNever = 0,
+	EPtResultLoggedIn,
+	EPtResultNoAnswer,       // no modem, no reply, the link failed
+	EPtResultRefused,        // the login was refused
+	EPtResultSecure,         // encryption could not be set up (a host key changed?)
+	EPtResultLost            // logged in, then the connection went
+	};
+const TInt KPtHostPinned = 1;   // THostEntry::iFlags: Pin to top
+
 struct THostEntry
 	{
+	THostEntry() : iPort(22), iAuth(0), iKeyId(0), iFlags(0), iLastUsed(0), iLastResult(0) {}
 	TBuf<24> iName;
 	TBuf<100> iHost;
 	TBuf<60> iUser;
@@ -300,6 +346,54 @@ struct THostEntry
 	                      // 3 = SSH key, then the saved password
 	TInt iKeyId;          // which key (TSshKey::iId); 0 = the first one
 	TPtTmux iTmux;        // 1.01: this server's tmux settings (all "use the default" to start)
+	TInt iFlags;          // 1.02: KPtHostPinned
+	TUint32 iLastUsed;    // 1.02: seconds since 1 Jan 2000 (local time); 0 = never
+	TInt iLastResult;     // 1.02: TPtHostResult
+	};
+
+// (1.02) the Start view (ptstart.cpp): the saved servers, pinned first, then
+// by when they were last used. It goes over the terminal as the file view
+// does, with its own menus, shortcuts and toolbar.
+class CPsiTermAppUi;
+class CPtEditView;
+class CEikMenuPane;
+class CHostList;
+class CKeyList;
+class CTermView;
+class CPtStartView : public CCoeControl
+	{
+public:
+	static CPtStartView* NewL(CHostList& aHosts, CKeyList& aKeys, const TPtTmux& aTmux,
+		CTermView& aTerm, const TRect& aRect);
+	~CPtStartView();
+	void ReloadL(TInt aSelectHost = -1);   // the hosts changed; select this one (-1: keep)
+	TInt Current() const;                   // the highlighted host's index, or -1
+	void SetViewRectL(const TRect& aRect);
+	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
+private:
+	CPtStartView(CHostList& aHosts, CKeyList& aKeys, const TPtTmux& aTmux, CTermView& aTerm)
+		: iHosts(aHosts), iKeys(aKeys), iTmux(aTmux), iTerm(aTerm) {}
+	void ConstructL(const TRect& aRect);
+	void Draw(const TRect& aRect) const;
+	void HandlePointerEventL(const TPointerEvent& aEvent);
+	void SizeChanged();
+	void Layout();
+	void Move(TInt aTo);
+	void DrawRow(CWindowGc& aGc, TInt aRow) const;
+	void DrawDetail(CWindowGc& aGc) const;
+	void Summary(TInt aHost, TDes& aLogin, TDes& aOnLogin) const;
+	CHostList& iHosts;
+	CKeyList& iKeys;
+	const TPtTmux& iTmux;
+	CTermView& iTerm;
+	TBool iColour;
+	TInt iOrder[KMaxHosts];   // rows -> host indices
+	TInt iCount;
+	TInt iSel, iTop;
+	TInt iBandH, iHeadH, iRowH, iRows, iListY, iFootY, iFootH;
+	TInt iColName, iColAddr, iColLast, iColEnd;
+	CFbsBitmap* iStar;
+	CFbsBitmap* iStarMask;
 	};
 
 // ---------------------------------------------------------------------------
@@ -386,6 +480,7 @@ public:
 	TInt Save();
 	TInt Count() const { return iEntries->Count(); }
 	THostEntry& At(TInt aIndex) { return (*iEntries)[aIndex]; }
+	const THostEntry& At(TInt aIndex) const { return (*iEntries)[aIndex]; }
 	void AddL(const THostEntry& aEntry);
 	void Delete(TInt aIndex);
 	TInt iLast;           // index of the last host used
@@ -565,6 +660,14 @@ public:
 	void SendCtrl(TUint aLetter);
 	void SendSnippetText(const TDesC& aText, TBool aEnter);   // with \n ^X etc.
 	void SetSnippets(CSnippetList* aSnippets) { iSnippets = aSnippets; }
+	// 1.02 (ptrecent.cpp): recent commands
+	CPtRecent* Recent() { return iRecent; }
+	void RecentServer(TDes& aServer) const;
+	void SendTyped(const TDesC& aText, TBool aEnter);
+	// 1.02 (ptedit.cpp): the editor's font
+	void EditorFont(TInt aStep, TDes& aFace, TInt& aPixels) const;
+	TInt EditorFontSteps() const;
+	TInt EditorFontStep(TInt aPixels) const;
 	void SetHosts(CHostList* aHosts) { iHosts = aHosts; }
 	void ApplyAppearanceL();           // theme / cursor / status line changed
 	void ShowWelcome();                // the start screen (the logo)
@@ -872,6 +975,14 @@ private:
 	TInt iLastState;          // connection state last tick, and since when
 	TUint iStateSince;
 	TUint iTickCount;
+	TInt iConnStage;          // (1.02) the furthest PSI_STATE_* this connection reached
+	CPtRecent* iRecent;       // (1.02) recent commands, and the line being typed
+	TBuf<120> iCmdLine;
+	TBool iCmdDirty;          // edited in ways that can't be followed
+	TBool iCmdSecret;         // typed at a password prompt
+	TBool iAltScreen;         // a full-screen program is up
+	void RecentKey(TUint aCode, TUint aMods);
+	TBool AtSecretPrompt() const;
 	TBool iEverLoggedIn;      // this session got as far as a login          // VTERM_PROP_MOUSE_*: the program wants mouse events
 	TInt iPenRow0, iPenCol0;
 	TBool iPenWheeled;
@@ -1037,11 +1148,44 @@ private:
 	void ConnectHostL(TInt aIndex);
 	TBool EditSnippetL(TSnippet& aEntry, TInt aSelf);
 	void SendTmux(TUint aKey);
+	// 1.02 (ptstart.cpp): the Start view
+public:
+	void OpenStartL();
+	void HostOutcomeL(TInt aResult);       // how the connection to the server went
+	void StartSoon();                       // after End SSH: the Start view again
+private:
+	void CloseStart();
+	TBool StartCommandL(TInt aCommand);     // ETrue if it was the Start view's
+	void ConnectEntryL(const THostEntry& aEntry);
+	void QuickConnectL();
+	void NewHostL();
+	void EditHostAtL(TInt aIndex);
+	void DeleteHostL(TInt aIndex);
+	static TInt StartIdleCallback(TAny* aSelf);
+	CPtStartView* iStart;
+	TBool iStartStacked;
+	CEikToolBar* iStartBar;
+	CIdle* iStartIdle;
+	TInt iConnHost;                         // the saved server connected to (-1: none)
 	// 1.01 (pttmux.cpp): the tmux defaults (Tmux.ini) and the commands
 	TPtTmux iTmux;
 	void TmuxSessionsL();
 	void TmuxSettingsL();
 	void TmuxCommandL(TInt aCommand);
+	void RecentCommandsL();                 // 1.02 (ptrecent.cpp)
+	// 1.02 (ptedit.cpp): the editor, over the terminal as the file view
+public:
+	void OpenEditorL(const TDesC8& aRemote, TUint aSize);
+private:
+	TBool CloseEditorL();
+	TBool EditorCommandL(TInt aCommand);
+	void EditorRecentMenuL(CEikMenuPane* aMenuPane);
+	void EditorMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
+	void EditorRectL(const TRect& aRect);
+	void DeleteEditor();
+	CPtEditView* iEdit;
+	TBool iEditStacked;
+	CEikToolBar* iEditBar;
 	};
 
 class CPsiTermDocument : public CEikDocument

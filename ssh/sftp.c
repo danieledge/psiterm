@@ -43,7 +43,9 @@ extern PsiShared* pg_shared(void);
 #define FXP_READDIR   12
 #define FXP_REMOVE    13
 #define FXP_REALPATH  16
+#define FXP_LSTAT     7
 #define FXP_STAT      17
+#define FXP_EXTENDED  200
 #define FXP_STATUS    101
 #define FXP_HANDLE    102
 #define FXP_DATA      103
@@ -114,7 +116,8 @@ static unsigned char outbuf[OUT_MAX];
 static unsigned int outlen, outpos;
 
 /* ---- the request being served */
-enum { K_FREE, K_STAT, K_OPEN, K_WRITE, K_READ, K_CLOSE, K_REMOVE, K_REALPATH, K_OPENDIR, K_READDIR };
+enum { K_FREE, K_STAT, K_OPEN, K_WRITE, K_READ, K_CLOSE, K_REMOVE, K_REALPATH, K_OPENDIR, K_READDIR,
+       K_LSTAT, K_RENAME, K_STAT2 };
 struct sreq { unsigned int id; int kind; unsigned long off; unsigned int len; };
 static struct sreq reqs[MAX_REQS];
 static unsigned int next_id = 1;
@@ -136,6 +139,19 @@ static unsigned long gap_off[MAX_REQS];   /* GET: rest of a short read, to ask a
 static unsigned int gap_len[MAX_REQS];
 static int gaps;
 static time_t last_heard;             /* the server's last reply (or our last request) */
+/* (1.02) SAVE, the editor's: the server can rename over a file (OpenSSH's
+   posix-rename@openssh.com, from its VERSION); the file being written (the
+   one beside the target, or the target itself); its permissions to keep */
+static int have_posix_rename;
+static char wpath[520];
+static int wtemp;                     /* writing wpath, a file beside the target */
+static unsigned int keep_perm;
+static int have_keep_perm;
+static unsigned int save_opened_mtime;  /* the file's time when the editor opened it (0: new) */
+static void save_write(void);
+static void save_write_as(int link);
+static int save_rename(void);
+#define T_LNK 0120000
 
 static void start_op(void);
 static void finish(int result);
@@ -316,21 +332,30 @@ static int send_handle(int type, int kind)
 	return 0;
 }
 
-static int send_open(const char *path, unsigned int flags)
+static int send_open_perm(const char *path, unsigned int flags, int has_perm, unsigned int perm)
 {
 	unsigned int n = strlen(path);
 	struct sreq *q;
-	if (!out_room(n + 40)) return -1;
+	if (!out_room(n + 44)) return -1;
 	q = new_req(K_OPEN, 0, 0);
 	if (!q) return -1;
 	pkt_begin(FXP_OPEN);
 	put32(q->id);
 	putstr(path, n);
 	put32(flags);
-	put32(0);                         /* no attributes: the server's usual permissions */
+	if (has_perm) {
+		put32(FILEXFER_ATTR_PERMISSIONS);  /* (1.02, SAVE: the file's own, kept) */
+		put32(perm & 07777);
+	} else
+		put32(0);                     /* no attributes: the server's usual permissions */
 	pkt_end();
 	last_heard = time(NULL);
 	return 0;
+}
+
+static int send_open(const char *path, unsigned int flags)
+{
+	return send_open_perm(path, flags, 0, 0);
 }
 
 static PsiShared *sh(void) { return pg_shared(); }
@@ -549,6 +574,16 @@ static void finish(int result)
 			pkt_end();
 		}
 	}
+	/* (1.02) SAVE that failed after starting the file beside the target:
+	   that file goes (the target is untouched) */
+	if (op == PSI_XOP_SAVE && wtemp && result != PSI_XFER_OK && ch && ch_state == CH_READY
+		&& out_room(strlen(wpath) + 32)) {
+		pkt_begin(FXP_REMOVE);
+		put32(next_id++);
+		putstr(wpath, strlen(wpath));
+		pkt_end();
+	}
+	wtemp = 0;
 	have_handle = 0;
 	for (i = 0; i < MAX_REQS; i++) reqs[i].kind = K_FREE;   /* late replies are now strays */
 	gaps = 0;
@@ -583,12 +618,15 @@ static void start_op(void)
 	s->xfer_list_len = 0;
 	s->xfer_list_more = 0;
 	s->xfer_msg[0] = 0;
-	if (op < PSI_XOP_PUT || op > PSI_XOP_STAT) {
+	wtemp = 0;
+	have_keep_perm = 0;
+	save_opened_mtime = (op == PSI_XOP_SAVE) ? s->xfer_mtime : 0;
+	if (op < PSI_XOP_PUT || op > PSI_XOP_SAVE) {
 		op = PSI_XOP_STAT;            /* (so finish() reports) */
 		finish(PSI_XFER_FAILED);
 		return;
 	}
-	if (op == PSI_XOP_PUT) {
+	if (op == PSI_XOP_PUT || op == PSI_XOP_SAVE) {
 		long size;
 		lf = fopen(s->xfer_local, "rb");
 		if (!lf) { finish(PSI_XFER_LOCAL_READ); return; }
@@ -623,6 +661,7 @@ static void first_request(void)
 		break;
 	case PSI_XOP_GET:
 	case PSI_XOP_STAT:
+	case PSI_XOP_SAVE:                /* (1.02) first: is it the file that was opened? */
 		if (send_path(FXP_STAT, K_STAT, s->xfer_remote) < 0) finish(PSI_XFER_FAILED);
 		break;
 	case PSI_XOP_LIST:
@@ -630,6 +669,56 @@ static void first_request(void)
 			finish(PSI_XFER_FAILED);
 		break;
 	}
+}
+
+/* (1.02) SAVE: write the new text to ".<name>.psiterm~" beside the target,
+   to be renamed over it, where the server can rename over a file and the
+   target is not a link; else to the target itself, as Send file does */
+static void save_write_as(int link)
+{
+	PsiShared *s = sh();
+	const char *t = s->xfer_remote;
+	const char *slash = strrchr(t, '/');
+	wtemp = 0;
+	if (have_posix_rename && !link) {
+		unsigned int dl = slash ? (unsigned int)(slash - t + 1) : 0;
+		const char *base = slash ? slash + 1 : t;
+		if (*base && dl + strlen(base) + 12 < sizeof(wpath)) {
+			memcpy(wpath, t, dl);
+			sprintf(wpath + dl, ".%s.psiterm~", base);
+			wtemp = 1;
+		}
+	}
+	if (!wtemp) {
+		strncpy(wpath, t, sizeof(wpath) - 1);
+		wpath[sizeof(wpath) - 1] = 0;
+	}
+	if (send_open_perm(wpath, FXF_WRITE | FXF_CREAT | FXF_TRUNC, have_keep_perm, keep_perm) < 0)
+		finish(PSI_XFER_FAILED);
+}
+
+static void save_write(void)
+{
+	save_write_as(0);
+}
+
+/* the written file over the target, in one step (the target is never half there) */
+static int save_rename(void)
+{
+	PsiShared *s = sh();
+	unsigned int a = strlen(wpath), b = strlen(s->xfer_remote);
+	struct sreq *q;
+	if (!out_room(a + b + 64)) return -1;
+	q = new_req(K_RENAME, 0, 0);
+	if (!q) return -1;
+	pkt_begin(FXP_EXTENDED);
+	put32(q->id);
+	putstr("posix-rename@openssh.com", 24);
+	putstr(wpath, a);
+	putstr(s->xfer_remote, b);
+	pkt_end();
+	last_heard = time(NULL);
+	return 0;
 }
 
 /* keep the pipeline full: more WRITEs (PUT) or READs (GET) */
@@ -643,7 +732,7 @@ static void pump(void)
 		finish(PSI_XFER_CANCELLED);
 		return;
 	}
-	if (op == PSI_XOP_PUT) {
+	if (op == PSI_XOP_PUT || op == PSI_XOP_SAVE) {
 		while (!failed && off_next < total && count_reqs(K_WRITE) < MAX_WRITES) {
 			unsigned int want = total - off_next < WRITE_LEN ? (unsigned int)(total - off_next) : WRITE_LEN;
 			struct sreq *q;
@@ -758,6 +847,16 @@ static void handle_reply(const unsigned char *p, unsigned int n)
 	last_heard = time(NULL);
 
 	if (type == FXP_VERSION) {
+		/* (1.02) the extensions the server offers: name, data pairs */
+		rd32(&r);
+		have_posix_rename = 0;
+		while (r.left > 0 && !r.bad) {
+			unsigned int nl, dl;
+			const unsigned char *nm = rdstr(&r, &nl);
+			rdstr(&r, &dl);
+			if (!r.bad && nl == 24 && memcmp(nm, "posix-rename@openssh.com", 24) == 0)
+				have_posix_rename = 1;
+		}
 		if (ch_state == CH_INIT) {
 			ch_state = CH_READY;
 			if (op) first_request();
@@ -784,6 +883,34 @@ static void handle_reply(const unsigned char *p, unsigned int n)
 				finish(PSI_XFER_OK);
 				return;
 			}
+			if (op == PSI_XOP_SAVE && code == FX_NO_SUCH_FILE) {
+				/* not there: a new file, or one deleted since it was opened */
+				if (save_opened_mtime && !s->xfer_force) {
+					set_fail(PSI_XFER_CHANGED, "it has been deleted on the server");
+					finish(failed);
+					return;
+				}
+				save_write();
+				return;
+			}
+			status_fail(code, msg, mlen);
+			finish(failed);
+			return;
+		case K_LSTAT:
+			save_write();                 /* (it said nothing useful: write as it is) */
+			return;
+		case K_RENAME:
+			if (code != FX_OK) {
+				status_fail(code, msg, mlen);
+				finish(failed);
+				return;
+			}
+			wtemp = 0;                    /* (it is the target now) */
+			if (send_path(FXP_STAT, K_STAT2, s->xfer_remote) < 0) finish(PSI_XFER_OK);
+			return;
+		case K_STAT2:
+			finish(PSI_XFER_OK);          /* (saved; just no new time) */
+			return;
 			status_fail(code, msg, mlen);
 			finish(failed);
 			return;
@@ -810,7 +937,16 @@ static void handle_reply(const unsigned char *p, unsigned int n)
 			return;
 		case K_CLOSE:
 			/* for an upload, the last chance for the server to say "disk full" */
-			if (code != FX_OK && op == PSI_XOP_PUT) status_fail(code, msg, mlen);
+			if (code != FX_OK && (op == PSI_XOP_PUT || op == PSI_XOP_SAVE)) status_fail(code, msg, mlen);
+			if (op == PSI_XOP_SAVE && !failed) {
+				/* written: rename the file beside it over the target, or
+				   (written in place) just the new time */
+				if (wtemp) {
+					if (save_rename() < 0) finish(PSI_XFER_FAILED);
+				} else if (send_path(FXP_STAT, K_STAT2, s->xfer_remote) < 0)
+					finish(PSI_XFER_OK);
+				return;
+			}
 			/* for a download, every byte STAT promised must have come: an
 			   early EOF (the file shrank, an odd server) is not a whole file */
 			if (op == PSI_XOP_GET && total && total != 0xffffffffUL && done_bytes < total)
@@ -842,15 +978,53 @@ static void handle_reply(const unsigned char *p, unsigned int n)
 		return;
 	}
 
+	if (type == FXP_ATTRS && (qc.kind == K_STAT2 || qc.kind == K_LSTAT)) {
+		int has_size, has_perm;
+		unsigned long size;
+		unsigned int perm;
+		rdattrs(&r, &has_size, &size, &perm, &has_perm);
+		if (qc.kind == K_STAT2) {
+			/* (1.02) saved: the file's new time and size, for the next save */
+			s->xfer_mtime = last_mtime;
+			s->xfer_total = has_size ? size : total;
+			finish(PSI_XFER_OK);
+			return;
+		}
+		/* LSTAT: a link is written through, in place (a rename would put
+		   a plain file where the link was) */
+		save_write_as(has_perm && S_TYPE(perm) == T_LNK);
+		return;
+	}
+
 	if (type == FXP_ATTRS && qc.kind == K_STAT) {
 		int has_size, has_perm;
 		unsigned long size;
 		unsigned int perm;
 		rdattrs(&r, &has_size, &size, &perm, &has_perm);
+		s->xfer_mtime = last_mtime;       /* (1.02, for the editor) */
 		if (op == PSI_XOP_STAT) {
 			s->xfer_exists = (has_perm && S_TYPE(perm) == T_DIR) ? 2 : 1;
 			s->xfer_total = size;
 			finish(PSI_XFER_OK);
+			return;
+		}
+		if (op == PSI_XOP_SAVE) {
+			unsigned int want_t = s->xfer_expect;
+			if (has_perm && S_TYPE(perm) == T_DIR) {
+				set_fail(PSI_XFER_FAILED, "that is a folder");
+				finish(failed);
+				return;
+			}
+			/* (s->xfer_mtime was the time it had when opened: compare
+			   before it is overwritten above, from the copy) */
+			if (!s->xfer_force && save_opened_mtime
+				&& (last_mtime != save_opened_mtime || (has_size && size != want_t))) {
+				set_fail(PSI_XFER_CHANGED, "it has changed on the server");
+				finish(failed);
+				return;
+			}
+			if (has_perm) { keep_perm = perm; have_keep_perm = 1; }
+			if (send_path(FXP_LSTAT, K_LSTAT, s->xfer_remote) < 0) save_write();
 			return;
 		}
 		/* GET: a folder can't be fetched; otherwise open it */

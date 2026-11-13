@@ -19,6 +19,12 @@ enum TPtIconId
 	EMbmToolSendHere = 26, EMbmToolSendHereMask = 27,
 	EMbmToolClose = 28, EMbmToolCloseMask = 29,
 	EMbmSmStar = 30, EMbmSmStarMask = 31,
-	EMbmCount = 32
+	EMbmToolNew = 32, EMbmToolNewMask = 33,
+	EMbmToolPin = 34, EMbmToolPinMask = 35,
+	EMbmToolTerm = 36, EMbmToolTermMask = 37,
+	EMbmToolSave = 38, EMbmToolSaveMask = 39,
+	EMbmToolFind = 40, EMbmToolFindMask = 41,
+	EMbmToolGoto = 42, EMbmToolGotoMask = 43,
+	EMbmCount = 44
 	};
 #endif

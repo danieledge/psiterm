@@ -108,7 +108,8 @@ RESOURCE MENU_PANE r_pt_snippets_popup
 	{
 	items=
 		{
-		MENU_ITEM { command=EPtCmdSnippets; txt="Manage snippets..."; }
+		MENU_ITEM { command=EPtCmdSnippets; txt="Manage snippets..."; },
+		MENU_ITEM { command=EPtCmdRecent; txt="Recent commands..."; }
 		};
 	}
 
@@ -135,6 +136,7 @@ RESOURCE MENU_PANE r_pt_files_popup
 		{
 		MENU_ITEM { command=EPtCmdSendFile; txt="Send file..."; },
 		MENU_ITEM { command=EPtCmdGetFile; txt="Get file..."; },
+		MENU_ITEM { command=EPtCmdEditFile; txt="Edit file on server..."; extratxt="Shift+Ctrl+O"; },
 		MENU_ITEM { command=EPtCmdLog; txt="Log to file..."; flags=EEikMenuItemCheckBox; }
 		};
 	}
@@ -154,6 +156,8 @@ RESOURCE HOTKEYS r_pt_hotkeys
 		{
 		HOTKEY { command=EEikCmdExit; key='e'; },
 		HOTKEY { command=EPtCmdSsh; key='s'; },
+		HOTKEY { command=EPtCmdRecent; key='r'; },
+		HOTKEY { command=EPtCmdEditFile; key='o'; },
 		HOTKEY { command=EPtCmdSshDisconnect; key='d'; },
 		HOTKEY { command=EPtCmdHangup; key='u'; },
 		HOTKEY { command=EPtCmdCopy; key='c'; },
@@ -326,7 +330,8 @@ RESOURCE MENU_PANE r_pt_snippets_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPtCmdSnippets; txt="Manage snippets..."; }
+		MENU_ITEM { command=EPtCmdSnippets; txt="Manage snippets..."; },
+		MENU_ITEM { command=EPtCmdRecent; txt="Recent commands..."; extratxt="Shift+Ctrl+R"; }
 		};
 	}
 
@@ -651,7 +656,7 @@ RESOURCE DIALOG r_pt_key_pick_dialog
 RESOURCE DIALOG r_pt_snippets_dialog
 	{
 	title="Snippets";
-	flags=EEikDialogFlagWait|EEikDialogFlagButtonsRight;
+	flags=EEikDialogFlagWait;
 	buttons=r_pt_snippets_buttons;
 	items=
 		{
@@ -665,25 +670,50 @@ RESOURCE DLG_BUTTONS r_pt_snippets_buttons
 		{
 		DLG_BUTTON { id=EPtBidNew; button=CMBUT { txt="New"; }; hotkey='N'; },
 		DLG_BUTTON { id=EPtBidEdit; button=CMBUT { txt="Edit"; }; hotkey='E'; },
+		DLG_BUTTON { id=EPtBidCopy; button=CMBUT { txt="Copy"; }; hotkey='C'; },
 		DLG_BUTTON { id=EPtBidDelete; button=CMBUT { txt="Delete"; }; hotkey='D'; },
 		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
 		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Send"; }; hotkey=EEikBidOk; flags=0; }
 		};
 	}
 
+// (1.02) two pages: the snippet, and where it shows (the Psion's 240
+// lines do not hold all eight lines on one)
 RESOURCE DIALOG r_pt_snippet_edit_dialog
 	{
 	title="Snippet";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	pages=r_pt_snippet_pages;
+	}
+
+RESOURCE ARRAY r_pt_snippet_pages
+	{
+	items=
+		{
+		PAGE { text="Snippet"; id=EPtPageSnipMain; lines=r_pt_snippet_main_lines; },
+		PAGE { text="Menu"; id=EPtPageSnipMenu; lines=r_pt_snippet_menu_lines; }
+		};
+	}
+
+RESOURCE ARRAY r_pt_snippet_main_lines
+	{
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgSnipName; control=EDWIN { width=22; maxlength=24; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Text"; id=EPtDlgSnipText; control=EDWIN { width=22; maxlength=120; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgSnipHint; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="\\n presses Enter, \\t Tab, \\e Esc; ^C sends Ctrl+C"; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Folder"; id=EPtDlgSnipFolder; control=EDWIN { width=22; maxlength=24; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Then press Enter"; id=EPtDlgSnipEnter; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Run in"; id=EPtDlgSnipNewWin; control=CHOICELIST { array_id=r_pt_snip_where_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Run in"; id=EPtDlgSnipNewWin; control=CHOICELIST { array_id=r_pt_snip_where_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pt_snippet_menu_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="On the Snippets menu"; id=EPtDlgSnipPinned; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Folder"; id=EPtDlgSnipFolder; control=EDWIN { width=22; maxlength=24; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Shortcut key"; id=EPtDlgSnipKey; control=CHOICELIST { maxdisplaychar=14; }; }
 		};
 	}
@@ -1178,4 +1208,317 @@ RESOURCE DIALOG r_pt_tmux_name_dialog
 RESOURCE ARRAY r_pt_snip_where_array
 	{
 	items={ LBUF { txt="This window"; }, LBUF { txt="A new tmux window"; } };
+	}
+
+// ===== 1.02: the Start view (ptstart.cpp) ======================================
+// Its keys never go to a host, so its shortcuts are plain Ctrl, as the file
+// view's: Ctrl+E closes PsiTerm, as in the Psion's own programs.
+RESOURCE HOTKEYS r_pt_start_hotkeys
+	{
+	control=
+		{
+		HOTKEY { command=EPtCmdStDelete; key='d'; },
+		HOTKEY { command=EEikCmdExit; key='e'; },
+		HOTKEY { command=EPtCmdStAddress; key='g'; },
+		HOTKEY { command=EPtCmdStEdit; key='i'; },
+		HOTKEY { command=EPtCmdAppearance; key='k'; },
+		HOTKEY { command=EPtCmdStNew; key='n'; },
+		HOTKEY { command=EPtCmdStPin; key='p'; },
+		HOTKEY { command=EPtCmdStTerminal; key='q'; },
+		HOTKEY { command=EPtCmdToolbar; key='t'; }
+		};
+	shift_control=
+		{
+		HOTKEY { command=EEikCmdExit; key='e'; },
+		HOTKEY { command=EPtCmdSsh; key='s'; },
+		HOTKEY { command=EPtCmdAppearance; key='k'; },
+		HOTKEY { command=EPtCmdToolbar; key='b'; },
+		HOTKEY { command=EPtCmdHelp; key='h'; },
+		HOTKEY { command=EPtCmdAbout; key='a'; }
+		};
+	}
+
+RESOURCE MENU_BAR r_pt_start_menubar
+	{
+	titles=
+		{
+		MENU_TITLE { menu_pane=r_pt_start_file_menu; txt="File"; },
+		MENU_TITLE { menu_pane=r_pt_start_edit_menu; txt="Edit"; },
+		MENU_TITLE { menu_pane=r_pt_start_view_menu; txt="View"; },
+		MENU_TITLE { menu_pane=r_pt_tools_menu; txt="Tools"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_start_file_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdStConnect; txt="SSH to server"; extratxt="Enter"; },
+		MENU_ITEM { command=EPtCmdStAddress; txt="SSH to address..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_start_edit_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdStNew; txt="Create new server..."; },
+		MENU_ITEM { command=EPtCmdStEdit; txt="Server details..."; },
+		MENU_ITEM { command=EPtCmdStDelete; txt="Delete server"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdStPin; txt="Pin to top"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxSettings; txt="tmux settings..."; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_start_view_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdStTerminal; txt="Show terminal"; },
+		MENU_ITEM { command=EPtCmdToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox; }
+		};
+	}
+
+RESOURCE TOOLBAR r_pt_start_toolbar
+	{
+	breadth=KEikStdToolBarWidth;
+	controls=
+		{
+		TBAR_CTRL
+			{
+			type=EEikCtLabel;
+			flags=EEikToolBarCtrlHasSetMinLength;
+			length=KEikStdFileNameLabelHeight;
+			control=LABEL { txt="PsiTerm"; horiz_align=EEikLabelAlignHCenter; vert_align=EEikLabelAlignVCenter; };
+			},
+		TBAR_BUTTON { id=EPtCmdStConnect; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="SSH to"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPtCmdStNew; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="New\nserver"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPtCmdStPin; behavior=EEikButLatches; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Pin"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPtCmdStTerminal; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Termi-\nnal"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_CTRL
+			{
+			type=EEikCtSpacer;
+			flags=EEikToolBarCtrlHasSetMinLength|EEikToolBarCtrlIsStretchable;
+			length=0;
+			control=SPACER;
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtClock;
+			control=CLOCK { digitalresourceid=R_EIK_DIGITAL_CLOCK; analogresourceid=R_EIK_ANALOG_CLOCK; };
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtSpacer;
+			flags=EEikToolBarCtrlHasSetMinLength;
+			length=KEikStdGapBelowClock;
+			control=SPACER;
+			}
+		};
+	}
+
+// File > SSH to address... (Ctrl+G): Muxedo's quick connect
+RESOURCE DIALOG r_pt_quick_dialog
+	{
+	title="SSH to address";
+	flags=EEikDialogFlagWait;
+	buttons=r_pt_quick_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Address (user@host:port)"; id=EPtDlgQuickAddr; control=EDWIN { width=20; maxlength=168; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Log in with"; id=EPtDlgQuickAuth; control=CHOICELIST { maxdisplaychar=22; array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Save as server"; id=EPtDlgQuickSave; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pt_quick_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Connect"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+// Snippets > Recent commands... (1.02, ptrecent.cpp)
+RESOURCE DIALOG r_pt_recent_dialog
+	{
+	title="Recent commands";
+	flags=EEikDialogFlagWait;
+	buttons=r_pt_recent_buttons;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Command"; id=EPtDlgRecentList; control=CHOICELIST { maxdisplaychar=28; array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Remember commands"; id=EPtDlgRecentOn; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgRecentNote; control=LABEL { standard_font=EEikLabelFontAnnotation; txt=""; }; }
+		};
+	}
+
+RESOURCE DLG_BUTTONS r_pt_recent_buttons
+	{
+	buttons=
+		{
+		DLG_BUTTON { id=EPtBidSaveSnippet; button=CMBUT { txt="Snippet..."; }; hotkey='S'; },
+		DLG_BUTTON { id=EPtBidDelete; button=CMBUT { txt="Delete"; }; hotkey='D'; },
+		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
+		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="Send"; }; hotkey=EEikBidOk; flags=0; }
+		};
+	}
+
+// ===== 1.02: the editor (ptedit.cpp) ==========================================
+// Its keys never go to a host: the Psion's own editing shortcuts, as Word's
+RESOURCE HOTKEYS r_pt_edit_hotkeys
+	{
+	control=
+		{
+		HOTKEY { command=EPtCmdEdSelectAll; key='a'; },
+		HOTKEY { command=EPtCmdEdCopy; key='c'; },
+		HOTKEY { command=EPtCmdEdClose; key='e'; },
+		HOTKEY { command=EPtCmdEdFind; key='f'; },
+		HOTKEY { command=EPtCmdEdFindNext; key='g'; },
+		HOTKEY { command=EPtCmdEdGoto; key='l'; },
+		HOTKEY { command=EPtCmdEdZoomIn; key='m'; },
+		HOTKEY { command=EPtCmdEdReplace; key='r'; },
+		HOTKEY { command=EPtCmdEdSave; key='s'; },
+		HOTKEY { command=EPtCmdToolbar; key='t'; },
+		HOTKEY { command=EPtCmdEdPaste; key='v'; },
+		HOTKEY { command=EPtCmdEdWrap; key='w'; },
+		HOTKEY { command=EPtCmdEdCut; key='x'; },
+		HOTKEY { command=EPtCmdEdUndo; key='z'; }
+		};
+	shift_control=
+		{
+		HOTKEY { command=EPtCmdEdClose; key='e'; },
+		HOTKEY { command=EPtCmdEdZoomOut; key='m'; },
+		HOTKEY { command=EPtCmdEditFile; key='o'; },
+		HOTKEY { command=EPtCmdToolbar; key='b'; },
+		HOTKEY { command=EPtCmdHelp; key='h'; },
+		HOTKEY { command=EPtCmdAbout; key='a'; }
+		};
+	}
+
+RESOURCE MENU_BAR r_pt_edit_menubar
+	{
+	titles=
+		{
+		MENU_TITLE { menu_pane=r_pt_edit_file_menu; txt="File"; },
+		MENU_TITLE { menu_pane=r_pt_edit_edit_menu; txt="Edit"; },
+		MENU_TITLE { menu_pane=r_pt_edit_view_menu; txt="View"; },
+		MENU_TITLE { menu_pane=r_pt_edit_tools_menu; txt="Tools"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_edit_file_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdEdSave; txt="Save"; },
+		MENU_ITEM { command=EPtCmdEdSaveCopy; txt="Save copy on Psion..."; },
+		MENU_ITEM { command=EPtCmdEdRevert; txt="Revert to saved"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdEditFile; txt="Edit another file..."; },
+		MENU_ITEM { cascade=r_pt_edit_recent_menu; txt="Recent"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdEdClose; txt="Close"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_edit_recent_menu
+	{
+	items={};
+	}
+
+RESOURCE MENU_PANE r_pt_edit_edit_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdEdUndo; txt="Undo"; },
+		MENU_ITEM { command=EPtCmdEdCut; txt="Cut"; },
+		MENU_ITEM { command=EPtCmdEdCopy; txt="Copy"; },
+		MENU_ITEM { command=EPtCmdEdPaste; txt="Paste"; },
+		MENU_ITEM { command=EPtCmdEdSelectAll; txt="Select all"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdEdFind; txt="Find..."; },
+		MENU_ITEM { command=EPtCmdEdFindNext; txt="Find next"; },
+		MENU_ITEM { command=EPtCmdEdReplace; txt="Replace..."; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_edit_view_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdEdGoto; txt="Go to line..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdEdWrap; txt="Wrap to screen"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdEdZoomIn; txt="Zoom in"; },
+		MENU_ITEM { command=EPtCmdEdZoomOut; txt="Zoom out"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_edit_tools_menu
+	{
+	items=
+		{
+		MENU_ITEM { cascade=r_pt_edit_endings_menu; txt="Line endings"; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdHelp; txt="Help on PsiTerm"; },
+		MENU_ITEM { command=EPtCmdAbout; txt="About PsiTerm"; }
+		};
+	}
+
+RESOURCE MENU_PANE r_pt_edit_endings_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdEdLf; txt="LF (Linux, Mac)"; flags=EEikMenuItemRadioStart; },
+		MENU_ITEM { command=EPtCmdEdCrLf; txt="CR LF (Windows)"; flags=EEikMenuItemRadioEnd; }
+		};
+	}
+
+RESOURCE TOOLBAR r_pt_edit_toolbar
+	{
+	breadth=KEikStdToolBarWidth;
+	controls=
+		{
+		TBAR_CTRL
+			{
+			type=EEikCtLabel;
+			flags=EEikToolBarCtrlHasSetMinLength;
+			length=KEikStdFileNameLabelHeight;
+			control=LABEL { txt="PsiTerm"; horiz_align=EEikLabelAlignHCenter; vert_align=EEikLabelAlignVCenter; };
+			},
+		TBAR_BUTTON { id=EPtCmdEdSave; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Save"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPtCmdEdFind; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Find"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPtCmdEdGoto; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Go to\nline"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPtCmdEdClose; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Close"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_CTRL
+			{
+			type=EEikCtSpacer;
+			flags=EEikToolBarCtrlHasSetMinLength|EEikToolBarCtrlIsStretchable;
+			length=0;
+			control=SPACER;
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtClock;
+			control=CLOCK { digitalresourceid=R_EIK_DIGITAL_CLOCK; analogresourceid=R_EIK_ANALOG_CLOCK; };
+			},
+		TBAR_CTRL
+			{
+			type=EEikCtSpacer;
+			flags=EEikToolBarCtrlHasSetMinLength;
+			length=KEikStdGapBelowClock;
+			control=SPACER;
+			}
+		};
+	}
+
+RESOURCE DIALOG r_pt_goto_line_dialog
+	{
+	title="Go to line";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtNumberEditor; prompt="Line"; id=EPtDlgGotoLine; control=NUMBER_EDITOR { min=1; max=99999; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgGotoOf; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="of 99999"; }; }
+		};
 	}

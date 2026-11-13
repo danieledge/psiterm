@@ -108,12 +108,15 @@ static void pump_stdin(int timeout_ms)
    PSI_XFER_OUT (default /tmp/psixfer.out). Lines:
      put <psion file> <server file>     get <server file> <psion file>
      list <server folder|.>             stat <server file>
+     save <psion file> <server file> <mtime> <size> <force>   (1.02, the editor's)
      cancel <bytes>   (Stop the next request once this much has moved)
      quit             (as Disconnect) */
 static FILE* gXferIn;
 static FILE* gXferOut;
 static int gXferBusy, gXferCancelAt = -1, gXferEnd;
 static char gXferCmd[600];
+static unsigned int gSaveMtime, gSaveSize;
+static int gSaveForce;
 static void xfer_tick(void)
 {
 	char line[1200], a[600], b[600];
@@ -129,8 +132,8 @@ static void xfer_tick(void)
 	if (gXferBusy) {
 		if (gXferCancelAt >= 0 && g.xfer_done >= (unsigned)gXferCancelAt) { g.xfer_cancel = 1; gXferCancelAt = -1; }
 		if (g.xfer_ack != g.xfer_req) return;
-		fprintf(gXferOut, "RESULT %s rc=%d done=%u total=%u exists=%d msg=%s path=%s more=%d\n", gXferCmd,
-			g.xfer_result, g.xfer_done, g.xfer_total, g.xfer_exists, g.xfer_msg, g.xfer_path, g.xfer_list_more);
+		fprintf(gXferOut, "RESULT %s rc=%d done=%u total=%u exists=%d mtime=%u msg=%s path=%s more=%d\n", gXferCmd,
+			g.xfer_result, g.xfer_done, g.xfer_total, g.xfer_exists, g.xfer_mtime, g.xfer_msg, g.xfer_path, g.xfer_list_more);
 		if (g.xfer_op == PSI_XOP_LIST && g.xfer_result == 0) fwrite(g.xfer_list, 1, g.xfer_list_len, gXferOut);
 		fflush(gXferOut);
 		gXferBusy = 0;
@@ -145,6 +148,10 @@ static void xfer_tick(void)
 		else if (sscanf(line, "get %599s %599s", a, b) == 2) { g.xfer_op = PSI_XOP_GET; strcpy(g.xfer_remote, a); strcpy(g.xfer_local, b); }
 		else if (sscanf(line, "list %599s", a) == 1) { g.xfer_op = PSI_XOP_LIST; strcpy(g.xfer_remote, strcmp(a, ".") ? a : ""); }
 		else if (sscanf(line, "stat %599s", a) == 1) { g.xfer_op = PSI_XOP_STAT; strcpy(g.xfer_remote, a); }
+		else if (sscanf(line, "save %599s %599s %u %u %d", a, b, &gSaveMtime, &gSaveSize, &gSaveForce) == 5) {
+			/* (1.02) the editor's save: <psion file> <server file> <mtime when opened> <size then> <force> */
+			g.xfer_op = PSI_XOP_SAVE; strcpy(g.xfer_local, a); strcpy(g.xfer_remote, b);
+			g.xfer_mtime = gSaveMtime; g.xfer_expect = gSaveSize; g.xfer_force = gSaveForce; }
 		else continue;
 		snprintf(gXferCmd, sizeof(gXferCmd), "%s", line);
 		g.xfer_cancel = 0;

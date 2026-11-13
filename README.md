@@ -59,6 +59,32 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 1.02**
+- **The Start view.** PsiTerm opens on your saved servers (as Muxedo's
+  landing page): pinned ones first, then the rest by when you last used
+  them, with how the last connection went (on the Series 7, a coloured mark
+  and a panel of details). Enter connects; type a letter to go to a server;
+  Ctrl+N, Ctrl+I and Ctrl+D create, change and delete; Ctrl+P pins.
+  File > SSH to address... (Ctrl+G) connects to `user@host:port` without
+  saving it first. Shift+Ctrl+S brings the Start view back over the
+  terminal; Ctrl+Q goes back to the terminal.
+- **Edit files on the server.** File > Files > Edit file on server...
+  (Shift+Ctrl+O) opens a text file (up to 64 KB) in an editor of its own,
+  over SFTP: Save (Ctrl+S), Find (Ctrl+F), Replace (Ctrl+R), Go to line
+  (Ctrl+L), Undo, word wrap, zoom, LF or CR LF lines, and the last files
+  you edited on that server under File > Recent. Saving checks the file has
+  not changed on the server since you opened it (and asks if it has), and
+  writes it beside the old one first, then renames it over, so a dropped
+  link never leaves half a file. A file with characters the Psion can't
+  show opens read only.
+- **Recent commands.** Snippets > Recent commands... (Shift+Ctrl+R) lists
+  the commands you typed on this server (not in full-screen programs or at
+  password prompts): send one again, or save it as a snippet.
+- **Snippets on the menu.** Each snippet says whether it is on the Snippets
+  menu (Edit > Menu page), wherever its folder; Manage snippets has Copy.
+- Shift+Ctrl+O and Shift+Ctrl+R are now Edit file on server and Recent
+  commands: a snippet that had one of those keys loses it.
+
 **PsiTerm 1.01**
 - **tmux as Muxedo has it.** tmux > tmux settings... sets the defaults:
   start in tmux on logging in, the session's name, a session of the Psion's

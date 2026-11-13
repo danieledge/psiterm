@@ -1600,6 +1600,8 @@ void CPtBrowser::DrawTitle(CWindowGc& aGc) const
 		Tail(TParsePtrC(from).NameAndExt(), leaf, 24);
 		title.Format(_L("Send \"%S\" to "), &leaf);
 		}
+	else if (iView.iXferMem && iView.iXferMem->iEditMode)
+		title.Copy(_L("Edit file - "));    // (1.02: the editor's Open)
 	else
 		title.Copy(_L("Get file - "));
 	TBuf<30> more;
@@ -1971,7 +1973,7 @@ void CPtBrowser::StatDone(TInt aResult, PsiShared* aShared)
 		CPtXferMemory& mem = Mem(iView);
 		mem.iPick = iStatPath;
 		mem.iPickSize = aShared->xfer_total;
-		Finish(EPtBrowseGet);
+		Finish(mem.iEditMode ? EPtBrowseEdit : EPtBrowseGet);
 		}
 	}
 
@@ -2048,7 +2050,7 @@ void CPtBrowser::OpenL()
 		CPtXferMemory& mem = Mem(iView);
 		mem.iPick = iPath;
 		mem.iPickSize = iList->At(row).iSize;
-		Finish(EPtBrowseGet);
+		Finish(mem.iEditMode ? EPtBrowseEdit : EPtBrowseGet);
 		}
 	}
 
@@ -2425,6 +2427,7 @@ CPtBrowseView* PtNewBrowseViewL(CTermView& aView, TBool aSend, MPtBrowseHost& aH
 static void OpenBrowseL(CTermView& aView, TBool aSend)
 	{
 	Mem(aView).iBrowseResult = EPtBrowseNone;
+	Mem(aView).iEditMode = EFalse;
 	static_cast<CPsiTermAppUi*>(CEikonEnv::Static()->EikAppUi())->OpenBrowseL(aSend);
 	}
 
@@ -2619,6 +2622,8 @@ void PtBrowseFinishedL(CTermView& aView)
 	mem.iBrowseResult = EPtBrowseNone;
 	if (r == EPtBrowseGet)
 		GetChosenL(aView);
+	else if (r == EPtBrowseEdit)
+		static_cast<CPsiTermAppUi*>(CEikonEnv::Static()->EikAppUi())->OpenEditorL(mem.iPick, mem.iPickSize);
 	else if (r == EPtBrowseSendHere)
 		SendChosenL(aView);
 	}
@@ -2965,4 +2970,34 @@ void PtLogCommandL(CTermView& aView)
 	else
 		m.Format(_L("Could not log to that file (%d)"), r);
 	env->InfoMsg(m);
+	}
+
+// ============================================================================
+// (1.02) the editor's: File > Files > Edit file on server... opens the file
+// view to pick the file; and what the editor uses of this file's
+// ============================================================================
+
+void PtEditFileL(CTermView& aView)
+	{
+	if (NeedLoginL(aView))
+		return;
+	Mem(aView).iBrowseResult = EPtBrowseNone;
+	Mem(aView).iEditMode = ETrue;
+	static_cast<CPsiTermAppUi*>(CEikonEnv::Static()->EikAppUi())->OpenBrowseL(EFalse);
+	}
+
+TInt PtRunXferL(CTermView& aView, TInt aOp, const TDesC8& aRemote, const TDesC& aLocal,
+	const TDesC& aTitle, const TDesC& aWhat)
+	{
+	return RunXferL(aView, aOp, aRemote, aLocal, aTitle, aWhat);
+	}
+
+void PtXferFailed(TInt aResult, CTermView& aView)
+	{
+	XferFailed(aResult, aView);
+	}
+
+void PtUtf8ToText(const TDesC8& aIn, TDes& aOut)
+	{
+	Utf8ToText(aIn, aOut, EFalse);
 	}
