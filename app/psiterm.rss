@@ -204,7 +204,22 @@ RESOURCE MENU_PANE r_pt_term_menu
 		MENU_ITEM { command=EPtCmdHangup; txt="Disconnect"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdInstallKey; txt="Install login key on server..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { cascade=r_pt_files_popup; txt="Files"; },
+		MENU_ITEM { cascade=r_pt_conn_menu; txt="Connections"; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
+		};
+	}
+
+// (1.04) File > Connections: the connections open now (their names filled
+// in, the unused ones taken out, by DynInitMenuPaneL), then Next connection
+RESOURCE MENU_PANE r_pt_conn_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdSession0; txt="1"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdSession1; txt="2"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdSession2; txt="3"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdSession3; txt="4"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdSessionNext; txt="Next connection"; extratxt="Shift+Ctrl+Space"; }
 		};
 	}
 
@@ -338,14 +353,14 @@ RESOURCE MENU_PANE r_pt_snippets_menu
 // One empty cascade pane per snippet folder (0.86). Filled at run time in
 // DynInitMenuPaneL (the KSnipFolderMenu table); keep KMaxSnipFolders of them,
 // declared together so the table can list them in order.
-RESOURCE MENU_PANE r_pt_snip_folder_0 { items = { }; }
-RESOURCE MENU_PANE r_pt_snip_folder_1 { items = { }; }
-RESOURCE MENU_PANE r_pt_snip_folder_2 { items = { }; }
-RESOURCE MENU_PANE r_pt_snip_folder_3 { items = { }; }
-RESOURCE MENU_PANE r_pt_snip_folder_4 { items = { }; }
-RESOURCE MENU_PANE r_pt_snip_folder_5 { items = { }; }
-RESOURCE MENU_PANE r_pt_snip_folder_6 { items = { }; }
-RESOURCE MENU_PANE r_pt_snip_folder_7 { items = { }; }
+RESOURCE MENU_PANE r_pt_snip_folder_0 { items = { MENU_ITEM { command=EPtCmdMenuEmpty; txt="(empty)"; flags=EEikMenuItemDimmed; } }; }
+RESOURCE MENU_PANE r_pt_snip_folder_1 { items = { MENU_ITEM { command=EPtCmdMenuEmpty; txt="(empty)"; flags=EEikMenuItemDimmed; } }; }
+RESOURCE MENU_PANE r_pt_snip_folder_2 { items = { MENU_ITEM { command=EPtCmdMenuEmpty; txt="(empty)"; flags=EEikMenuItemDimmed; } }; }
+RESOURCE MENU_PANE r_pt_snip_folder_3 { items = { MENU_ITEM { command=EPtCmdMenuEmpty; txt="(empty)"; flags=EEikMenuItemDimmed; } }; }
+RESOURCE MENU_PANE r_pt_snip_folder_4 { items = { MENU_ITEM { command=EPtCmdMenuEmpty; txt="(empty)"; flags=EEikMenuItemDimmed; } }; }
+RESOURCE MENU_PANE r_pt_snip_folder_5 { items = { MENU_ITEM { command=EPtCmdMenuEmpty; txt="(empty)"; flags=EEikMenuItemDimmed; } }; }
+RESOURCE MENU_PANE r_pt_snip_folder_6 { items = { MENU_ITEM { command=EPtCmdMenuEmpty; txt="(empty)"; flags=EEikMenuItemDimmed; } }; }
+RESOURCE MENU_PANE r_pt_snip_folder_7 { items = { MENU_ITEM { command=EPtCmdMenuEmpty; txt="(empty)"; flags=EEikMenuItemDimmed; } }; }
 
 // tmux: sends the prefix (Ctrl+B or Ctrl+A) and the command key. The
 // right-hand column shows tmux's own key for each command (it teaches
@@ -1423,9 +1438,14 @@ RESOURCE MENU_PANE r_pt_edit_file_menu
 		};
 	}
 
+// (filled in by EditorRecentMenuL; an item here, or ER5's Right arrow would
+// not open it)
 RESOURCE MENU_PANE r_pt_edit_recent_menu
 	{
-	items={};
+	items=
+		{
+		MENU_ITEM { command=EPtCmdEdRecent0; txt="(none yet)"; flags=EEikMenuItemDimmed; }
+		};
 	}
 
 RESOURCE MENU_PANE r_pt_edit_edit_menu

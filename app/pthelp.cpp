@@ -35,6 +35,12 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "File > End SSH (Shift+Ctrl+D), or the toolbar's End SSH button, ends the session. If the SSH "
 	  "program has not stopped after 10 seconds PsiTerm ends it; choosing End SSH again ends it at once.\n"
 	  "\n"
+	  "Over Psion Internet PsiTerm keeps up to four connections at once. While one is up, connect to "
+	  "another server from the Start view and it opens beside the first; the others run on behind. "
+	  "File > Connections lists them, and Shift+Ctrl+Space goes to the next. The status line shows which one "
+	  "is in front (2/3), and the Start view marks the servers connected now: Enter on one goes to it. "
+	  "End SSH brings the next connection in front. The modem route carries one connection.\n"
+	  "\n"
 	  "In the terminal before connecting, keys typed go to the modem, so AT commands work as in a plain "
 	  "terminal. Tools > Preferences > Start screen No starts on the terminal instead." },
 
@@ -268,6 +274,7 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "Every plain Ctrl+letter goes to the server. PsiTerm's own keys:\n"
 	  "\n"
 	  "Shift+Ctrl+S / Shift+Ctrl+D / Shift+Ctrl+U: the Start view / end SSH / disconnect\n"
+	  "Shift+Ctrl+Space: the next connection (File > Connections)\n"
 	  "Shift+Ctrl+O: edit a file on the server\n"
 	  "Shift+Ctrl+R: recent commands\n"
 	  "Shift+Ctrl+C / Shift+Ctrl+V: copy / paste\n"

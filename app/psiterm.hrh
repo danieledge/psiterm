@@ -178,7 +178,12 @@ enum TPsiTermCommands
 	EPtCmdBrFav0 = 0x1380,    // ... + 7: go to favourite N (the Favourites menu)
 	EPtCmdSnippet0 = 0x1400,  // ... EPtCmdSnippet0 + KMaxSnippets - 1: send snippet N
 	EPtCmdHost0 = 0x1500,     // ... + KMaxHosts - 1: connect to saved host N (welcome screen)
-	EPtCmdEdRecent0 = 0x1600  // (1.02) ... + 5: the editor's File > Recent
+	EPtCmdEdRecent0 = 0x1600, // (1.02) ... + 5: the editor's File > Recent
+	EPtCmdSession0 = 0x1680,  // (1.04) ... + 3: File > Connections > connection N
+	EPtCmdSession1, EPtCmdSession2, EPtCmdSession3,   // (for the resource)
+	EPtCmdSessionNext = 0x1690,  // (1.04) File > Connections > Next connection (Shift+Ctrl+Space)
+	EPtCmdMenuEmpty = 0x1691     // (1.04) a filled-in cascade's item in its resource (ER5's Right
+	                             // arrow opens no cascade whose resource has no items)
 	};
 
 enum TPsiTermDialogControls

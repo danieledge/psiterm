@@ -517,8 +517,12 @@ void CPtStartView::DrawRow(CWindowGc& aGc, TInt aY, TInt aRow) const
 	TInt right = card.iBr.iX - 8;
 	TBuf<40> when;
 	RelativeWhen(e.iLastUsed, when);
+	// (1.04) connected now (in front or behind): says so in place of when
+	TBool on = ((CPsiTermAppUi*)iEikonEnv->EikAppUi())->HostSession(iOrder[aRow]) >= 0;
+	if (on)
+		when.Copy(_L("Connected"));
 	TInt ww = small->TextWidthInPixels(when);
-	TInt dot = (e.iLastResult != EPtResultNever) ? 8 : 0;
+	TInt dot = (on || e.iLastResult != EPtResultNever) ? 8 : 0;
 	TInt nameY = row.iTl.iY + (iRowH - f->HeightInPixels() - small->HeightInPixels() - 2) / 2 + f->AscentInPixels();
 	TInt subY = nameY + f->DescentInPixels() + 2 + small->AscentInPixels();
 	TBuf<120> t(Upto(e.iName, 40));
@@ -546,18 +550,18 @@ void CPtStartView::DrawRow(CWindowGc& aGc, TInt aY, TInt aRow) const
 	aGc.SetPenColor(l.iSoft);
 	aGc.DrawText(t, TPoint(tx, subY));
 	// when, and how it went (a dot: filled for logged in, a ring if not)
-	aGc.SetPenColor(l.iFaint);
+	aGc.SetPenColor(on ? (iColour ? TRgb(0, 153, 0) : l.iInk) : l.iFaint);
 	aGc.DrawText(when, TPoint(right - ww, nameY));
 	if (dot)
 		{
 		TInt cx = right - ww - 9, cy = nameY - small->AscentInPixels() / 2 - 1;
 		TRect d(cx - 3, cy - 3, cx + 4, cy + 4);
-		TBool good = e.iLastResult == EPtResultLoggedIn;
+		TBool good = on || e.iLastResult == EPtResultLoggedIn;
 		if (iColour)
 			{
 			aGc.SetPenStyle(CGraphicsContext::ENullPen);
 			aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-			aGc.SetBrushColor(ResultColour(e.iLastResult));
+			aGc.SetBrushColor(ResultColour(on ? EPtResultLoggedIn : e.iLastResult));
 			}
 		else if (good)
 			{
@@ -730,17 +734,28 @@ void CPtStartView::Draw(const TRect& /*aRect*/) const
 	TInt ty = r.iTl.iY + (iBandH - title->HeightInPixels()) / 2 + title->AscentInPixels();
 	gc.DrawText(_L("Servers"), TPoint(r.iTl.iX + 12, ty));
 	TBuf<80> state;
-	if (iTerm.SshActive())
+	CPsiTermAppUi* ui = (CPsiTermAppUi*)iEikonEnv->EikAppUi();
+	TInt live = ui->LiveSessions();
+	if (live == 1)
 		{
-		state.Copy(_L("Connected to "));
-		state.Append(Upto(iTerm.Settings().iSshHost, 30));
+		// (1.04) the one connection, whichever it is
+		for (TInt i = 0; i < CPsiTermAppUi::KMaxSessions; i++)
+			if (ui->Session(i) && ui->Session(i)->Live())
+				{
+				TBuf<30> name;
+				ui->SessionName(*ui->Session(i), name);
+				state.Copy(_L("Connected to "));
+				state.Append(name);
+				}
 		}
+	else if (live > 1)
+		state.Format(_L("%d connections"), live);
 	else if (iCount == 1)
 		state.Copy(_L("1 saved"));
 	else
 		state.Format(_L("%d saved"), iCount);
 	gc.UseFont(small);
-	gc.SetPenColor(iTerm.SshActive() && iColour ? TRgb(0, 150, 0) : l.iFaint);
+	gc.SetPenColor(live && iColour ? TRgb(0, 150, 0) : l.iFaint);
 	gc.DrawText(state, TPoint(r.iBr.iX - 14 - small->TextWidthInPixels(state), ty));
 	gc.DiscardFont();
 	if (iCount == 0)
@@ -868,11 +883,11 @@ TInt CPsiTermAppUi::StartIdleCallback(TAny* aSelf)
 	}
 
 // How the connection to the saved server went (CTermView, as it learns)
-void CPsiTermAppUi::HostOutcomeL(TInt aResult)
+void CPsiTermAppUi::HostOutcomeL(TInt aHost, TInt aResult)
 	{
-	if (iConnHost < 0 || iConnHost >= iHosts->Count())
+	if (aHost < 0 || aHost >= iHosts->Count())
 		return;
-	THostEntry& e = iHosts->At(iConnHost);
+	THostEntry& e = iHosts->At(aHost);
 	if (e.iLastResult == aResult)
 		return;
 	e.iLastResult = aResult;
@@ -936,10 +951,15 @@ void CPsiTermAppUi::DeleteHostL(TInt aIndex)
 	if (!iEikonEnv->QueryWinL(what, _L("Delete server?")))
 		return;
 	iHosts->Delete(aIndex);
-	if (iConnHost == aIndex)
-		iConnHost = -1;
-	else if (iConnHost > aIndex)
-		iConnHost--;
+	for (TInt i = 0; i < KMaxSessions; i++)   // (1.04) every connection's server
+		if (iSessions[i])
+			{
+			TInt h = iSessions[i]->HostIndex();
+			if (h == aIndex)
+				iSessions[i]->SetHostIndex(-1);
+			else if (h > aIndex)
+				iSessions[i]->SetHostIndex(h - 1);
+			}
 	iHosts->Save();
 	if (iStart)
 		iStart->ReloadL(aIndex < iHosts->Count() ? aIndex : iHosts->Count() - 1);
@@ -1031,11 +1051,6 @@ private:
 
 void CPsiTermAppUi::QuickConnectL()
 	{
-	if (iView->SshActive())
-		{
-		iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
-		return;
-		}
 	THostEntry e;
 	TBool save = EFalse;
 	CPtQuickDialog* dlg = new(ELeave) CPtQuickDialog(e, *iKeys, save);
@@ -1049,10 +1064,14 @@ void CPsiTermAppUi::QuickConnectL()
 		ConnectHostL(iHosts->iLast);
 		return;
 		}
+	TInt slot = PickSessionL();              // (1.04) a connection of its own, if need be
+	if (slot < 0)
+		return;
 	if (save)
 		iEikonEnv->InfoMsg(_L("Server list is full - connecting without saving"));
 	CloseStart();
-	iConnHost = -1;
+	UseSessionL(slot);
+	iView->SetHostIndex(-1);
 	ConnectEntryL(e);
 	}
 
@@ -1063,11 +1082,6 @@ TBool CPsiTermAppUi::StartCommandL(TInt aCommand)
 	switch (aCommand)
 		{
 	case EPtCmdStConnect:
-		if (iView->SshActive())
-			{
-			iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
-			return ETrue;
-			}
 		if (cur < 0 || cur >= iHosts->Count())
 			{
 			NewHostL();

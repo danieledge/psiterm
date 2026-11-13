@@ -1173,9 +1173,12 @@ void CPsiTermAppUi::EditorRecentMenuL(CEikMenuPane* aMenuPane)
 	{
 	TBuf8<512> paths[KRecentMax];
 	TInt n = RecentForServerL(*iView, paths, KRecentMax);
+	// (1.04) the first in the resource's "(none yet)" (an item there, or ER5's
+	// Right arrow would not open the cascade), the rest added
 	for (TInt i = 0; i < n; i++)
 		{
-		CEikMenuPane::TItem::SData item;
+		CEikMenuPane::TItem::SData added;
+		CEikMenuPane::TItem::SData& item = i == 0 ? aMenuPane->ItemData(EPtCmdEdRecent0) : added;
 		item.iCommandId = EPtCmdEdRecent0 + i;
 		item.iCascadeId = 0;
 		item.iFlags = 0;
@@ -1190,17 +1193,8 @@ void CPsiTermAppUi::EditorRecentMenuL(CEikMenuPane* aMenuPane)
 			TPtrC dir(t.Left(slash));
 			item.iExtraText = dir.Length() > 20 ? dir.Right(20) : dir;
 			}
-		aMenuPane->AddMenuItemL(item);
-		}
-	if (n == 0)
-		{
-		CEikMenuPane::TItem::SData item;
-		item.iCommandId = EPtCmdEdRecent0;
-		item.iCascadeId = 0;
-		item.iFlags = EEikMenuItemDimmed;
-		item.iText = _L("(none yet)");
-		item.iExtraText.Zero();
-		aMenuPane->AddMenuItemL(item);
+		if (i > 0)
+			aMenuPane->AddMenuItemL(item);
 		}
 	}
 

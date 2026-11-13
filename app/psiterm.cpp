@@ -170,7 +170,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.03");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.04");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -443,11 +443,13 @@ void CSerialPort::DoCancel()
 CTermView::CTermView()
 	{
 	iTbBusy = -1;
+	iHostIndex = -1;
 	}
 
 CTermView::~CTermView()
 	{
-	delete iRecent;
+	if (!iRecentShared)
+		delete iRecent;
 	delete iLog;                         // (flushes and closes the log file)
 	delete iXferMem;
 	if (iSshActive && iShared)
@@ -491,7 +493,54 @@ CTermView::~CTermView()
 		iCoeEnv->ScreenDevice()->RemoveFile(iFontFileId);
 	for (TInt f = 0; f < iExtraFonts; f++)
 		iCoeEnv->ScreenDevice()->RemoveFile(iExtraFontId[f]);
-	CloseSTDLIB();
+	if (iSlot == 0)
+		CloseSTDLIB();                   // (1.04: the thread's, once, as the last view goes)
+	}
+
+// ----- several connections (1.04) --------------------------------------------
+
+// Another connection comes in front (aHidden), or this one does. A hidden
+// connection runs on as one behind PsiTerm does: output goes into libvterm
+// and the backed-up window, the tick slows and draws nothing.
+void CTermView::SetHidden(TBool aHidden)
+	{
+	iHidden = aHidden;
+	MakeVisible(!aHidden);
+	SetFocus(!aHidden);
+	if (aHidden)
+		SetForeground(EFalse);
+	else
+		{
+		iTbBusy = -1;                        // the toolbar button is this one's again
+		SyncToolbar();
+		}
+	}
+
+void CTermView::SetRecent(CPtRecent* aRecent)
+	{
+	if (!iRecentShared)
+		delete iRecent;
+	iRecent = aRecent;
+	iRecentShared = ETrue;
+	}
+
+// the randomness typed so far, so a new connection does not start with none
+void CTermView::ShareEntropy(const CTermView& aFrom)
+	{
+	Mem::Copy(iEntropy, aFrom.iEntropy, PSI_ENTROPY_SIZE);
+	iEntropyPos = aFrom.iEntropyPos;
+	iEntropyFill = aFrom.iEntropyFill;
+	iKeyCount = aFrom.iKeyCount;
+	AddKeyEntropy(iSlot + 0x5100);           // (and this one's own from here on)
+	}
+
+void CTermView::QuitSoon()
+	{
+	if (iSshActive && iShared && !iShared->quit)
+		{
+		iShared->quit = 1;
+		RingSsh();
+		}
 	}
 
 // (0.96) Fonts other programs installed: every .gdr in \System\Fonts\ on
@@ -542,7 +591,8 @@ void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	{
 	iSettings = aSettings;
 	iTabRow = -1;
-	iRecent = CPtRecent::NewL(iCoeEnv->FsSession());   // (1.02) recent commands
+	if (iSlot == 0)
+		iRecent = CPtRecent::NewL(iCoeEnv->FsSession());   // (1.02) recent commands (1.04: shared, SetRecent)
 	{
 	TTimeIntervalMicroSeconds32 period;
 	iTickUsReal = (UserHal::TickPeriod(period) == KErrNone && period.Int() > 0) ? period.Int() : 15625;
@@ -608,7 +658,8 @@ void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	ActivateL();
 	DrawNow();
 
-	iSerial = CSerialPort::NewL(*this);
+	if (iSlot == 0)
+		iSerial = CSerialPort::NewL(*this);   // (1.04: the other connections never have it)
 	ShowWelcome();
 	ApplySerialSettings();
 	StartTick();
@@ -999,7 +1050,7 @@ void CTermView::SizeAtZoom(TInt aZoom, TInt& aCols, TInt& aRows) const
 void CTermView::SyncToolbar()
 	{
 	TInt busy = (iSshActive || iReconnectWait) ? 1 : 0;
-	if (busy == iTbBusy)
+	if (busy == iTbBusy || iHidden)
 		return;
 	iTbBusy = busy;
 	((CPsiTermAppUi*)iEikonEnv->EikAppUi())->SetConnectButton(busy);
@@ -1595,6 +1646,16 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 		aText.Copy(_L("Not connected   link: Psion Internet (PPP)"));
 	else
 		aText.Format(_L("Not connected   %d baud"), BaudValue(iSettings.iBaudIndex));
+	{
+	// (1.04) which connection this is, when there are several
+	TBuf<12> tag;
+	((CPsiTermAppUi*)iEikonEnv->EikAppUi())->SessionTag(*this, tag);
+	if (tag.Length() > 0 && aText.Length() + tag.Length() + 2 <= aText.MaxLength())
+		{
+		tag.Append(_L("  "));
+		aText.Insert(0, tag);
+		}
+	}
 	aSplit = aText.Length();
 	if (PtLogging(*this))
 		aText.Append(_L("Log   "));        // File > Log to file is on
@@ -1670,7 +1731,7 @@ void CTermView::Tick()
 		if (SshLoggedIn() && !iEverLoggedIn)
 			{
 			iEverLoggedIn = ETrue;
-			TRAP_IGNORE(((CPsiTermAppUi*)iEikonEnv->EikAppUi())->HostOutcomeL(EPtResultLoggedIn));
+			TRAP_IGNORE(((CPsiTermAppUi*)iEikonEnv->EikAppUi())->HostOutcomeL(iHostIndex, EPtResultLoggedIn));
 			}
 		return;
 		}
@@ -1701,7 +1762,7 @@ void CTermView::Tick()
 	if (SshLoggedIn() && !iEverLoggedIn)
 		{
 		iEverLoggedIn = ETrue;               // (1.02: the Start view shows it)
-		TRAP_IGNORE(((CPsiTermAppUi*)iEikonEnv->EikAppUi())->HostOutcomeL(EPtResultLoggedIn));
+		TRAP_IGNORE(((CPsiTermAppUi*)iEikonEnv->EikAppUi())->HostOutcomeL(iHostIndex, EPtResultLoggedIn));
 		}
 	// typed to the modem but nothing came back (the WiRSa echoes what it
 	// is sent): say what to check, once per burst of typing
@@ -3626,6 +3687,16 @@ TKeyResponse CTermView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aT
 		default: break;
 			}
 		}
+	// (1.04) Shift+Ctrl+Space: the next connection, when there are several
+	// (not Shift+Ctrl+digits: EPOC keeps Ctrl+digits for typing a character
+	// by its code). With one connection it goes to the server as before.
+	if ((mods & EModifierCtrl) && (mods & EModifierShift) && aKeyEvent.iScanCode == EStdKeySpace)
+		{
+		// (a held key's repeats do nothing: the first went to the next
+		// connection, and the rest would be NULs to its server)
+		if (aKeyEvent.iRepeats > 0 || ((CPsiTermAppUi*)iEikonEnv->EikAppUi())->NextSessionL())
+			return EKeyWasConsumed;
+		}
 	// Shift+Ctrl + a key: a snippet on that hotkey (menu shortcuts such as
 	// Shift+Ctrl+S never get here - EIKON handles those first)
 	if ((mods & EModifierCtrl) && (mods & EModifierShift) && iSnippets)
@@ -4416,10 +4487,16 @@ void CTermView::LaunchSshL(TInt aMode)
 	if (iSerial)
 		iSerial->Close();
 
-	TInt r = iChunk.CreateGlobal(_L(PSI_SHARED_NAME), sizeof(PsiShared), sizeof(PsiShared));
+	// (1.04) each connection its own chunk: "PsiTermSSH", "PsiTermSSH2"...
+	// (psissh is given the name as its command line: psiglue's pg_attach)
+	TBuf<24> chunkName;
+	chunkName.Copy(_L(PSI_SHARED_NAME));
+	if (iSlot > 0)
+		chunkName.AppendNum(iSlot + 1);
+	TInt r = iChunk.CreateGlobal(chunkName, sizeof(PsiShared), sizeof(PsiShared));
 	if (r == KErrAlreadyExists)
 		{
-		r = iChunk.OpenGlobal(_L(PSI_SHARED_NAME), EFalse);
+		r = iChunk.OpenGlobal(chunkName, EFalse);
 		if (r == KErrNone)
 			{
 			// a psissh left over from a PsiTerm that crashed may still be
@@ -4591,12 +4668,15 @@ void CTermView::LaunchSshL(TInt aMode)
 	parse.Set(CEikonEnv::Static()->EikAppUi()->Application()->AppFullName(), NULL, NULL);
 	TFileName exe(parse.DriveAndPath());
 	exe.Append(KSshExeName);
-	r = iSshProcess.Create(exe, KNullDesC);
+	// (slot 0's name is the usual one: no command line, as before, so an
+	// older psissh still finds it)
+	TPtrC cmdLine(iSlot > 0 ? TPtrC(chunkName) : TPtrC(KNullDesC));
+	r = iSshProcess.Create(exe, cmdLine);
 	// not there (a half-finished install?): try the same folder on C: and D:
 	for (TInt d = 0; r == KErrNotFound && d < 2; d++)
 		{
 		exe[0] = (TText)(d == 0 ? 'C' : 'D');
-		r = iSshProcess.Create(exe, KNullDesC);
+		r = iSshProcess.Create(exe, cmdLine);
 		}
 	if (r != KErrNone)
 		{
@@ -5021,20 +5101,21 @@ void CTermView::SshProcessEnded()
 				: iConnStage == PSI_STATE_AUTH ? EPtResultRefused : iConnStage == PSI_STATE_KEYEX ? EPtResultSecure
 				: EPtResultNoAnswer;
 			if (!iUserQuit || !iEverLoggedIn)
-				TRAP_IGNORE(((CPsiTermAppUi*)iEikonEnv->EikAppUi())->HostOutcomeL(outcome));
+				TRAP_IGNORE(((CPsiTermAppUi*)iEikonEnv->EikAppUi())->HostOutcomeL(iHostIndex, outcome));
 			if (iPendingCmd)
 				;
 			else if (iEverLoggedIn || iUserQuit)
 				{
 				ShowWelcome();                   // back to the start screen
-				if (iUserQuit && iSettings.iStartScreen)
-					((CPsiTermAppUi*)iEikonEnv->EikAppUi())->StartSoon();   // (1.02) and the Start view
+				// (1.02) and the Start view, or (1.04) another connection
+				((CPsiTermAppUi*)iEikonEnv->EikAppUi())->SessionEnded(this);
 				}
 			else
 				{
 				// never got in: keep the messages that say why on screen
 				LocalMessage(_L8("\r\n[Not connected - the lines above say why. "
 					"Shift+Ctrl+S to try again.]\r\n"));
+				((CPsiTermAppUi*)iEikonEnv->EikAppUi())->SessionEnded(this);
 				}
 			}
 		}
@@ -6618,6 +6699,7 @@ void CPsiTermAppUi::ConstructL()
 	if (iToolBar && !settings.iToolbar)
 		iToolBar->MakeVisible(EFalse);       // remembered from last time
 	iView = new(ELeave) CTermView;
+	iSessions[0] = iView;                    // (1.04) the first connection, always there
 	iView->SetSnippets(iSnippets);
 	iView->SetHosts(iHosts);
 	iView->ConstructL(TermRect(settings.iToolbar), settings);
@@ -6629,11 +6711,11 @@ void CPsiTermAppUi::ConstructL()
 	PsiGrey grey;
 	PsiGreyLoad(iCoeEnv->FsSession(), grey);
 	iView->SetGreys(grey);
+	iGrey = grey;
 	TPsiReading::Recover(iCoeEnv->FsSession(), iCoeEnv->WsSession(), KUidPsiTerm);
 	iForeground = ETrue;
 	UpdateReading();
 	// (1.02) PsiTerm opens on the Start view (Preferences > Start screen)
-	iConnHost = -1;
 	if (settings.iStartScreen)
 		StartSoon();
 	}
@@ -6672,7 +6754,10 @@ void CPsiTermAppUi::ScreenGreysL()
 	User::LeaveIfError(err);
 	if (r > 0)
 		{
-		iView->SetGreys(grey);
+		iGrey = grey;
+		for (TInt i = 0; i < KMaxSessions; i++)   // (1.04) every connection
+			if (iSessions[i])
+				iSessions[i]->SetGreys(grey);
 		iEikonEnv->InfoMsg(_L("Greys saved - PsiMail and PsiWeb use them from the next picture or page"));
 		}
 	else if (r < 0)
@@ -6772,7 +6857,9 @@ void CPsiTermAppUi::ShowToolBarL(TBool aShow)
 		bar->DrawNow();
 		iCoeEnv->WsSession().Flush();
 		}
-	iView->SetTermRectL(TermRect(aShow));
+	for (TInt i = 0; i < KMaxSessions; i++)   // (1.04) every connection
+		if (iSessions[i])
+			iSessions[i]->SetTermRectL(TermRect(aShow));
 	if (iBrowse)
 		iBrowse->SetViewRectL(TermRect(aShow));
 	if (iStart)
@@ -6924,8 +7011,9 @@ void CPsiTermAppUi::ToolbarPopupL(TInt aCommand)
 void CPsiTermAppUi::HandleSwitchOnEventL(CCoeControl* aDestination)
 	{
 	(void)aDestination;                  // (the CONE default does nothing, and is private)
-	if (iView)
-		iView->LinkSwitchedOn();
+	for (TInt i = 0; i < KMaxSessions; i++)   // (1.04) every connection
+		if (iSessions[i])
+			iSessions[i]->LinkSwitchedOn();
 	// Reading mode is put back to the user's settings at switch-off/on; the
 	// next key in PsiTerm turns it on again (not the switch-on itself: an
 	// alarm may have woken the Psion with nobody reading)
@@ -6952,11 +7040,20 @@ CPsiTermAppUi::~CPsiTermAppUi()
 		}
 	delete iBrowseIdle;
 	delete iBrowseBar;
+	delete iTidy;
+	// (1.04) every connection: all are asked to go first, so they hang up
+	// together rather than one after another; the first one goes last
+	for (TInt i = 0; i < KMaxSessions; i++)
+		if (iSessions[i])
+			iSessions[i]->QuitSoon();
 	if (iView)
-		{
 		RemoveFromStack(iView);
-		delete iView;
+	for (TInt i = KMaxSessions - 1; i >= 0; i--)
+		{
+		delete iSessions[i];
+		iSessions[i] = NULL;
 		}
+	iView = NULL;
 	delete iHosts;
 	delete iSnippets;
 	delete iKeys;
@@ -6974,11 +7071,6 @@ TBool CPsiTermAppUi::EditHostL(THostEntry& aEntry)
 // cancels; the start screen, if showing, is drawn again with any changes.
 void CPsiTermAppUi::SshToL()
 	{
-	if (iView->SshActive())
-		{
-		iEikonEnv->InfoMsg(_L("Not available while SSH is connected"));
-		return;
-		}
 	TBool changed = EFalse;
 	for (;;)
 		{
@@ -7257,6 +7349,11 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 
 void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	{
+	// (1.04) the settings are PsiTerm's, not a connection's: every other
+	// connection has them now (and lays itself out again when it comes in front)
+	for (TInt i = 0; i < KMaxSessions; i++)
+		if (iSessions[i] && &iSessions[i]->Settings() != &aSettings && CopySettings(aSettings, *iSessions[i]))
+			iSessions[i]->iSettingsStale = ETrue;
 	RFs& fs = iCoeEnv->FsSession();
 	SaveSharedLink(fs, aSettings);
 	TBuf8<512> data;
@@ -7337,24 +7434,37 @@ void CPsiTermAppUi::HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestina
 		}
 	else if (aEvent.Type() == EEventKey && !iReading.Active() && iForeground)
 		UpdateReading(ETrue);
-	if (aEvent.Type() == EEventUser && iView && PtLogging(*iView)
-		&& *(TApaSystemEvent*)aEvent.EventData() == EApaSystemEventBackupStarting)
-		TRAP_IGNORE(PtLogCommandL(*iView));   // (with the log on, the command stops it)
+	if (aEvent.Type() == EEventUser && *(TApaSystemEvent*)aEvent.EventData() == EApaSystemEventBackupStarting)
+		for (TInt i = 0; i < KMaxSessions; i++)   // (1.04) every connection's log
+			if (iSessions[i] && PtLogging(*iSessions[i]))
+				TRAP_IGNORE(PtLogCommandL(*iSessions[i]));   // (with the log on, the command stops it)
 	CEikAppUi::HandleWsEventL(aEvent, aDestination);
 	}
 
 // Connects to saved host aIndex (from the SSH to... list)
 void CPsiTermAppUi::ConnectHostL(TInt aIndex)
 	{
-	if (iView->SshActive() || aIndex < 0 || aIndex >= iHosts->Count())
+	if (aIndex < 0 || aIndex >= iHosts->Count())
+		return;
+	// (1.04) already connected to it: that connection comes in front
+	TInt live = HostSession(aIndex);
+	if (live >= 0)
+		{
+		CloseStart();
+		SwitchToL(live);
+		return;
+		}
+	TInt slot = PickSessionL();
+	if (slot < 0)
 		return;
 	THostEntry& h = iHosts->At(aIndex);
 	h.iLastUsed = PtNowSeconds();            // (1.02) the Start view's Last used
 	iHosts->iLast = aIndex;
 	iHosts->Save();
 	CloseStart();
-	iConnHost = aIndex;
-	THostEntry e = h;
+	UseSessionL(slot);
+	iView->SetHostIndex(aIndex);
+	THostEntry e = iHosts->At(aIndex);
 	ConnectEntryL(e);
 	e.iPassword.FillZ();
 	}
@@ -7386,6 +7496,293 @@ void CPsiTermAppUi::ConnectEntryL(const THostEntry& e)
 		}
 	iView->SetKeyBase(base);
 	iView->StartSshL();
+	}
+
+// ----- several connections (1.04) ---------------------------------------------
+// Each connection is a CTermView of its own with its own psissh.exe; the one
+// in front (iView) is on the control stack, the others are hidden and run on
+// behind (CTermView::SetHidden). Slot 0 is always there and has the serial
+// port; the others come and go. Over the modem there is one connection (it
+// is one raw pipe); over Psion Internet up to KMaxSessions.
+
+TInt CPsiTermAppUi::LiveSessions() const
+	{
+	TInt n = 0;
+	for (TInt i = 0; i < KMaxSessions; i++)
+		if (iSessions[i] && iSessions[i]->Live())
+			n++;
+	return n;
+	}
+
+TInt CPsiTermAppUi::HostSession(TInt aHost) const
+	{
+	if (aHost < 0)
+		return -1;
+	for (TInt i = 0; i < KMaxSessions; i++)
+		if (iSessions[i] && iSessions[i]->Live() && iSessions[i]->HostIndex() == aHost)
+			return i;
+	return -1;
+	}
+
+// the saved server's name, or the address typed
+void CPsiTermAppUi::SessionName(const CTermView& aView, TDes& aName) const
+	{
+	TInt h = aView.HostIndex();
+	CTermView& v = CONST_CAST(CTermView&, aView);
+	if (h >= 0 && h < iHosts->Count())
+		aName = LeftSafe(iHosts->At(h).iName, aName.MaxLength());
+	else if (v.Settings().iSshHost.Length() > 0)
+		aName = LeftSafe(v.Settings().iSshHost, aName.MaxLength());
+	else
+		aName = _L("Terminal");
+	}
+
+// the connections File > Connections lists: those up (or on their way),
+// and the one in front whatever it is doing, in slot order
+TInt CPsiTermAppUi::SessionList(TInt* aSlots) const
+	{
+	TInt n = 0;
+	for (TInt i = 0; i < KMaxSessions; i++)
+		if (iSessions[i] && (iSessions[i]->Live() || iSessions[i] == iView))
+			aSlots[n++] = i;
+	return n;
+	}
+
+void CPsiTermAppUi::SessionTag(const CTermView& aView, TDes& aTag) const
+	{
+	aTag.Zero();
+	TInt slots[KMaxSessions];
+	TInt n = SessionList(slots);
+	if (n < 2)
+		return;
+	for (TInt i = 0; i < n; i++)
+		if (iSessions[slots[i]] == &aView)
+			aTag.Format(_L("%d/%d"), i + 1, n);
+	}
+
+// Where a new connection goes: the one in front if it is free, else a free
+// one, else a new one. -1 (and an infoprint saying why) if there is none.
+TInt CPsiTermAppUi::PickSessionL()
+	{
+	TPsiSettings* s = (TPsiSettings*)User::AllocL(sizeof(TPsiSettings));
+	Mem::Copy(s, &iView->Settings(), sizeof(TPsiSettings));
+	UseSharedLink(iCoeEnv->FsSession(), *s);   // PsiMail/PsiWeb may have changed it
+	TBool modem = !s->iNetMode;
+	User::Free(s);
+	if (modem)
+		{
+		// the modem's call is one raw pipe, and slot 0 has the serial port
+		if (LiveSessions() > 0)
+			{
+			iEikonEnv->InfoMsg(_L("The modem carries one connection - use Psion Internet for more"));
+			return -1;
+			}
+		return 0;
+		}
+	if (!iView->Live())
+		return iView->Slot();
+	for (TInt i = 0; i < KMaxSessions; i++)
+		if (iSessions[i] && !iSessions[i]->Live())
+			return i;
+	for (TInt i = 1; i < KMaxSessions; i++)
+		if (!iSessions[i])
+			{
+			// a connection needs room for its own psissh.exe (up to 1 MB
+			// or so while it logs in) besides its terminal
+			TMemoryInfoV1Buf mem;
+			UserHal::MemoryInfo(mem);
+			if (mem().iFreeRamInBytes < 1536 * 1024)
+				{
+				iEikonEnv->InfoMsg(_L("Not enough memory for another connection"));
+				return -1;
+				}
+			return i;
+			}
+	TBuf<60> m;
+	m.Format(_L("%d connections are open - end one first"), (TInt)KMaxSessions);
+	iEikonEnv->InfoMsg(m);
+	return -1;
+	}
+
+void CPsiTermAppUi::UseSessionL(TInt aSlot)
+	{
+	if (aSlot < 0 || aSlot >= KMaxSessions)
+		User::Leave(KErrArgument);
+	if (!iSessions[aSlot])
+		{
+		CTermView* v = new(ELeave) CTermView;
+		CleanupStack::PushL(v);
+		v->SetSlot(aSlot);
+		v->SetSnippets(iSnippets);
+		v->SetHosts(iHosts);
+		v->SetRecent(iSessions[0]->Recent());
+		v->ConstructL(TermRect(iView->Settings().iToolbar), iView->Settings());
+		v->SetGreys(iGrey);
+		v->ShareEntropy(*iView);
+		CleanupStack::Pop();             // v
+		iSessions[aSlot] = v;
+		if (v != iView)
+			v->SetHidden(ETrue);         // (until SwitchToL brings it in front)
+		}
+	SwitchToL(aSlot);
+	}
+
+// Brings connection aSlot in front, with the settings the one in front had
+// (Preferences, the zoom, the toolbar: they are PsiTerm's, not a connection's)
+void CPsiTermAppUi::SwitchToL(TInt aSlot)
+	{
+	CTermView* v = (aSlot >= 0 && aSlot < KMaxSessions) ? iSessions[aSlot] : NULL;
+	if (!v || v == iView)
+		return;
+	CTermView* old = iView;
+	AddToStackL(v);
+	RemoveFromStack(old);
+	old->SetHidden(ETrue);
+	iView = v;
+	if (CopySettings(old->Settings(), *v) || v->iSettingsStale)
+		TRAP_IGNORE(v->ApplyAppearanceL());
+	v->iSettingsStale = EFalse;
+	v->SetTermRectL(TermRect(v->Settings().iToolbar));
+	v->SetHidden(EFalse);
+	v->SetForeground(iForeground);
+	v->DrawNow();
+	UpdateReading();
+	TidySoon();
+	}
+
+// aFrom's settings into aTo, but for aTo's own server (host, user, port).
+// ETrue if that changed anything.
+TBool CPsiTermAppUi::CopySettings(const TPsiSettings& aFrom, CTermView& aTo)
+	{
+	const TInt size = sizeof(TPsiSettings);
+	TPsiSettings* n = (TPsiSettings*)User::Alloc(size);
+	if (!n)
+		return EFalse;
+	TPsiSettings& to = aTo.Settings();
+	Mem::Copy(n, &aFrom, size);
+	Mem::Copy(&n->iSshHost, &to.iSshHost, sizeof(to.iSshHost));
+	Mem::Copy(&n->iSshUser, &to.iSshUser, sizeof(to.iSshUser));
+	n->iSshPort = to.iSshPort;
+	TBool changed = Mem::Compare((const TUint8*)n, size, (const TUint8*)&to, size) != 0;
+	if (changed)
+		Mem::Copy(&to, n, size);
+	User::Free(n);
+	return changed;
+	}
+
+// File > Connections > N
+void CPsiTermAppUi::SessionCommandL(TInt aIndex)
+	{
+	if (iStart || iBrowse || iEdit)
+		return;
+	TInt slots[KMaxSessions];
+	TInt n = SessionList(slots);
+	if (aIndex >= 0 && aIndex < n)
+		SwitchToL(slots[aIndex]);
+	}
+
+// File > Connections > Next connection, Shift+Ctrl+Space: EFalse if there
+// is no other (the key then goes to the server)
+TBool CPsiTermAppUi::NextSessionL()
+	{
+	if (iStart || iBrowse || iEdit)
+		return EFalse;
+	TInt slots[KMaxSessions];
+	TInt n = SessionList(slots);
+	if (n < 2)
+		return EFalse;
+	TInt at = 0;
+	for (TInt i = 0; i < n; i++)
+		if (iSessions[slots[i]] == iView)
+			at = i;
+	SwitchToL(slots[(at + 1) % n]);
+	return ETrue;
+	}
+
+// The menu File > Connections: each, the one in front ticked
+void CPsiTermAppUi::ConnMenuL(CEikMenuPane* aMenuPane)
+	{
+	TInt slots[KMaxSessions];
+	TInt n = SessionList(slots);
+	for (TInt i = n; i < KMaxSessions; i++)
+		aMenuPane->DeleteMenuItem(EPtCmdSession0 + i);
+	for (TInt i = 0; i < n; i++)
+		{
+		CTermView* v = iSessions[slots[i]];
+		CEikMenuPane::TItem::SData& item = aMenuPane->ItemData(EPtCmdSession0 + i);
+		item.iFlags = EEikMenuItemCheckBox;
+		TBuf<40> name;
+		SessionName(*v, name);
+		if (!v->Live() && (v->HostIndex() >= 0 || v->Settings().iSshHost.Length() > 0) && name.Length() <= 22)
+			name.Append(_L(" (not connected)"));
+		else if (!v->Live())
+			name = _L("Not connected");
+		else if (v->ReconnectWaiting())
+			name.Append(_L(" (reconnecting)"));
+		item.iText = LeftSafe(name, item.iText.MaxLength());
+		item.iExtraText.Zero();
+		if (i == n - 1)
+			item.iFlags |= EEikMenuItemSeparatorAfter;
+		if (v == iView)
+			aMenuPane->SetItemButtonState(EPtCmdSession0 + i, EEikMenuItemSymbolOn);
+		}
+	aMenuPane->SetItemDimmed(EPtCmdSessionNext, n < 2);
+	}
+
+// psissh has gone and no reconnect follows
+void CPsiTermAppUi::SessionEnded(CTermView* aView)
+	{
+	if (aView != iView)
+		{
+		// behind: say so; it goes once nothing needs it
+		TBuf<40> name;
+		SessionName(*aView, name);
+		TBuf<70> m;
+		m.Format(_L("Connection to %S ended"), &name);
+		iEikonEnv->InfoMsg(m);
+		TidySoon();
+		return;
+		}
+	if (!aView->UserQuit())
+		return;                              // its messages stay on the screen
+	if (iStart || iBrowse || iEdit)
+		return;
+	// End SSH: another connection still up comes in front...
+	for (TInt i = 0; i < KMaxSessions; i++)
+		if (iSessions[i] && iSessions[i] != aView && iSessions[i]->Live())
+			{
+			TRAP_IGNORE(SwitchToL(i));
+			return;
+			}
+	// ...else the first one (the others go) and the Start view
+	if (aView->Slot() > 0)
+		TRAP_IGNORE(SwitchToL(0));
+	if (iView->Settings().iStartScreen)
+		StartSoon();
+	}
+
+void CPsiTermAppUi::TidySoon()
+	{
+	if (!iTidy)
+		iTidy = CIdle::New(CActive::EPriorityIdle);
+	if (iTidy && !iTidy->IsActive())
+		iTidy->Start(TCallBack(TidyCallback, this));
+	}
+
+// Connections that have ended, behind the one in front, go (never slot 0)
+TInt CPsiTermAppUi::TidyCallback(TAny* aSelf)
+	{
+	CPsiTermAppUi* ui = (CPsiTermAppUi*)aSelf;
+	for (TInt i = 1; i < KMaxSessions; i++)
+		{
+		CTermView* v = ui->iSessions[i];
+		if (v && v != ui->iView && !v->Live() && !v->SshActive())
+			{
+			ui->iSessions[i] = NULL;
+			delete v;
+			}
+		}
+	return 0;
 	}
 
 // tmux commands: the prefix (Ctrl+B or Ctrl+A), then the command key
@@ -7539,11 +7936,7 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 			}
 		else if (aMenuId == R_PT_START_FILE_MENU)
 			{
-			if (iView->SshActive())
-				{
-				aMenuPane->SetItemDimmed(EPtCmdStConnect, ETrue);
-				aMenuPane->SetItemDimmed(EPtCmdStAddress, ETrue);
-				}
+			;                                // (1.04: another connection can always be asked for)
 			}
 		else
 			aMenuPane->SetItemButtonState(EPtCmdToolbar, iView->Settings().iToolbar ? EEikMenuItemSymbolOn : 0);
@@ -7562,15 +7955,20 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPtCmdToolbar, iView->Settings().iToolbar ? EEikMenuItemSymbolOn : 0);
 		return;
 		}
+	if (aMenuId == R_PT_CONN_MENU)           // (1.04) File > Connections
+		{
+		ConnMenuL(aMenuPane);
+		return;
+		}
 	if (aMenuId == R_PT_TERM_MENU)
 		{
 		TBool ssh = iView->SshActive();
-		aMenuPane->SetItemDimmed(EPtCmdSsh, ssh);
 		aMenuPane->SetItemDimmed(EPtCmdSshDisconnect, !ssh);
-		aMenuPane->SetItemDimmed(EPtCmdConnect, ssh);
+		// (the modem's own commands: the first connection has the serial port)
+		aMenuPane->SetItemDimmed(EPtCmdConnect, ssh || iView->Slot() > 0);
 		// (link keep-up) Disconnect: the modem's call, or the Psion Internet
 		// connection while it is up ("Stay connected" keeps it after use)
-		aMenuPane->SetItemDimmed(EPtCmdHangup, ssh || !(iView->ModemOnline() || (iView->Settings().iNetMode && PgLinkUp())));
+		aMenuPane->SetItemDimmed(EPtCmdHangup, ssh || (iView->Slot() > 0 && !iView->Settings().iNetMode) || !(iView->ModemOnline() || (iView->Settings().iNetMode && PgLinkUp())));
 		aMenuPane->SetItemDimmed(EPtCmdInstallKey, !iView->SshLoggedIn() || iKeys->Count() == 0);
 		return;
 		}
@@ -7678,6 +8076,8 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 				aMenuPane->AddMenuItemL(item);
 				shown++;
 				}
+			if (shown > 0)
+				aMenuPane->DeleteMenuItem(EPtCmdMenuEmpty);   // (1.04: the resource's stand-in)
 			}
 		CleanupStack::PopAndDestroy();   // folders
 		return;
@@ -7799,6 +8199,17 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		return;
 	if (StartCommandL(aCommand))
 		return;
+	if (aCommand == EPtCmdSessionNext)
+		{
+		if (!NextSessionL())
+			iEikonEnv->InfoMsg(_L("No other connection - SSH to... opens one"));
+		return;
+		}
+	if (aCommand >= EPtCmdSession0 && aCommand < EPtCmdSession0 + KMaxSessions)
+		{
+		SessionCommandL(aCommand - EPtCmdSession0);   // (1.04) File > Connections
+		return;
+		}
 	if (aCommand >= EPtCmdHost0 && aCommand < EPtCmdHost0 + KMaxHosts)
 		{
 		ConnectHostL(aCommand - EPtCmdHost0);
@@ -8096,8 +8507,8 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		if (!dlg->ExecuteLD(R_PT_CONN_DIALOG))
 			break;
 		SaveSettings(s);
-		if (!iView->SshActive())
-			iView->ApplySerialSettings();       // also reopens a port that failed to open
+		if (!iSessions[0]->SshActive())
+			iSessions[0]->ApplySerialSettings();   // also reopens a port that failed to open (1.04: the first connection has it)
 		else if (s.iBaudIndex != old.iBaudIndex || s.iRtsCts != old.iRtsCts || s.iNetMode != old.iNetMode)
 			iEikonEnv->InfoMsg(_L("New settings apply when SSH disconnects"));
 		if (s.iNetMode != old.iNetMode && s.iNetMode)

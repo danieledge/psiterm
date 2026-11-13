@@ -59,6 +59,15 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 1.04**
+- **Several connections at once.** Over Psion Internet PsiTerm keeps up to
+  four SSH connections open. Connect to another server from the Start view
+  while one is up and it opens beside it; the others run on behind. File >
+  Connections lists them and Shift+Ctrl+Space goes to the next; the status line
+  says which one is in front (2/3), and the Start view marks the servers
+  connected now (Enter on one goes to it). End SSH brings the next one in
+  front. The modem route is one raw pipe, so it carries one connection.
+
 **PsiTerm 1.03**
 - **A modern Start view.** A light page with a large title: your servers in
   two-line rows (the name, then user@address) with a badge of each one's
@@ -226,6 +235,8 @@ and Claude Code - on a 1999 palmtop.
   and keeps favourite folders per server at the top of its Location pane.
   Progress with Stop; works over a 57600 baud modem; a stopped or failed
   download leaves no half file. Servers without SFTP are told apart
+- Up to four SSH connections at once over Psion Internet (File >
+  Connections, Shift+Ctrl+Space)
 - Session log (File > Log to file): everything received, as plain text
   (escape sequences taken out) or raw, to a file you choose; "Log" on the
   status line while it runs

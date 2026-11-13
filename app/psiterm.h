@@ -659,6 +659,23 @@ class CPtXferMemory;
 class CTermView : public CCoeControl, public MSerialObserver
 	{
 public:
+	// (1.04) several connections at once: each has its own CTermView, its
+	// own psissh.exe and its own chunk ("PsiTermSSH", "PsiTermSSH2"...).
+	// Only slot 0 has the serial port (the modem route carries one
+	// connection); the app UI shows one and hides the rest (SetHidden).
+	void SetSlot(TInt aSlot) { iSlot = aSlot; }      // before ConstructL
+	TInt Slot() const { return iSlot; }
+	void SetHidden(TBool aHidden);
+	TBool Hidden() const { return iHidden; }
+	// connected, connecting, or about to (randomness, a reconnect's countdown)
+	TBool Live() const { return iSshActive || iReconnectWait || iGatheringEntropy; }
+	TInt HostIndex() const { return iHostIndex; }    // the saved server (-1: none)
+	void SetHostIndex(TInt aIndex) { iHostIndex = aIndex; }
+	void SetRecent(CPtRecent* aRecent);              // slot 0's, shared (not owned)
+	void ShareEntropy(const CTermView& aFrom);
+	TBool UserQuit() const { return iUserQuit; }
+	void QuitSoon();                                 // PsiTerm is closing: psissh may start to go
+	TBool iSettingsStale;     // the settings changed while it was behind: lay out again in front
 	// 0.74: file transfer and the session log (ptxfer.cpp)
 	PsiShared* XferShared() const { return SshLoggedIn() ? iShared : NULL; }
 	CPtLog* iLog;                 // NULL until File > Log to file... is first used
@@ -1097,6 +1114,10 @@ private:
 	TBool iReconnectWait;     // counting down to the next attempt
 	TInt iReconnectTries;
 	CPeriodic* iReconnectTimer;
+	TInt iSlot;               // (1.04) which connection: 0 has the serial port
+	TBool iHidden;            // another connection is in front
+	TInt iHostIndex;          // the saved server connected to (-1: none)
+	TBool iRecentShared;      // iRecent is slot 0's
 	void ScheduleReconnect();
 	void CancelReconnect(const TDesC8& aWhy);
 	void ReconnectNowL();
@@ -1111,6 +1132,7 @@ class CEikToolBar;
 class CPsiTermAppUi : public CEikAppUi, public MPtBrowseHost
 	{
 public:
+	enum { KMaxSessions = 4 };              // (1.04) connections at once
 	void ConstructL();
 	~CPsiTermAppUi();
 	// 0.91: Get file / Send file's file view, in place of the terminal (which
@@ -1154,7 +1176,17 @@ private:
 	CIdle* iBrowseIdle;                     // closes it, once its own code has returned
 	TRect TermRect(TBool aToolbar) const;
 	void ToolbarPopupL(TInt aCommand);
-	CTermView* iView;
+	CTermView* iView;                       // the connection in front (one of iSessions)
+	CTermView* iSessions[KMaxSessions];     // (1.04) slot 0 always; the others while used
+	TInt PickSessionL();                    // where a new connection goes: a slot, or -1 (said why)
+	void UseSessionL(TInt aSlot);           // ...make it (if new) and bring it in front
+	void SwitchToL(TInt aSlot);
+	TBool CopySettings(const TPsiSettings& aFrom, CTermView& aTo);
+	void ConnMenuL(CEikMenuPane* aMenuPane);
+	static TInt TidyCallback(TAny* aSelf);
+	void TidySoon();
+	CIdle* iTidy;                           // deletes connections that have ended, behind
+	PsiGrey iGrey;                          // the calibration, for new connections
 	CHostList* iHosts;
 	CSnippetList* iSnippets;
 	CKeyList* iKeys;
@@ -1168,8 +1200,21 @@ private:
 	// 1.02 (ptstart.cpp): the Start view
 public:
 	void OpenStartL();
-	void HostOutcomeL(TInt aResult);       // how the connection to the server went
+	void HostOutcomeL(TInt aHost, TInt aResult);   // how the connection to the server went
 	void StartSoon();                       // after End SSH: the Start view again
+	// (1.04) several connections at once
+	void SessionEnded(CTermView* aView);    // its psissh has gone, for good
+	TBool IsShown(const CTermView* aView) const { return aView == iView; }
+	TInt LiveSessions() const;
+	TInt HostSession(TInt aHost) const;     // the slot connected to saved server aHost, or -1
+	const CTermView* Session(TInt aSlot) const { return aSlot >= 0 && aSlot < KMaxSessions ? iSessions[aSlot] : NULL; }
+	void SessionName(const CTermView& aView, TDes& aName) const;
+	void SessionTag(const CTermView& aView, TDes& aTag) const;   // "2/3" on its status line
+	void SessionCommandL(TInt aIndex);      // File > Connections > the connection at that place
+	TBool NextSessionL();                   // Shift+Ctrl+Space (EFalse: there is no other)
+private:
+	TInt SessionList(TInt* aSlots) const;   // the connections the menu lists, in order
+public:
 private:
 	void CloseStart();
 	TBool StartCommandL(TInt aCommand);     // ETrue if it was the Start view's
@@ -1183,7 +1228,6 @@ private:
 	TBool iStartStacked;
 	CEikToolBar* iStartBar;
 	CIdle* iStartIdle;
-	TInt iConnHost;                         // the saved server connected to (-1: none)
 	// 1.01 (pttmux.cpp): the tmux defaults (Tmux.ini) and the commands
 	TPtTmux iTmux;
 	void TmuxSessionsL();
