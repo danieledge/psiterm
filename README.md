@@ -59,6 +59,27 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 1.06** (not yet released)
+- **Folders on the Start view.** Edit > Folder & icon... (Ctrl+F) puts a
+  server in a folder: None, one you have, or a new one. Each folder is a
+  heading with its servers under it; Enter or a tap on the heading shuts or
+  opens it (Left and Right too), and PsiTerm remembers which are shut.
+  Pinned servers stay at the top. Edit > Rename folder... renames one.
+- **An icon for each server**, chosen from sixteen in the same dialog
+  (server, terminal, home, cloud, desktop, laptop, database, globe, network,
+  lock, star, chip, code, key, box, Psion), in place of its initial.
+- **Connections as tabs.** With two or more connections open, a row of tabs
+  above the terminal shows each with its icon and name: tap one to bring it
+  in front. The button at its left is the Start view. On the netBook's
+  taller screen the row is there with one connection too.
+- **tmux's sessions as a drop-down list.** The session's name sits at the
+  left of the window tabs: tap it, or press Shift+Ctrl+G, for the list of
+  sessions, and choose one to switch to it. tmux > Sessions is the same
+  list; Manage sessions... there is the old dialog (new, rename, close).
+- Shift+Ctrl+G is now that list: a snippet that had that key loses it.
+- Saved servers are kept as before. Hosts.dat gains a part at its end for
+  the folders and icons, which PsiTerm 1.05 and earlier do not read.
+
 **PsiTerm 1.05**
 - **tmux > Sessions... works again.** With two or more tmux sessions it
   closed PsiTerm (USER 19 or 23); the editor's File > Recent had the same fault
