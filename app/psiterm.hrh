@@ -188,6 +188,7 @@ enum TPsiTermCommands
 	EPtCmdStLook = 0x1692,       // Edit > Folder & icon... (Ctrl+F)
 	EPtCmdStFolderRename,        // Edit > Rename folder...
 	EPtCmdTmuxSessPopup,         // the tab strip's drop-down (Shift+Ctrl+G)
+	EPtCmdShowTabs,              // (1.07) View > Show tabs (Shift+Ctrl+W, tick box; the strips' ^)
 	EPtCmdTmuxSess0 = 0x16a0,    // ... + 5: tmux > Sessions > session N
 	EPtCmdTmuxSess1, EPtCmdTmuxSess2, EPtCmdTmuxSess3, EPtCmdTmuxSess4, EPtCmdTmuxSess5
 	};

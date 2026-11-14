@@ -170,7 +170,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.06");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.07");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -1633,6 +1633,34 @@ void CTermView::DemoSession(const TDesC8& aId)
 	iQSid = aId;
 	DrawNow();
 	}
+
+// ...and its windows: one closed, or a new one
+void CTermView::DemoWindow(TInt aClose)
+	{
+	if (aClose < 0 && iTabCount < KMaxTabs)
+		{
+		for (TInt i = 0; i < iTabCount; i++)
+			iTabs[i].iCurrent = EFalse;
+		TTmuxTab& t = iTabs[iTabCount];
+		t.iIndex = iTabCount > 0 ? iTabs[iTabCount - 1].iIndex + 1 : 1;
+		t.iName = _L("bash");
+		t.iCurrent = ETrue;
+		t.iX0 = t.iX1 = 0;
+		iTabCount++;
+		}
+	for (TInt i = 0; i < iTabCount && aClose >= 0; i++)
+		if (iTabs[i].iIndex == aClose && iTabCount > 1)
+			{
+			TBool was = iTabs[i].iCurrent;
+			for (TInt k = i; k + 1 < iTabCount; k++)
+				iTabs[k] = iTabs[k + 1];
+			iTabCount--;
+			if (was)
+				iTabs[i < iTabCount ? i : iTabCount - 1].iCurrent = ETrue;
+			break;
+			}
+	DrawNow();
+	}
 #endif
 
 // ----- status line --------------------------------------------------------------
@@ -2017,14 +2045,22 @@ void CTermView::ParseTmuxTabs()
 	{
 #ifdef PT_TESTSEED
 	if (iDemo)
-		return;                              // (a test build's stand-in keeps its tabs)
+		{
+		// (a test build's stand-in keeps its tabs, while they are wanted)
+		if (iTabCount > 0 && TabsOn() != iTabsTop)
+			{
+			iTabHideRow = iRows - 1;
+			SetTabsTop(TabsOn());
+			}
+		return;
+		}
 #endif
 	TTmuxTab tabs[KMaxTabs];
 	TInt count = 0;
 	TInt row = -1;
 	// tmux's own answer (TmuxQueryDone) when there is a fresh one; else what
 	// the status line on the screen shows (or tmux's PSITABS title)
-	TBool exact = iSettings.iTmuxTabs && SshLoggedIn() && iScreen && ExactTabs(tabs, count, row);
+	TBool exact = TabsOn() && SshLoggedIn() && iScreen && ExactTabs(tabs, count, row);
 	if (!exact && SshLoggedIn() && iScreen)
 		{
 		for (TInt pass = 0; pass < 2 && row < 0; pass++)
@@ -2114,10 +2150,10 @@ void CTermView::ParseTmuxTabs()
 	// none has been seen for a few seconds (tmux gone), so a tmux prompt or
 	// message in the bar (shown in the strip meanwhile) does not change the
 	// terminal's size, which would make every program redraw.
-	TBool found = iSettings.iTmuxTabs && row >= 0;
+	TBool found = TabsOn() && row >= 0;
 	if (found && !exact && iQCount == 0 && iTqState != 2 && iTqNone < 3)
 		TmuxQueryKick();                     // tabs on the screen: ask tmux for them properly
-	if (!SshLoggedIn() || !iSettings.iTmuxTabs)
+	if (!SshLoggedIn() || !TabsOn())
 		iTabMiss = KTabMissLimit;            // no session or tabs off: no strip
 	else if (found || (iTabsTop && RowIsBar(iTabHideRow)))
 		iTabMiss = 0;                        // (a prompt or message: tmux is still there)
@@ -5914,8 +5950,8 @@ TBool CSnippetList::HasFolder(const TDesC& aName) const
 // style guide's shortcuts are all Ctrl+letter or Shift+Ctrl+letter (0.79
 // dropped 1-9 and 0). A saved snippet on a key no longer here loses its key
 // when loaded (0.71 took B for View > Show toolbar; a digit loads as none).
-static const char KSnippetKeys[] = "FIJLNQWXYZ";    // (1.02: O and R went to Edit file on server and Recent commands;
-                                                    // 1.06: G to tmux's session list)
+static const char KSnippetKeys[] = "FIJLNQXYZ";     // (1.02: O and R went to Edit file on server and Recent commands;
+                                                    // 1.06: G to tmux's session list; 1.07: W to Show tabs)
 
 TInt SnippetKeyCount()
 	{
@@ -7487,7 +7523,7 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 												if (pos + 9 + plen < data.Length())   // v13: toolbar
 													aSettings.iToolbar = data[pos + 9 + plen] ? 1 : 0;
 												if (pos + 10 + plen < data.Length())  // v14: display
-													aSettings.iDisplay = data[pos + 10 + plen] & (KPtDisplayReading | KPtDisplayLightText);
+													aSettings.iDisplay = data[pos + 10 + plen] & (KPtDisplayReading | KPtDisplayLightText | KPtDisplayNoTabs);   // (1.07: Show tabs)
 												TInt fpos = pos + 11 + plen;           // v15 (0.96): Other font...
 												if (fpos < data.Length())
 													{
@@ -7875,6 +7911,8 @@ void CPsiTermAppUi::SessionsSync()
 	TInt n = SessionList(slots);
 	TBool tall = iEikonEnv->ScreenDevice()->SizeInPixels().iHeight >= 400;
 	TBool want = n >= 2 || (tall && LiveSessions() >= 1);
+	if (iView->Settings().iDisplay & KPtDisplayNoTabs)
+		want = EFalse;                       // (1.07) View > Show tabs is unticked
 	TBool toolbar = iView->Settings().iToolbar;
 	TRect bar = TermRect(toolbar);
 	bar.iBr.iY = bar.iTl.iY + CPtSessionBar::Height();
@@ -7919,6 +7957,48 @@ void CPsiTermAppUi::SessionsSync()
 		if (show)
 			iSessBar->DrawNow();
 		}
+	}
+
+// (1.07) A tab's x: End SSH for that connection, asked first
+void CPsiTermAppUi::SessionCloseL(TInt aSlot)
+	{
+	CTermView* v = (aSlot >= 0 && aSlot < KMaxSessions) ? iSessions[aSlot] : NULL;
+	if (!v || iStart || iBrowse || iEdit)
+		return;
+	if (!v->Live())
+		{
+		// it has ended already: behind, it goes; in front, the Start view
+		if (v != iView)
+			TidySoon();
+		else
+			OpenStartL();
+		return;
+		}
+	TBuf<40> name;
+	SessionName(*v, name);
+	TBuf<80> q;
+	q.Format(_L("The connection to %S will be ended"), &name);
+	if (!iEikonEnv->QueryWinL(q, _L("End SSH?")))
+		return;
+#ifdef PT_TESTSEED
+	if (v->iDemo)
+		{
+		v->DemoEnd();
+		if (v == iView)
+			for (TInt i = 0; i < KMaxSessions; i++)
+				if (iSessions[i] && iSessions[i] != v && iSessions[i]->Live())
+					{
+					SwitchToL(i);
+					break;
+					}
+		TidySoon();
+		SessionsSync();
+		return;
+		}
+#endif
+	if (v->SshQuitting())
+		iEikonEnv->InfoMsg(_L("Ending the SSH program now"));
+	v->DisconnectSsh();                      // (as File > End SSH; SessionEnded does the rest)
 	}
 
 // A tap on a tab: that connection comes in front. Home is the Start view.
@@ -8410,6 +8490,7 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		// "Terminus 12 (95x20)": the counts depend on the toolbar. The
 		// typeface (Preferences) has up to five sizes: the rest go.
 		TInt levels = CTermView::ZoomLevels(s.iFace);
+		aMenuPane->SetItemButtonState(EPtCmdBold, s.iBold ? EEikMenuItemSymbolOn : 0);   // (1.07: here, from View)
 		for (TInt z = 0; z < KMaxZoomLevels; z++)
 			{
 			TInt cmd = (z < 5) ? EPtCmdZoom0 + z : EPtCmdZoom5;
@@ -8433,13 +8514,13 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		}
 	else if (aMenuId == R_PT_VIEW_MENU)
 		{
-		aMenuPane->SetItemButtonState(EPtCmdBold, s.iBold ? EEikMenuItemSymbolOn : 0);
+		aMenuPane->SetItemButtonState(EPtCmdShowTabs, (s.iDisplay & KPtDisplayNoTabs) ? 0 : EEikMenuItemSymbolOn);
 		aMenuPane->SetItemButtonState(EPtCmdStatusLine, s.iStatus ? EEikMenuItemSymbolOn : 0);
 		aMenuPane->SetItemButtonState(EPtCmdToolbar, s.iToolbar ? EEikMenuItemSymbolOn : 0);
 		if (PtColourScreen())
 			{
 			aMenuPane->DeleteMenuItem(EPtCmdReading);     // (a grey-screen setting: docs/display.md)
-			aMenuPane->ItemData(EPtCmdToolbar).iFlags |= EEikMenuItemSeparatorAfter;
+			aMenuPane->ItemData(EPtCmdShowTabs).iFlags |= EEikMenuItemSeparatorAfter;
 			}
 		else
 			aMenuPane->SetItemButtonState(EPtCmdReading, (s.iDisplay & KPtDisplayReading) ? EEikMenuItemSymbolOn : 0);
@@ -8524,6 +8605,13 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			iView->SendSnippet(iSnippets->At(i));
 		return;
 		}
+#ifdef PT_TESTSEED
+	if (iView->iDemo && aCommand == EPtCmdTmuxNew)
+		{
+		iView->DemoWindow(-1);               // (a test build's stand-in: the strip's +)
+		return;
+		}
+#endif
 	if (((aCommand >= EPtCmdTmuxNew && aCommand <= EPtCmdTmuxDetach) || aCommand == EPtCmdTmuxMouse
 		|| (aCommand >= EPtCmdTmuxSessions && aCommand <= EPtCmdTmuxHistory && aCommand != EPtCmdTmuxSettings))
 		&& !iView->SshLoggedIn())
@@ -8815,6 +8903,19 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 			iEikonEnv->InfoMsg(_L("New settings apply when SSH disconnects"));
 		if (s.iNetMode != old.iNetMode && s.iNetMode)
 			iEikonEnv->InfoMsg(_L("Set the Internet service to Direct"));
+		break;
+		}
+	case EPtCmdShowTabs:                      // (1.07) View > Show tabs (Shift+Ctrl+W; the strips' ^)
+		{
+		s.iDisplay ^= KPtDisplayNoTabs;
+		SaveSettings(s);
+		for (TInt i = 0; i < KMaxSessions; i++)   // every connection: its tmux strip goes or comes
+			if (iSessions[i] && iSessions[i] != iView)
+				iSessions[i]->Settings().iDisplay = s.iDisplay;
+		SessionsSync();
+		iView->ParseTmuxTabs();
+		iEikonEnv->InfoMsg((s.iDisplay & KPtDisplayNoTabs) ? _L("Tabs not shown - Shift+Ctrl+W shows them")
+			: _L("Tabs shown"));
 		break;
 		}
 	case EPtCmdBold:

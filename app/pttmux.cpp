@@ -551,6 +551,38 @@ void CPsiTermAppUi::TmuxSessCommandL(TInt aIndex)
 	iView->TmuxRun(cmd);
 	}
 
+// (1.07) A window tab's x: that window is closed, asked first (as tmux >
+// Windows > Close window does for the window in use)
+void CPsiTermAppUi::TmuxCloseWindowL(TInt aIndex, const TDesC& aName)
+	{
+	TBuf8<12> sid(iView->TmuxSid());
+	TBool run = SessListReady(*iView) && sid.Length() > 1 && sid[0] == '$';
+	if (!run)
+		{
+		// tmux cannot be asked: go to the window and type its own Close
+		// window key (tmux then asks, in its bar)
+		iView->SelectTmuxWindow(aIndex);
+		SendTmux('&');
+		return;
+		}
+	TBuf<80> q;
+	TPtrC name(aName.Left(aName.Length() < 24 ? aName.Length() : 24));
+	q.Format(_L("Window %d: %S and what runs in it will be closed"), aIndex, &name);
+	if (!iEikonEnv->QueryWinL(q, _L("Close the window?")))
+		return;
+#ifdef PT_TESTSEED
+	if (iView->iDemo)
+		{
+		iView->DemoWindow(aIndex);
+		return;
+		}
+#endif
+	TBuf8<60> cmd(_L8("kill-window -t '"));
+	cmd.Append(sid);                         // '$3:2': only digits after the $ (tmuxq.c)
+	cmd.AppendFormat(_L8(":%d'"), aIndex);
+	iView->TmuxRun(cmd);
+	}
+
 // The list, under the session's name at the left of the tab strip
 void CPsiTermAppUi::TmuxSessPopupL()
 	{
@@ -591,6 +623,13 @@ void CPsiTermAppUi::TmuxSettingsL()
 // Windows and panes: as tmux commands when it can be asked, else the keys
 void CPsiTermAppUi::TmuxCommandL(TInt aCommand)
 	{
+#ifdef PT_TESTSEED
+	if (iView->iDemo && aCommand == EPtCmdTmuxNew)
+		{
+		iView->DemoWindow(-1);
+		return;
+		}
+#endif
 	TBool run = iView->TmuxCanRun();
 	const TDesC8& sid = iView->TmuxSid();
 	TBuf8<120> cmd;

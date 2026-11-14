@@ -166,6 +166,7 @@ RESOURCE HOTKEYS r_pt_hotkeys
 		HOTKEY { command=EPtCmdEditFile; key='o'; },
 		HOTKEY { command=EPtCmdSshDisconnect; key='d'; },
 		HOTKEY { command=EPtCmdTmuxSessPopup; key='g'; },
+		HOTKEY { command=EPtCmdShowTabs; key='w'; },
 		HOTKEY { command=EPtCmdHangup; key='u'; },
 		HOTKEY { command=EPtCmdCopy; key='c'; },
 		HOTKEY { command=EPtCmdPaste; key='v'; },
@@ -311,9 +312,10 @@ RESOURCE MENU_PANE r_pt_view_menu
 		{
 		MENU_ITEM { command=EPtCmdZoomIn; txt="Zoom in"; },
 		MENU_ITEM { command=EPtCmdZoomOut; txt="Zoom out"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdBold; txt="Bold text"; flags=EEikMenuItemCheckBox; },
+		// (1.07: Bold text is in the Font cascade, to make room for Show tabs)
 		MENU_ITEM { command=EPtCmdStatusLine; txt="Show status line"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPtCmdToolbar; txt="Show toolbar"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdShowTabs; txt="Show tabs"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPtCmdReading; txt="Reading mode"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { cascade=r_pt_font_menu; txt="Font"; },
 		MENU_ITEM { cascade=r_pt_scroll_menu; txt="Scroll"; }
@@ -479,6 +481,7 @@ RESOURCE MENU_PANE r_pt_font_menu
 		MENU_ITEM { command=EPtCmdZoom3; txt="Terminus 16"; flags=EEikMenuItemRadioMiddle; },
 		MENU_ITEM { command=EPtCmdZoom4; txt="Terminus 18"; flags=EEikMenuItemRadioMiddle; },
 		MENU_ITEM { command=EPtCmdZoom5; txt="Terminus 24"; flags=EEikMenuItemRadioEnd|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdBold; txt="Bold text"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPtCmdFontOther; txt="Other font..."; }
 		};
 	}

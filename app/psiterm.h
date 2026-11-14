@@ -88,6 +88,7 @@ struct TPsiSettings
 
 // TPsiSettings::iDisplay bits (all 0 is the standard)
 const TInt KPtDisplayReading = 1;      // View > Reading mode
+const TInt KPtDisplayNoTabs = 4;       // (1.07) View > Show tabs unticked: no tab strips
 const TInt KPtDisplayLightText = 2;    // Preferences > Coloured text: lighter greys (as before 0.81)
 
 // ---------------------------------------------------------------------------
@@ -839,6 +840,8 @@ public:
 	// screen of text, tmux's windows and sessions, and Live() says yes
 	void DemoL(const TDesC& aHost, TBool aTmux);
 	void DemoSession(const TDesC8& aId);
+	void DemoWindow(TInt aClose);           // closes window aClose, or (-1) makes a new one
+	void DemoEnd() { iDemo = EFalse; }
 	TBool iDemo;
 #endif
 	void SelectTmuxWindow(TInt aIndex);           // make the key (psissh mode 4)
@@ -1009,6 +1012,9 @@ private:
 	TInt iTabLastCur;         // the current window when they were last laid out
 	TInt iTabArrowL, iTabArrowR;   // the scroll arrows' left edges (-1 = none)
 	TInt iTabDropW;           // (1.06) the session drop-down's width at the strip's left (0: none)
+	TInt iTabPlusX, iTabUpX;  // (1.07) the + and ^ buttons' left edges (^: -1 when the strip above has it)
+	// the tab strips are wanted: tmux > Windows as tabs, and View > Show tabs
+	TBool TabsOn() const { return iSettings.iTmuxTabs && !(iSettings.iDisplay & KPtDisplayNoTabs); }
 	void Layout();            // rows, columns and origin for the font and the strip
 	TInt TabStripHeight() const;
 	TInt RowY(TInt aRow) const;     // the pixel row a terminal row is drawn at
@@ -1208,6 +1214,7 @@ private:
 	TTab iTabs[KMaxTabs];
 	TInt iCount;
 	TInt iHomeW;
+	TInt iPlusX, iUpX;        // (1.07) the + and ^ buttons' left edges
 	TBool iColour;
 	};
 
@@ -1298,6 +1305,10 @@ public:
 	void SessionsSync();                    // the tabs follow the connections (cheap: call freely)
 	void SessionTabL(TInt aSlot);           // a tap on a tab (-1: Home)
 	void TmuxSessPopupL();                  // the drop-down, at the tab strip's left
+	// (1.07) the tabs' x, and whether the connections' strip is up
+	void SessionCloseL(TInt aSlot);         // ends that connection (asks first)
+	void TmuxCloseWindowL(TInt aIndex, const TDesC& aName);   // closes that tmux window (asks first)
+	TBool SessBarUp() const { return iSessBarUp; }
 private:
 	TRect ViewRect(TBool aToolbar) const;   // the terminal's room: TermRect less the tabs
 	void TmuxSessMenuL(CEikMenuPane* aMenuPane);

@@ -59,6 +59,21 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 1.07** (not yet released)
+- **The tabs as Muxedo's.** Both rows are now rounded tabs, the one in use
+  outlined, and tmux's windows read "1: name". Each connection's tab has an
+  x that ends it, and each window's an x that closes it (both ask first; on
+  the 5mx only the window in use has one, to keep the tabs readable). A +
+  after the connections is the Start view, for another one; a + after the
+  windows is a new tmux window.
+- **View > Show tabs** (Shift+Ctrl+W), and ^ at the right of the tabs,
+  hides both rows and gives the terminal the room; tmux's own status line
+  shows meanwhile. PsiTerm remembers it. On the netBook the rows are taller,
+  for a finger.
+- View > Bold text is now View > Font > Bold text. Shift+Ctrl+W is Show
+  tabs: a snippet that had that key loses it.
+- No response time on the tabs yet: PsiTerm does not measure one.
+
 **PsiTerm 1.06** (not yet released)
 - **Folders on the Start view.** Edit > Folder & icon... (Ctrl+F) puts a
   server in a folder: None, one you have, or a new one. Each folder is a

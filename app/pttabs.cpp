@@ -1,58 +1,202 @@
-// PTTABS.CPP - tmux's windows as EIKON tabs (0.75)
+// PTTABS.CPP - tmux's windows, and the connections, as tabs
 //
 // When PsiTerm finds tmux's window list (psiterm.cpp, ParseTmuxTabs) it puts
 // a tab strip at the top of the terminal and hides tmux's own status line
-// under it. The tabs are drawn as EIKON draws a multi-page dialog's page
-// tabs (CEikPageSelector, e.g. PsiMail's Preferences), measured from the
-// 5mx: the dialog font; each tab a black outline with a dark grey shadow
-// inside its right edge; the current tab 2 pixels taller, with a light grey
-// line inside its top and left edges, and open at the bottom so it joins
-// the page (here the terminal); the others recessed behind the page's top
-// line, a pixel apart. CEikPageSelector itself only works inside a dialog
-// (it builds the dialog's pages from resources), so it is drawn here.
+// under it. Since 1.06 a second strip above it (CPtSessionBar) shows the
+// connections.
 //
-// Tap a tab to go to that window. Names that don't fit end in "..."; when
-// they would be cut to less than 4 letters, arrows at the ends scroll the
-// strip instead (it follows the current window as that changes).
+// 1.07: both strips are laid out as Muxedo's two rows. Each tab is a pill (a
+// rounded box), the one in use outlined:
+//   connections:  [Home] [icon Dev x] [icon NAS x] [+]                   [^]
+//   tmux:         [main v] [1: psion x] [2: logs x] [+]
+// A tap on a tab goes to it; its x closes it (asked first); + is a new
+// connection (the Start view) or a new tmux window; ^ hides both strips
+// (View > Show tabs, Shift+Ctrl+W, brings them back). The session's name is
+// a drop-down list of tmux's sessions. On a taller screen (the netBook's)
+// the strips are taller and every window tab has its x; on the 5mx only the
+// window in use has one, to keep the tabs wide enough to read and to tap.
+// (To 1.06 the tabs were drawn as EIKON's dialog page tabs.)
+//
+// Names that don't fit end in "..."; when they would be cut to less than 4
+// letters, arrows at the ends scroll the strip instead (it follows the
+// current window as that changes).
 
 #include "psiterm.h"
 #include <eiktxtut.h>
 
-const TInt KTabRaise = 2;        // the current tab stands this much taller
-const TInt KTabTextX = 7;        // text inset from the tab's left edge
-const TInt KTabExtraW = 13;      // tab width = text + this (insets, outline, shadow)
+const TInt KTabTextX = 8;        // text inset from the pill's left edge
+const TInt KTabExtraW = 16;      // pill width = text + this (the insets)
+const TInt KTabGap = 3;          // between pills
 const TInt KTabArrowW = 15;      // the scroll arrows' width
-const TInt KTabDropArrowW = 13;  // (1.06) the session drop-down: its arrow, and the gap after it
-const TInt KTabDropGap = 4;
+const TInt KTabDropArrowW = 12;  // the session drop-down's arrow
 const TInt KTabMinChars = 4;     // a name shows at least this much ("buil...") before
                                  // tabs scroll off the strip instead
+const TInt KSessIconW = 16 + 4;  // a connection's icon and the gap after it
 
-static TRgb Gray4(TInt aLevel)
+static TBool Tall()
 	{
-	return TRgb::Gray4(aLevel);  // 0 black, 1 dark grey, 2 light grey, 3 white
+	return CEikonEnv::Static()->ScreenDevice()->SizeInPixels().iHeight >= 400;
 	}
-
-// A tab's colours. On the 5mx, EIKON's greys; on a colour screen (Series 7,
-// netBook) the strip is the Series 7's title-band navy, as PsiTerm's status
-// line, with the current tab in the terminal's own colours: black bevels
-// and a grey dialog face looked out of place against a coloured theme.
-struct TTabLook
-	{
-	TRgb iFace, iInk;            // the tab and its text
-	TRgb iEdge, iShade, iLight;  // outline, shadow inside the right edge, highlight
-	};
 
 static const CFont* TabFont()
 	{
 	return CEikonEnv::Static()->NormalFont();     // the dialog font
 	}
 
-// The strip: the current tab's 2 extra pixels, then a tab as tall as
-// EIKON's (26 pixels in all with the 5mx's dialog font)
-TInt CTermView::TabStripHeight() const
+// a tab's x, and the square buttons (Home, +, ^): wider on the netBook, for a finger
+static TInt CloseW()
+	{
+	return Tall() ? 20 : 14;
+	}
+
+static TInt ButtonW()
+	{
+	return Tall() ? 28 : 21;
+	}
+
+// A strip: 26 pixels with the 5mx's dialog font, 32 on a taller screen
+static TInt StripHeight()
 	{
 	const CFont* f = TabFont();
-	return f->AscentInPixels() + f->DescentInPixels() + 11;
+	return f->AscentInPixels() + f->DescentInPixels() + (Tall() ? 17 : 11);
+	}
+
+// A pill's colours. On the 5mx, EIKON's greys: the strip is the dialog
+// grey, a tab a thin dark outline on it, the one in use white with a black
+// outline two lines thick. On a colour screen (Series 7, netBook) the strip
+// is navy, as PsiTerm's status line, a tab a lighter blue, the one in use
+// lighter still with a white outline. All from the screen's own 216
+// colours, so nothing dithers.
+struct TPillLook
+	{
+	TRgb iFace, iInk, iEdge;
+	TInt iEdgeW;                 // the outline's thickness (0: none)
+	};
+
+static void Looks(TBool aColour, TBool aUpper, const CCoeControl& aControl, TRgb& aBand,
+	TPillLook& aTab, TPillLook& aCurrent)
+	{
+	if (aColour)
+		{
+		aBand = aUpper ? TRgb(0, 0, 102) : TRgb(0, 0, 153);
+		aTab.iFace = aUpper ? TRgb(51, 51, 153) : TRgb(51, 51, 204);
+		aTab.iInk = TRgb(204, 204, 255);
+		aTab.iEdge = aTab.iFace;
+		aTab.iEdgeW = 0;
+		aCurrent.iFace = TRgb(102, 102, 255);
+		aCurrent.iInk = KRgbWhite;
+		aCurrent.iEdge = KRgbWhite;
+		aCurrent.iEdgeW = 1;
+		}
+	else
+		{
+		CEikonEnv* env = CEikonEnv::Static();
+		aBand = env->ControlColor(EEikColorDialogBackground, aControl);
+		aTab.iFace = aBand;
+		aTab.iInk = env->ControlColor(EEikColorDialogText, aControl);
+		aTab.iEdge = TRgb::Gray4(1);
+		aTab.iEdgeW = 1;
+		aCurrent.iFace = KRgbWhite;
+		aCurrent.iInk = KRgbBlack;
+		aCurrent.iEdge = KRgbBlack;
+		aCurrent.iEdgeW = 2;
+		}
+	}
+
+// A pill from aL to aR (both drawn), aTop to aBottom
+static void DrawPill(CWindowGc& aGc, TInt aL, TInt aR, TInt aTop, TInt aBottom, const TPillLook& aLook)
+	{
+	TRect r(aL, aTop, aR + 1, aBottom + 1);
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	if (aLook.iEdgeW > 0)
+		{
+		aGc.SetBrushColor(aLook.iEdge);
+		aGc.DrawRoundRect(r, TSize(5, 5));
+		r.Shrink(aLook.iEdgeW, aLook.iEdgeW);
+		}
+	aGc.SetBrushColor(aLook.iFace);
+	aGc.DrawRoundRect(r, TSize(4, 4));
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	}
+
+// the marks on the buttons, centred on (aX, aY), each two lines thick
+static void DrawCross(CWindowGc& aGc, TInt aX, TInt aY, TRgb aInk)
+	{
+	aGc.SetPenColor(aInk);
+	for (TInt k = 0; k < 2; k++)
+		{
+		aGc.DrawLine(TPoint(aX - 3 + k, aY - 3), TPoint(aX + 3 + k, aY + 3));
+		aGc.DrawLine(TPoint(aX - 3 + k, aY + 2), TPoint(aX + 3 + k, aY - 4));
+		}
+	}
+
+static void DrawPlus(CWindowGc& aGc, TInt aX, TInt aY, TRgb aInk)
+	{
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(aInk);
+	aGc.DrawRect(TRect(aX - 4, aY - 1, aX + 5, aY + 1));
+	aGc.DrawRect(TRect(aX - 1, aY - 4, aX + 1, aY + 5));
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	}
+
+// ^ (hide the strips)
+static void DrawUp(CWindowGc& aGc, TInt aX, TInt aY, TRgb aInk)
+	{
+	aGc.SetPenColor(aInk);
+	for (TInt k = 0; k < 2; k++)
+		{
+		aGc.DrawLine(TPoint(aX - 4, aY + 2 + k), TPoint(aX + 1, aY - 3 + k));
+		aGc.DrawLine(TPoint(aX, aY - 2 + k), TPoint(aX + 5, aY + 3 + k));
+		}
+	}
+
+// a filled triangle: down (a drop-down list), or left / right (the scroll arrows)
+static void DrawTriangle(CWindowGc& aGc, TInt aX, TInt aY, TInt aWay, TRgb aInk)
+	{
+	aGc.SetPenColor(aInk);
+	for (TInt i = 0; i < 4; i++)
+		{
+		if (aWay == 0)
+			aGc.DrawLine(TPoint(aX - 3 + i, aY - 1 + i), TPoint(aX + 4 - i, aY - 1 + i));
+		else
+			{
+			TInt x = aWay > 0 ? aX - 2 + i : aX + 2 - i;   // (the tip points out)
+			aGc.DrawLine(TPoint(x, aY - (3 - i)), TPoint(x, aY + (3 - i) + 1));
+			}
+		}
+	}
+
+// a square button: a pill with a mark (0 +, 1 ^, 2 left, 3 right)
+static void DrawButton(CWindowGc& aGc, TInt aL, TInt aW, TInt aTop, TInt aBottom, TInt aMark,
+	const TPillLook& aLook)
+	{
+	DrawPill(aGc, aL, aL + aW - 1, aTop, aBottom, aLook);
+	TInt cx = aL + aW / 2, cy = (aTop + aBottom + 1) / 2;
+	if (aMark == 0)
+		DrawPlus(aGc, cx, cy, aLook.iInk);
+	else if (aMark == 1)
+		DrawUp(aGc, cx, cy, aLook.iInk);
+	else
+		DrawTriangle(aGc, cx, cy, aMark == 2 ? -1 : 1, aLook.iInk);
+	}
+
+static void Command(TInt aCommand)
+	{
+	MEikCommandObserver* o = CEikonEnv::Static()->EikAppUi();
+	o->ProcessCommandL(aCommand);
+	}
+
+// ============================================================================
+// tmux's windows
+// ============================================================================
+
+TInt CTermView::TabStripHeight() const
+	{
+	return StripHeight();
 	}
 
 TInt CTermView::RowY(TInt aRow) const
@@ -75,16 +219,23 @@ void CTermView::SetTabsTop(TBool aTop)
 	Layout();
 	}
 
+// "1: psion", as Muxedo
 static void TabLabel(TDes& aLabel, const CTermView::TTmuxTab& aTab)
 	{
 	aLabel.Num(aTab.iIndex);
-	aLabel.Append(' ');
+	aLabel.Append(_L(": "));
 	aLabel.Append(aTab.iName);
 	}
 
-// Sets each tab's iX0/iX1 (its outline's left and right pixels, 0/0 when
-// not shown) and the arrows. Neighbouring tabs are a pixel apart; the
-// current tab shares its edges with its neighbours.
+// Which window tabs have an x: all of them where there is room for a
+// finger (a taller screen), else the window in use
+static TBool TabHasClose(const CTermView::TTmuxTab& aTab)
+	{
+	return Tall() || aTab.iCurrent;
+	}
+
+// Sets each tab's iX0/iX1 (its pill's left and right pixels, 0/0 when not
+// shown) and the arrows.
 void CTermView::LayoutTabs(const CFont& aFont, TInt aLeft, TInt aRight)
 	{
 	TInt n = iTabCount;
@@ -96,16 +247,17 @@ void CTermView::LayoutTabs(const CFont& aFont, TInt aLeft, TInt aRight)
 	TBuf<40> label;
 	for (TInt i = 0; i < n; i++)
 		{
+		TInt extra = KTabExtraW + (TabHasClose(iTabs[i]) ? CloseW() : 0);
 		TabLabel(label, iTabs[i]);
-		nat[i] = aFont.TextWidthInPixels(label) + KTabExtraW;
+		nat[i] = aFont.TextWidthInPixels(label) + extra;
 		minW[i] = nat[i];                   // (a short name is shown whole)
 		if (iTabs[i].iName.Length() > KTabMinChars)
 			{
 			label.Num(iTabs[i].iIndex);
-			label.Append(' ');
+			label.Append(_L(": "));
 			label.Append(iTabs[i].iName.Left(KTabMinChars));
 			label.Append((TChar)KTextUtilClipEndChar);
-			minW[i] = aFont.TextWidthInPixels(label) + KTabExtraW;
+			minW[i] = aFont.TextWidthInPixels(label) + extra;
 			}
 		if (minW[i] > nat[i])
 			minW[i] = nat[i];
@@ -120,7 +272,7 @@ void CTermView::LayoutTabs(const CFont& aFont, TInt aLeft, TInt aRight)
 	TInt first = 0, last = n - 1;
 	TInt sumMin = 0;
 	for (TInt k = 0; k < n; k++)
-		sumMin += minW[k] + (k > 0 ? ((iTabs[k].iCurrent || iTabs[k - 1].iCurrent) ? -1 : 1) : 0);
+		sumMin += minW[k] + (k > 0 ? KTabGap : 0);
 	if (sumMin > room)
 		{
 		// too many: show a run of them with arrows, keeping the current tab
@@ -134,18 +286,17 @@ void CTermView::LayoutTabs(const CFont& aFont, TInt aLeft, TInt aRight)
 			first = cur;
 		for (;;)
 			{
-			TInt used = first > 0 ? KTabArrowW + 1 : 0;
+			TInt used = first > 0 ? KTabArrowW + KTabGap : 0;
 			last = first;
 			used += minW[first];
 			while (last + 1 < n)
 				{
-				TInt adv = (iTabs[last].iCurrent || iTabs[last + 1].iCurrent) ? -1 : 1;
-				TInt need = used + adv + minW[last + 1];
+				TInt need = used + KTabGap + minW[last + 1];
 				if (last + 2 < n)
-					need += KTabArrowW + 1;   // the right-hand arrow
+					need += KTabArrowW + KTabGap;   // the right-hand arrow
 				if (need > room)
 					break;
-				used += adv + minW[last + 1];
+				used += KTabGap + minW[last + 1];
 				last++;
 				}
 			if (follow && cur > last && first < cur)
@@ -159,12 +310,12 @@ void CTermView::LayoutTabs(const CFont& aFont, TInt aLeft, TInt aRight)
 		if (first > 0)
 			{
 			iTabArrowL = aLeft;
-			aLeft += KTabArrowW + 1;
+			aLeft += KTabArrowW + KTabGap;
 			}
 		if (last < n - 1)
 			{
 			iTabArrowR = aRight - KTabArrowW + 1;
-			aRight -= KTabArrowW + 1;
+			aRight -= KTabArrowW + KTabGap;
 			}
 		room = aRight - aLeft + 1;
 		}
@@ -178,7 +329,7 @@ void CTermView::LayoutTabs(const CFont& aFont, TInt aLeft, TInt aRight)
 		TInt mid = (lo + hi + 1) / 2;
 		TInt total = 0;
 		for (TInt j = first; j <= last; j++)
-			total += TAB_W(j, mid) + (j > first ? ((iTabs[j].iCurrent || iTabs[j - 1].iCurrent) ? -1 : 1) : 0);
+			total += TAB_W(j, mid) + (j > first ? KTabGap : 0);
 		if (total <= room)
 			lo = mid;
 		else
@@ -188,7 +339,7 @@ void CTermView::LayoutTabs(const CFont& aFont, TInt aLeft, TInt aRight)
 	for (TInt t = first; t <= last; t++)
 		{
 		if (t > first)
-			x += (iTabs[t].iCurrent || iTabs[t - 1].iCurrent) ? -1 : 1;
+			x += KTabGap;
 		TInt w = TAB_W(t, lo);
 		if (x + w - 1 > aRight)
 			w = aRight - x + 1;              // (only when a single tab is too wide)
@@ -199,77 +350,6 @@ void CTermView::LayoutTabs(const CFont& aFont, TInt aLeft, TInt aRight)
 		x += w;
 		}
 	#undef TAB_W
-	}
-
-// One tab, aTop to aBottom (the current tab runs down over the page's top
-// line, to join the page): its outline, shadow and (on the current one)
-// highlight, and its text, clipped with "..." to fit
-static void DrawOneTab(CWindowGc& aGc, const CFont& aFont, TInt aL, TInt aR, TInt aTop,
-	TInt aBottom, TInt aBase, TBool aCurrent, const TDesC& aText, const TTabLook& aLook)
-	{
-	aGc.SetPenStyle(CGraphicsContext::ENullPen);
-	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	aGc.SetBrushColor(aLook.iFace);
-	aGc.DrawRect(TRect(aL + 1, aTop + 1, aR, aBottom + 1));
-	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
-	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-	aGc.SetPenColor(aLook.iEdge);
-	aGc.DrawLine(TPoint(aL, aTop), TPoint(aR + 1, aTop));
-	aGc.DrawLine(TPoint(aL, aTop), TPoint(aL, aBottom + 1));
-	aGc.DrawLine(TPoint(aR, aTop), TPoint(aR, aBottom + 1));
-	aGc.SetPenColor(aLook.iShade);
-	aGc.DrawLine(TPoint(aR - 1, aTop + 1), TPoint(aR - 1, aBottom + 1));
-	if (aCurrent)
-		{
-		aGc.DrawLine(TPoint(aR - 2, aTop + 2), TPoint(aR - 2, aBottom + 1));
-		aGc.SetPenColor(aLook.iLight);
-		aGc.DrawLine(TPoint(aL + 2, aTop + 2), TPoint(aR - 2, aTop + 2));
-		aGc.DrawLine(TPoint(aL + 2, aTop + 2), TPoint(aL + 2, aBottom + 1));
-		}
-	if (aText.Length() == 0)
-		return;
-	TBuf<40> shown(aText.Left(Min(aText.Length(), 40)));
-	TInt room = aR - aL + 1 - KTabExtraW;
-	if (aFont.TextWidthInPixels(shown) > room)
-		TextUtils::ClipToFit(shown, aFont, room);
-	aGc.SetPenColor(aLook.iInk);
-	aGc.DrawText(shown, TPoint(aL + KTabTextX, aBase));
-	}
-
-// a scroll arrow: an unselected tab with a black triangle
-static void DrawArrow(CWindowGc& aGc, TInt aL, TInt aTop, TInt aBottom, TBool aRight, const TTabLook& aLook)
-	{
-	TInt r = aL + KTabArrowW - 1;
-	DrawOneTab(aGc, *TabFont(), aL, r, aTop, aBottom, 0, EFalse, KNullDesC, aLook);
-	TInt cy = (aTop + aBottom) / 2;
-	TInt cx = (aL + r) / 2;
-	aGc.SetPenColor(aLook.iInk);
-	for (TInt i = 0; i < 4; i++)
-		{
-		TInt x = aRight ? cx - 2 + i : cx + 2 - i;   // (the tip points out)
-		aGc.DrawLine(TPoint(x, cy - (3 - i)), TPoint(x, cy + (3 - i) + 1));
-		}
-	}
-
-// (1.06) A drop-down list's button: a raised box (not a tab: it stands clear
-// of the page's top line) with its text and a down arrow
-static void DrawDropButton(CWindowGc& aGc, const CFont& aFont, TInt aL, TInt aR, TInt aTop,
-	TInt aBottom, TInt aBase, const TDesC& aText, const TTabLook& aLook)
-	{
-	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-	aGc.SetPenColor(aLook.iEdge);
-	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
-	aGc.SetBrushColor(aLook.iFace);
-	aGc.DrawRoundRect(TRect(aL, aTop, aR + 1, aBottom + 1), TSize(3, 3));
-	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
-	aGc.SetPenColor(aLook.iShade);
-	aGc.DrawLine(TPoint(aL + 2, aBottom - 1), TPoint(aR - 1, aBottom - 1));
-	aGc.DrawLine(TPoint(aR - 1, aTop + 2), TPoint(aR - 1, aBottom));
-	aGc.SetPenColor(aLook.iInk);
-	aGc.DrawText(aText, TPoint(aL + KTabTextX, aBase));
-	TInt cx = aR - 9, cy = (aTop + aBottom) / 2;
-	for (TInt i = 0; i < 4; i++)
-		aGc.DrawLine(TPoint(cx - 3 + i, cy - 1 + i), TPoint(cx + 4 - i, cy - 1 + i));
 	}
 
 // tmux's session on this connection, by name (EFalse: not known, or no tmux)
@@ -291,7 +371,7 @@ TBool CTermView::TmuxSessionName(TDes& aName) const
 // where the drop-down's list opens: under the button, in the view's co-ordinates
 TPoint CTermView::TabDropPos() const
 	{
-	return TPoint(2, iOriginY0 + iTabStripH);
+	return TPoint(3, iOriginY0 + iTabStripH);
 	}
 
 // The whole strip. Under tmux's prompts and messages it shows tmux's bar
@@ -311,38 +391,24 @@ void CTermView::DrawTabs(CWindowGc& aGc) const
 		DrawCells(aGc, iTabHideRow, 0, iTabHideRow + 1, iCols);
 		return;
 		}
-	TTabLook look, cur;
-	TRgb band;                                  // the strip behind the tabs
-	if (iColour)
-		{
-		band = TRgb(0, 0, 128);
-		look.iFace = TRgb(40, 48, 160);
-		look.iInk = TRgb(224, 228, 255);
-		look.iEdge = TRgb(0, 0, 72);
-		look.iShade = TRgb(24, 30, 120);
-		look.iLight = look.iFace;
-		cur.iFace = Grey(15);                   // the page: the theme's paper
-		cur.iInk = Grey(0);
-		cur.iEdge = look.iEdge;
-		cur.iShade = cur.iLight = cur.iFace;    // (flat: no bevel)
-		}
-	else
-		{
-		CEikonEnv* env = CEikonEnv::Static();
-		band = look.iFace = env->ControlColor(EEikColorDialogBackground, *this);
-		look.iInk = env->ControlColor(EEikColorDialogText, *this);
-		look.iEdge = Gray4(0);
-		look.iShade = Gray4(1);
-		look.iLight = Gray4(2);
-		cur = look;
-		cur.iFace = Grey(15);                   // the terminal's own colours
-		cur.iInk = Grey(0);
-		}
+	TRgb band;
+	TPillLook look, cur;
+	Looks(iColour, EFalse, *this, band, look, cur);
 	aGc.SetBrushColor(band);
 	aGc.DrawRect(strip);
 	const CFont* f = TabFont();
 	aGc.UseFont(f);
 	CTermView* self = CONST_CAST(CTermView*, this);
+	TInt top = iOriginY0 + 2, bottom = iOriginY0 + iTabStripH - 4;
+	TInt base = (top + bottom + 1) / 2 + (f->AscentInPixels() - f->DescentInPixels()) / 2 + 1;
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	if (!iColour)
+		{
+		// (the 5mx: a line between the strip and the terminal's white)
+		aGc.SetPenColor(TRgb::Gray4(0));
+		aGc.DrawLine(TPoint(0, strip.iBr.iY - 1), TPoint(width, strip.iBr.iY - 1));
+		}
 	// (1.06) tmux's session at the left, as a drop-down list (Muxedo's
 	// "main" button): a tap, or Shift+Ctrl+G, lists the sessions
 	TBuf<24> sess;
@@ -353,54 +419,86 @@ void CTermView::DrawTabs(CWindowGc& aGc) const
 		if (f->TextWidthInPixels(sess) > room)
 			TextUtils::ClipToFit(sess, *f, room);
 		dropW = f->TextWidthInPixels(sess) + KTabExtraW + KTabDropArrowW;
+		DrawPill(aGc, 3, 3 + dropW - 1, top, bottom, look);
+		aGc.SetPenColor(look.iInk);
+		aGc.DrawText(sess, TPoint(3 + KTabTextX, base));
+		DrawTriangle(aGc, 3 + dropW - 11, (top + bottom + 1) / 2, 0, look.iInk);
 		}
 	self->iTabDropW = dropW;
-	self->LayoutTabs(*f, 2 + (dropW ? dropW + KTabDropGap : 0), width - 3);
-	TInt top = iOriginY0;                       // the current tab's top
-	TInt bottom = iOriginY0 + iTabStripH - 1;   // the page's top line
-	TInt base = bottom - 3 - f->DescentInPixels();
-	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
-	aGc.SetPenColor(look.iEdge);
-	aGc.DrawLine(TPoint(0, bottom), TPoint(width, bottom));
-	if (dropW)
-		DrawDropButton(aGc, *f, 2, 2 + dropW - 1, top + KTabRaise, bottom - 3, base - 1, sess, look);
+	// at the right: ^ (unless the connections' strip above has it), and
+	// room after the last tab for +
+	TInt bw = ButtonW();
+	CPsiTermAppUi* ui = (CPsiTermAppUi*)iEikonEnv->EikAppUi();
+	TInt right = width - 4;
+	self->iTabUpX = -1;
+	if (!ui->SessBarUp())
+		{
+		self->iTabUpX = right - bw + 1;
+		DrawButton(aGc, iTabUpX, bw, top, bottom, 1, look);
+		right -= bw + KTabGap;
+		}
+	TInt left = 3 + (dropW ? dropW + KTabGap : 0);
+	self->LayoutTabs(*f, left, right - bw - KTabGap);
 	TBuf<40> label;
-	TInt curTab = -1;
+	TInt end = left - KTabGap - 1;              // the right edge of what is drawn so far
+	if (iTabArrowL >= 0)
+		{
+		DrawButton(aGc, iTabArrowL, KTabArrowW, top, bottom, 2, look);
+		end = iTabArrowL + KTabArrowW - 1;
+		}
 	for (TInt i = 0; i < iTabCount; i++)
 		{
-		if (iTabs[i].iX1 <= iTabs[i].iX0)
+		const TTmuxTab& t = iTabs[i];
+		if (t.iX1 <= t.iX0)
 			continue;
-		if (iTabs[i].iCurrent)
+		const TPillLook& l = t.iCurrent ? cur : look;
+		DrawPill(aGc, t.iX0, t.iX1, top, bottom, l);
+		TInt closeW = TabHasClose(t) ? CloseW() : 0;
+		TabLabel(label, t);
+		TInt room = t.iX1 - t.iX0 + 1 - KTabExtraW - closeW;
+		if (room > 4)
 			{
-			curTab = i;                         // drawn last: in front
-			continue;
+			if (f->TextWidthInPixels(label) > room)
+				TextUtils::ClipToFit(label, *f, room);
+			aGc.SetPenColor(l.iInk);
+			aGc.DrawText(label, TPoint(t.iX0 + KTabTextX, base));
 			}
-		TabLabel(label, iTabs[i]);
-		DrawOneTab(aGc, *f, iTabs[i].iX0, iTabs[i].iX1, top + KTabRaise, bottom - 1, base,
-			EFalse, label, look);
+		if (closeW)
+			DrawCross(aGc, t.iX1 - closeW / 2 - 2, (top + bottom + 1) / 2, l.iInk);
+		end = t.iX1;
 		}
-	if (iTabArrowL >= 0)
-		DrawArrow(aGc, iTabArrowL, top + KTabRaise, bottom - 1, EFalse, look);
 	if (iTabArrowR >= 0)
-		DrawArrow(aGc, iTabArrowR, top + KTabRaise, bottom - 1, ETrue, look);
-	if (curTab >= 0)
 		{
-		// the terminal's own colours, so the tab joins it as a page
-		TabLabel(label, iTabs[curTab]);
-		DrawOneTab(aGc, *f, iTabs[curTab].iX0, iTabs[curTab].iX1, top, bottom, base,
-			ETrue, label, cur);
+		DrawButton(aGc, iTabArrowR, KTabArrowW, top, bottom, 3, look);
+		end = iTabArrowR + KTabArrowW - 1;
 		}
+	// + : a new window, straight after the last tab
+	self->iTabPlusX = end + KTabGap + 1;
+	DrawButton(aGc, iTabPlusX, bw, top, bottom, 0, look);
 	aGc.UseFont(iFont);
 	}
 
-// A tap on the strip: a tab goes to that window, an arrow scrolls the strip
+// A tap on the strip: the session list, a tab (its x closes that window),
+// + (a new window), ^ (hide the strips), or an arrow (scrolls the strip)
 TBool CTermView::TabPenDownL(TInt aX)
 	{
 	if (iTabMsg)
 		return EFalse;
-	if (iTabDropW > 0 && aX >= 2 && aX < 2 + iTabDropW)
+	CPsiTermAppUi* ui = (CPsiTermAppUi*)iEikonEnv->EikAppUi();
+	if (iTabDropW > 0 && aX >= 3 && aX < 3 + iTabDropW)
 		{
-		((CPsiTermAppUi*)iEikonEnv->EikAppUi())->TmuxSessPopupL();   // (1.06) the sessions
+		ui->TmuxSessPopupL();                // (1.06) the sessions
+		return ETrue;
+		}
+	TInt bw = ButtonW();
+	if (iTabUpX >= 0 && aX >= iTabUpX - 1)
+		{
+		Command(EPtCmdShowTabs);
+		return ETrue;
+		}
+	if (aX >= iTabPlusX - 1 && aX < iTabPlusX + bw + 1)
+		{
+		Command(EPtCmdTmuxNew);
 		return ETrue;
 		}
 	TBool scroll = EFalse;
@@ -429,7 +527,9 @@ TBool CTermView::TabPenDownL(TInt aX)
 	for (TInt i = 0; i < iTabCount; i++)
 		if (iTabs[i].iX1 > iTabs[i].iX0 && aX >= iTabs[i].iX0 && aX <= iTabs[i].iX1)
 			{
-			if (!iTabs[i].iCurrent)
+			if (TabHasClose(iTabs[i]) && aX > iTabs[i].iX1 - CloseW() - 2)
+				ui->TmuxCloseWindowL(iTabs[i].iIndex, iTabs[i].iName);
+			else if (!iTabs[i].iCurrent)
 				SelectTmuxWindow(iTabs[i].iIndex);
 			return ETrue;
 			}
@@ -438,13 +538,11 @@ TBool CTermView::TabPenDownL(TInt aX)
 
 // ============================================================================
 // (1.06) The connections as tabs: Muxedo's top row. A strip above the
-// terminal with Home (the Start view) and a tab for each connection, its
-// server's icon and name. It looks as the tmux strip under it, a shade
-// darker on a colour screen so the two rows read apart.
+// terminal with Home (the Start view), a tab for each connection (its
+// server's icon and name, and an x that ends it), + (another connection)
+// and, at the right, ^ (hide the strips). A shade darker than the tmux
+// strip under it on a colour screen, so the two rows read apart.
 // ============================================================================
-
-const TInt KSessIconW = 16 + 4;      // a tab's icon and the gap after it
-const TInt KSessHomeW = 26;          // the Home button
 
 CPtSessionBar* CPtSessionBar::NewL(const TRect& aRect)
 	{
@@ -452,7 +550,6 @@ CPtSessionBar* CPtSessionBar::NewL(const TRect& aRect)
 	CleanupStack::PushL(b);
 	b->CreateWindowL();
 	b->iColour = CEikonEnv::Static()->ScreenDevice()->DisplayMode() >= EColor16;
-	b->iHomeW = KSessHomeW;
 	b->SetRectL(aRect);
 	b->ActivateL();
 	CleanupStack::Pop();
@@ -461,8 +558,7 @@ CPtSessionBar* CPtSessionBar::NewL(const TRect& aRect)
 
 TInt CPtSessionBar::Height()
 	{
-	const CFont* f = TabFont();
-	return f->AscentInPixels() + f->DescentInPixels() + 11;   // (as the tmux strip)
+	return StripHeight();                    // (as the tmux strip)
 	}
 
 void CPtSessionBar::SetBarRectL(const TRect& aRect)
@@ -493,99 +589,80 @@ void CPtSessionBar::Draw(const TRect& /*aRect*/) const
 	{
 	CWindowGc& gc = SystemGc();
 	TRect r = Rect();
-	TTabLook look, cur;
 	TRgb band;
-	if (iColour)
-		{
-		// (the palette's own colours: nothing dithers)
-		band = TRgb(0, 0, 102);
-		look.iFace = TRgb(51, 51, 153);
-		look.iInk = TRgb(204, 204, 255);
-		look.iEdge = TRgb(0, 0, 51);
-		look.iShade = TRgb(0, 0, 102);
-		look.iLight = look.iFace;
-		cur.iFace = KRgbWhite;
-		cur.iInk = KRgbBlack;
-		cur.iEdge = look.iEdge;
-		cur.iShade = cur.iLight = cur.iFace;
-		}
-	else
-		{
-		band = look.iFace = iEikonEnv->ControlColor(EEikColorDialogBackground, *this);
-		look.iInk = iEikonEnv->ControlColor(EEikColorDialogText, *this);
-		look.iEdge = Gray4(0);
-		look.iShade = Gray4(1);
-		look.iLight = Gray4(2);
-		cur = look;
-		cur.iFace = KRgbWhite;
-		cur.iInk = KRgbBlack;
-		}
+	TPillLook look, cur;
+	Looks(iColour, ETrue, *this, band, look, cur);
 	gc.SetPenStyle(CGraphicsContext::ENullPen);
 	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 	gc.SetBrushColor(band);
 	gc.DrawRect(r);
 	const CFont* f = TabFont();
 	gc.UseFont(f);
-	TInt top = r.iTl.iY, bottom = r.iBr.iY - 1;
-	TInt base = bottom - 3 - f->DescentInPixels();
+	TInt top = r.iTl.iY + 2, bottom = r.iBr.iY - 4;
+	TInt mid = (top + bottom + 1) / 2;
+	TInt base = mid + (f->AscentInPixels() - f->DescentInPixels()) / 2 + 1;
+	gc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	gc.SetPenStyle(CGraphicsContext::ESolidPen);
-	gc.SetPenColor(look.iEdge);
-	gc.DrawLine(TPoint(r.iTl.iX, bottom), TPoint(r.iBr.iX, bottom));
+	if (!iColour)
+		{
+		gc.SetPenColor(TRgb::Gray4(1));
+		gc.DrawLine(TPoint(r.iTl.iX, r.iBr.iY - 1), TPoint(r.iBr.iX, r.iBr.iY - 1));
+		}
+	CPtSessionBar* self = CONST_CAST(CPtSessionBar*, this);
+	TInt bw = ButtonW(), closeW = CloseW();
 	// Home: four squares, as Muxedo's button for its list of servers
-	TInt hl = r.iTl.iX + 2, hr = hl + iHomeW - 1;
-	DrawOneTab(gc, *f, hl, hr, top + KTabRaise, bottom - 1, base, EFalse, KNullDesC, look);
+	TInt hl = r.iTl.iX + 3;
+	self->iHomeW = bw;
+	DrawPill(gc, hl, hl + bw - 1, top, bottom, look);
 	gc.SetPenStyle(CGraphicsContext::ENullPen);
 	gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 	gc.SetBrushColor(look.iInk);
-	TInt gx = (hl + hr) / 2 - 6, gy = (top + KTabRaise + bottom) / 2 - 5;
+	TInt gx = hl + bw / 2 - 6, gy = mid - 6;
 	for (TInt q = 0; q < 4; q++)
 		gc.DrawRect(TRect(gx + (q & 1) * 7, gy + (q >> 1) * 7, gx + (q & 1) * 7 + 5, gy + (q >> 1) * 7 + 5));
 	gc.SetBrushStyle(CGraphicsContext::ENullBrush);
 	gc.SetPenStyle(CGraphicsContext::ESolidPen);
-	// the tabs: as wide as their names, or an equal share when they do not fit
-	CPtSessionBar* self = CONST_CAST(CPtSessionBar*, this);
-	TInt left = hr + 4, right = r.iBr.iX - 3;
-	TInt share = iCount > 0 ? (right - left + 1 - (iCount - 1)) / iCount : 0;
+	// ^ at the right
+	self->iUpX = r.iBr.iX - 4 - bw + 1;
+	DrawButton(gc, iUpX, bw, top, bottom, 1, look);
+	// the tabs: as wide as their names, or an equal share when they do not
+	// fit; then +
+	TInt left = hl + bw + KTabGap, right = iUpX - KTabGap - 1 - bw - KTabGap;
+	TInt share = iCount > 0 ? (right - left + 1 - (iCount - 1) * KTabGap) / iCount : 0;
 	TInt x = left;
-	TInt front = -1;
 	for (TInt i = 0; i < iCount; i++)
 		{
 		TTab& t = self->iTabs[i];
-		TInt w = f->TextWidthInPixels(t.iName) + KTabExtraW + (t.iIcon > 0 ? KSessIconW : 0);
+		TInt w = f->TextWidthInPixels(t.iName) + KTabExtraW + closeW + (t.iIcon > 0 ? KSessIconW : 0);
 		if (w > share)
 			w = share;
 		t.iX0 = x;
 		t.iX1 = x + w - 1;
-		x += w + 1;
-		if (t.iFront)
-			front = i;
-		}
-	for (TInt pass = 0; pass < 2; pass++)
-		for (TInt i = 0; i < iCount; i++)
+		x += w + KTabGap;
+		if (w < KTabExtraW + closeW)
+			continue;
+		const TPillLook& l = t.iFront ? cur : look;
+		DrawPill(gc, t.iX0, t.iX1, top, bottom, l);
+		TInt tx = t.iX0 + KTabTextX;
+		if (t.iIcon > 0 && w > KTabExtraW + closeW + KSessIconW)
 			{
-			const TTab& t = iTabs[i];
-			if ((pass == 1) != (i == front) || t.iX1 - t.iX0 < KTabExtraW)
-				continue;                    // (the one in front last: over its neighbours)
-			const TTabLook& l = (i == front) ? cur : look;
-			DrawOneTab(gc, *f, t.iX0, t.iX1, i == front ? top : top + KTabRaise,
-				i == front ? bottom : bottom - 1, base, i == front, KNullDesC, l);
-			TInt tx = t.iX0 + KTabTextX;
-			if (t.iIcon > 0 && t.iX1 - t.iX0 > KTabExtraW + KSessIconW)
-				{
-				PtDrawHostIcon(gc, t.iIcon, TPoint(tx, (top + KTabRaise + bottom) / 2 - 7), l.iInk);
-				tx += KSessIconW;
-				}
-			TBuf<24> name(t.iName);
-			TInt room = t.iX1 - tx - 5;
-			if (room > 8)
-				{
-				if (f->TextWidthInPixels(name) > room)
-					TextUtils::ClipToFit(name, *f, room);
-				// (a connection that has ended: its name in the shadow colour)
-				gc.SetPenColor(t.iLive || i == front ? l.iInk : (iColour ? TRgb(153, 153, 204) : Gray4(1)));
-				gc.DrawText(name, TPoint(tx, base));
-				}
+			PtDrawHostIcon(gc, t.iIcon, TPoint(tx, mid - 8), l.iInk);
+			tx += KSessIconW;
 			}
+		TBuf<24> name(t.iName);
+		TInt room = t.iX1 - closeW - 6 - tx;
+		if (room > 8)
+			{
+			if (f->TextWidthInPixels(name) > room)
+				TextUtils::ClipToFit(name, *f, room);
+			// (a connection that has ended: its name fainter)
+			gc.SetPenColor(t.iLive || t.iFront ? l.iInk : (iColour ? TRgb(153, 153, 204) : TRgb::Gray4(1)));
+			gc.DrawText(name, TPoint(tx, base));
+			}
+		DrawCross(gc, t.iX1 - closeW / 2 - 2, mid, l.iInk);
+		}
+	self->iPlusX = x;
+	DrawButton(gc, iPlusX, bw, top, bottom, 0, look);
 	gc.DiscardFont();
 	}
 
@@ -595,15 +672,24 @@ void CPtSessionBar::HandlePointerEventL(const TPointerEvent& aEvent)
 		return;
 	TInt x = aEvent.iPosition.iX;
 	CPsiTermAppUi* ui = (CPsiTermAppUi*)iEikonEnv->EikAppUi();
-	if (x < Rect().iTl.iX + 2 + iHomeW)
+	TInt bw = ButtonW();
+	if (x < Rect().iTl.iX + 3 + iHomeW + 1 || (x >= iPlusX - 1 && x < iPlusX + bw + 1))
 		{
-		ui->SessionTabL(-1);
+		ui->SessionTabL(-1);                 // Home, or +: the Start view
+		return;
+		}
+	if (x >= iUpX - 1)
+		{
+		Command(EPtCmdShowTabs);
 		return;
 		}
 	for (TInt i = 0; i < iCount; i++)
 		if (x >= iTabs[i].iX0 && x <= iTabs[i].iX1)
 			{
-			ui->SessionTabL(iTabs[i].iSlot);
+			if (x > iTabs[i].iX1 - CloseW() - 2)
+				ui->SessionCloseL(iTabs[i].iSlot);
+			else
+				ui->SessionTabL(iTabs[i].iSlot);
 			return;
 			}
 	}
