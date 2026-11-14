@@ -33,6 +33,21 @@
 
 ## Ideas
 
+- Keys and saved passwords held securely (Dan, 14 Nov 2026). Today saved
+  passwords are only scrambled with a key tied to the Psion, and private
+  keys (C:\System\Apps\PsiTerm\Keys\) are stored in the clear; EPOC R5 has
+  no per-program file permissions, and PsiBoot's backup copies them to the
+  card (plain FAT). Wanted: a master passphrase typed once a session,
+  keys and passwords encrypted with a key derived from it (in PsiTerm and
+  psissh), keys with passphrases accepted on import, and PsiBoot's backup
+  leaving PsiTerm's key and login files off the card.
+- Latency on the connection tabs, as Muxedo's "1ms" (Dan, 14 Nov 2026):
+  PsiTerm has no round-trip figure; needs a timed keep-alive in psissh and
+  psion-core.
+- Import servers from Muxedo or an OpenSSH config file (File > Import
+  servers...): group as folder, icon as the nearest of PsiTerm's 16, key or
+  password as ask. Muxedo would need an Export hosts (no secrets). Done once
+  by hand for Dan on 14 Nov 2026.
 - Download URL...: fetch any https:// file to the Psion (TLS now works).
 - mosh (parked).
 - 16-grey icons for our apps (Dan, 17 Oct 2026): the 5mx shows 16 greys
