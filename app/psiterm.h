@@ -344,10 +344,15 @@ enum TPtHostResult
 	EPtResultLost            // logged in, then the connection went
 	};
 const TInt KPtHostPinned = 1;   // THostEntry::iFlags: Pin to top
+const TInt KPtFolderLen = 16;   // (1.06) a folder's name on the Start view
+// ...and what the two headings that are not folders are known by when shut
+// (CHostList::Shut; nobody can type these as a folder's name)
+_LIT(KPtShutPinned, "\001");
+_LIT(KPtShutRest, "\002");
 
 struct THostEntry
 	{
-	THostEntry() : iPort(22), iAuth(0), iKeyId(0), iFlags(0), iLastUsed(0), iLastResult(0) {}
+	THostEntry() : iPort(22), iAuth(0), iKeyId(0), iFlags(0), iLastUsed(0), iLastResult(0), iIcon(0) {}
 	TBuf<24> iName;
 	TBuf<100> iHost;
 	TBuf<60> iUser;
@@ -361,7 +366,15 @@ struct THostEntry
 	TInt iFlags;          // 1.02: KPtHostPinned
 	TUint32 iLastUsed;    // 1.02: seconds since 1 Jan 2000 (local time); 0 = never
 	TInt iLastResult;     // 1.02: TPtHostResult
+	TInt iIcon;           // 1.06: 0 = its initial, 1.. = a picture (pthosticons.h)
+	TBuf<KPtFolderLen> iFolder;   // 1.06: its folder on the Start view (empty: none)
 	};
+
+// (1.06) a server's picture, 16 x 16 in one colour, its top left at aAt
+// (ptstart.cpp); nothing for 0 or a number this PsiTerm does not know
+void PtDrawHostIcon(CGraphicsContext& aGc, TInt aIcon, const TPoint& aAt, TRgb aColour);
+// its badge colour on a colour screen: from its name, so it keeps it
+TRgb PtHostBadgeColour(const TDesC& aName);
 
 // (1.02) the Start view (ptstart.cpp): the saved servers, pinned first, then
 // by when they were last used. It goes over the terminal as the file view
@@ -380,6 +393,9 @@ public:
 	~CPtStartView();
 	void ReloadL(TInt aSelectHost = -1);   // the hosts changed; select this one (-1: keep)
 	TInt Current() const;                   // the highlighted host's index, or -1
+	// (1.06) the folder the highlight is in or on (EFalse: none)
+	TBool CurrentFolder(TDes& aName) const;
+	TBool ActivateHeadL();                  // on a heading: opens or shuts it (EFalse: on a server)
 	void SetViewRectL(const TRect& aRect);
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
 private:
@@ -391,7 +407,24 @@ private:
 	void SizeChanged();
 	void Layout();
 	void Move(TInt aTo);
-	TBool HeadBefore(TInt aRow) const;      // a "Pinned" / "Recent" heading above this row
+	// (1.06) the rows: a heading (Pinned, a folder, the rest), then its
+	// servers unless it is shut
+	enum { EHeadPinned, EHeadFolder, EHeadRest };
+	struct TRow
+		{
+		TInt iHost;           // the server, or -1: a heading
+		TInt iKind;           // a heading's EHead...
+		TInt iRef;            // a heading: one of its servers (it has the folder's name)
+		TInt iCount;          // a heading: how many servers it has
+		TBool iShut;          // a heading: its servers are not shown
+		};
+	enum { KMaxRows = 2 * KMaxHosts + 2 };
+	TBool IsHead(TInt aRow) const { return aRow >= 0 && aRow < iCount && iRow[aRow].iHost < 0; }
+	TInt RowHeight(TInt aRow) const { return IsHead(aRow) ? iSecH : iRowH; }
+	void HeadName(TInt aRow, TDes& aName) const;
+	void HeadKey(TInt aRow, TDes& aKey) const;   // what CHostList::Shut knows it by
+	void ToggleL(TInt aRow);                 // open or shut a heading
+	void AddSectionL(TInt aKind, const TDesC& aFolder, TBool aHeads);
 	TInt LastVisible(TInt aTop) const;       // the last row that fits from aTop
 	TInt HitTest(TInt aY) const;             // the row at aY (view co-ordinates), or -1
 	void DrawHead(CWindowGc& aGc, TInt aY, TInt aRow) const;
@@ -404,13 +437,16 @@ private:
 	const TPtTmux& iTmux;
 	CTermView& iTerm;
 	TBool iColour;
-	TInt iOrder[KMaxHosts];   // rows -> host indices
-	TInt iCount;
+	TRow iRow[KMaxRows];
+	TInt iCount;              // rows
+	TInt iServers;            // servers saved
+	TInt iFolders;            // folders in use
 	TInt iSel, iTop;
-	TInt iPinned;             // how many are pinned (the first rows)
 	TInt iBandH, iSecH, iRowH, iRows, iListY, iFootY, iFootH;
-	CFbsBitmap* iStar;
-	CFbsBitmap* iStarMask;
+	CFbsBitmap* iFolder;      // the headings' folder pictures (PsiTerm.mbm)
+	CFbsBitmap* iFolderMask;
+	CFbsBitmap* iFolderOpen;
+	CFbsBitmap* iFolderOpenMask;
 	};
 
 // ---------------------------------------------------------------------------
@@ -501,7 +537,14 @@ public:
 	void AddL(const THostEntry& aEntry);
 	void Delete(TInt aIndex);
 	TInt iLast;           // index of the last host used
+	// (1.06) the Start view's headings that are shut: a folder by its name,
+	// Pinned and the rest by KPtShutPinned and KPtShutRest
+	TBool Shut(const TDesC& aKey) const;
+	void SetShut(const TDesC& aKey, TBool aShut);
 private:
+	enum { KMaxShut = KMaxHosts + 2 };
+	TBuf<KPtFolderLen> iShut[KMaxShut];
+	TInt iShutCount;
 	CHostList(RFs& aFs) : iFs(aFs) {}
 	TUint32 KeyFor(TUint32 aSalt) const;
 	RFs& iFs;
@@ -668,7 +711,11 @@ public:
 	void SetHidden(TBool aHidden);
 	TBool Hidden() const { return iHidden; }
 	// connected, connecting, or about to (randomness, a reconnect's countdown)
+#ifdef PT_TESTSEED
+	TBool Live() const { return iSshActive || iReconnectWait || iGatheringEntropy || iDemo; }
+#else
 	TBool Live() const { return iSshActive || iReconnectWait || iGatheringEntropy; }
+#endif
 	TInt HostIndex() const { return iHostIndex; }    // the saved server (-1: none)
 	void SetHostIndex(TInt aIndex) { iHostIndex = aIndex; }
 	void SetRecent(CPtRecent* aRecent);              // slot 0's, shared (not owned)
@@ -784,6 +831,16 @@ public:
 	TBool RowIsBar(TInt aRow) const;
 	void CheckTabsL();              // Debug: what the tab reader sees
 	void DrawTabs(CWindowGc& aGc) const;
+	// (1.06) the tab strip's drop-down: tmux's session, and where its list opens
+	TBool TmuxSessionName(TDes& aName) const;
+	TPoint TabDropPos() const;
+#ifdef PT_TESTSEED
+	// a test build's stand-in for a connection (never in a release): a
+	// screen of text, tmux's windows and sessions, and Live() says yes
+	void DemoL(const TDesC& aHost, TBool aTmux);
+	void DemoSession(const TDesC8& aId);
+	TBool iDemo;
+#endif
 	void SelectTmuxWindow(TInt aIndex);           // make the key (psissh mode 4)
 	void InstallLoginKeyL(const TDesC& aBase);   // type the authorized_keys command into the session
 	static TInt PumpCallback(TAny* aSelf);
@@ -951,6 +1008,7 @@ private:
 	TInt iTabFirst;           // first tab shown when they don't all fit
 	TInt iTabLastCur;         // the current window when they were last laid out
 	TInt iTabArrowL, iTabArrowR;   // the scroll arrows' left edges (-1 = none)
+	TInt iTabDropW;           // (1.06) the session drop-down's width at the strip's left (0: none)
 	void Layout();            // rows, columns and origin for the font and the strip
 	TInt TabStripHeight() const;
 	TInt RowY(TInt aRow) const;     // the pixel row a terminal row is drawn at
@@ -1131,6 +1189,28 @@ private:
 // ---------------------------------------------------------------------------
 class CEikToolBar;
 
+// (1.06) the connections as tabs, above the terminal (pttabs.cpp): Home,
+// then a tab for each connection with its server's icon and name. A tap
+// brings that connection in front. It is up while two or more are open
+// (on a taller screen, the netBook's, with one as well).
+class CPtSessionBar : public CCoeControl
+	{
+public:
+	enum { KMaxTabs = 4 };
+	struct TTab { TInt iSlot; TBuf<24> iName; TInt iIcon; TBool iLive; TBool iFront; TInt iX0; TInt iX1; };
+	static CPtSessionBar* NewL(const TRect& aRect);
+	static TInt Height();
+	void SetTabs(const TTab* aTabs, TInt aCount);   // (draws if they changed)
+	void SetBarRectL(const TRect& aRect);
+private:
+	void Draw(const TRect& aRect) const;
+	void HandlePointerEventL(const TPointerEvent& aEvent);
+	TTab iTabs[KMaxTabs];
+	TInt iCount;
+	TInt iHomeW;
+	TBool iColour;
+	};
+
 class CPsiTermAppUi : public CEikAppUi, public MPtBrowseHost
 	{
 public:
@@ -1214,7 +1294,21 @@ public:
 	void SessionTag(const CTermView& aView, TDes& aTag) const;   // "2/3" on its status line
 	void SessionCommandL(TInt aIndex);      // File > Connections > the connection at that place
 	TBool NextSessionL();                   // Shift+Ctrl+Space (EFalse: there is no other)
+	// (1.06) the connections as tabs, and tmux's sessions as a drop-down list
+	void SessionsSync();                    // the tabs follow the connections (cheap: call freely)
+	void SessionTabL(TInt aSlot);           // a tap on a tab (-1: Home)
+	void TmuxSessPopupL();                  // the drop-down, at the tab strip's left
 private:
+	TRect ViewRect(TBool aToolbar) const;   // the terminal's room: TermRect less the tabs
+	void TmuxSessMenuL(CEikMenuPane* aMenuPane);
+	void TmuxSessCommandL(TInt aIndex);
+	void HostLookL(TInt aIndex);            // Edit > Folder & icon...
+	void RenameFolderL();
+	CPtSessionBar* iSessBar;
+	TBool iSessBarUp;                       // ...and taking room from the terminal
+#ifdef PT_TESTSEED
+	void SeedL();
+#endif
 	TInt SessionList(TInt* aSlots) const;   // the connections the menu lists, in order
 public:
 private:

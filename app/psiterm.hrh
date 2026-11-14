@@ -182,8 +182,14 @@ enum TPsiTermCommands
 	EPtCmdSession0 = 0x1680,  // (1.04) ... + 3: File > Connections > connection N
 	EPtCmdSession1, EPtCmdSession2, EPtCmdSession3,   // (for the resource)
 	EPtCmdSessionNext = 0x1690,  // (1.04) File > Connections > Next connection (Shift+Ctrl+Space)
-	EPtCmdMenuEmpty = 0x1691     // (1.04) a filled-in cascade's item in its resource (ER5's Right
+	EPtCmdMenuEmpty = 0x1691,    // (1.04) a filled-in cascade's item in its resource (ER5's Right
 	                             // arrow opens no cascade whose resource has no items)
+	// 1.06: folders and icons on the Start view, tmux's sessions as a drop-down list
+	EPtCmdStLook = 0x1692,       // Edit > Folder & icon... (Ctrl+F)
+	EPtCmdStFolderRename,        // Edit > Rename folder...
+	EPtCmdTmuxSessPopup,         // the tab strip's drop-down (Shift+Ctrl+G)
+	EPtCmdTmuxSess0 = 0x16a0,    // ... + 5: tmux > Sessions > session N
+	EPtCmdTmuxSess1, EPtCmdTmuxSess2, EPtCmdTmuxSess3, EPtCmdTmuxSess4, EPtCmdTmuxSess5
 	};
 
 enum TPsiTermDialogControls
@@ -324,5 +330,9 @@ enum TPtTmuxControls
 	EPtPageSnipMain,
 	EPtPageSnipMenu,
 	EPtDlgGotoLine,           // (1.02) the editor's Go to line
-	EPtDlgGotoOf
+	EPtDlgGotoOf,
+	EPtDlgLookFolder,         // (1.06) Folder & icon...
+	EPtDlgLookIcon,
+	EPtDlgFolderName,         // New folder, Rename folder
+	EPtCtIconGrid = 0x7601    // Folder & icon's row of pictures (a control type)
 	};

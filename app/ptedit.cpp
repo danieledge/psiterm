@@ -1080,6 +1080,7 @@ void CPsiTermAppUi::OpenEditorL(const TDesC8& aRemote, TUint aSize)
 	UpdateStackedControlFlags(iView, ECoeStackFlagRefusesAllKeys | ECoeStackFlagRefusesFocus,
 		ECoeStackFlagRefusesAllKeys | ECoeStackFlagRefusesFocus);
 	iMenuBar->ChangeMenuBarL(R_PT_EDIT_HOTKEYS, R_PT_EDIT_MENUBAR, EFalse);
+	SessionsSync();                          // (1.06: the connections' tabs go under it)
 	iEdit->ActivateL();
 	if (iToolBar && iEditBar && iView->Settings().iToolbar)
 		{
@@ -1124,6 +1125,7 @@ TBool CPsiTermAppUi::CloseEditorL()
 		}
 	iView->SetFocus(ETrue);
 	iView->DrawNow();
+	SessionsSync();
 	return ETrue;
 	}
 

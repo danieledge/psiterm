@@ -17,6 +17,7 @@
 #include "psiterm.h"
 #include <eikchlst.h>
 #include <eikdialg.h>
+#include <eikmenup.h>
 #include <eikon.rsg>
 #include "psiterm.rsg"
 
@@ -459,6 +460,116 @@ void CPsiTermAppUi::TmuxSessionsL()
 		cmd.Append('\'');
 		}
 	iView->TmuxRun(cmd);
+	}
+
+// ----- (1.06) tmux's sessions as a drop-down list -------------------------------
+// The list at the left of the tab strip (a tap on the session's name, or
+// Shift+Ctrl+G) and the cascade tmux > Sessions are one menu pane: up to six
+// sessions, the one in use ticked, then Manage sessions... (the dialog above:
+// new, rename, close, and any session past the sixth).
+
+const TInt KSessMenuMax = 6;
+
+// The sessions the list shows, in tmux's order; the one in use is always
+// among them. Returns how many, and which is in use (-1: not known).
+static TInt SessMenuList(const CTermView& aView, TBuf8<12>* aIds, TBuf<24>* aNames, TInt* aWindows, TInt& aCurrent)
+	{
+	const TInt KMax = 12;
+	TInt att[KMax];
+	TInt n = aView.TmuxSessions(aIds, aNames, aWindows, att, KMax);
+	aCurrent = -1;
+	for (TInt i = 0; i < n; i++)
+		if (aIds[i] == aView.TmuxSid())
+			aCurrent = i;
+	if (aCurrent >= KSessMenuMax)
+		{
+		// (past the sixth: it takes the last place)
+		aIds[KSessMenuMax - 1] = aIds[aCurrent];
+		aNames[KSessMenuMax - 1] = aNames[aCurrent];
+		aWindows[KSessMenuMax - 1] = aWindows[aCurrent];
+		aCurrent = KSessMenuMax - 1;
+		}
+	return n < KSessMenuMax ? n : KSessMenuMax;
+	}
+
+static TBool SessListReady(const CTermView& aView)
+	{
+#ifdef PT_TESTSEED
+	if (aView.iDemo)
+		return ETrue;
+#endif
+	return aView.TmuxCanRun();
+	}
+
+void CPsiTermAppUi::TmuxSessMenuL(CEikMenuPane* aMenuPane)
+	{
+	TBuf8<12> ids[12];
+	TBuf<24> names[12];
+	TInt wins[12];
+	TInt current = -1;
+	TInt n = SessListReady(*iView) ? SessMenuList(*iView, ids, names, wins, current) : 0;
+	for (TInt i = n; i < KSessMenuMax; i++)
+		aMenuPane->DeleteMenuItem(EPtCmdTmuxSess0 + i);
+	for (TInt i = 0; i < n; i++)
+		{
+		CEikMenuPane::TItem::SData& item = aMenuPane->ItemData(EPtCmdTmuxSess0 + i);
+		item.iFlags = EEikMenuItemCheckBox;
+		TBuf<40> l(names[i]);
+		l.AppendFormat(wins[i] == 1 ? _L(" (1 window)") : _L(" (%d windows)"), wins[i]);
+		item.iText = l.Left(l.Length() < item.iText.MaxLength() ? l.Length() : item.iText.MaxLength());
+		item.iExtraText.Zero();
+		if (i == n - 1)
+			item.iFlags |= EEikMenuItemSeparatorAfter;
+		if (i == current)
+			aMenuPane->SetItemButtonState(EPtCmdTmuxSess0 + i, EEikMenuItemSymbolOn);
+		}
+	if (!iView->SshLoggedIn())
+		aMenuPane->SetItemDimmed(EPtCmdTmuxSessions, ETrue);
+	}
+
+void CPsiTermAppUi::TmuxSessCommandL(TInt aIndex)
+	{
+	TBuf8<12> ids[12];
+	TBuf<24> names[12];
+	TInt wins[12];
+	TInt current = -1;
+	if (!SessListReady(*iView))
+		return;
+	TInt n = SessMenuList(*iView, ids, names, wins, current);
+	if (aIndex < 0 || aIndex >= n || aIndex == current)
+		return;
+#ifdef PT_TESTSEED
+	if (iView->iDemo)
+		{
+		iView->DemoSession(ids[aIndex]);
+		return;
+		}
+#endif
+	TBuf8<40> cmd(_L8("switch-client -t '"));
+	cmd.Append(ids[aIndex]);                 // '$3': only digits after the $ (tmuxq.c)
+	cmd.Append('\'');
+	iView->TmuxRun(cmd);
+	}
+
+// The list, under the session's name at the left of the tab strip
+void CPsiTermAppUi::TmuxSessPopupL()
+	{
+	if (iStart || iBrowse || iEdit)
+		return;
+	TBuf<24> name;
+	if (!iView->TmuxSessionName(name) || !SessListReady(*iView))
+		{
+		// no list to show: say why, or (tmux is there but will not say) its own chooser
+		if (!iView->SshLoggedIn())
+			iEikonEnv->InfoMsg(_L("Not available - SSH is not connected"));
+		else if (!iView->InTmux())
+			iEikonEnv->InfoMsg(_L("Not available - tmux is not running"));
+		else
+			TmuxSessionsL();
+		return;
+		}
+	TPoint pos = iView->PositionRelativeToScreen() + iView->TabDropPos();
+	LaunchPopupMenuL(R_PT_TMUX_SESS_MENU, pos, EPopupTargetTopLeft);
 	}
 
 // tmux > tmux settings...

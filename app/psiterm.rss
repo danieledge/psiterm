@@ -165,6 +165,7 @@ RESOURCE HOTKEYS r_pt_hotkeys
 		HOTKEY { command=EPtCmdRecent; key='r'; },
 		HOTKEY { command=EPtCmdEditFile; key='o'; },
 		HOTKEY { command=EPtCmdSshDisconnect; key='d'; },
+		HOTKEY { command=EPtCmdTmuxSessPopup; key='g'; },
 		HOTKEY { command=EPtCmdHangup; key='u'; },
 		HOTKEY { command=EPtCmdCopy; key='c'; },
 		HOTKEY { command=EPtCmdPaste; key='v'; },
@@ -379,10 +380,27 @@ RESOURCE MENU_PANE r_pt_tmux_menu
 		MENU_ITEM { command=EPtCmdTmuxDetach; txt="Detach"; extratxt="d"; },
 		MENU_ITEM { command=EPtCmdTmuxMouse; txt="Switch mouse mode"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdTmuxTabs; txt="Windows as tabs"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdTmuxSessions; txt="Sessions..."; },
+		MENU_ITEM { cascade=r_pt_tmux_sess_menu; txt="Sessions"; },
 		MENU_ITEM { cascade=r_pt_tmux_win_menu; txt="Windows"; },
 		MENU_ITEM { cascade=r_pt_tmux_pane_menu; txt="Panes"; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdTmuxSettings; txt="tmux settings..."; }
+		};
+	}
+
+// (1.06) tmux's sessions: the tmux menu's cascade, and the drop-down list at
+// the left of the tab strip (a tap there, or Shift+Ctrl+G). Filled in by
+// pttmux.cpp: up to six sessions, the one in use ticked.
+RESOURCE MENU_PANE r_pt_tmux_sess_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdTmuxSess0; txt="1"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdTmuxSess1; txt="2"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdTmuxSess2; txt="3"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdTmuxSess3; txt="4"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdTmuxSess4; txt="5"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdTmuxSess5; txt="6"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxSessions; txt="Manage sessions..."; }
 		};
 	}
 
@@ -1240,6 +1258,7 @@ RESOURCE HOTKEYS r_pt_start_hotkeys
 		{
 		HOTKEY { command=EPtCmdStDelete; key='d'; },
 		HOTKEY { command=EEikCmdExit; key='e'; },
+		HOTKEY { command=EPtCmdStLook; key='f'; },
 		HOTKEY { command=EPtCmdStAddress; key='g'; },
 		HOTKEY { command=EPtCmdStEdit; key='i'; },
 		HOTKEY { command=EPtCmdAppearance; key='k'; },
@@ -1287,8 +1306,12 @@ RESOURCE MENU_PANE r_pt_start_edit_menu
 		MENU_ITEM { command=EPtCmdStNew; txt="Create new server..."; },
 		MENU_ITEM { command=EPtCmdStEdit; txt="Server details..."; },
 		MENU_ITEM { command=EPtCmdStDelete; txt="Delete server"; flags=EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdStPin; txt="Pin to top"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
-		MENU_ITEM { command=EPtCmdTmuxSettings; txt="tmux settings..."; }
+		MENU_ITEM { command=EPtCmdStPin; txt="Pin to top"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdTmuxSettings; txt="tmux settings..."; flags=EEikMenuItemSeparatorAfter; },
+		// (1.06) the folders, in a group of their own at the foot (the items
+		// above keep their places: core's emulator tests count them)
+		MENU_ITEM { command=EPtCmdStLook; txt="Folder & icon..."; },
+		MENU_ITEM { command=EPtCmdStFolderRename; txt="Rename folder..."; }
 		};
 	}
 
@@ -1338,6 +1361,35 @@ RESOURCE TOOLBAR r_pt_start_toolbar
 			length=KEikStdGapBelowClock;
 			control=SPACER;
 			}
+		};
+	}
+
+// Edit > Folder & icon... (Ctrl+F, 1.06): the server's folder on the Start
+// view (None, one in use, or a new one) and its picture, chosen from a row
+// of them (ptstart.cpp's CPtIconGrid)
+STRUCT PT_ICONGRID { BYTE spare=0; }
+
+RESOURCE DIALOG r_pt_look_dialog
+	{
+	title="Folder & icon";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Folder"; id=EPtDlgLookFolder; control=CHOICELIST { maxdisplaychar=18; array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EPtCtIconGrid; prompt="Icon"; id=EPtDlgLookIcon; control=PT_ICONGRID { }; }
+		};
+	}
+
+// a folder's name (the title is set: New folder, Rename folder)
+RESOURCE DIALOG r_pt_folder_name_dialog
+	{
+	title="Folder";
+	flags=EEikDialogFlagWait;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	items=
+		{
+		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgFolderName; control=EDWIN { width=14; maxlength=16; }; }
 		};
 	}
 

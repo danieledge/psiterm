@@ -170,7 +170,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.05");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.06");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -1577,6 +1577,64 @@ void CTermView::Draw(const TRect& /*aRect*/) const
 	gc.UseFont(iFont);
 	}
 
+#ifdef PT_TESTSEED
+// A test build's stand-in for a connection: a screen of text, and (aTmux)
+// tmux's windows and sessions as PsiTerm would have read them. Nothing is
+// sent anywhere. Never in a release (#define PT_TESTSEED at the top of psiterm.h, for a test build only).
+void CTermView::DemoL(const TDesC& aHost, TBool aTmux)
+	{
+	iDemo = ETrue;
+	TBuf8<400> t;
+	t.Copy(_L8("\x1b[2J\x1b[H"));
+	t.Append(_L8("dan@"));
+	TBuf8<24> host;
+	host.Copy(aHost.Left(aHost.Length() < 24 ? aHost.Length() : 24));
+	t.Append(host);
+	t.Append(_L8(":~$ uptime\r\n 16:20:01 up 12 days,  3:04,  2 users,  load average: 0.08, 0.03, 0.01\r\n"));
+	t.Append(_L8("dan@"));
+	t.Append(host);
+	t.Append(_L8(":~$ ls\r\n\x1b[1;34mprojects\x1b[0m  \x1b[1;34mwww\x1b[0m  notes.md  \x1b[1;32mbackup.sh\x1b[0m\r\n"));
+	t.Append(_L8("dan@"));
+	t.Append(host);
+	t.Append(_L8(":~$ "));
+	FeedTerminal(t.Ptr(), t.Length());
+	if (aTmux)
+		{
+		static const TText* const KWin[] = { _S("psion"), _S("maintenance"), _S("claude"), _S("logs") };
+		iTabCount = 4;
+		for (TInt i = 0; i < 4; i++)
+			{
+			iTabs[i].iIndex = i + 1;
+			iTabs[i].iName = TPtrC(KWin[i]);
+			iTabs[i].iCurrent = (i == 0);
+			iTabs[i].iX0 = iTabs[i].iX1 = 0;
+			}
+		static const TText* const KSess[] = { _S("main"), _S("5"), _S("5-psion"), _S("main-psion") };
+		static const TInt KSessWin[] = { 4, 2, 2, 4 };
+		iQSessCount = 4;
+		for (TInt i = 0; i < 4; i++)
+			{
+			iQSessId[i].Format(_L8("$%d"), i);
+			iQSessName[i] = TPtrC(KSess[i]);
+			iQSessWin[i] = KSessWin[i];
+			iQSessAtt[i] = (i == 0);
+			}
+		iQSid = iQSessId[0];
+		iTabHideRow = iRows - 1;
+		iTabMsg = EFalse;
+		SetTabsTop(ETrue);
+		}
+	DrawNow();
+	}
+
+// ...and its drop-down list: the session chosen becomes the one in use
+void CTermView::DemoSession(const TDesC8& aId)
+	{
+	iQSid = aId;
+	DrawNow();
+	}
+#endif
+
 // ----- status line --------------------------------------------------------------
 // Connection state on the left, the time on the right. aSplit = where the
 // right-hand part starts in aText.
@@ -1749,6 +1807,9 @@ void CTermView::Tick()
 		}
 	iTickCount++;
 	SyncToolbar();
+	CPsiTermAppUi* appUi = (CPsiTermAppUi*)iEikonEnv->EikAppUi();
+	if (appUi->IsShown(this))
+		appUi->SessionsSync();               // (1.06) the connections' tabs follow them
 	if (iLog)
 		iLog->Flush();                   // the log reaches the disk within half a second
 	TInt state = (iSshActive && iShared) ? iShared->state : -1;
@@ -1954,6 +2015,10 @@ TBool CTermView::RowIsBar(TInt aRow) const
 
 void CTermView::ParseTmuxTabs()
 	{
+#ifdef PT_TESTSEED
+	if (iDemo)
+		return;                              // (a test build's stand-in keeps its tabs)
+#endif
 	TTmuxTab tabs[KMaxTabs];
 	TInt count = 0;
 	TInt row = -1;
@@ -2062,6 +2127,9 @@ void CTermView::ParseTmuxTabs()
 	TInt hide = found ? row : iTabHideRow;
 	TBuf<320> sig;
 	sig.AppendNum(row);
+	TBuf<8> sessName;                        // (1.06) the drop-down shows tmux's session
+	if (TmuxSessionName(sessName))
+		sig.Append(sessName);
 	for (TInt t = 0; t < count && sig.Length() < 300; t++)
 		{
 		sig.Append(tabs[t].iCurrent ? '*' : ' ');
@@ -5244,16 +5312,46 @@ static TBool GetStr(const TDesC8& aIn, TInt& aPos, TDes& aText)
 	return ETrue;
 	}
 
+// (1.06) the Start view's headings that are shut
+TBool CHostList::Shut(const TDesC& aKey) const
+	{
+	for (TInt i = 0; i < iShutCount; i++)
+		if (iShut[i].CompareF(aKey) == 0)
+			return ETrue;
+	return EFalse;
+	}
+
+void CHostList::SetShut(const TDesC& aKey, TBool aShut)
+	{
+	if (aKey.Length() == 0 || aKey.Length() > KPtFolderLen)
+		return;
+	for (TInt i = 0; i < iShutCount; i++)
+		if (iShut[i].CompareF(aKey) == 0)
+			{
+			if (aShut)
+				return;
+			iShut[i] = iShut[--iShutCount];
+			return;
+			}
+	if (aShut && iShutCount < KMaxShut)
+		iShut[iShutCount++] = aKey;
+	}
+
+// the most Hosts.dat can be: each host's strings at their longest, in the
+// three parts below, and the shut headings
+const TInt KHostsFileMax = KMaxHosts * 600 + 16 + (KMaxHosts + 2) * (KPtFolderLen + 1);
+
 // Hosts.dat: "PH" 1 count last salt[4], then per host:
 //   name host user (length-prefixed), port (2 bytes), password (length-prefixed, scrambled)
 void CHostList::Load()
 	{
 	iEntries->Reset();
 	iLast = 0;
+	iShutCount = 0;
 	RFile file;
 	if (file.Open(iFs, KHostsFile, EFileRead) != KErrNone)
 		return;
-	HBufC8* buf = HBufC8::New(KMaxHosts * 560 + 16);
+	HBufC8* buf = HBufC8::New(KHostsFileMax);
 	if (!buf)
 		{
 		file.Close();
@@ -5329,6 +5427,38 @@ void CHostList::Load()
 				}
 			}
 		}
+	// (1.06) each host's icon and folder, and the headings that are shut, if
+	// this file has them (a file from 1.05 or before ends above: every host
+	// then has its initial for an icon and no folder, as it always had)
+	if (pos + 3 <= data.Length() && data[pos] == 'P' && data[pos + 1] == 'G' && data[pos + 2] >= 1)
+		{
+		pos += 3;
+		TBool ok = ETrue;
+		for (TInt i = 0; i < iEntries->Count() && ok; i++)
+			{
+			THostEntry& h = (*iEntries)[i];
+			if (pos >= data.Length())
+				{
+				ok = EFalse;
+				break;
+				}
+			h.iIcon = data[pos++];
+			ok = GetStr(data, pos, h.iFolder);
+			if (!ok)
+				h.iFolder.Zero();
+			}
+		if (ok && pos < data.Length())
+			{
+			TInt shut = data[pos++];
+			for (TInt i = 0; i < shut && iShutCount < KMaxShut; i++)
+				{
+				TBuf<KPtFolderLen> key;
+				if (!GetStr(data, pos, key))
+					break;
+				SetShut(key, ETrue);
+				}
+			}
+		}
 	data.FillZ();
 	delete buf;
 	if (iLast >= iEntries->Count())
@@ -5337,7 +5467,7 @@ void CHostList::Load()
 
 TInt CHostList::Save()
 	{
-	HBufC8* buf = HBufC8::New(KMaxHosts * 560 + 16);
+	HBufC8* buf = HBufC8::New(KHostsFileMax);
 	if (!buf)
 		return KErrNoMemory;
 	TPtr8 data(buf->Des());
@@ -5391,6 +5521,30 @@ TInt CHostList::Save()
 			data.Append((TUint8)(h.iLastUsed >> (8 * b)));
 		data.Append((TUint8)h.iLastResult);
 		}
+	// (1.06) after that, where 1.05 and before do not look: "PG" 1, then
+	// each host's icon (a byte) and folder (length-prefixed), then how many
+	// headings are shut and their names. A heading no host has any more is
+	// forgotten here.
+	data.Append('P');
+	data.Append('G');
+	data.Append(1);
+	for (TInt i = 0; i < iEntries->Count(); i++)
+		{
+		const THostEntry& h = (*iEntries)[i];
+		data.Append((TUint8)h.iIcon);
+		PutStr(data, h.iFolder);
+		}
+	for (TInt i = iShutCount - 1; i >= 0; i--)
+		{
+		TBool used = iShut[i] == KPtShutPinned || iShut[i] == KPtShutRest;
+		for (TInt k = 0; k < iEntries->Count() && !used; k++)
+			used = (*iEntries)[k].iFolder.CompareF(iShut[i]) == 0;
+		if (!used)
+			iShut[i] = iShut[--iShutCount];
+		}
+	data.Append((TUint8)iShutCount);
+	for (TInt i = 0; i < iShutCount; i++)
+		PutStr(data, iShut[i]);
 	TInt r = SafeWrite(iFs, KHostsFile, data);
 	data.FillZ();
 	delete buf;
@@ -5760,7 +5914,8 @@ TBool CSnippetList::HasFolder(const TDesC& aName) const
 // style guide's shortcuts are all Ctrl+letter or Shift+Ctrl+letter (0.79
 // dropped 1-9 and 0). A saved snippet on a key no longer here loses its key
 // when loaded (0.71 took B for View > Show toolbar; a digit loads as none).
-static const char KSnippetKeys[] = "FGIJLNQWXYZ";   // (1.02: O and R went to Edit file on server and Recent commands)
+static const char KSnippetKeys[] = "FIJLNQWXYZ";    // (1.02: O and R went to Edit file on server and Recent commands;
+                                                    // 1.06: G to tmux's session list)
 
 TInt SnippetKeyCount()
 	{
@@ -6663,6 +6818,9 @@ void CPsiTermAppUi::ConstructL()
 	LoadSettings(settings);
 	iHosts = CHostList::NewL(iCoeEnv->FsSession());
 	iHosts->Load();
+#ifdef PT_TESTSEED
+	SeedL();
+#endif
 	PtTmuxLoad(iCoeEnv->FsSession(), iTmux);     // 1.01: tmux settings
 	if (iHosts->Count() == 0 && settings.iSshUser.Length() > 0)
 		{
@@ -6873,12 +7031,13 @@ void CPsiTermAppUi::ShowToolBarL(TBool aShow)
 		}
 	for (TInt i = 0; i < KMaxSessions; i++)   // (1.04) every connection
 		if (iSessions[i])
-			iSessions[i]->SetTermRectL(TermRect(aShow));
+			iSessions[i]->SetTermRectL(ViewRect(aShow));
 	if (iBrowse)
 		iBrowse->SetViewRectL(TermRect(aShow));
 	if (iStart)
 		iStart->SetViewRectL(TermRect(aShow));
 	EditorRectL(TermRect(aShow));
+	SessionsSync();                          // (1.06) the connections' tabs take the new width
 	}
 
 // ----- 0.91: the file view (Get file / Send file; ptxfer.cpp) ----------------------
@@ -6949,6 +7108,7 @@ void CPsiTermAppUi::ShowBrowseL(TBool aSend)
 	iView->SetFocus(EFalse);
 	iBrowse->SetFocus(ETrue);
 	iBrowse->DrawNow();
+	SessionsSync();                          // (1.06: the connections' tabs go under it)
 	iCoeEnv->WsSession().Flush();
 	iBrowse->StartL();
 	}
@@ -6976,6 +7136,7 @@ void CPsiTermAppUi::CloseBrowse()
 		}
 	iView->SetFocus(ETrue);
 	iView->DrawNow();
+	SessionsSync();
 	}
 
 void CPsiTermAppUi::BrowseCloseSoon()
@@ -7045,6 +7206,7 @@ CPsiTermAppUi::~CPsiTermAppUi()
 		}
 	delete iStartBar;
 	delete iStartIdle;
+	delete iSessBar;
 	DeleteEditor();
 	if (iBrowse)
 		{
@@ -7474,6 +7636,24 @@ void CPsiTermAppUi::ConnectHostL(TInt aIndex)
 		SwitchToL(live);
 		return;
 		}
+#ifdef PT_TESTSEED
+	// a test build: a stand-in connection, so the emulator (which has no
+	// Psion Internet) can show several of them as tabs
+	{
+	TInt demo = !iView->Live() ? iView->Slot() : -1;
+	for (TInt i = 1; i < KMaxSessions && demo < 0; i++)
+		if (!iSessions[i] || !iSessions[i]->Live())
+			demo = i;
+	if (demo < 0)
+		return;
+	CloseStart();
+	UseSessionL(demo);
+	iView->SetHostIndex(aIndex);
+	iView->DemoL(iHosts->At(aIndex).iName, (aIndex & 1) == 0);
+	SessionsSync();
+	return;
+	}
+#endif
 	TInt slot = PickSessionL();
 	if (slot < 0)
 		return;
@@ -7487,6 +7667,7 @@ void CPsiTermAppUi::ConnectHostL(TInt aIndex)
 	THostEntry e = iHosts->At(aIndex);
 	ConnectEntryL(e);
 	e.iPassword.FillZ();
+	SessionsSync();
 	}
 
 // (1.02) a saved server, or one typed in SSH to address...
@@ -7636,7 +7817,7 @@ void CPsiTermAppUi::UseSessionL(TInt aSlot)
 		v->SetSnippets(iSnippets);
 		v->SetHosts(iHosts);
 		v->SetRecent(iSessions[0]->Recent());
-		v->ConstructL(TermRect(iView->Settings().iToolbar), iView->Settings());
+		v->ConstructL(ViewRect(iView->Settings().iToolbar), iView->Settings());
 		v->SetGreys(iGrey);
 		v->ShareEntropy(*iView);
 		CleanupStack::Pop();             // v
@@ -7662,12 +7843,93 @@ void CPsiTermAppUi::SwitchToL(TInt aSlot)
 	if (CopySettings(old->Settings(), *v) || v->iSettingsStale)
 		TRAP_IGNORE(v->ApplyAppearanceL());
 	v->iSettingsStale = EFalse;
-	v->SetTermRectL(TermRect(v->Settings().iToolbar));
+	v->SetTermRectL(ViewRect(v->Settings().iToolbar));
 	v->SetHidden(EFalse);
 	v->SetForeground(iForeground);
 	v->DrawNow();
 	UpdateReading();
 	TidySoon();
+	SessionsSync();
+	}
+
+// ----- (1.06) the connections as tabs (pttabs.cpp's CPtSessionBar) --------------
+// The strip is up while two or more connections are open; on a taller
+// screen (the netBook's 480 lines) with one as well, as Muxedo. It takes its
+// height from the terminal, so it comes and goes only when a connection
+// does. Under the Start view, the file view and the editor it is hidden,
+// and the terminal keeps its size.
+
+TRect CPsiTermAppUi::ViewRect(TBool aToolbar) const
+	{
+	TRect r = TermRect(aToolbar);
+	if (iSessBarUp)
+		r.iTl.iY += CPtSessionBar::Height();
+	return r;
+	}
+
+void CPsiTermAppUi::SessionsSync()
+	{
+	if (!iView)
+		return;
+	TInt slots[KMaxSessions];
+	TInt n = SessionList(slots);
+	TBool tall = iEikonEnv->ScreenDevice()->SizeInPixels().iHeight >= 400;
+	TBool want = n >= 2 || (tall && LiveSessions() >= 1);
+	TBool toolbar = iView->Settings().iToolbar;
+	TRect bar = TermRect(toolbar);
+	bar.iBr.iY = bar.iTl.iY + CPtSessionBar::Height();
+	if (want && !iSessBar)
+		{
+		TRAPD(err, iSessBar = CPtSessionBar::NewL(bar));
+		if (err != KErrNone || !iSessBar)
+			return;
+		iSessBar->MakeVisible(EFalse);
+		}
+	if (!iSessBar)
+		return;
+	if (want != iSessBarUp)
+		{
+		iSessBarUp = want;
+		TRect r = ViewRect(toolbar);
+		for (TInt i = 0; i < KMaxSessions; i++)
+			if (iSessions[i])
+				TRAP_IGNORE(iSessions[i]->SetTermRectL(r));
+		}
+	if (iSessBarUp)
+		{
+		TRAP_IGNORE(iSessBar->SetBarRectL(bar));
+		CPtSessionBar::TTab tabs[KMaxSessions];
+		for (TInt i = 0; i < n; i++)
+			{
+			CTermView* v = iSessions[slots[i]];
+			tabs[i].iSlot = slots[i];
+			SessionName(*v, tabs[i].iName);
+			TInt h = v->HostIndex();
+			tabs[i].iIcon = (h >= 0 && h < iHosts->Count()) ? iHosts->At(h).iIcon : 0;
+			tabs[i].iLive = v->Live();
+			tabs[i].iFront = (v == iView);
+			tabs[i].iX0 = tabs[i].iX1 = 0;
+			}
+		iSessBar->SetTabs(tabs, n);
+		}
+	TBool show = iSessBarUp && !iStart && !iBrowse && !iEdit;
+	if (iSessBar->IsVisible() != show)
+		{
+		iSessBar->MakeVisible(show);
+		if (show)
+			iSessBar->DrawNow();
+		}
+	}
+
+// A tap on a tab: that connection comes in front. Home is the Start view.
+void CPsiTermAppUi::SessionTabL(TInt aSlot)
+	{
+	if (iStart || iBrowse || iEdit)
+		return;
+	if (aSlot < 0)
+		OpenStartL();
+	else
+		SwitchToL(aSlot);
 	}
 
 // aFrom's settings into aTo, but for aTo's own server (host, user, port).
@@ -7763,6 +8025,7 @@ void CPsiTermAppUi::SessionEnded(CTermView* aView)
 		TidySoon();
 		return;
 		}
+	SessionsSync();
 	if (!aView->UserQuit())
 		return;                              // its messages stay on the screen
 	if (iStart || iBrowse || iEdit)
@@ -7802,6 +8065,7 @@ TInt CPsiTermAppUi::TidyCallback(TAny* aSelf)
 			delete v;
 			}
 		}
+	ui->SessionsSync();
 	return 0;
 	}
 
@@ -7944,9 +8208,13 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		TInt cur = iStart ? iStart->Current() : -1;
 		if (aMenuId == R_PT_START_EDIT_MENU)
 			{
+			TBuf<KPtFolderLen> folder;
+			if (!iStart || !iStart->CurrentFolder(folder))
+				aMenuPane->SetItemDimmed(EPtCmdStFolderRename, ETrue);
 			if (cur < 0)
 				{
 				aMenuPane->SetItemDimmed(EPtCmdStEdit, ETrue);
+				aMenuPane->SetItemDimmed(EPtCmdStLook, ETrue);
 				aMenuPane->SetItemDimmed(EPtCmdStDelete, ETrue);
 				aMenuPane->SetItemDimmed(EPtCmdStPin, ETrue);
 				}
@@ -8102,6 +8370,11 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		CleanupStack::PopAndDestroy();   // folders
 		return;
 		}
+	if (aMenuId == R_PT_TMUX_SESS_MENU)      // (1.06) tmux > Sessions, and the drop-down list
+		{
+		TmuxSessMenuL(aMenuPane);
+		return;
+		}
 	// tmux keys only mean something in an SSH session
 	if (aMenuId == R_PT_TMUX_MENU || aMenuId == R_PT_TMUX_WIN_MENU
 		|| aMenuId == R_PT_TMUX_PANE_MENU)
@@ -8111,14 +8384,13 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 				iView->Settings().iTmuxTabs ? EEikMenuItemSymbolOn : 0);
 		if (!iView->SshLoggedIn())
 			{
-			static const TInt KTmux[] = { EPtCmdTmuxCopy, EPtCmdTmuxDetach, EPtCmdTmuxMouse,
-				EPtCmdTmuxSessions };
+			static const TInt KTmux[] = { EPtCmdTmuxCopy, EPtCmdTmuxDetach, EPtCmdTmuxMouse };
 			static const TInt KWin[] = { EPtCmdTmuxNew, EPtCmdTmuxNext, EPtCmdTmuxPrev,
 				EPtCmdTmuxChoose, EPtCmdTmuxRename, EPtCmdTmuxCloseWin };
 			static const TInt KPane[] = { EPtCmdTmuxSplitH, EPtCmdTmuxSplitV, EPtCmdTmuxPane,
 				EPtCmdTmuxZoom, EPtCmdTmuxEven, EPtCmdTmuxBreak, EPtCmdTmuxClosePane };
 			const TInt* ids = KTmux;
-			TInt n = 4;
+			TInt n = 3;                      // (Sessions is a cascade since 1.06: its own items dim)
 			if (aMenuId == R_PT_TMUX_WIN_MENU) { ids = KWin; n = 6; }
 			else if (aMenuId == R_PT_TMUX_PANE_MENU) { ids = KPane; n = 7; }
 			for (TInt i = 0; i < n; i++)
@@ -8233,6 +8505,16 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	if (aCommand >= EPtCmdHost0 && aCommand < EPtCmdHost0 + KMaxHosts)
 		{
 		ConnectHostL(aCommand - EPtCmdHost0);
+		return;
+		}
+	if (aCommand == EPtCmdTmuxSessPopup)     // (1.06) Shift+Ctrl+G: tmux's sessions, as a list
+		{
+		TmuxSessPopupL();
+		return;
+		}
+	if (aCommand >= EPtCmdTmuxSess0 && aCommand <= EPtCmdTmuxSess5)
+		{
+		TmuxSessCommandL(aCommand - EPtCmdTmuxSess0);
 		return;
 		}
 	if (aCommand >= EPtCmdSnippet0 && aCommand < EPtCmdSnippet0 + KMaxSnippets)
