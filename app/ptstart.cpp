@@ -9,10 +9,13 @@
 // highlighted server's details (one line on the 5mx; a panel on the
 // Series 7, which has the room), with how its last connection went.
 //
-// Enter (or a tap on the highlighted row) connects; typing a letter goes to
-// the next server whose name starts with it. The view goes over the terminal
-// as the file view does (ptxfer.cpp), with its own menus, shortcuts and
-// toolbar; View > Show terminal (Ctrl+Q) goes back to the terminal.
+// Enter (or a tap on the highlighted row) connects. 1.08: typing goes in
+// the field at the top and only the servers with that text stay; each row
+// has a "..." button (Tab) for the server's own menu; the sections are
+// always Pinned, Recent, the folders and the rest, with "Add server" last.
+// The view goes over the terminal as the file view does (ptxfer.cpp), with
+// its own menus, shortcuts and toolbar; View > Show terminal (Ctrl+Q) goes
+// back to the terminal.
 
 #include "psiterm.h"
 #include "pticons.h"
@@ -24,6 +27,8 @@
 #include <eikcmbut.h>
 #include <eikmenub.h>
 #include <eiktxtut.h>
+#include <eikcfdlg.h>       // CEikFileOpenDialog
+#include <eikon.rsg>
 #include <psiterm.rsg>
 
 #ifndef TRAP_IGNORE
@@ -250,6 +255,8 @@ void CPtStartView::Layout()
 	// two lines a server: the name, then user@address
 	iRowH = f->HeightInPixels() + small->HeightInPixels() + (tall ? 16 : 6);
 	iFootH = tall ? 4 * (small->HeightInPixels() + 4) + 22 : small->HeightInPixels() + 6;
+	iAddH = f->HeightInPixels() + (tall ? 16 : 6);
+	iMoreW = tall ? 30 : 22;
 	iListY = iBandH;
 	iFootY = h - iFootH;
 	iRows = (iFootY - iListY) / iRowH;
@@ -263,7 +270,9 @@ static void RowKey(TInt aKind, const TDesC& aFolder, TDes& aKey)
 	{
 	if (aKind == 0)
 		aKey = KPtShutPinned;
-	else if (aKind == 2)
+	else if (aKind == 1)
+		aKey = KPtShutRecent;
+	else if (aKind == 3)
 		aKey = KPtShutRest;
 	else
 		aKey = Upto(aFolder, aKey.MaxLength());
@@ -283,24 +292,44 @@ void CPtStartView::HeadName(TInt aRow, TDes& aName) const
 		return;
 	if (iRow[aRow].iKind == EHeadPinned)
 		aName = _L("Pinned");
+	else if (iRow[aRow].iKind == EHeadRecent)
+		aName = _L("Recent");
 	else if (iRow[aRow].iKind == EHeadRest)
-		aName = iFolders > 0 ? _L("Other servers") : _L("Recent");
+		aName = iFolders > 0 ? _L("Other servers") : _L("All servers");
 	else
 		aName = Upto(iHosts.At(iRow[aRow].iRef).iFolder, aName.MaxLength());
 	}
 
+// (1.08) Does the server have the text typed in the field at the top: in
+// its name, address, user or folder?
+TBool CPtStartView::Matches(const THostEntry& aEntry) const
+	{
+	if (iFilter.Length() == 0)
+		return ETrue;
+	return aEntry.iName.FindF(iFilter) >= 0 || aEntry.iHost.FindF(iFilter) >= 0
+		|| aEntry.iUser.FindF(iFilter) >= 0 || aEntry.iFolder.FindF(iFilter) >= 0;
+	}
+
 // One heading and its servers: the pinned ones in their saved order, a
 // folder's (or the rest) most recently used first. A pinned server is under
-// Pinned only.
+// Pinned only. Recent (1.08) is the few used last, whichever folder they
+// are in: they are under their folder as well.
 void CPtStartView::AddSectionL(TInt aKind, const TDesC& aFolder, TBool aHeads)
 	{
 	TInt list[KMaxHosts];
 	TInt n = 0;
+	TBool finding = iFilter.Length() > 0;
+	if (aKind == EHeadRecent && finding)
+		return;                              // (what is found is listed once)
 	for (TInt i = 0; i < iServers; i++)
 		{
 		const THostEntry& e = iHosts.At(i);
 		TBool pinned = (e.iFlags & KPtHostPinned) != 0;
 		if (aKind == EHeadPinned ? !pinned : pinned)
+			continue;
+		if (!Matches(e))
+			continue;
+		if (aKind == EHeadRecent && e.iLastUsed == 0)
 			continue;
 		if (aKind == EHeadFolder && e.iFolder.CompareF(aFolder) != 0)
 			continue;
@@ -316,6 +345,9 @@ void CPtStartView::AddSectionL(TInt aKind, const TDesC& aFolder, TBool aHeads)
 		list[at] = i;
 		n++;
 		}
+	const TInt KRecent = Rect().Height() >= 400 ? 4 : 3;
+	if (aKind == EHeadRecent && n > KRecent)
+		n = KRecent;
 	if (n == 0)
 		return;
 	TBool shut = EFalse;
@@ -323,7 +355,7 @@ void CPtStartView::AddSectionL(TInt aKind, const TDesC& aFolder, TBool aHeads)
 		{
 		TBuf<KPtFolderLen> key;
 		RowKey(aKind, aFolder, key);
-		shut = iHosts.Shut(key);
+		shut = iHosts.Shut(key) && !finding;
 		TRow& h = iRow[iCount++];
 		h.iHost = -1;
 		h.iKind = aKind;
@@ -342,9 +374,10 @@ void CPtStartView::AddSectionL(TInt aKind, const TDesC& aFolder, TBool aHeads)
 		}
 	}
 
-// Pinned first, then each folder (in alphabetical order), then the servers
-// in no folder. With no folders it is as before 1.06: Pinned and Recent, or
-// no headings at all when there is only one of those.
+// Pinned first, then Recent (the few used last), then each folder (in
+// alphabetical order), then the servers in no folder ("All servers" when
+// there are no folders), and last the "Add server" row. With text typed in
+// the field, only the servers that have it.
 void CPtStartView::ReloadL(TInt aSelectHost)
 	{
 	// what stays highlighted: a server, or the heading it was on
@@ -370,6 +403,8 @@ void CPtStartView::ReloadL(TInt aSelectHost)
 			rest = ETrue;
 			continue;
 			}
+		if (!Matches(e))
+			continue;
 		TBool seen = EFalse;
 		for (TInt k = 0; k < folders; k++)
 			if (iHosts.At(folder[k]).iFolder.CompareF(e.iFolder) == 0)
@@ -386,15 +421,25 @@ void CPtStartView::ReloadL(TInt aSelectHost)
 		folders++;
 		}
 	iFolders = folders;
-	TBool heads = folders > 0 || (pinned && rest);
+	(void)pinned;
+	(void)rest;
+	TBool heads = ETrue;                     // (1.08: always, so the sections read the same every time)
 	AddSectionL(EHeadPinned, KNullDesC, heads);
+	AddSectionL(EHeadRecent, KNullDesC, heads);
 	for (TInt k = 0; k < folders; k++)
 		AddSectionL(EHeadFolder, iHosts.At(folder[k]).iFolder, heads);
 	AddSectionL(EHeadRest, KNullDesC, heads);
+	if (iCount < KMaxRows)
+		{
+		TRow& add = iRow[iCount++];          // the "Add server" row, always last
+		add.iHost = -2;
+		add.iKind = add.iRef = add.iCount = 0;
+		add.iShut = EFalse;
+		}
 	// the highlight: the server; its heading if that is shut; the heading
 	// it was on; else the first server
 	iSel = -1;
-	for (TInt r = 0; r < iCount && keep >= 0; r++)
+	for (TInt r = 0; r < iCount && keep >= 0 && iSel < 0; r++)
 		if (iRow[r].iHost == keep)
 			iSel = r;
 	if (iSel < 0 && keep >= 0 && keep < iServers)
@@ -414,7 +459,7 @@ void CPtStartView::ReloadL(TInt aSelectHost)
 		}
 	for (TInt r = 0; r < iCount && iSel < 0; r++)
 		if (!IsHead(r))
-			iSel = r;
+			iSel = r;                        // (the first server; the "Add server" row with none)
 	if (iSel < 0)
 		iSel = 0;
 	Layout();
@@ -431,7 +476,35 @@ void CPtStartView::ReloadL(TInt aSelectHost)
 
 TInt CPtStartView::Current() const
 	{
-	return iCount > 0 && iSel >= 0 && iSel < iCount ? iRow[iSel].iHost : -1;
+	return iCount > 0 && iSel >= 0 && iSel < iCount && iRow[iSel].iHost >= 0 ? iRow[iSel].iHost : -1;
+	}
+
+// The field at the top: what is typed there changed
+void CPtStartView::FilterChangedL()
+	{
+	iTop = 0;
+	ReloadL();
+	DrawNow();
+	Command(EPtCmdStSync);
+	}
+
+void CPtStartView::ClearFilter()
+	{
+	if (iFilter.Length() == 0)
+		return;
+	iFilter.Zero();
+	TRAP_IGNORE(FilterChangedL());
+	}
+
+TBool CPtStartView::RowMenuPos(TPoint& aPos) const
+	{
+	if (Current() < 0)
+		return EFalse;
+	TInt y = iListY;
+	for (TInt r = iTop; r < iSel; r++)
+		y += RowHeight(r);
+	aPos = PositionRelativeToScreen() + TPoint(Rect().Width() - 14, y + iRowH - 4);
+	return ETrue;
 	}
 
 TBool CPtStartView::CurrentFolder(TDes& aName) const
@@ -439,7 +512,7 @@ TBool CPtStartView::CurrentFolder(TDes& aName) const
 	aName.Zero();
 	if (iSel < 0 || iSel >= iCount)
 		return EFalse;
-	if (IsHead(iSel) && iRow[iSel].iKind != EHeadFolder)
+	if (IsAdd(iSel) || (IsHead(iSel) && iRow[iSel].iKind != EHeadFolder))
 		return EFalse;
 	aName = Upto(iHosts.At(iRow[iSel].iRef).iFolder, aName.MaxLength());
 	return aName.Length() > 0;
@@ -530,30 +603,38 @@ TKeyResponse CPtStartView::OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode
 			}
 		return EKeyWasConsumed;
 	case EKeyEnter:
-		Command(EPtCmdStConnect);            // (a heading: opens or shuts it)
+		if (IsAdd(iSel))
+			Command(EPtCmdStNew);
+		else
+			Command(EPtCmdStConnect);        // (a heading: opens or shuts it)
 		return EKeyWasConsumed;
 	case EKeyEscape:
-		Command(EPtCmdStTerminal);
+		if (iFilter.Length())
+			ClearFilter();                   // (first what was typed goes, then the view)
+		else
+			Command(EPtCmdStTerminal);
+		return EKeyWasConsumed;
+	case EKeyTab:
+		Command(EPtCmdStRowMenu);            // (1.08) the server's own menu, as its "..." button
+		return EKeyWasConsumed;
+	case EKeyBackspace:
+		if (iFilter.Length())
+			{
+			iFilter.SetLength(iFilter.Length() - 1);
+			FilterChangedL();
+			}
 		return EKeyWasConsumed;
 	default:
 		break;
 		}
-	// a letter: the next server whose name starts with it
-	TChar c(aKeyEvent.iCode);
-	if (aKeyEvent.iCode >= 0x20 && aKeyEvent.iCode < 0x100 && c.IsAlphaDigit() && iCount > 0)
+	// (1.08) anything typed goes in the field at the top: only the servers
+	// with it in their name, address, user or folder stay in the list
+	if (aKeyEvent.iCode >= 0x20 && aKeyEvent.iCode < 0x100 && aKeyEvent.iCode != 0x7f)
 		{
-		c.Fold();
-		for (TInt k = 1; k <= iCount; k++)
+		if (iFilter.Length() < iFilter.MaxLength() && !(aKeyEvent.iCode == ' ' && iFilter.Length() == 0))
 			{
-			TInt r = (iSel + k) % iCount;
-			if (IsHead(r))
-				continue;
-			const TDesC& name = iHosts.At(iRow[r].iHost).iName;
-			if (name.Length() && TChar(name[0]).GetLowerCase() == c.GetLowerCase())
-				{
-				Move(r);
-				break;
-				}
+			iFilter.Append((TText)aKeyEvent.iCode);
+			FilterChangedL();
 			}
 		return EKeyWasConsumed;
 		}
@@ -564,11 +645,26 @@ void CPtStartView::HandlePointerEventL(const TPointerEvent& aEvent)
 	{
 	if (aEvent.iType != TPointerEvent::EButton1Down)
 		return;
+	if (iServers == 0)
+		{
+		Command(EPtCmdStNew);       // (nothing saved: the whole page is "Add server")
+		return;
+		}
 	TInt r = HitTest(aEvent.iPosition.iY - Rect().iTl.iY);
 	if (r < 0)
 		return;
 	if (IsHead(r))
 		ToggleL(r);                 // (a tap on a heading opens or shuts it)
+	else if (IsAdd(r))
+		{
+		Move(r);
+		Command(EPtCmdStNew);
+		}
+	else if (aEvent.iPosition.iX >= Rect().iBr.iX - iMoreW - 18)
+		{
+		Move(r);                    // (1.08) its "..." button: the server's menu
+		Command(EPtCmdStRowMenu);
+		}
 	else if (r == iSel)
 		Command(EPtCmdStConnect);   // (a tap on the highlight connects)
 	else
@@ -797,9 +893,26 @@ void CPtStartView::DrawRow(CWindowGc& aGc, TInt aY, TInt aRow) const
 		aGc.SetPenColor(KRgbWhite);
 		aGc.DrawText(init, TPoint(bx + (bs - f->TextWidthInPixels(init)) / 2, by + (bs + f->AscentInPixels()) / 2 - 1));
 		}
+	// (1.08) its menu's button at the right: three dots in a rounded box
+	{
+	TRect more(card.iBr.iX - iMoreW - 6, row.iTl.iY + (iRowH - (tall ? 24 : 18)) / 2, card.iBr.iX - 6, 0);
+	more.iBr.iY = more.iTl.iY + (tall ? 24 : 18);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.SetPenColor(sel ? l.iSoft : l.iRule);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(sel ? l.iPaper : l.iPaper);
+	aGc.DrawRoundRect(more, TSize(4, 4));
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushColor(l.iSoft);
+	TInt mx = (more.iTl.iX + more.iBr.iX) / 2, my = (more.iTl.iY + more.iBr.iY) / 2;
+	for (TInt d = -1; d <= 1; d++)
+		aGc.DrawRect(TRect(mx + d * 5 - 1, my - 1, mx + d * 5 + 1, my + 1));
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	}
 	// the name, and user@address under it
 	TInt tx = bx + bs + (tall ? 12 : 8);
-	TInt right = card.iBr.iX - 8;
+	TInt right = card.iBr.iX - iMoreW - 14;
 	TBuf<40> when;
 	RelativeWhen(e.iLastUsed, when);
 	// (1.04) connected now (in front or behind): says so in place of when
@@ -863,7 +976,8 @@ void CPtStartView::DrawRow(CWindowGc& aGc, TInt aY, TInt aRow) const
 	aGc.DiscardFont();
 	}
 
-// Nothing saved yet: a picture and the way in, in the middle
+// Nothing saved yet: a picture, and "Add server" as a button in the middle
+// (Enter, or a tap anywhere, adds one)
 void CPtStartView::DrawEmpty(CWindowGc& aGc) const
 	{
 	TStartLook l;
@@ -872,9 +986,9 @@ void CPtStartView::DrawEmpty(CWindowGc& aGc) const
 	const CFont* f = iEikonEnv->NormalFont();
 	const CFont* small = iEikonEnv->AnnotationFont();
 	TInt cx = (r.iTl.iX + r.iBr.iX) / 2;
-	TInt mid = r.iTl.iY + (iListY + iFootY) / 2;
+	TInt mid = r.iTl.iY + (iListY + r.Height()) / 2 - 10;
 	// a small terminal: a rounded screen with a prompt
-	TRect scr(cx - 26, mid - 40, cx + 26, mid - 6);
+	TRect scr(cx - 26, mid - 54, cx + 26, mid - 20);
 	aGc.SetPenStyle(CGraphicsContext::ENullPen);
 	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
 	aGc.SetBrushColor(iColour ? l.iAccent : TRgb::Gray16(4));
@@ -886,11 +1000,110 @@ void CPtStartView::DrawEmpty(CWindowGc& aGc) const
 	aGc.DrawText(_L(">_"), TPoint(scr.iTl.iX + 10, scr.iTl.iY + 6 + f->AscentInPixels()));
 	aGc.SetPenColor(l.iInk);
 	TPtrC a(_L("No servers yet"));
-	aGc.DrawText(a, TPoint(cx - f->TextWidthInPixels(a) / 2, mid + 6 + f->AscentInPixels()));
+	aGc.DrawText(a, TPoint(cx - f->TextWidthInPixels(a) / 2, mid - 12 + f->AscentInPixels()));
+	// the button
+	TPtrC add(_L("+  Add server"));
+	TInt bw = f->TextWidthInPixels(add) + 36, bh = f->HeightInPixels() + 10;
+	TRect but(cx - bw / 2, mid + 12, cx + bw / 2, mid + 12 + bh);
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(iColour ? l.iAccent : KRgbBlack);
+	aGc.DrawRoundRect(but, TSize(6, 6));
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.SetPenColor(KRgbWhite);
+	aGc.DrawText(add, TPoint(cx - f->TextWidthInPixels(add) / 2, but.iTl.iY + 5 + f->AscentInPixels()));
 	aGc.UseFont(small);
 	aGc.SetPenColor(l.iSoft);
-	TPtrC b(_L("Ctrl+N adds one - Ctrl+G connects to an address"));
-	aGc.DrawText(b, TPoint(cx - small->TextWidthInPixels(b) / 2, mid + 10 + f->HeightInPixels() + small->AscentInPixels()));
+	TPtrC b(_L("Enter adds one - Ctrl+G connects to an address - File > Import servers reads a list"));
+	aGc.DrawText(b, TPoint(cx - small->TextWidthInPixels(b) / 2, but.iBr.iY + 8 + small->AscentInPixels()));
+	aGc.DiscardFont();
+	}
+
+// (1.08) The last row: "+ Add server"
+void CPtStartView::DrawAdd(CWindowGc& aGc, TInt aY, TInt aRow) const
+	{
+	TStartLook l;
+	Look(iColour, l);
+	const CFont* f = iEikonEnv->NormalFont();
+	TRect r = Rect();
+	TBool tall = iRowH >= 40;
+	TInt pad = tall ? 8 : 4;
+	TRect line(r.iTl.iX, r.iTl.iY + aY, r.iBr.iX, r.iTl.iY + aY + iAddH);
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(l.iPaper);
+	aGc.DrawRect(line);
+	TRect card(line.iTl.iX + pad, line.iTl.iY + 1, line.iBr.iX - pad - 4, line.iBr.iY - 1);
+	if (aRow == iSel)
+		{
+		aGc.SetBrushColor(l.iHigh);
+		aGc.DrawRoundRect(card, TSize(6, 6));
+		}
+	// a plus in a ring where a server has its badge, then the words
+	TInt bs = tall ? 20 : 16;
+	TInt bx = card.iTl.iX + (tall ? 16 : 11), cy = (line.iTl.iY + line.iBr.iY) / 2;
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.SetPenColor(l.iAccent);
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.DrawEllipse(TRect(bx, cy - bs / 2, bx + bs, cy + bs / 2));
+	aGc.SetPenStyle(CGraphicsContext::ENullPen);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(l.iAccent);
+	TInt px = bx + bs / 2;
+	aGc.DrawRect(TRect(px - 4, cy - 1, px + 4, cy + 1));
+	aGc.DrawRect(TRect(px - 1, cy - 4, px + 1, cy + 4));
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.UseFont(f);
+	aGc.SetPenColor(l.iAccent);
+	aGc.DrawText(_L("Add server"), TPoint(bx + bs + (tall ? 14 : 10),
+		line.iTl.iY + (iAddH - f->HeightInPixels()) / 2 + f->AscentInPixels()));
+	aGc.DiscardFont();
+	}
+
+// (1.08) The field at the top: a magnifying glass, then what was typed, or
+// (in grey) what it is for
+void CPtStartView::DrawSearch(CWindowGc& aGc, const TRect& aBox) const
+	{
+	TStartLook l;
+	Look(iColour, l);
+	const CFont* f = iEikonEnv->NormalFont();
+	const CFont* small = iEikonEnv->AnnotationFont();
+	TBool on = iFilter.Length() > 0;
+	aGc.SetPenStyle(CGraphicsContext::ESolidPen);
+	aGc.SetPenColor(on ? l.iAccent : l.iFaint);
+	aGc.SetBrushStyle(CGraphicsContext::ESolidBrush);
+	aGc.SetBrushColor(iColour ? TRgb(238, 238, 238) : KRgbWhite);
+	aGc.DrawRoundRect(aBox, TSize(aBox.Height() / 2, aBox.Height() / 2));
+	aGc.SetBrushStyle(CGraphicsContext::ENullBrush);
+	TInt cy = (aBox.iTl.iY + aBox.iBr.iY) / 2;
+	TInt gx = aBox.iTl.iX + 9;
+	aGc.SetPenColor(l.iSoft);
+	aGc.DrawEllipse(TRect(gx, cy - 5, gx + 8, cy + 3));
+	aGc.DrawLine(TPoint(gx + 6, cy + 2), TPoint(gx + 11, cy + 7));
+	aGc.DrawLine(TPoint(gx + 7, cy + 2), TPoint(gx + 12, cy + 7));
+	TInt tx = gx + 17;
+	TInt room = aBox.iBr.iX - 10 - tx;
+	if (on)
+		{
+		TBuf<26> t(iFilter);
+		aGc.UseFont(f);
+		aGc.SetPenColor(l.iInk);
+		TextUtils::ClipToFit(t, *f, room - 4);
+		TInt base = cy - f->HeightInPixels() / 2 + f->AscentInPixels();
+		aGc.DrawText(t, TPoint(tx, base));
+		TInt x = tx + f->TextWidthInPixels(t) + 1;   // the cursor
+		aGc.DrawLine(TPoint(x, base - f->AscentInPixels() + 2), TPoint(x, base + 2));
+		}
+	else
+		{
+		TBuf<40> t(_L("Type to find a server"));
+		aGc.UseFont(small);
+		aGc.SetPenColor(l.iFaint);
+		TextUtils::ClipToFit(t, *small, room);
+		aGc.DrawText(t, TPoint(tx, cy - small->HeightInPixels() / 2 + small->AscentInPixels()));
+		}
 	aGc.DiscardFont();
 	}
 
@@ -912,16 +1125,21 @@ void CPtStartView::DrawDetail(CWindowGc& aGc) const
 	TInt h = Current();
 	if (h < 0)
 		{
-		if (!IsHead(iSel))
+		if (IsAdd(iSel))
+			t.Copy(_L("Enter adds a server  -  File > Import servers reads a list of them"));
+		else if (!IsHead(iSel))
 			return;
-		// a heading: what it holds, and how to open it
-		TBuf<24> name;
-		HeadName(iSel, name);
-		if (iRow[iSel].iKind == EHeadFolder)
-			t.Copy(_L("Folder "));
-		t.Append(name);
-		t.AppendFormat(iRow[iSel].iCount == 1 ? _L("  -  %d server") : _L("  -  %d servers"), iRow[iSel].iCount);
-		t.Append(iRow[iSel].iShut ? _L("  -  Enter opens it") : _L("  -  Enter shuts it"));
+		else
+			{
+			// a heading: what it holds, and how to open it
+			TBuf<24> name;
+			HeadName(iSel, name);
+			if (iRow[iSel].iKind == EHeadFolder)
+				t.Copy(_L("Folder "));
+			t.Append(name);
+			t.AppendFormat(iRow[iSel].iCount == 1 ? _L("  -  %d server") : _L("  -  %d servers"), iRow[iSel].iCount);
+			t.Append(iRow[iSel].iShut ? _L("  -  Enter opens it") : _L("  -  Enter shuts it"));
+			}
 		aGc.SetPenStyle(CGraphicsContext::ESolidPen);
 		aGc.SetPenColor(l.iRule);
 		aGc.DrawLine(TPoint(foot.iTl.iX + 8, foot.iTl.iY), TPoint(foot.iBr.iX - 8, foot.iTl.iY));
@@ -1043,6 +1261,7 @@ void CPtStartView::Draw(const TRect& /*aRect*/) const
 	gc.SetPenColor(l.iInk);
 	TInt ty = r.iTl.iY + (iBandH - title->HeightInPixels()) / 2 + title->AscentInPixels();
 	gc.DrawText(_L("Servers"), TPoint(r.iTl.iX + 12, ty));
+	TInt titleW = title->TextWidthInPixels(_L("Servers"));
 	TBuf<80> state;
 	CPsiTermAppUi* ui = (CPsiTermAppUi*)iEikonEnv->EikAppUi();
 	TInt live = ui->LiveSessions();
@@ -1061,17 +1280,39 @@ void CPtStartView::Draw(const TRect& /*aRect*/) const
 	else if (live > 1)
 		state.Format(_L("%d connections"), live);
 	else if (iServers == 1)
-		state.Copy(_L("1 saved"));
+		state.Copy(_L("1 server"));
 	else
-		state.Format(_L("%d saved"), iServers);
+		state.Format(_L("%d servers"), iServers);
 	gc.UseFont(small);
 	gc.SetPenColor(live && iColour ? TRgb(0, 150, 0) : l.iFaint);
-	gc.DrawText(state, TPoint(r.iBr.iX - 14 - small->TextWidthInPixels(state), ty));
+	TInt stateW = small->TextWidthInPixels(state);
+	gc.DrawText(state, TPoint(r.iBr.iX - 14 - stateW, ty));
 	gc.DiscardFont();
 	if (iServers == 0)
 		{
 		DrawEmpty(gc);
 		return;
+		}
+	// (1.08) the field between the title and the count
+	{
+	TInt bh = iBandH >= 34 ? 24 : iBandH - 6;
+	TInt by = r.iTl.iY + (iBandH - bh) / 2;
+	TRect box(r.iTl.iX + 12 + titleW + 20, by, r.iBr.iX - 14 - stateW - 16, by + bh);
+	if (box.Width() > 300)
+		box.iBr.iX = box.iTl.iX + 300;
+	if (box.Width() > 90)
+		DrawSearch(gc, box);
+	}
+	if (iFilter.Length() && iCount <= 1)
+		{
+		// nothing has what was typed
+		const CFont* f = iEikonEnv->NormalFont();
+		TBuf<60> none;
+		none.Format(_L("No server has \"%S\""), &iFilter);
+		gc.UseFont(f);
+		gc.SetPenColor(l.iSoft);
+		gc.DrawText(none, TPoint(r.iTl.iX + 24, r.iTl.iY + iListY + iAddH + 12 + f->AscentInPixels()));
+		gc.DiscardFont();
 		}
 	// the rows: headings and servers
 	TInt y = iListY;
@@ -1082,6 +1323,8 @@ void CPtStartView::Draw(const TRect& /*aRect*/) const
 			break;
 		if (IsHead(row))
 			DrawHead(gc, y, row);
+		else if (IsAdd(row))
+			DrawAdd(gc, y, row);
 		else
 			DrawRow(gc, y, row);
 		y += h;
@@ -1102,52 +1345,60 @@ void CPtStartView::Draw(const TRect& /*aRect*/) const
 	}
 
 // ============================================================================
-// Edit > Folder & icon... (1.06): the server's folder on the Start view and
-// its picture
+// The server dialog's pictures, and the folders (1.06; 1.08: the grid has
+// rows, for the forty-odd icons, and lives on the dialog's Icon page)
 // ============================================================================
 
-// The pictures in a row: the server's initial first, then each icon. Left
-// and Right choose; a tap chooses.
+// The pictures in rows: the server's initial first, then each icon. The
+// arrow keys choose; a tap chooses. Its name is under the grid.
 class CPtIconGrid : public CCoeControl
 	{
 public:
-	enum { KCell = 22 };
+	enum { KCell = 22, KCols = 15 };
 	TInt iIcon;                              // 0 (the initial) .. KPtHostIconCount
 	TBuf<24> iName;                          // the server's (its initial and colour)
+	static TInt Rows()
+		{
+		return (KPtHostIconCount + 1 + KCols - 1) / KCols;
+		}
 	void ConstructFromResourceL(TResourceReader& aReader)
 		{
 		aReader.ReadInt8();
 		}
 	TSize MinimumSize()
 		{
-		return TSize((KPtHostIconCount + 1) * KCell + 2, KCell + 4 + iEikonEnv->AnnotationFont()->HeightInPixels());
+		return TSize(KCols * KCell + 2, Rows() * KCell + 5 + iEikonEnv->AnnotationFont()->HeightInPixels());
 		}
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType)
 		{
 		if (aType != EEventKey)
 			return EKeyWasNotConsumed;
-		if (aKeyEvent.iCode == EKeyLeftArrow)
+		TInt to = iIcon;
+		switch (aKeyEvent.iCode)
 			{
-			iIcon = iIcon > 0 ? iIcon - 1 : KPtHostIconCount;
-			DrawNow();
-			return EKeyWasConsumed;
+		case EKeyLeftArrow:  to = iIcon > 0 ? iIcon - 1 : KPtHostIconCount; break;
+		case EKeyRightArrow: to = iIcon < KPtHostIconCount ? iIcon + 1 : 0; break;
+		case EKeyUpArrow:    to = iIcon - KCols; break;
+		case EKeyDownArrow:  to = iIcon + KCols; break;
+		default:
+			return EKeyWasNotConsumed;
 			}
-		if (aKeyEvent.iCode == EKeyRightArrow)
-			{
-			iIcon = iIcon < KPtHostIconCount ? iIcon + 1 : 0;
-			DrawNow();
-			return EKeyWasConsumed;
-			}
-		return EKeyWasNotConsumed;
+		if (to < 0 || to > KPtHostIconCount)
+			return EKeyWasNotConsumed;       // (off the top or bottom: the dialog's own keys)
+		iIcon = to;
+		DrawNow();
+		return EKeyWasConsumed;
 		}
 	void HandlePointerEventL(const TPointerEvent& aEvent)
 		{
 		if (aEvent.iType != TPointerEvent::EButton1Down)
 			return;
 		TInt c = (aEvent.iPosition.iX - Rect().iTl.iX - 1) / KCell;
-		if (c >= 0 && c <= KPtHostIconCount)
+		TInt r = (aEvent.iPosition.iY - Rect().iTl.iY - 1) / KCell;
+		TInt i = r * KCols + c;
+		if (c >= 0 && c < KCols && r >= 0 && i <= KPtHostIconCount)
 			{
-			iIcon = c;
+			iIcon = i;
 			DrawNow();
 			}
 		}
@@ -1169,7 +1420,8 @@ public:
 		const CFont* f = iEikonEnv->AnnotationFont();
 		for (TInt i = 0; i <= KPtHostIconCount; i++)
 			{
-			TRect cell(r.iTl.iX + 1 + i * KCell, r.iTl.iY + 1, r.iTl.iX + 1 + (i + 1) * KCell, r.iTl.iY + 1 + KCell);
+			TPoint tl(r.iTl.iX + 1 + (i % KCols) * KCell, r.iTl.iY + 1 + (i / KCols) * KCell);
+			TRect cell(tl, TSize(KCell, KCell));
 			TRect badge(cell.iTl.iX + 1, cell.iTl.iY + 1, cell.iBr.iX - 1, cell.iBr.iY - 1);
 			gc.SetPenStyle(CGraphicsContext::ENullPen);
 			gc.SetBrushStyle(CGraphicsContext::ESolidBrush);
@@ -1207,16 +1459,37 @@ public:
 					gc.DrawRect(TRect(cell.iTl.iX - 1, cell.iTl.iY - 1, cell.iBr.iX + 1, cell.iBr.iY + 1));
 				}
 			}
-		// its name under the row
-		TPtrC name(iIcon >= 1 && iIcon <= KPtHostIconCount ? TPtrC(KPtHostIconNames[iIcon - 1]) : TPtrC(_L("Initial")));
+		// its name under the grid
+		TBuf<40> name;
+		if (iIcon >= 1 && iIcon <= KPtHostIconCount)
+			name = TPtrC(KPtHostIconNames[iIcon - 1]);
+		else
+			name = _L("The name's first letter");
 		gc.SetBrushStyle(CGraphicsContext::ENullBrush);
 		gc.SetPenStyle(CGraphicsContext::ESolidPen);
 		gc.SetPenColor(iEikonEnv->ControlColor(EEikColorDialogText, *this));
 		gc.UseFont(f);
-		gc.DrawText(name, TPoint(r.iTl.iX + 2, r.iTl.iY + KCell + 3 + f->AscentInPixels()));
+		gc.DrawText(name, TPoint(r.iTl.iX + 2, r.iTl.iY + Rows() * KCell + 4 + f->AscentInPixels()));
 		gc.DiscardFont();
 		}
 	};
+
+CCoeControl* PtNewIconGridL()
+	{
+	return new(ELeave) CPtIconGrid;
+	}
+
+void PtIconGridSet(CCoeControl* aGrid, TInt aIcon, const TDesC& aName)
+	{
+	CPtIconGrid* g = (CPtIconGrid*)aGrid;
+	g->iIcon = aIcon >= 0 && aIcon <= KPtHostIconCount ? aIcon : 0;
+	g->iName = Upto(aName, 24);
+	}
+
+TInt PtIconGridIcon(const CCoeControl* aGrid)
+	{
+	return ((const CPtIconGrid*)aGrid)->iIcon;
+	}
 
 // a folder's name: New folder, Rename folder
 class CPtFolderNameDialog : public CEikDialog
@@ -1246,59 +1519,56 @@ private:
 	const TDesC& iTitle;
 	};
 
-static TBool AskFolderNameL(TDes& aName, const TDesC& aTitle)
+TBool PtAskFolderNameL(TDes& aName, const TDesC& aTitle)
 	{
 	CPtFolderNameDialog* dlg = new(ELeave) CPtFolderNameDialog(aName, aTitle);
 	return dlg->ExecuteLD(R_PT_FOLDER_NAME_DIALOG) != 0;
 	}
 
-class CPtLookDialog : public CEikDialog
+// the folders in use, in alphabetical order
+TInt PtFolderNames(const CHostList& aHosts, TBuf<KPtFolderLen>* aNames)
+	{
+	TInt n = 0;
+	for (TInt i = 0; i < aHosts.Count() && i < KMaxHosts; i++)
+		{
+		const TDesC& f = aHosts.At(i).iFolder;
+		if (f.Length() == 0)
+			continue;
+		TBool seen = EFalse;
+		for (TInt k = 0; k < n; k++)
+			if (aNames[k].CompareF(f) == 0)
+				seen = ETrue;
+		if (seen)
+			continue;
+		TInt at = n;
+		while (at > 0 && aNames[at - 1].CompareF(f) > 0)
+			{
+			aNames[at] = aNames[at - 1];
+			at--;
+			}
+		aNames[at] = Upto(f, KPtFolderLen);
+		n++;
+		}
+	return n;
+	}
+
+// Edit > Move to folder... (1.08): None, a folder in use, or a new one
+class CPtMoveDialog : public CEikDialog
 	{
 public:
-	CPtLookDialog(THostEntry& aEntry, CHostList& aHosts) : iEntry(aEntry), iHosts(aHosts) {}
+	CPtMoveDialog(TDes& aFolder, const CHostList& aHosts) : iFolder(aFolder), iHosts(aHosts) {}
 private:
-	SEikControlInfo CreateCustomControlL(TInt aControlType)
-		{
-		SEikControlInfo info;
-		info.iControl = NULL;
-		info.iTrailerTextId = 0;
-		info.iFlags = 0;
-		if (aControlType == EPtCtIconGrid)
-			info.iControl = new(ELeave) CPtIconGrid;
-		return info;
-		}
 	void PreLayoutDynInitL()
 		{
-		// None, each folder in use (in alphabetical order), New folder...
 		CDesCArrayFlat* a = new(ELeave) CDesCArrayFlat(8);
 		CleanupStack::PushL(a);
 		a->AppendL(_L("None"));
-		iNameCount = 0;
+		iNameCount = PtFolderNames(iHosts, iNames);
 		TInt current = 0;
-		for (TInt i = 0; i < iHosts.Count() && i < KMaxHosts; i++)
-			{
-			const TDesC& f = iHosts.At(i).iFolder;
-			if (f.Length() == 0)
-				continue;
-			TBool seen = EFalse;
-			for (TInt k = 0; k < iNameCount; k++)
-				if (iNames[k].CompareF(f) == 0)
-					seen = ETrue;
-			if (seen)
-				continue;
-			TInt at = iNameCount;
-			while (at > 0 && iNames[at - 1].CompareF(f) > 0)
-				{
-				iNames[at] = iNames[at - 1];
-				at--;
-				}
-			iNames[at] = Upto(f, KPtFolderLen);
-			iNameCount++;
-			}
 		for (TInt k = 0; k < iNameCount; k++)
 			{
 			a->AppendL(iNames[k]);
-			if (iNames[k].CompareF(iEntry.iFolder) == 0)
+			if (iNames[k].CompareF(iFolder) == 0)
 				current = k + 1;
 			}
 		a->AppendL(_L("New folder..."));
@@ -1307,9 +1577,6 @@ private:
 		c->SetArrayExternalOwnership(EFalse);
 		CleanupStack::Pop();
 		c->SetCurrentItem(current);
-		CPtIconGrid* g = (CPtIconGrid*)Control(EPtDlgLookIcon);
-		g->iIcon = iEntry.iIcon >= 0 && iEntry.iIcon <= KPtHostIconCount ? iEntry.iIcon : 0;
-		g->iName = Upto(iEntry.iName, 24);
 		}
 	TBool OkToExitL(TInt /*aButtonId*/)
 		{
@@ -1317,17 +1584,16 @@ private:
 		TBuf<KPtFolderLen> folder;
 		if (at > iNameCount)
 			{
-			if (!AskFolderNameL(folder, _L("New folder")))
+			if (!PtAskFolderNameL(folder, _L("New folder")))
 				return EFalse;               // (back to this dialog)
 			}
 		else if (at >= 1)
 			folder = iNames[at - 1];
-		iEntry.iFolder = folder;
-		iEntry.iIcon = ((CPtIconGrid*)Control(EPtDlgLookIcon))->iIcon;
+		iFolder = folder;
 		return ETrue;
 		}
-	THostEntry& iEntry;
-	CHostList& iHosts;
+	TDes& iFolder;
+	const CHostList& iHosts;
 	TBuf<KPtFolderLen> iNames[KMaxHosts];
 	TInt iNameCount;
 	};
@@ -1338,6 +1604,7 @@ private:
 
 void CPsiTermAppUi::OpenStartL()
 	{
+	iHosts->MergeDisk();                     // (1.08) Hosts.dat copied over meanwhile: its servers come in
 	if (iStart)
 		{
 		iStart->ReloadL();
@@ -1460,7 +1727,9 @@ void CPsiTermAppUi::NewHostL()
 	TInt cur = iStart ? iStart->Current() : -1;
 	if (cur >= 0)
 		e.iUser = iHosts->At(cur).iUser;     // most people reuse a user name
-	if (EditHostL(e))
+	if (iStart)
+		iStart->CurrentFolder(e.iFolder);    // (1.08) in the folder the highlight is in
+	if (EditHostL(e, ETrue))
 		{
 		iHosts->AddL(e);
 		iHosts->iLast = iHosts->Count() - 1;
@@ -1483,9 +1752,12 @@ void CPsiTermAppUi::EditHostAtL(TInt aIndex)
 		{
 		iHosts->At(aIndex) = e;
 		iHosts->iLast = aIndex;
+		if (e.iFolder.Length())
+			iHosts->SetShut(e.iFolder, EFalse);   // (its folder opens, so it can be seen)
 		iHosts->Save();
 		if (iStart)
 			iStart->ReloadL(aIndex);
+		SessionsSync();                      // (a connection's tab has the name and icon)
 		}
 	e.iPassword.FillZ();
 	}
@@ -1517,29 +1789,165 @@ void CPsiTermAppUi::DeleteHostL(TInt aIndex)
 		iStart->ReloadL(aIndex < iHosts->Count() ? aIndex : iHosts->Count() - 1);
 	}
 
-// ----- Edit > Folder & icon... (Ctrl+F), Rename folder... (1.06) ---------------
+// ----- Duplicate server, Move to folder..., Rename folder..., the row's menu ----
 
-void CPsiTermAppUi::HostLookL(TInt aIndex)
+// (1.08) A copy of the server, to change: "Dev 2", not pinned, never used
+void CPsiTermAppUi::DuplicateHostL(TInt aIndex)
 	{
 	if (aIndex < 0 || aIndex >= iHosts->Count())
 		{
 		iEikonEnv->InfoMsg(_L("No server selected"));
 		return;
 		}
-	THostEntry e = iHosts->At(aIndex);
-	CPtLookDialog* dlg = new(ELeave) CPtLookDialog(e, *iHosts);
-	if (dlg->ExecuteLD(R_PT_LOOK_DIALOG))
+	if (iHosts->Count() >= KMaxHosts)
 		{
-		iHosts->At(aIndex).iFolder = e.iFolder;
-		iHosts->At(aIndex).iIcon = e.iIcon;
-		if (e.iFolder.Length())
-			iHosts->SetShut(e.iFolder, EFalse);   // (its folder opens, so it can be seen)
+		iEikonEnv->InfoMsg(_L("Server list is full - delete one first"));
+		return;
+		}
+	THostEntry e = iHosts->At(aIndex);
+	if (e.iName.Length() > e.iName.MaxLength() - 2)
+		e.iName.SetLength(e.iName.MaxLength() - 2);
+	e.iName.Append(_L(" 2"));
+	e.iFlags &= ~KPtHostPinned;
+	e.iLastUsed = 0;
+	e.iLastResult = EPtResultNever;
+	iHosts->AddL(e);
+	e.iPassword.FillZ();
+	iHosts->iLast = iHosts->Count() - 1;
+	iHosts->Save();
+	if (iStart)
+		iStart->ReloadL(iHosts->iLast);
+	iEikonEnv->InfoMsg(_L("Server duplicated"));
+	}
+
+void CPsiTermAppUi::MoveHostL(TInt aIndex)
+	{
+	if (aIndex < 0 || aIndex >= iHosts->Count())
+		{
+		iEikonEnv->InfoMsg(_L("No server selected"));
+		return;
+		}
+	TBuf<KPtFolderLen> folder(iHosts->At(aIndex).iFolder);
+	CPtMoveDialog* dlg = new(ELeave) CPtMoveDialog(folder, *iHosts);
+	if (!dlg->ExecuteLD(R_PT_MOVE_DIALOG))
+		return;
+	iHosts->At(aIndex).iFolder = folder;
+	if (folder.Length())
+		iHosts->SetShut(folder, EFalse);     // (its folder opens, so it can be seen)
+	iHosts->Save();
+	if (iStart)
+		iStart->ReloadL(aIndex);
+	}
+
+// The highlighted server's own menu: Tab, or its "..." button
+void CPsiTermAppUi::RowMenuL(const TPoint& aScreenPos)
+	{
+	LaunchPopupMenuL(R_PT_ROW_MENU, aScreenPos, EPopupTargetTopRight);
+	}
+
+// Hosts.dat changed on the disk while PsiTerm was open (copied there by
+// hand, restored): the servers in it that are not here are taken in
+void CPsiTermAppUi::HostsFromDiskL()
+	{
+	TInt added = iHosts->MergeDisk();
+	if (added <= 0)
+		return;
+	if (iStart)
+		{
+		iStart->ReloadL();
+		iStart->DrawNow();
+		}
+	TBuf<60> m;
+	m.Format(added == 1 ? _L("%d server read from the disk") : _L("%d servers read from the disk"), added);
+	iEikonEnv->InfoMsg(m);
+	}
+
+// ----- File > Import servers... (1.08) -----------------------------------------
+// A PsiTerm Hosts.dat (another Psion's, a backup's) or an OpenSSH config
+// file. Its servers that are not here already (the same address, port and
+// user) are added, with their folder, icon and pin; a saved password comes
+// across only from this Psion's own files (it is scrambled with the
+// Psion's number), and an SSH key that is not on this Psion becomes the
+// first key.
+void CPsiTermAppUi::ImportServersL()
+	{
+	RFs& fs = iCoeEnv->FsSession();
+	TFileName name(_L("D:\\Install\\Hosts.dat"));
+	TEntry entry;
+	if (fs.Entry(name, entry) != KErrNone)
+		name = _L("C:\\Documents\\");
+	CEikFileOpenDialog* open = new(ELeave) CEikFileOpenDialog(&name, R_PT_TBUF_IMPORT_TITLE);
+	if (!open->ExecuteLD(R_EIK_DIALOG_FILE_OPEN))
+		return;
+	if (fs.Entry(name, entry) != KErrNone)
+		{
+		iEikonEnv->InfoMsg(_L("File not found"));
+		return;
+		}
+	CHostList* in = CHostList::NewL(fs);
+	CleanupStack::PushL(in);
+	TInt r = in->ReadFile(name);             // a Hosts.dat?
+	if (r != KErrNone)
+		{
+		// no: an OpenSSH config file (text, up to 32 KB of it)
+		RFile file;
+		r = file.Open(fs, name, EFileRead | EFileShareReadersOnly);
+		if (r == KErrNone)
+			{
+			HBufC8* text = HBufC8::NewLC(32768);
+			TPtr8 p(text->Des());
+			r = file.Read(p);
+			file.Close();
+			TBool looksText = ETrue;
+			for (TInt i = 0; i < p.Length() && i < 256; i++)
+				if (p[i] == 0)
+					looksText = EFalse;
+			if (r == KErrNone && looksText)
+				in->ReadSshConfig(p, iKeys->Count() > 0);
+			CleanupStack::PopAndDestroy();   // text
+			}
+		}
+	TInt found = in->Count();
+	TInt before = iHosts->Count();
+	TBool full = EFalse;
+	TInt added = found ? iHosts->MergeFrom(*in, full) : 0;
+	CleanupStack::PopAndDestroy();           // in
+	for (TInt i = before; i < iHosts->Count(); i++)
+		{
+		// an SSH key from another Psion is not here: the first key instead
+		THostEntry& e = iHosts->At(i);
+		if (e.iKeyId && iKeys->Find(e.iKeyId) < 0)
+			e.iKeyId = 0;
+		if ((e.iAuth == 0 || e.iAuth == 3) && iKeys->Count() == 0)
+			e.iAuth = 1;
+		}
+	TBuf<80> m;
+	if (found == 0)
+		m = _L("No servers found in the file");
+	else if (added == 0 && full)
+		m = _L("Server list is full - delete one first");
+	else if (added == 0)
+		m.Format(found == 1 ? _L("No new servers - the %d in the file is here already")
+			: _L("No new servers - the %d in the file are here already"), found);
+	else
+		{
+		m.Format(added == 1 ? _L("%d server added") : _L("%d servers added"), added);
+		if (full)
+			m.Append(_L(" - the list is full"));
+		else if (found > added)
+			m.AppendFormat(_L(" - %d here already"), found - added);
+		}
+	if (added > 0)
+		{
 		iHosts->Save();
 		if (iStart)
-			iStart->ReloadL(aIndex);
-		SessionsSync();                      // (a connection's tab has the icon)
+			{
+			iStart->ClearFilter();
+			iStart->ReloadL(before);
+			iStart->DrawNow();
+			}
 		}
-	e.iPassword.FillZ();
+	iEikonEnv->InfoMsg(m);
 	}
 
 // The folder the highlight is on or in gets a new name: every server in it moves
@@ -1552,7 +1960,7 @@ void CPsiTermAppUi::RenameFolderL()
 		return;
 		}
 	TBuf<KPtFolderLen> name(old);
-	if (!AskFolderNameL(name, _L("Rename folder")) || name == old)
+	if (!PtAskFolderNameL(name, _L("Rename folder")) || name == old)
 		return;
 	TBool shut = iHosts->Shut(old);
 	TInt cur = iStart->Current();
@@ -1723,6 +2131,11 @@ TBool CPsiTermAppUi::StartCommandL(TInt aCommand)
 	case EPtCmdStConnect:
 		if (iStart && iStart->ActivateHeadL())
 			return ETrue;                    // (1.06) on a heading: it opens or shuts
+		if (iStart && iStart->OnAddRow())
+			{
+			NewHostL();
+			return ETrue;
+			}
 		if (cur < 0 || cur >= iHosts->Count())
 			{
 			NewHostL();
@@ -1737,14 +2150,27 @@ TBool CPsiTermAppUi::StartCommandL(TInt aCommand)
 		NewHostL();
 		return ETrue;
 	case EPtCmdStEdit:
-		EditHostAtL(cur);
+		EditHostAtL(iStart ? cur : -1);
 		return ETrue;
 	case EPtCmdStDelete:
 		DeleteHostL(cur);
 		return ETrue;
-	case EPtCmdStLook:
-		HostLookL(iStart ? cur : -1);
+	case EPtCmdStDuplicate:
+		DuplicateHostL(iStart ? cur : -1);
 		return ETrue;
+	case EPtCmdStMove:
+		MoveHostL(iStart ? cur : -1);
+		return ETrue;
+	case EPtCmdStImport:
+		ImportServersL();
+		return ETrue;
+	case EPtCmdStRowMenu:
+		{
+		TPoint pos;
+		if (iStart && iStart->RowMenuPos(pos))
+			RowMenuL(pos);
+		return ETrue;
+		}
 	case EPtCmdStFolderRename:
 		RenameFolderL();
 		return ETrue;

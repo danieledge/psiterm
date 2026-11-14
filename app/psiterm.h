@@ -24,6 +24,7 @@
 #include <eikbutb.h>
 #include <badesca.h>
 
+#include <eikfctry.h>       // SEikControlInfo
 class CFbsBitmap;
 
 extern "C" {
@@ -350,6 +351,7 @@ const TInt KPtFolderLen = 16;   // (1.06) a folder's name on the Start view
 // (CHostList::Shut; nobody can type these as a folder's name)
 _LIT(KPtShutPinned, "\001");
 _LIT(KPtShutRest, "\002");
+_LIT(KPtShutRecent, "\003");   // (1.08)
 
 struct THostEntry
 	{
@@ -376,6 +378,15 @@ struct THostEntry
 void PtDrawHostIcon(CGraphicsContext& aGc, TInt aIcon, const TPoint& aAt, TRgb aColour);
 // its badge colour on a colour screen: from its name, so it keeps it
 TRgb PtHostBadgeColour(const TDesC& aName);
+// (1.08) the row of pictures in the server dialog (a control for a dialog
+// line), a folder's name asked for, and the folders in use, in alphabetical order
+class CCoeControl;
+class CHostList;
+CCoeControl* PtNewIconGridL();
+void PtIconGridSet(CCoeControl* aGrid, TInt aIcon, const TDesC& aName);
+TInt PtIconGridIcon(const CCoeControl* aGrid);
+TBool PtAskFolderNameL(TDes& aName, const TDesC& aTitle);
+TInt PtFolderNames(const CHostList& aHosts, TBuf<KPtFolderLen>* aNames);   // (room for KMaxHosts)
 
 // (1.02) the Start view (ptstart.cpp): the saved servers, pinned first, then
 // by when they were last used. It goes over the terminal as the file view
@@ -397,6 +408,11 @@ public:
 	// (1.06) the folder the highlight is in or on (EFalse: none)
 	TBool CurrentFolder(TDes& aName) const;
 	TBool ActivateHeadL();                  // on a heading: opens or shuts it (EFalse: on a server)
+	// (1.08) where the highlighted server's menu opens (screen co-ordinates);
+	// EFalse when the highlight is not on a server
+	TBool RowMenuPos(TPoint& aPos) const;
+	TBool OnAddRow() const { return IsAdd(iSel); }
+	void ClearFilter();
 	void SetViewRectL(const TRect& aRect);
 	TKeyResponse OfferKeyEventL(const TKeyEvent& aKeyEvent, TEventCode aType);
 private:
@@ -410,18 +426,26 @@ private:
 	void Move(TInt aTo);
 	// (1.06) the rows: a heading (Pinned, a folder, the rest), then its
 	// servers unless it is shut
-	enum { EHeadPinned, EHeadFolder, EHeadRest };
+	enum { EHeadPinned, EHeadRecent, EHeadFolder, EHeadRest };
 	struct TRow
 		{
-		TInt iHost;           // the server, or -1: a heading
+		TInt iHost;           // the server; -1: a heading; -2: the "Add server" row
 		TInt iKind;           // a heading's EHead...
 		TInt iRef;            // a heading: one of its servers (it has the folder's name)
 		TInt iCount;          // a heading: how many servers it has
 		TBool iShut;          // a heading: its servers are not shown
 		};
-	enum { KMaxRows = 2 * KMaxHosts + 2 };
-	TBool IsHead(TInt aRow) const { return aRow >= 0 && aRow < iCount && iRow[aRow].iHost < 0; }
-	TInt RowHeight(TInt aRow) const { return IsHead(aRow) ? iSecH : iRowH; }
+	enum { KMaxRows = 2 * KMaxHosts + 8 };   // (each server, each a folder of its own, Recent, the rest)
+	TBool IsHead(TInt aRow) const { return aRow >= 0 && aRow < iCount && iRow[aRow].iHost == -1; }
+	TBool IsAdd(TInt aRow) const { return aRow >= 0 && aRow < iCount && iRow[aRow].iHost == -2; }
+	TInt RowHeight(TInt aRow) const { return IsHead(aRow) ? iSecH : IsAdd(aRow) ? iAddH : iRowH; }
+	TBool Matches(const THostEntry& aEntry) const;   // the filter typed (all, with none)
+	void DrawSearch(CWindowGc& aGc, const TRect& aBox) const;
+	void DrawAdd(CWindowGc& aGc, TInt aY, TInt aRow) const;
+	void FilterChangedL();
+	TBuf<24> iFilter;         // (1.08) typed: only servers with it in their name, address, user or folder
+	TInt iAddH;               // the "Add server" row's height
+	TInt iMoreW;              // a row's "..." button
 	void HeadName(TInt aRow, TDes& aName) const;
 	void HeadKey(TInt aRow, TDes& aKey) const;   // what CHostList::Shut knows it by
 	void ToggleL(TInt aRow);                 // open or shut a heading
@@ -532,6 +556,18 @@ public:
 	~CHostList();
 	void Load();
 	TInt Save();
+	// (1.08) Hosts.dat changed on the disk since PsiTerm read or wrote it
+	// (copied there by hand, restored): its servers that are not here are
+	// taken in, so a save never loses them. Returns how many (0: no change).
+	TInt MergeDisk();
+	// a file of servers read (a Hosts.dat, or an OpenSSH config file);
+	// KErrNone, or why not
+	TInt ReadFile(const TDesC& aFile);
+	TInt ReadSshConfig(const TDesC8& aText, TBool aKeys);
+	// aFrom's servers that are not here (the same address, port and user)
+	// are added; how many, and aFull if some did not fit
+	TInt MergeFrom(const CHostList& aFrom, TBool& aFull);
+	TInt Find(const THostEntry& aEntry) const;   // the server with its address, port and user, or -1
 	TInt Count() const { return iEntries->Count(); }
 	THostEntry& At(TInt aIndex) { return (*iEntries)[aIndex]; }
 	const THostEntry& At(TInt aIndex) const { return (*iEntries)[aIndex]; }
@@ -546,6 +582,10 @@ private:
 	enum { KMaxShut = KMaxHosts + 2 };
 	TBuf<KPtFolderLen> iShut[KMaxShut];
 	TInt iShutCount;
+	void NoteDisk();
+	TBool DiskChanged() const;
+	TTime iDiskTime;          // Hosts.dat's time when it was last read or written here
+	TBool iDiskKnown;         // ...there was one
 	CHostList(RFs& aFs) : iFs(aFs) {}
 	TUint32 KeyFor(TUint32 aSalt) const;
 	RFs& iFs;
@@ -681,14 +721,22 @@ private:
 class CHostEditDialog : public CEikDialog
 	{
 public:
-	CHostEditDialog(THostEntry& aEntry, CKeyList& aKeys);
-	const TPtTmux* iDefaults;   // for its tmux... button (the defaults it shows)
+	// (1.08) the one place a server is added or changed: pages Server,
+	// Login, Icon and tmux. aHosts: for the folders to choose from.
+	CHostEditDialog(THostEntry& aEntry, CKeyList& aKeys, const CHostList* aHosts = 0, TBool aNew = EFalse);
+	const TPtTmux* iDefaults;   // the tmux defaults its tmux page shows
 private:
 	void SetSizeAndPositionL(const TSize& aSize);
 	void PreLayoutDynInitL();
 	TBool OkToExitL(TInt aButtonId);
+	SEikControlInfo CreateCustomControlL(TInt aControlType);
+	void TmuxChoicesL(TInt aId, TInt aValue, TInt aDefault);
 	THostEntry& iEntry;
 	CKeyList& iKeys;
+	const CHostList* iHosts;
+	TBool iNew;
+	TBuf<KPtFolderLen> iFolders[KMaxHosts];
+	TInt iFolderCount;
 	TInt iOptCount;
 	TInt iOptAuth[2 * KMaxKeys + 2];
 	TInt iOptKey[2 * KMaxKeys + 2];
@@ -1243,7 +1291,7 @@ private:
 	TBool ConfirmDisconnectL(TInt aCommand);
 	void LoadSettings(TPsiSettings& aSettings);
 	void SshToL();
-	TBool EditHostL(THostEntry& aEntry);
+	TBool EditHostL(THostEntry& aEntry, TBool aNew = EFalse);
 	void SaveSettings(const TPsiSettings& aSettings);
 public:
 	// the toolbar (View > Show toolbar hides it: the terminal takes its room)
@@ -1313,8 +1361,15 @@ private:
 	TRect ViewRect(TBool aToolbar) const;   // the terminal's room: TermRect less the tabs
 	void TmuxSessMenuL(CEikMenuPane* aMenuPane);
 	void TmuxSessCommandL(TInt aIndex);
-	void HostLookL(TInt aIndex);            // Edit > Folder & icon...
 	void RenameFolderL();
+	// (1.08)
+	void DuplicateHostL(TInt aIndex);
+	void MoveHostL(TInt aIndex);            // Edit > Move to folder...
+	void ImportServersL();                  // File > Import servers...
+	void HostsFromDiskL();                  // Hosts.dat changed on the disk: its new servers come in
+public:
+	void RowMenuL(const TPoint& aScreenPos); // the Start view's "..." button
+private:
 	CPtSessionBar* iSessBar;
 	TBool iSessBarUp;                       // ...and taking room from the terminal
 #ifdef PT_TESTSEED

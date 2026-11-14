@@ -59,6 +59,34 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 1.08** (not yet released)
+- **One place to add and edit a server.** Add server... (Ctrl+N) and Edit
+  server... (Ctrl+I) open one dialog with four pages: Server (name, address,
+  user, folder, Pin to top), Login (key or password, command on login), Icon
+  and tmux (the server's own tmux settings). Folder & icon... and the tmux...
+  button have gone into it.
+- **43 icons** (27 more: Raspberry Pi, router, switch, Wi-Fi, hypervisor,
+  shield, disk, container, Linux, Apple, Windows, mail, camera, printer,
+  game, phone, rack, firewall and others), chosen from a grid.
+- **A menu on each server**: the ... button at the end of its row, or Tab.
+  Connect, Edit..., Pin to top, Duplicate, Move to folder..., Delete....
+- **Find a server.** Type on the Start view and only the servers with that
+  text in their name, address, user or folder stay (Esc clears it). This
+  replaces "type a letter to go to a server".
+- **The Start view's sections** are always Pinned, Recent (the three or four
+  used last, whichever folder they are in), each folder, then the rest, with
+  an Add server row at the end and a friendlier page when nothing is saved.
+- **File > Import servers...** adds the servers in a file that are not here
+  already (the same address, port and user): a PsiTerm Hosts.dat, or an
+  OpenSSH config file (Host, HostName, User, Port). Folders, icons and pins
+  come across. A saved password comes across only between files of the same
+  Psion (it is scrambled with the Psion's own number): otherwise the server
+  asks for it.
+- **A Hosts.dat copied onto the Psion while PsiTerm is open is no longer
+  lost.** PsiTerm notices the file has changed, takes its servers in, and
+  only then saves.
+- Hosts.dat's layout is as in 1.06.
+
 **PsiTerm 1.07** (not yet released)
 - **The tabs as Muxedo's.** Both rows are now rounded tabs, the one in use
   outlined, and tmux's windows read "1: name". Each connection's tab has an
@@ -163,7 +191,8 @@ click one to see it full size.
   current window), tmux options set on attach (standard: `window-size latest`
   and `aggressive-resize on`, so a bigger screen on the same session is not
   squeezed), the prefix key, and a note when the server has no tmux. Each
-  saved server can override any of them (SSH to > Edit > tmux...); a
+  saved server can override any of them (SSH to > Edit > tmux...; since 1.08
+  the tmux page of Edit server...); a
   server's Command on login still overrides everything.
 - **tmux > Sessions...** lists tmux's sessions: switch to one, or make,
   rename or close one.

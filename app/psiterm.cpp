@@ -170,7 +170,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.07");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.08");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -5381,25 +5381,213 @@ const TInt KHostsFileMax = KMaxHosts * 600 + 16 + (KMaxHosts + 2) * (KPtFolderLe
 //   name host user (length-prefixed), port (2 bytes), password (length-prefixed, scrambled)
 void CHostList::Load()
 	{
+	ReadFile(KHostsFile);
+	NoteDisk();
+	}
+
+// (1.08) Hosts.dat's time on the disk, as PsiTerm last read or wrote it
+void CHostList::NoteDisk()
+	{
+	iDiskKnown = iFs.Modified(KHostsFile, iDiskTime) == KErrNone;
+	}
+
+TBool CHostList::DiskChanged() const
+	{
+	TTime now;
+	if (iFs.Modified(KHostsFile, now) != KErrNone)
+		return EFalse;                       // (no file: nothing to take in)
+	return !iDiskKnown || now != iDiskTime;
+	}
+
+TInt CHostList::Find(const THostEntry& aEntry) const
+	{
+	for (TInt i = 0; i < iEntries->Count(); i++)
+		{
+		const THostEntry& e = (*iEntries)[i];
+		if (e.iHost.CompareF(aEntry.iHost) == 0 && e.iPort == aEntry.iPort && e.iUser.Compare(aEntry.iUser) == 0)
+			return i;
+		}
+	return -1;
+	}
+
+TInt CHostList::MergeFrom(const CHostList& aFrom, TBool& aFull)
+	{
+	TInt added = 0;
+	aFull = EFalse;
+	for (TInt i = 0; i < aFrom.Count(); i++)
+		{
+		const THostEntry& e = aFrom.At(i);
+		if (Find(e) >= 0)
+			continue;
+		if (iEntries->Count() >= KMaxHosts)
+			{
+			aFull = ETrue;
+			break;
+			}
+		TRAPD(err, iEntries->AppendL(e));
+		if (err != KErrNone)
+			break;
+		added++;
+		}
+	return added;
+	}
+
+// Hosts.dat was changed behind PsiTerm's back (copied over by hand while
+// PsiTerm was open, restored from a backup): the servers in it that are
+// not here are added at the end, so the ones here keep their places and a
+// save loses nothing. With nothing here yet, the file is simply read.
+TInt CHostList::MergeDisk()
+	{
+	if (!DiskChanged())
+		return 0;
+	TInt added = 0;
+	if (iEntries->Count() == 0)
+		{
+		ReadFile(KHostsFile);
+		added = iEntries->Count();
+		}
+	else
+		{
+		CHostList* disk = NULL;
+		TRAPD(err, disk = CHostList::NewL(iFs));
+		if (err == KErrNone && disk)
+			{
+			TBool full;
+			if (disk->ReadFile(KHostsFile) == KErrNone)
+				added = MergeFrom(*disk, full);
+			delete disk;
+			}
+		}
+	NoteDisk();
+	return added;
+	}
+
+// An OpenSSH config file's servers: each "Host name" with its HostName,
+// User and Port (a "Host *" part gives the user for those without one).
+// Patterns, and servers no user is known for, are left out.
+TInt CHostList::ReadSshConfig(const TDesC8& aText, TBool aKeys)
+	{
+	iEntries->Reset();
+	iLast = 0;
+	iShutCount = 0;
+	THostEntry e;
+	TBool open = EFalse, star = EFalse;
+	TBuf<60> everyUser;
+	TInt pos = 0;
+	for (;;)
+		{
+		TBool end = pos >= aText.Length();
+		TPtrC8 line;
+		if (!end)
+			{
+			TPtrC8 rest(aText.Mid(pos));
+			TInt nl = rest.Locate('\n');
+			line.Set(rest);
+			if (nl >= 0)
+				line.Set(rest.Left(nl));
+			pos += (nl >= 0 ? nl + 1 : rest.Length());
+			}
+		// the keyword and its value (KEY value, or KEY=value)
+		TLex8 lex(line);
+		lex.SkipSpace();
+		TPtrC8 key(lex.NextToken());
+		lex.SkipSpace();
+		TPtrC8 val(lex.Remainder());
+		TInt eq = key.Locate('=');
+		if (eq > 0)
+			{
+			val.Set(line.Mid(line.Find(key) + eq + 1));
+			key.Set(key.Left(eq));
+			}
+		else if (val.Length() && val[0] == '=')
+			val.Set(val.Mid(1));
+		TBuf8<128> v(val.Left(val.Length() < 128 ? val.Length() : 128));
+		v.Trim();
+		if (v.Length() >= 2 && v[0] == '"' && v[v.Length() - 1] == '"')
+			v = v.Mid(1, v.Length() - 2);
+		TBuf8<16> k(key.Left(key.Length() < 16 ? key.Length() : 16));
+		k.LowerCase();
+		TBool host = (k == _L8("host"));
+		if (end || host || k == _L8("match"))
+			{
+			// the part before is complete
+			if (open && !star && e.iHost.Length())
+				{
+				if (e.iUser.Length() == 0)
+					e.iUser = everyUser;
+				if (e.iUser.Length() && iEntries->Count() < KMaxHosts)
+					{
+					e.iAuth = aKeys ? 0 : 1;
+					TRAPD(err, iEntries->AppendL(e));
+					(void)err;
+					}
+				}
+			open = EFalse;
+			star = EFalse;
+			if (end)
+				break;
+			if (host && v.Length())
+				{
+				// the first name; a pattern is no server
+				TInt sp = v.Locate(' ');
+				TPtrC8 name(v);
+				if (sp > 0)
+					name.Set(v.Left(sp));
+				THostEntry fresh;
+				e = fresh;
+				open = ETrue;
+				star = name.Locate('*') >= 0 || name.Locate('?') >= 0 || name.Locate('!') >= 0;
+				e.iName.Copy(name.Left(name.Length() < e.iName.MaxLength() ? name.Length() : e.iName.MaxLength()));
+				e.iHost.Copy(name.Left(name.Length() < e.iHost.MaxLength() ? name.Length() : e.iHost.MaxLength()));
+				}
+			continue;
+			}
+		if (!open || v.Length() == 0 || (key.Length() && key[0] == '#'))
+			continue;
+		if (k == _L8("hostname") && !star)
+			e.iHost.Copy(v.Left(v.Length() < e.iHost.MaxLength() ? v.Length() : e.iHost.MaxLength()));
+		else if (k == _L8("user"))
+			{
+			TBuf<60> u;
+			u.Copy(v.Left(v.Length() < 60 ? v.Length() : 60));
+			if (star)
+				everyUser = u;
+			else
+				e.iUser = u;
+			}
+		else if (k == _L8("port") && !star)
+			{
+			TLex8 n(v);
+			TInt p;
+			if (n.Val(p) == KErrNone && p > 0 && p < 65536)
+				e.iPort = p;
+			}
+		}
+	return KErrNone;
+	}
+
+TInt CHostList::ReadFile(const TDesC& aFile)
+	{
 	iEntries->Reset();
 	iLast = 0;
 	iShutCount = 0;
 	RFile file;
-	if (file.Open(iFs, KHostsFile, EFileRead) != KErrNone)
-		return;
+	TInt r = file.Open(iFs, aFile, EFileRead | EFileShareReadersOnly);
+	if (r != KErrNone)
+		return r;
 	HBufC8* buf = HBufC8::New(KHostsFileMax);
 	if (!buf)
 		{
 		file.Close();
-		return;
+		return KErrNoMemory;
 		}
 	TPtr8 data(buf->Des());
-	TInt r = file.Read(data);
+	r = file.Read(data);
 	file.Close();
 	if (r != KErrNone || data.Length() < 9 || data[0] != 'P' || data[1] != 'H' || (data[2] < 1 || data[2] > 4))
 		{
 		delete buf;
-		return;
+		return r != KErrNone ? r : KErrCorrupt;
 		}
 	TInt fileVer = data[2];
 	TInt count = data[3];
@@ -5422,7 +5610,15 @@ void CHostList::Load()
 		TBuf8<64> pw(data.Mid(pos, len));
 		pos += len;
 		Scramble(pw, key + (TUint32)i * 0x10001u);
-		e.iPassword.Copy(pw);
+		// (1.08) a saved password is scrambled with this Psion's own number:
+		// in a file from another Psion it comes out as nonsense, and is dropped
+		TBool sense = ETrue;
+		for (TInt c = 0; c < pw.Length(); c++)
+			if (pw[c] < 0x20 || pw[c] > 0x7e)
+				sense = EFalse;
+		if (sense)
+			e.iPassword.Copy(pw);
+		TBool lostPw = !sense;
 		pw.FillZ();
 		if (fileVer >= 2 && !GetStr(data, pos, e.iCommand))
 			break;
@@ -5434,6 +5630,10 @@ void CHostList::Load()
 		e.iKeyId = 0;
 		if (fileVer >= 4 && pos < data.Length())
 			e.iKeyId = data[pos++];
+		if (lostPw && e.iAuth == 2)
+			e.iAuth = 1;                     // (the password is asked for)
+		else if (lostPw && e.iAuth == 3)
+			e.iAuth = 0;
 		TRAPD(err, iEntries->AppendL(e));
 		e.iPassword.FillZ();
 		if (err != KErrNone)
@@ -5499,10 +5699,14 @@ void CHostList::Load()
 	delete buf;
 	if (iLast >= iEntries->Count())
 		iLast = 0;
+	return KErrNone;
 	}
 
 TInt CHostList::Save()
 	{
+	// (1.08) never over a Hosts.dat that changed on the disk meanwhile
+	// without taking its servers in first
+	MergeDisk();
 	HBufC8* buf = HBufC8::New(KHostsFileMax);
 	if (!buf)
 		return KErrNoMemory;
@@ -5572,7 +5776,7 @@ TInt CHostList::Save()
 		}
 	for (TInt i = iShutCount - 1; i >= 0; i--)
 		{
-		TBool used = iShut[i] == KPtShutPinned || iShut[i] == KPtShutRest;
+		TBool used = iShut[i] == KPtShutPinned || iShut[i] == KPtShutRest || iShut[i] == KPtShutRecent;
 		for (TInt k = 0; k < iEntries->Count() && !used; k++)
 			used = (*iEntries)[k].iFolder.CompareF(iShut[i]) == 0;
 		if (!used)
@@ -5584,6 +5788,7 @@ TInt CHostList::Save()
 	TInt r = SafeWrite(iFs, KHostsFile, data);
 	data.FillZ();
 	delete buf;
+	NoteDisk();
 	return r;
 	}
 
@@ -6167,13 +6372,80 @@ TBool CHostListDialog::OkToExitL(TInt aButtonId)
 
 // ----- add / edit one host ---------------------------------------------------
 
-CHostEditDialog::CHostEditDialog(THostEntry& aEntry, CKeyList& aKeys)
-	: iDefaults(0), iEntry(aEntry), iKeys(aKeys)
+CHostEditDialog::CHostEditDialog(THostEntry& aEntry, CKeyList& aKeys, const CHostList* aHosts, TBool aNew)
+	: iDefaults(0), iEntry(aEntry), iKeys(aKeys), iHosts(aHosts), iNew(aNew)
 	{
+	}
+
+// the Icon page's row of pictures (ptstart.cpp)
+SEikControlInfo CHostEditDialog::CreateCustomControlL(TInt aControlType)
+	{
+	SEikControlInfo info;
+	info.iControl = NULL;
+	info.iTrailerTextId = 0;
+	info.iFlags = 0;
+	if (aControlType == EPtCtIconGrid)
+		info.iControl = PtNewIconGridL();
+	return info;
+	}
+
+// the tmux page's choices: "Use default (Yes)" / Yes / No (as tmux settings)
+void CHostEditDialog::TmuxChoicesL(TInt aId, TInt aValue, TInt aDefault)
+	{
+	CDesCArrayFlat* a = new(ELeave) CDesCArrayFlat(3);
+	CleanupStack::PushL(a);
+	a->AppendL(aDefault ? _L("Use default (Yes)") : _L("Use default (No)"));
+	a->AppendL(_L("Yes"));
+	a->AppendL(_L("No"));
+	CEikChoiceList* c = (CEikChoiceList*)Control(aId);
+	c->SetArrayL(a);
+	c->SetArrayExternalOwnership(EFalse);
+	CleanupStack::Pop();
+	c->SetCurrentItem(aValue >= 0 && aValue <= 2 ? aValue : 0);
 	}
 
 void CHostEditDialog::PreLayoutDynInitL()
 	{
+	SetTitleL(iNew ? _L("Add server") : _L("Edit server"));
+	// the Server page's folder: None, each one in use, New folder...
+	{
+	CDesCArrayFlat* f = new(ELeave) CDesCArrayFlat(8);
+	CleanupStack::PushL(f);
+	f->AppendL(_L("None"));
+	iFolderCount = iHosts ? PtFolderNames(*iHosts, iFolders) : 0;
+	TInt at = 0;
+	for (TInt k = 0; k < iFolderCount; k++)
+		{
+		f->AppendL(iFolders[k]);
+		if (iFolders[k].CompareF(iEntry.iFolder) == 0)
+			at = k + 1;
+		}
+	if (at == 0 && iEntry.iFolder.Length() && iFolderCount < KMaxHosts)
+		{
+		// (its folder is its own alone, and it is not in the list yet)
+		iFolders[iFolderCount++] = iEntry.iFolder;
+		f->AppendL(iEntry.iFolder);
+		at = iFolderCount;
+		}
+	f->AppendL(_L("New folder..."));
+	CEikChoiceList* c = (CEikChoiceList*)Control(EPtDlgLookFolder);
+	c->SetArrayL(f);
+	c->SetArrayExternalOwnership(EFalse);
+	CleanupStack::Pop();
+	c->SetCurrentItem(at);
+	}
+	((CEikChoiceList*)Control(EPtDlgHostPin))->SetCurrentItem((iEntry.iFlags & KPtHostPinned) ? 1 : 0);
+	PtIconGridSet(Control(EPtDlgLookIcon), iEntry.iIcon, iEntry.iName);
+	// the tmux page: this server's own settings
+	{
+	TPtTmux none;
+	const TPtTmux& d = iDefaults ? *iDefaults : none;
+	TmuxChoicesL(EPtDlgTmuxStart, iEntry.iTmux.iStart, d.iStart);
+	TmuxChoicesL(EPtDlgTmuxOwn, iEntry.iTmux.iOwn, d.iOwn);
+	TmuxChoicesL(EPtDlgTmuxOpts, iEntry.iTmux.iOpts, d.iOpts);
+	SetEdwinTextL(EPtDlgTmuxSession, &iEntry.iTmux.iSession);
+	SetEdwinTextL(EPtDlgTmuxOptions, &iEntry.iTmux.iOptions);
+	}
 	SetEdwinTextL(EPtDlgName, &iEntry.iName);
 	// the port rides along as host:port, which saves a line on the screen
 	TBuf<108> host(iEntry.iHost);
@@ -6222,13 +6494,25 @@ void CHostEditDialog::PreLayoutDynInitL()
 	list->SetCurrentItem(current);
 	}
 
-TBool CHostEditDialog::OkToExitL(TInt aButtonId)
+TBool CHostEditDialog::OkToExitL(TInt /*aButtonId*/)
 	{
-	if (aButtonId == EPtBidTmux)
+	// the tmux page first: its text must be right (as tmux settings checks it)
+	TBuf<KTmuxSessionLen> session;
+	TBuf<120> options;
+	GetEdwinText(session, EPtDlgTmuxSession);
+	GetEdwinText(options, EPtDlgTmuxOptions);
+	session.Trim();
+	options.Trim();
+	if (!PtTmuxTextOk(session, ETrue))
 		{
-		// (1.01) this server's tmux settings: kept with it when it is saved
-		if (iDefaults)
-			PtHostTmuxL(iEntry.iTmux, *iDefaults);
+		CEikonEnv::Static()->InfoMsg(_L("Session names are letters, digits, - and _"));
+		TryChangeFocusToL(EPtDlgTmuxSession);
+		return EFalse;
+		}
+	if (!PtTmuxTextOk(options, EFalse))
+		{
+		CEikonEnv::Static()->InfoMsg(_L("Options cannot hold \", $, \\ or `"));
+		TryChangeFocusToL(EPtDlgTmuxOptions);
 		return EFalse;
 		}
 	TBuf<108> host;
@@ -6298,6 +6582,27 @@ TBool CHostEditDialog::OkToExitL(TInt aButtonId)
 		}
 	iEntry.iAuth = auth;
 	typed.FillZ();
+	// (1.08) the folder (a new one is asked for now), pin, icon and tmux
+	TInt at = ((CEikChoiceList*)Control(EPtDlgLookFolder))->CurrentItem();
+	TBuf<KPtFolderLen> folder;
+	if (at > iFolderCount)
+		{
+		if (!PtAskFolderNameL(folder, _L("New folder")))
+			return EFalse;                   // (back to this dialog)
+		}
+	else if (at >= 1)
+		folder = iFolders[at - 1];
+	iEntry.iFolder = folder;
+	if (((CEikChoiceList*)Control(EPtDlgHostPin))->CurrentItem() == 1)
+		iEntry.iFlags |= KPtHostPinned;
+	else
+		iEntry.iFlags &= ~KPtHostPinned;
+	iEntry.iIcon = PtIconGridIcon(Control(EPtDlgLookIcon));
+	iEntry.iTmux.iSession = session;
+	iEntry.iTmux.iOptions = options;
+	iEntry.iTmux.iStart = ((CEikChoiceList*)Control(EPtDlgTmuxStart))->CurrentItem();
+	iEntry.iTmux.iOwn = ((CEikChoiceList*)Control(EPtDlgTmuxOwn))->CurrentItem();
+	iEntry.iTmux.iOpts = ((CEikChoiceList*)Control(EPtDlgTmuxOpts))->CurrentItem();
 	return ETrue;
 	}
 
@@ -7272,9 +7577,9 @@ CPsiTermAppUi::~CPsiTermAppUi()
 	}
 
 // Add / edit dialog. Returns ETrue if the user pressed OK.
-TBool CPsiTermAppUi::EditHostL(THostEntry& aEntry)
+TBool CPsiTermAppUi::EditHostL(THostEntry& aEntry, TBool aNew)
 	{
-	CHostEditDialog* dlg = new(ELeave) CHostEditDialog(aEntry, *iKeys);
+	CHostEditDialog* dlg = new(ELeave) CHostEditDialog(aEntry, *iKeys, iHosts, aNew);
 	dlg->iDefaults = &iTmux;
 	return dlg->ExecuteLD(R_PT_HOST_EDIT_DIALOG) != 0;
 	}
@@ -7649,6 +7954,8 @@ void CPsiTermAppUi::HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestina
 		UpdateReading();
 		if (iView)
 			iView->SetForeground(iForeground);   // (0.81) power: no drawing behind
+		if (iForeground && iHosts)
+			TRAP_IGNORE(HostsFromDiskL());   // (1.08) Hosts.dat copied over meanwhile: its servers come in
 		}
 	else if (aEvent.Type() == EEventKey && !iReading.Active() && iForeground)
 		UpdateReading(ETrue);
@@ -8282,6 +8589,13 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 		aMenuPane->SetItemButtonState(EPtCmdToolbar, iView->Settings().iToolbar ? EEikMenuItemSymbolOn : 0);
 		return;
 		}
+	if (aMenuId == R_PT_ROW_MENU)            // (1.08) a server's own menu
+		{
+		TInt at = iStart ? iStart->Current() : -1;
+		if (at >= 0 && (iHosts->At(at).iFlags & KPtHostPinned))
+			aMenuPane->SetItemButtonState(EPtCmdStPin, EEikMenuItemSymbolOn);
+		return;
+		}
 	// 1.02: the Start view's menus
 	if (aMenuId == R_PT_START_EDIT_MENU || aMenuId == R_PT_START_FILE_MENU || aMenuId == R_PT_START_VIEW_MENU)
 		{
@@ -8294,7 +8608,8 @@ void CPsiTermAppUi::DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane)
 			if (cur < 0)
 				{
 				aMenuPane->SetItemDimmed(EPtCmdStEdit, ETrue);
-				aMenuPane->SetItemDimmed(EPtCmdStLook, ETrue);
+				aMenuPane->SetItemDimmed(EPtCmdStDuplicate, ETrue);
+				aMenuPane->SetItemDimmed(EPtCmdStMove, ETrue);
 				aMenuPane->SetItemDimmed(EPtCmdStDelete, ETrue);
 				aMenuPane->SetItemDimmed(EPtCmdStPin, ETrue);
 				}

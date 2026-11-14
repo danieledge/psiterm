@@ -189,6 +189,11 @@ enum TPsiTermCommands
 	EPtCmdStFolderRename,        // Edit > Rename folder...
 	EPtCmdTmuxSessPopup,         // the tab strip's drop-down (Shift+Ctrl+G)
 	EPtCmdShowTabs,              // (1.07) View > Show tabs (Shift+Ctrl+W, tick box; the strips' ^)
+	// 1.08: the Start view
+	EPtCmdStDuplicate,           // Edit > Duplicate server
+	EPtCmdStMove,                // Edit > Move to folder...
+	EPtCmdStImport,              // File > Import servers...
+	EPtCmdStRowMenu,             // (Tab, or a row's "..." button) the highlighted server's menu
 	EPtCmdTmuxSess0 = 0x16a0,    // ... + 5: tmux > Sessions > session N
 	EPtCmdTmuxSess1, EPtCmdTmuxSess2, EPtCmdTmuxSess3, EPtCmdTmuxSess4, EPtCmdTmuxSess5
 	};
@@ -335,5 +340,10 @@ enum TPtTmuxControls
 	EPtDlgLookFolder,         // (1.06) Folder & icon...
 	EPtDlgLookIcon,
 	EPtDlgFolderName,         // New folder, Rename folder
+	EPtDlgHostPin,            // (1.08) the server dialog: Pin to top
+	EPtPageHostMain,          // ...and its pages
+	EPtPageHostLogin,
+	EPtPageHostIcon,
+	EPtPageHostTmux,
 	EPtCtIconGrid = 0x7601    // Folder & icon's row of pictures (a control type)
 	};

@@ -817,19 +817,70 @@ RESOURCE ARRAY r_pt_cursor_array
 	items={ LBUF { txt="Block"; }, LBUF { txt="Underline"; }, LBUF { txt="Bar"; } };
 	}
 
+// (1.08) The one place a server is added or changed (Add server..., Edit
+// server...): everything about it, on four pages. The first page keeps
+// Name, Address and User as its first lines. The title is set (Add server,
+// Edit server); the choices are filled in by psiterm.cpp.
+STRUCT PT_ICONGRID { BYTE spare=0; }
+
 RESOURCE DIALOG r_pt_host_edit_dialog
 	{
-	title="SSH server";
+	title="Server";
 	flags=EEikDialogFlagWait;
-	buttons=r_pt_host_edit_buttons;
+	buttons=R_EIK_BUTTONS_CANCEL_OK;
+	pages=r_pt_host_pages;
+	}
+
+RESOURCE ARRAY r_pt_host_pages
+	{
+	items=
+		{
+		PAGE { text="Server"; id=EPtPageHostMain; lines=r_pt_host_main_lines; },
+		PAGE { text="Login"; id=EPtPageHostLogin; lines=r_pt_host_login_lines; },
+		PAGE { text="Icon"; id=EPtPageHostIcon; lines=r_pt_host_icon_lines; },
+		PAGE { text="tmux"; id=EPtPageHostTmux; lines=r_pt_host_tmux_lines; }
+		};
+	}
+
+RESOURCE ARRAY r_pt_host_main_lines
+	{
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgName; control=EDWIN { width=22; maxlength=24; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="Address (host:port)"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=106; }; },
 		DLG_LINE { type=EEikCtEdwin; prompt="User"; id=EPtDlgUser; control=EDWIN { width=22; maxlength=60; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Command on login"; id=EPtDlgStartCmd; control=EDWIN { width=22; maxlength=100; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Folder"; id=EPtDlgLookFolder; control=CHOICELIST { maxdisplaychar=18; array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Pin to top"; id=EPtDlgHostPin; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pt_host_login_lines
+	{
+	items=
+		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Log in with"; id=EPtDlgAuth; control=CHOICELIST { maxdisplaychar=26; }; },
-		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPtDlgPassword; control=SECRETED { num_letters=32; }; }
+		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPtDlgPassword; control=SECRETED { num_letters=32; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Command on login"; id=EPtDlgStartCmd; control=EDWIN { width=22; maxlength=100; }; }
+		};
+	}
+
+RESOURCE ARRAY r_pt_host_icon_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EPtCtIconGrid; id=EPtDlgLookIcon; control=PT_ICONGRID { }; }
+		};
+	}
+
+RESOURCE ARRAY r_pt_host_tmux_lines
+	{
+	items=
+		{
+		DLG_LINE { type=EEikCtChoiceList; prompt="Start in tmux"; id=EPtDlgTmuxStart; control=CHOICELIST { array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Session"; id=EPtDlgTmuxSession; control=EDWIN { width=12; maxlength=16; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Own session for this Psion"; id=EPtDlgTmuxOwn; control=CHOICELIST { array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Set options on attach"; id=EPtDlgTmuxOpts; control=CHOICELIST { array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Options"; id=EPtDlgTmuxOptions; control=EDWIN { width=17; maxlength=120; }; }
 		};
 	}
 
@@ -1173,17 +1224,6 @@ RESOURCE ARRAY r_pt_log_existing_array
 	items={ LBUF { txt="Add to the end"; }, LBUF { txt="Replace it"; } };
 	}
 
-// SSH server: tmux... opens this server's own tmux settings (1.01)
-RESOURCE DLG_BUTTONS r_pt_host_edit_buttons
-	{
-	buttons=
-		{
-		DLG_BUTTON { id=EPtBidTmux; button=CMBUT { txt="tmux..."; }; hotkey='T'; },
-		DLG_BUTTON { id=EEikBidCancel; button=CMBUT { txt="Cancel"; }; hotkey=EEikBidCancel; flags=0; },
-		DLG_BUTTON { id=EEikBidOk; button=CMBUT { txt="OK"; }; hotkey=EEikBidOk; flags=0; }
-		};
-	}
-
 // tmux settings (1.01, as Muxedo's): the defaults (tmux > tmux settings...)
 // or one server's own (SSH server > tmux..., which hides the last two lines
 // and offers "Use default" in each choice). The choices are filled in by
@@ -1261,7 +1301,6 @@ RESOURCE HOTKEYS r_pt_start_hotkeys
 		{
 		HOTKEY { command=EPtCmdStDelete; key='d'; },
 		HOTKEY { command=EEikCmdExit; key='e'; },
-		HOTKEY { command=EPtCmdStLook; key='f'; },
 		HOTKEY { command=EPtCmdStAddress; key='g'; },
 		HOTKEY { command=EPtCmdStEdit; key='i'; },
 		HOTKEY { command=EPtCmdAppearance; key='k'; },
@@ -1297,7 +1336,8 @@ RESOURCE MENU_PANE r_pt_start_file_menu
 	items=
 		{
 		MENU_ITEM { command=EPtCmdStConnect; txt="SSH to server"; extratxt="Enter"; },
-		MENU_ITEM { command=EPtCmdStAddress; txt="SSH to address..."; flags=EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdStAddress; txt="SSH to address..."; },
+		MENU_ITEM { command=EPtCmdStImport; txt="Import servers..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EEikCmdExit; txt="Close"; }
 		};
 	}
@@ -1306,14 +1346,14 @@ RESOURCE MENU_PANE r_pt_start_edit_menu
 	{
 	items=
 		{
-		MENU_ITEM { command=EPtCmdStNew; txt="Create new server..."; },
-		MENU_ITEM { command=EPtCmdStEdit; txt="Server details..."; },
-		MENU_ITEM { command=EPtCmdStDelete; txt="Delete server"; flags=EEikMenuItemSeparatorAfter; },
+		// (the first five keep their places: core's emulator tests count them)
+		MENU_ITEM { command=EPtCmdStNew; txt="Add server..."; },
+		MENU_ITEM { command=EPtCmdStEdit; txt="Edit server..."; },
+		MENU_ITEM { command=EPtCmdStDelete; txt="Delete server..."; flags=EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdStPin; txt="Pin to top"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPtCmdTmuxSettings; txt="tmux settings..."; flags=EEikMenuItemSeparatorAfter; },
-		// (1.06) the folders, in a group of their own at the foot (the items
-		// above keep their places: core's emulator tests count them)
-		MENU_ITEM { command=EPtCmdStLook; txt="Folder & icon..."; },
+		MENU_ITEM { command=EPtCmdStDuplicate; txt="Duplicate server"; },
+		MENU_ITEM { command=EPtCmdStMove; txt="Move to folder..."; },
 		MENU_ITEM { command=EPtCmdStFolderRename; txt="Rename folder..."; }
 		};
 	}
@@ -1340,7 +1380,7 @@ RESOURCE TOOLBAR r_pt_start_toolbar
 			control=LABEL { txt="PsiTerm"; horiz_align=EEikLabelAlignHCenter; vert_align=EEikLabelAlignVCenter; };
 			},
 		TBAR_BUTTON { id=EPtCmdStConnect; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="SSH to"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
-		TBAR_BUTTON { id=EPtCmdStNew; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="New\nserver"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
+		TBAR_BUTTON { id=EPtCmdStNew; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Add\nserver"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
 		// (1.04) a taller screen's (the netBook's) only: OpenStartL takes it off a 5mx
 		TBAR_BUTTON { id=EPtCmdStEdit; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Edit\nserver"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
 		TBAR_BUTTON { id=EPtCmdStPin; behavior=EEikButLatches; layout=EEikCmdButTextRightPictureLeft|EEikCmdButDenseFont|EEikCmdButExcessToText; txt="Pin"; flags=EEikToolBarCtrlHasSetMinLength; length=KEikStdToolBarButtonHeight; },
@@ -1367,20 +1407,32 @@ RESOURCE TOOLBAR r_pt_start_toolbar
 		};
 	}
 
-// Edit > Folder & icon... (Ctrl+F, 1.06): the server's folder on the Start
-// view (None, one in use, or a new one) and its picture, chosen from a row
-// of them (ptstart.cpp's CPtIconGrid)
-STRUCT PT_ICONGRID { BYTE spare=0; }
-
-RESOURCE DIALOG r_pt_look_dialog
+// Edit > Move to folder... (1.08): None, a folder in use, or a new one
+RESOURCE DIALOG r_pt_move_dialog
 	{
-	title="Folder & icon";
+	title="Move to folder";
 	flags=EEikDialogFlagWait;
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="Folder"; id=EPtDlgLookFolder; control=CHOICELIST { maxdisplaychar=18; array_id=r_pt_empty_array; }; },
-		DLG_LINE { type=EPtCtIconGrid; prompt="Icon"; id=EPtDlgLookIcon; control=PT_ICONGRID { }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Folder"; id=EPtDlgLookFolder; control=CHOICELIST { maxdisplaychar=18; array_id=r_pt_empty_array; }; }
+		};
+	}
+
+RESOURCE TBUF r_pt_tbuf_import_title { buf="Import servers"; }
+
+// A server's own menu (1.08, as Muxedo's "..." on a row): a tap on the
+// row's "..." button, or Tab
+RESOURCE MENU_PANE r_pt_row_menu
+	{
+	items=
+		{
+		MENU_ITEM { command=EPtCmdStConnect; txt="Connect"; },
+		MENU_ITEM { command=EPtCmdStEdit; txt="Edit..."; },
+		MENU_ITEM { command=EPtCmdStPin; txt="Pin to top"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdStDuplicate; txt="Duplicate"; },
+		MENU_ITEM { command=EPtCmdStMove; txt="Move to folder..."; },
+		MENU_ITEM { command=EPtCmdStDelete; txt="Delete..."; }
 		};
 	}
 
