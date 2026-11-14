@@ -742,6 +742,7 @@ private:
 	TInt iOptKey[2 * KMaxKeys + 2];
 	};
 
+const TInt KPtMaxTmuxSessions = 24;   // tmux's sessions PsiTerm lists (1.09: 12 before)
 class CPtLog;                     // the session log (ptxfer.h)
 class CPtXferMemory;
 
@@ -882,6 +883,9 @@ public:
 	void DrawTabs(CWindowGc& aGc) const;
 	// (1.06) the tab strip's drop-down: tmux's session, and where its list opens
 	TBool TmuxSessionName(TDes& aName) const;
+	// (1.09) the session list is about to be shown, or the strip was
+	// tapped: ask tmux again now, not at the next slow turn
+	void TmuxRefreshSoon() { iUserAt = User::TickCount(); TmuxQueryKick(); }
 	TPoint TabDropPos() const;
 #ifdef PT_TESTSEED
 	// a test build's stand-in for a connection (never in a release): a
@@ -1102,11 +1106,12 @@ private:
 	TBuf<120> iTqAfterText;   // typed once the commands have run (a snippet in a new window)
 	TBool iTqAfterEnter;
 	TBool iTqAfterPending;
-	enum { KMaxTmuxSessions = 12 };
+	enum { KMaxTmuxSessions = KPtMaxTmuxSessions };
 	TBuf8<12> iQSessId[KMaxTmuxSessions];
 	TBuf<24> iQSessName[KMaxTmuxSessions];
 	TInt iQSessWin[KMaxTmuxSessions];
 	TInt iQSessAtt[KMaxTmuxSessions];
+	TUint iQSessAct[KMaxTmuxSessions];   // (1.09) when it was last active (tmux's clock): newest first
 	TInt iQSessCount;
 	TInt iHistState;          // 0 none, 1 asking tmux, 2 fetching the file
 	void TmuxRunDone(TInt aOp, TInt aResult);

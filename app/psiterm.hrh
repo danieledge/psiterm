@@ -195,7 +195,8 @@ enum TPsiTermCommands
 	EPtCmdStImport,              // File > Import servers...
 	EPtCmdStRowMenu,             // (Tab, or a row's "..." button) the highlighted server's menu
 	EPtCmdTmuxSess0 = 0x16a0,    // ... + 5: tmux > Sessions > session N
-	EPtCmdTmuxSess1, EPtCmdTmuxSess2, EPtCmdTmuxSess3, EPtCmdTmuxSess4, EPtCmdTmuxSess5
+	EPtCmdTmuxSess1, EPtCmdTmuxSess2, EPtCmdTmuxSess3, EPtCmdTmuxSess4, EPtCmdTmuxSess5,
+	EPtCmdTmuxSess6              // (1.09: seven of them)
 	};
 
 enum TPsiTermDialogControls

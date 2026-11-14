@@ -59,6 +59,14 @@ click one to see it full size.
 
 ## What's new
 
+**PsiTerm 1.09** (not yet released)
+- **A new tmux session stays in the session list.** With more than six
+  sessions the drop-down showed tmux's first six by name, so a session just
+  made dropped out of it as soon as another was in use. It now shows the
+  seven used last, newest first (the rest are under Manage sessions..., which
+  lists up to 24). PsiTerm also asks tmux again whenever the list opens or
+  the tabs are tapped.
+
 **PsiTerm 1.08** (not yet released)
 - **One place to add and edit a server.** Add server... (Ctrl+N) and Edit
   server... (Ctrl+I) open one dialog with four pages: Server (name, address,

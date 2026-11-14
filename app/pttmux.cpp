@@ -377,12 +377,13 @@ private:
 
 void CPsiTermAppUi::TmuxSessionsL()
 	{
+	iView->TmuxRefreshSoon();                // (1.09) tmux is asked again as the list opens
 	if (!iView->TmuxCanRun())
 		{
 		SendTmux('s');                       // (tmux's own chooser)
 		return;
 		}
-	const TInt KMax = 12;
+	const TInt KMax = KPtMaxTmuxSessions;
 	TBuf8<12> ids[KMax];
 	TBuf<24> names[KMax];
 	TInt wins[KMax], att[KMax];
@@ -466,15 +467,19 @@ void CPsiTermAppUi::TmuxSessionsL()
 // The list at the left of the tab strip (a tap on the session's name, or
 // Shift+Ctrl+G) and the cascade tmux > Sessions are one menu pane: up to six
 // sessions, the one in use ticked, then Manage sessions... (the dialog above:
-// new, rename, close, and any session past the sixth).
+// new, rename, close, and any session past the seventh).
+// (1.09) To 1.08 the list was tmux's first six by name, so with more than
+// six a session just made was missing once another was in use. Now it is the
+// seven active last (CTermView keeps them newest first), which with Manage
+// sessions... makes the eight a menu holds.
 
-const TInt KSessMenuMax = 6;
+const TInt KSessMenuMax = 7;
 
-// The sessions the list shows, in tmux's order; the one in use is always
-// among them. Returns how many, and which is in use (-1: not known).
+// The sessions the list shows, those active last first; the one in use is
+// always among them. Returns how many, and which is in use (-1: not known).
 static TInt SessMenuList(const CTermView& aView, TBuf8<12>* aIds, TBuf<24>* aNames, TInt* aWindows, TInt& aCurrent)
 	{
-	const TInt KMax = 12;
+	const TInt KMax = KPtMaxTmuxSessions;
 	TInt att[KMax];
 	TInt n = aView.TmuxSessions(aIds, aNames, aWindows, att, KMax);
 	aCurrent = -1;
@@ -503,9 +508,10 @@ static TBool SessListReady(const CTermView& aView)
 
 void CPsiTermAppUi::TmuxSessMenuL(CEikMenuPane* aMenuPane)
 	{
-	TBuf8<12> ids[12];
-	TBuf<24> names[12];
-	TInt wins[12];
+	iView->TmuxRefreshSoon();                // (the tmux menu's cascade too)
+	TBuf8<12> ids[KPtMaxTmuxSessions];
+	TBuf<24> names[KPtMaxTmuxSessions];
+	TInt wins[KPtMaxTmuxSessions];
 	TInt current = -1;
 	TInt n = SessListReady(*iView) ? SessMenuList(*iView, ids, names, wins, current) : 0;
 	for (TInt i = n; i < KSessMenuMax; i++)
@@ -529,9 +535,9 @@ void CPsiTermAppUi::TmuxSessMenuL(CEikMenuPane* aMenuPane)
 
 void CPsiTermAppUi::TmuxSessCommandL(TInt aIndex)
 	{
-	TBuf8<12> ids[12];
-	TBuf<24> names[12];
-	TInt wins[12];
+	TBuf8<12> ids[KPtMaxTmuxSessions];
+	TBuf<24> names[KPtMaxTmuxSessions];
+	TInt wins[KPtMaxTmuxSessions];
 	TInt current = -1;
 	if (!SessListReady(*iView))
 		return;
@@ -600,6 +606,7 @@ void CPsiTermAppUi::TmuxSessPopupL()
 			TmuxSessionsL();
 		return;
 		}
+	iView->TmuxRefreshSoon();                // (1.09) tmux is asked again as the list opens
 	TPoint pos = iView->PositionRelativeToScreen() + iView->TabDropPos();
 	LaunchPopupMenuL(R_PT_TMUX_SESS_MENU, pos, EPopupTargetTopLeft);
 	}

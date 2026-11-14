@@ -391,7 +391,7 @@ RESOURCE MENU_PANE r_pt_tmux_menu
 
 // (1.06) tmux's sessions: the tmux menu's cascade, and the drop-down list at
 // the left of the tab strip (a tap there, or Shift+Ctrl+G). Filled in by
-// pttmux.cpp: up to six sessions, the one in use ticked.
+// pttmux.cpp: up to seven sessions (1.09: those active last), the one in use ticked.
 RESOURCE MENU_PANE r_pt_tmux_sess_menu
 	{
 	items=
@@ -401,7 +401,8 @@ RESOURCE MENU_PANE r_pt_tmux_sess_menu
 		MENU_ITEM { command=EPtCmdTmuxSess2; txt="3"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPtCmdTmuxSess3; txt="4"; flags=EEikMenuItemCheckBox; },
 		MENU_ITEM { command=EPtCmdTmuxSess4; txt="5"; flags=EEikMenuItemCheckBox; },
-		MENU_ITEM { command=EPtCmdTmuxSess5; txt="6"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
+		MENU_ITEM { command=EPtCmdTmuxSess5; txt="6"; flags=EEikMenuItemCheckBox; },
+		MENU_ITEM { command=EPtCmdTmuxSess6; txt="7"; flags=EEikMenuItemCheckBox|EEikMenuItemSeparatorAfter; },
 		MENU_ITEM { command=EPtCmdTmuxSessions; txt="Manage sessions..."; }
 		};
 	}

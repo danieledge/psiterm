@@ -126,7 +126,7 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "overrides them all.\n"
 	  "\n"
 	  "The tmux menu runs tmux's commands for you. The session's name at the left of the tabs is a "
-	  "drop-down list of tmux's sessions: tap it, or press Shift+Ctrl+G, and choose one to switch to "
+	  "drop-down list of tmux's sessions (the seven used last): tap it, or press Shift+Ctrl+G, and choose one to switch to "
 	  "it (tmux > Sessions is the same list). Manage sessions there makes a New one, or Renames or "
 	  "Closes one. A window tab's x closes that window (PsiTerm asks first; on the 5mx only the "
 	  "window in use has an x), and + after the tabs makes a new window. Windows: new, next, previous, choose, rename, "

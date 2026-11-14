@@ -71,13 +71,17 @@ static int is_detached(const struct Channel *c)
 /* the shared text: "C" lines are the clients (when each was last active and
    its session), "W" lines the windows of every session (the name last, as
    it may hold anything), then tmux's status settings. A tab is a real tab. */
+/* (PsiTerm 1.09) "S" lines are the sessions, with when each was last
+   active, so PsiTerm can list the newest first; they come before the
+   windows, so a long window list (the answer is PSI_TQ_OUT_SIZE at most)
+   never cuts a session off. */
 /* (1.01) tmux -u: with no UTF-8 locale (an exec channel often has no LANG)
    tmux 3.4 prints the tabs in -F's output as '_', and nothing parses */
 #define TQ_PATH  "PATH=\\\"\\$PATH:/usr/local/bin:/opt/homebrew/bin:/opt/local/bin\\\"; "
 #define TQ_LIST \
 	"tmux -u list-clients -F 'C\t#{client_activity}\t#{session_id}' 2>/dev/null; " \
+	"tmux -u list-sessions -F 'S\t#{session_id}\t#{session_attached}\t#{session_windows}\t#{session_activity}\t#{session_name}' 2>/dev/null; " \
 	"tmux -u list-windows -a -F 'W\t#{session_id}\t#{window_index}\t#{window_active}\t#{window_name}' 2>/dev/null; " \
-	"tmux -u list-sessions -F 'S\t#{session_id}\t#{session_attached}\t#{session_windows}\t#{session_name}' 2>/dev/null; " \
 	"tmux -u show-options -g status 2>/dev/null; " \
 	"tmux -u show-options -g status-position 2>/dev/null"
 

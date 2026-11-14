@@ -170,7 +170,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.08");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.09");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -2360,6 +2360,15 @@ static TInt TmuxNumber(const TDesC8& aText)
 	return v;
 	}
 
+// a time from tmux (seconds since 1970: ten figures, more than TmuxNumber takes)
+static TUint TmuxTime(const TDesC8& aText)
+	{
+	TUint v = 0;
+	for (TInt i = 0; i < aText.Length() && i < 10 && aText[i] >= '0' && aText[i] <= '9'; i++)
+		v = v * 10 + (TUint)(aText[i] - '0');
+	return v;
+	}
+
 void CTermView::TmuxQueryReset()
 	{
 	iTqSent = 0;
@@ -2491,15 +2500,30 @@ void CTermView::TmuxQueryDone()
 			}
 		else if (line.Length() > 2 && line[0] == 'S' && line[1] == '\t' && iQSessCount < KMaxTmuxSessions)
 			{
-			// (1.01) a session: id, clients attached, windows, name
-			TPtrC8 sid, att, win, name;
-			if (TmuxField(line, 1, 4, sid) && sid.Length() < 12 && TmuxField(line, 2, 4, att)
-				&& TmuxField(line, 3, 4, win) && TmuxField(line, 4, 4, name))
+			// (1.01) a session: id, clients attached, windows, (1.09) when
+			// it was last active, name. The list is kept newest first, so
+			// the drop-down's few are the ones in use lately: a session just
+			// made is always among them.
+			TPtrC8 sid, att, win, act, name;
+			if (TmuxField(line, 1, 5, sid) && sid.Length() < 12 && TmuxField(line, 2, 5, att)
+				&& TmuxField(line, 3, 5, win) && TmuxField(line, 4, 5, act) && TmuxField(line, 5, 5, name))
 				{
-				iQSessId[iQSessCount] = sid;
-				TmuxName(name, iQSessName[iQSessCount]);
-				iQSessWin[iQSessCount] = TmuxNumber(win);
-				iQSessAtt[iQSessCount] = TmuxNumber(att);
+				TUint when = TmuxTime(act);
+				TInt at = iQSessCount;
+				while (at > 0 && iQSessAct[at - 1] < when)
+					{
+					iQSessId[at] = iQSessId[at - 1];
+					iQSessName[at] = iQSessName[at - 1];
+					iQSessWin[at] = iQSessWin[at - 1];
+					iQSessAtt[at] = iQSessAtt[at - 1];
+					iQSessAct[at] = iQSessAct[at - 1];
+					at--;
+					}
+				iQSessId[at] = sid;
+				TmuxName(name, iQSessName[at]);
+				iQSessWin[at] = TmuxNumber(win);
+				iQSessAtt[at] = TmuxNumber(att);
+				iQSessAct[at] = when;
 				iQSessCount++;
 				}
 			}
@@ -8908,7 +8932,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 		TmuxSessPopupL();
 		return;
 		}
-	if (aCommand >= EPtCmdTmuxSess0 && aCommand <= EPtCmdTmuxSess5)
+	if (aCommand >= EPtCmdTmuxSess0 && aCommand <= EPtCmdTmuxSess6)
 		{
 		TmuxSessCommandL(aCommand - EPtCmdTmuxSess0);
 		return;

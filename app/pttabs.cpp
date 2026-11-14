@@ -484,6 +484,7 @@ TBool CTermView::TabPenDownL(TInt aX)
 	{
 	if (iTabMsg)
 		return EFalse;
+	TmuxRefreshSoon();                       // (1.09) the strip is in use: tmux is asked again now
 	CPsiTermAppUi* ui = (CPsiTermAppUi*)iEikonEnv->EikAppUi();
 	if (iTabDropW > 0 && aX >= 3 && aX < 3 + iTabDropW)
 		{
