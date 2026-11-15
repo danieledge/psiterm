@@ -7,7 +7,7 @@ like the Psion's own programs. PsiTerm is part of a suite that brings the
 PsiWeb (a web browser), PsiCast (screen sharing), PsiLinux, the PsiConnect
 modem firmware and PsiProxy.
 
-> **Alpha - pre-v1. Expect bugs!** The apps are new and changing fast. They
+> **Beta - Expect bugs!** The apps are new and changing fast. They
 > work well enough for daily SSH, tmux, Claude Code and email on a real 5mx,
 > but things will break. Bug reports (a photo of the screen is perfect) are
 > very welcome via [GitHub issues](https://github.com/danieledge/psiterm/issues).
