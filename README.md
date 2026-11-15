@@ -1,7 +1,7 @@
 # PsiTerm
 
-**An SSH terminal for the 1999 Psion Series 5mx:** tmux, vim, htop and
-Claude Code on a 36 MHz palmtop, as a native EPOC app that looks and behaves
+**An SSH terminal for the 1999 Psion Series 5mx, and now the netBook and
+Series 7:** tmux, vim, htop and Claude Code on a palmtop, as a native EPOC app that looks and behaves
 like the Psion's own programs. PsiTerm is part of a suite that brings the
 5mx into 2026: see [The suite](#the-suite) for PsiMail (email and calendar),
 PsiWeb (a web browser), PsiCast (screen sharing), PsiLinux, the PsiConnect
@@ -17,9 +17,9 @@ modem firmware and PsiProxy.
 [![Download PsiWeb.sis](https://img.shields.io/badge/Download-PsiWeb.sis-2ea44f?logo=github)](https://github.com/danieledge/psiterm/raw/main/dist/PsiWeb.sis)
 [![Buy me a coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-support-FFDD00?logo=buymeacoffee&logoColor=000)](https://buymeacoffee.com/danedge)
 
-<p align="center"><img src="docs/screenshots/banner.png" alt="PsiTerm running vim inside tmux, with the tmux windows as tabs, above PsiMail's Inbox" width="640"></p>
+<p align="center"><img src="docs/screenshots/netbook-05-tabs.png" alt="PsiTerm on the netBook: four connections as tabs, with tmux windows as a second row" width="640"></p>
 
-PsiTerm 0.95. It shares one connection layer with the other apps
+PsiTerm 1.11. It shares one connection layer with the other apps
 ([psion-core](https://github.com/danieledge/psion-core)): a Wi-Fi modem on
 the serial port (`ATDT host:port`) or the Psion's own dial-up TCP/IP. Modern
 servers work: curve25519, Ed25519, ChaCha20-Poly1305 and TLS 1.3, all on the
@@ -39,8 +39,55 @@ Psion's ARM710.
 
 ## Screenshots
 
-Taken in a Series 5mx emulator at the Psion's own 640x240 resolution. Tap or
-click one to see it full size.
+PsiTerm 1.11 on the netBook (640x480, colour) and the Series 5mx (640x240,
+16 greys), with the same demo servers. Taken in emulators. Tap or click one
+to see it full size.
+
+<table>
+<tr><th>netBook</th><th>Series 5mx</th></tr>
+<tr><td colspan="2"><b>Start view: Pinned, Recent and folders</b></td></tr>
+<tr>
+<td><a href="docs/screenshots/netbook-01-home.png"><img src="docs/screenshots/netbook-01-home.png" alt="netBook: The Start view with pinned and recent servers" width="400"></a></td>
+<td><a href="docs/screenshots/5mx-01-home.png"><img src="docs/screenshots/5mx-01-home.png" alt="Series 5mx: The Start view with pinned and recent servers" width="400"></a></td>
+</tr>
+<tr><td colspan="2"><b>Type to find a server</b></td></tr>
+<tr>
+<td><a href="docs/screenshots/netbook-02-search.png"><img src="docs/screenshots/netbook-02-search.png" alt="netBook: Typing home on the Start view finds the Home lab servers" width="400"></a></td>
+<td><a href="docs/screenshots/5mx-02-search.png"><img src="docs/screenshots/5mx-02-search.png" alt="Series 5mx: Typing home on the Start view finds the Home lab servers" width="400"></a></td>
+</tr>
+<tr><td colspan="2"><b>Folders for each group of servers</b></td></tr>
+<tr>
+<td><a href="docs/screenshots/netbook-03-folders.png"><img src="docs/screenshots/netbook-03-folders.png" alt="netBook: Pinned and Recent shut, the Cloud and Home lab folders open" width="400"></a></td>
+<td><a href="docs/screenshots/5mx-03-folders.png"><img src="docs/screenshots/5mx-03-folders.png" alt="Series 5mx: Pinned and Recent shut, the Cloud and Home lab folders open" width="400"></a></td>
+</tr>
+<tr><td colspan="2"><b>43 icons to choose from</b></td></tr>
+<tr>
+<td><a href="docs/screenshots/netbook-04-icons.png"><img src="docs/screenshots/netbook-04-icons.png" alt="netBook: Edit server, Icon page" width="400"></a></td>
+<td><a href="docs/screenshots/5mx-04-icons.png"><img src="docs/screenshots/5mx-04-icons.png" alt="Series 5mx: Edit server, Icon page" width="400"></a></td>
+</tr>
+<tr><td colspan="2"><b>Connections as tabs, tmux windows below</b></td></tr>
+<tr>
+<td><a href="docs/screenshots/netbook-05-tabs.png"><img src="docs/screenshots/netbook-05-tabs.png" alt="netBook: Four connections as tabs, with tmux windows as a second row" width="400"></a></td>
+<td><a href="docs/screenshots/5mx-05-tabs.png"><img src="docs/screenshots/5mx-05-tabs.png" alt="Series 5mx: Four connections as tabs, with tmux windows as a second row" width="400"></a></td>
+</tr>
+<tr><td colspan="2"><b>Switch tmux sessions from the drop-down</b></td></tr>
+<tr>
+<td><a href="docs/screenshots/netbook-06-sessions.png"><img src="docs/screenshots/netbook-06-sessions.png" alt="netBook: The tmux session list" width="400"></a></td>
+<td><a href="docs/screenshots/5mx-06-sessions.png"><img src="docs/screenshots/5mx-06-sessions.png" alt="Series 5mx: The tmux session list" width="400"></a></td>
+</tr>
+<tr><td colspan="2"><b>A menu on each server</b></td></tr>
+<tr>
+<td><a href="docs/screenshots/netbook-07-row-menu.png"><img src="docs/screenshots/netbook-07-row-menu.png" alt="netBook: The menu on a server row" width="400"></a></td>
+<td><a href="docs/screenshots/5mx-07-row-menu.png"><img src="docs/screenshots/5mx-07-row-menu.png" alt="Series 5mx: The menu on a server row" width="400"></a></td>
+</tr>
+<tr><td colspan="2"><b>More folders, each server with its own icon</b></td></tr>
+<tr>
+<td><a href="docs/screenshots/netbook-08-more-folders.png"><img src="docs/screenshots/netbook-08-more-folders.png" alt="netBook: The Home lab, Retro and Work folders" width="400"></a></td>
+<td><a href="docs/screenshots/5mx-08-more-folders.png"><img src="docs/screenshots/5mx-08-more-folders.png" alt="Series 5mx: The Home lab, Retro and Work folders" width="400"></a></td>
+</tr>
+</table>
+
+More from the 5mx:
 
 <table>
 <tr>
@@ -58,6 +105,29 @@ click one to see it full size.
 </table>
 
 ## What's new
+
+**PsiTerm 1.11** (since 1.05, the last signed release; not released yet)
+
+New:
+- Runs on the netBook and Series 7 as well as the 5mx: in colour, on the whole 640x480 screen, with colour schemes for the terminal and taller tab rows for a finger. The same PsiTerm.sis installs on all three.
+- Servers can go in folders, each with one of 43 icons. Pinned and Recent come first on the Start view.
+- Type on the Start view to find a server by name, address, user or folder. Esc clears it.
+- One dialog to add or edit a server, with Server, Login, Icon and tmux pages.
+- Each server has a menu (its ... button, or Tab): Connect, Edit, Pin to top, Duplicate, Move to folder, Delete.
+- File > Import servers... reads another PsiTerm's Hosts.dat or an OpenSSH config file.
+- Open connections show as tabs, with tmux's windows as a second row. x closes one, + opens another.
+- View > Show tabs (Shift+Ctrl+W), or the ^ by the tabs, hides both rows.
+- tmux sessions are in a drop-down list (Shift+Ctrl+G).
+- The program icon is in colour on a colour screen.
+
+Changed:
+- Shift+Ctrl+W and Shift+Ctrl+G are taken by the above. A snippet that used either loses it.
+
+Fixed:
+- A Hosts.dat copied over while PsiTerm was open got overwritten.
+- A tmux session you had just made dropped out of the list once there were more than six.
+
+The notes for each test build follow.
 
 **PsiTerm 1.09** (not yet released)
 - **A new tmux session stays in the session list.** With more than six
