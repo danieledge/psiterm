@@ -87,23 +87,6 @@ to see it full size.
 </tr>
 </table>
 
-More from the 5mx:
-
-<table>
-<tr>
-<td><a href="docs/screenshots/psiterm-ssh.png"><img src="docs/screenshots/psiterm-ssh.png" alt="An SSH session: ls -l, cat and uptime" width="400"></a><br>An SSH session</td>
-<td><a href="docs/screenshots/psiterm-tmux-tabs.png"><img src="docs/screenshots/psiterm-tmux-tabs.png" alt="tmux with three windows shown as EIKON tabs" width="400"></a><br>tmux windows as tabs</td>
-</tr>
-<tr>
-<td><a href="docs/screenshots/psiterm-files.png"><img src="docs/screenshots/psiterm-files.png" alt="The toolbar's Files pop-out: Send file, Get file, Log to file" width="400"></a><br>The toolbar's Files pop-out</td>
-<td><a href="docs/screenshots/psiterm-get-file.png"><img src="docs/screenshots/psiterm-get-file.png" alt="Get file: browsing the server's folders" width="400"></a><br>Get file (SFTP)</td>
-</tr>
-<tr>
-<td><a href="docs/screenshots/psiterm-file-menu.png"><img src="docs/screenshots/psiterm-file-menu.png" alt="PsiTerm's File menu" width="400"></a><br>The File menu</td>
-<td><a href="docs/screenshots/psiterm-test.png"><img src="docs/screenshots/psiterm-test.png" alt="Connection settings: the Test result from an Atom modem" width="400"></a><br>Connection settings > Test</td>
-</tr>
-</table>
-
 ## What's new
 
 **PsiTerm 1.11** (since 1.05, the last signed release; not released yet)
