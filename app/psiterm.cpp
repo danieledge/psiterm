@@ -170,7 +170,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.11");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.12");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -6217,6 +6217,18 @@ void SnippetKeyName(TInt aKey, TDes& aText)
 	}
 
 // keeps a dialog on the 640x240 screen (EIKON centres whatever size it asks for)
+// aText shortened to aWidth pixels with "..." (0x85, one character in the
+// Psion's fonts): names and commands in a choice list of fixed width
+void PtFitPx(TDes& aText, const CFont& aFont, TInt aWidth)
+	{
+	if (aFont.TextWidthInPixels(aText) <= aWidth)
+		return;
+	const TText KEllipsis = 0x85;
+	TInt n = aFont.TextCount(aText, aWidth - aFont.CharWidthInPixels(KEllipsis));
+	aText.SetLength(n > 0 ? n : 0);
+	aText.Append(KEllipsis);
+	}
+
 static TSize ClampToScreen(const TSize& aSize)
 	{
 	TSize screen = CEikonEnv::Static()->ScreenDevice()->SizeInPixels();
@@ -6656,7 +6668,8 @@ void CAboutDialog::PreLayoutDynInitL()
 	// the (c) sign (0xa9 in the Psion's fonts, as PsiMail's About has it)
 	// rather than the resource's "(c)"; the lines keep their resource
 	// lengths, as these are shorter
-	TBuf<80> who(_L("SSH terminal for the Psion Series 5mx and Series 7 - "));
+	// (two lines: one was wider than Psion's own dialogs)
+	TBuf<80> who(_L("SSH terminal for the Psion Series 5mx and Series 7\n"));
 	who.Append(TChar(0xa9));
 	who.Append(_L(" 2026 Dan Edge"));
 	SetLabelL(EPtDlgAbout2, who);

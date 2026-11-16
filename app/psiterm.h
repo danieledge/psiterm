@@ -184,6 +184,7 @@ TInt SafeWrite(RFs& aFs, const TDesC& aName, const TDesC8& aData);
 TInt SnippetKeyAt(TInt aIndex);          // 0 = none
 TInt SnippetKeyIndex(TInt aKey);
 void SnippetKeyName(TInt aKey, TDes& aText);
+void PtFitPx(TDes& aText, const CFont& aFont, TInt aWidth);   // shortened with "..." (psiterm.cpp)
 
 // Manage snippets: pick one, Send it, or add / edit / delete
 class CSnippetListDialog : public CEikDialog

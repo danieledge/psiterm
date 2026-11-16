@@ -496,8 +496,8 @@ RESOURCE DIALOG r_pt_font_dialog
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="Font"; id=EPtDlgFontFace; control=CHOICELIST { maxdisplaychar=24; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Size"; id=EPtDlgFontSize; control=CHOICELIST { maxdisplaychar=24; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Font"; id=EPtDlgFontFace; control=CHOICELIST { maxdisplaychar=18; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Size"; id=EPtDlgFontSize; control=CHOICELIST { maxdisplaychar=18; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgFontNote; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Not a fixed-width font: letters are spaced out to fit"; }; }
 		};
 	}
@@ -631,7 +631,7 @@ RESOURCE DIALOG r_pt_keys_dialog
 	buttons=r_pt_keys_buttons;
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="Key"; id=EPtDlgKeyList; control=CHOICELIST { maxdisplaychar=30; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Key"; id=EPtDlgKeyList; control=CHOICELIST { maxdisplaychar=20; }; }
 		};
 	}
 
@@ -667,7 +667,7 @@ RESOURCE DIALOG r_pt_key_import_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgKeyName; control=EDWIN { width=20; maxlength=24; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Private key file"; id=EPtDlgKeyFile; control=EDWIN { width=24; maxlength=90; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Private key file"; id=EPtDlgKeyFile; control=EDWIN { width=18; maxlength=90; }; },
 		DLG_LINE { type=EEikCtLabel; control=LABEL { standard_font=EEikLabelFontAnnotation;
 			txt="OpenSSH or Dropbear, Ed25519 or RSA, no passphrase"; }; }
 		};
@@ -692,7 +692,7 @@ RESOURCE DIALOG r_pt_key_pick_dialog
 	buttons=R_EIK_BUTTONS_CANCEL_OK;
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="Key"; id=EPtDlgKeyPick; control=CHOICELIST { maxdisplaychar=28; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Key"; id=EPtDlgKeyPick; control=CHOICELIST { maxdisplaychar=20; }; }
 		};
 	}
 
@@ -743,8 +743,8 @@ RESOURCE ARRAY r_pt_snippet_main_lines
 	{
 	items=
 		{
-		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgSnipName; control=EDWIN { width=22; maxlength=24; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Text"; id=EPtDlgSnipText; control=EDWIN { width=22; maxlength=120; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgSnipName; control=EDWIN { width=18; maxlength=24; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Text"; id=EPtDlgSnipText; control=EDWIN { width=18; maxlength=120; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgSnipHint; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="\\n presses Enter, \\t Tab, \\e Esc; ^C sends Ctrl+C"; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Then press Enter"; id=EPtDlgSnipEnter; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Run in"; id=EPtDlgSnipNewWin; control=CHOICELIST { array_id=r_pt_snip_where_array; }; }
@@ -756,7 +756,7 @@ RESOURCE ARRAY r_pt_snippet_menu_lines
 	items=
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="On the Snippets menu"; id=EPtDlgSnipPinned; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Folder"; id=EPtDlgSnipFolder; control=EDWIN { width=22; maxlength=24; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Folder"; id=EPtDlgSnipFolder; control=EDWIN { width=14; maxlength=24; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Shortcut key"; id=EPtDlgSnipKey; control=CHOICELIST { maxdisplaychar=14; }; }
 		};
 	}
@@ -847,9 +847,9 @@ RESOURCE ARRAY r_pt_host_main_lines
 	{
 	items=
 		{
-		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgName; control=EDWIN { width=22; maxlength=24; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Address (host:port)"; id=EPtDlgHost; control=EDWIN { width=22; maxlength=106; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="User"; id=EPtDlgUser; control=EDWIN { width=22; maxlength=60; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Name"; id=EPtDlgName; control=EDWIN { width=14; maxlength=24; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Address (host:port)"; id=EPtDlgHost; control=EDWIN { width=14; maxlength=106; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="User"; id=EPtDlgUser; control=EDWIN { width=14; maxlength=60; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Folder"; id=EPtDlgLookFolder; control=CHOICELIST { maxdisplaychar=18; array_id=r_pt_empty_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Pin to top"; id=EPtDlgHostPin; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
 		};
@@ -859,9 +859,9 @@ RESOURCE ARRAY r_pt_host_login_lines
 	{
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="Log in with"; id=EPtDlgAuth; control=CHOICELIST { maxdisplaychar=26; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Log in with"; id=EPtDlgAuth; control=CHOICELIST { maxdisplaychar=16; }; },
 		DLG_LINE { type=EEikCtSecretEd; prompt="Password"; id=EPtDlgPassword; control=SECRETED { num_letters=32; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Command on login"; id=EPtDlgStartCmd; control=EDWIN { width=22; maxlength=100; }; }
+		DLG_LINE { type=EEikCtEdwin; prompt="Command on login"; id=EPtDlgStartCmd; control=EDWIN { width=14; maxlength=100; }; }
 		};
 	}
 
@@ -881,7 +881,7 @@ RESOURCE ARRAY r_pt_host_tmux_lines
 		DLG_LINE { type=EEikCtEdwin; prompt="Session"; id=EPtDlgTmuxSession; control=EDWIN { width=12; maxlength=16; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Own session for this Psion"; id=EPtDlgTmuxOwn; control=CHOICELIST { array_id=r_pt_empty_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Set options on attach"; id=EPtDlgTmuxOpts; control=CHOICELIST { array_id=r_pt_empty_array; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Options"; id=EPtDlgTmuxOptions; control=EDWIN { width=17; maxlength=120; }; }
+		DLG_LINE { type=EEikCtEdwin; prompt="Options"; id=EPtDlgTmuxOptions; control=EDWIN { width=12; maxlength=120; }; }
 		};
 	}
 
@@ -1185,7 +1185,7 @@ RESOURCE DIALOG r_pt_goto_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="Folder"; id=EPtDlgGotoPath;
-			control=EDWIN { width=26; maxlength=250; }; }
+			control=EDWIN { width=20; maxlength=250; }; }
 		};
 	}
 
@@ -1198,7 +1198,7 @@ RESOURCE DIALOG r_pt_log_dialog
 	items=
 		{
 		DLG_LINE { type=EEikCtEdwin; prompt="File"; id=EPtDlgLogFile;
-			control=EDWIN { width=26; maxlength=200; }; },
+			control=EDWIN { width=18; maxlength=200; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Save"; id=EPtDlgLogText;
 			control=CHOICELIST { array_id=r_pt_log_text_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="If the file exists"; id=EPtDlgLogExisting;
@@ -1240,7 +1240,7 @@ RESOURCE DIALOG r_pt_tmux_dialog
 		DLG_LINE { type=EEikCtEdwin; prompt="Session"; id=EPtDlgTmuxSession; control=EDWIN { width=12; maxlength=16; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Own session for this Psion"; id=EPtDlgTmuxOwn; control=CHOICELIST { array_id=r_pt_empty_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Set options on attach"; id=EPtDlgTmuxOpts; control=CHOICELIST { array_id=r_pt_empty_array; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Options"; id=EPtDlgTmuxOptions; control=EDWIN { width=17; maxlength=120; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Options"; id=EPtDlgTmuxOptions; control=EDWIN { width=12; maxlength=120; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Prefix key"; id=EPtDlgTmuxPrefix; control=CHOICELIST { array_id=r_pt_tmux_prefix_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Say if tmux is missing"; id=EPtDlgTmuxWarn; control=CHOICELIST { array_id=r_pt_empty_array; }; }
 		};
@@ -1259,7 +1259,7 @@ RESOURCE DIALOG r_pt_tmux_sessions_dialog
 	buttons=r_pt_tmux_sessions_buttons;
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="Session"; id=EPtDlgTmuxSessList; control=CHOICELIST { maxdisplaychar=30; array_id=r_pt_empty_array; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="Session"; id=EPtDlgTmuxSessList; control=CHOICELIST { maxdisplaychar=22; array_id=r_pt_empty_array; }; }
 		};
 	}
 
@@ -1457,8 +1457,8 @@ RESOURCE DIALOG r_pt_quick_dialog
 	buttons=r_pt_quick_buttons;
 	items=
 		{
-		DLG_LINE { type=EEikCtEdwin; prompt="Address (user@host:port)"; id=EPtDlgQuickAddr; control=EDWIN { width=20; maxlength=168; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Log in with"; id=EPtDlgQuickAuth; control=CHOICELIST { maxdisplaychar=22; array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt="Address (user@host:port)"; id=EPtDlgQuickAddr; control=EDWIN { width=14; maxlength=168; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Log in with"; id=EPtDlgQuickAuth; control=CHOICELIST { maxdisplaychar=14; array_id=r_pt_empty_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Save as server"; id=EPtDlgQuickSave; control=CHOICELIST { array_id=r_pt_noyes_array; }; }
 		};
 	}
@@ -1480,7 +1480,7 @@ RESOURCE DIALOG r_pt_recent_dialog
 	buttons=r_pt_recent_buttons;
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="Command"; id=EPtDlgRecentList; control=CHOICELIST { maxdisplaychar=28; array_id=r_pt_empty_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt="Command"; id=EPtDlgRecentList; control=CHOICELIST { maxdisplaychar=16; array_id=r_pt_empty_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Remember commands"; id=EPtDlgRecentOn; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgRecentNote; control=LABEL { standard_font=EEikLabelFontAnnotation; txt=""; }; }
 		};

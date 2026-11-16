@@ -263,8 +263,16 @@ private:
 		iCount = iRecent.ForServer(iServer, iIdx, KPerServer);
 		CDesCArrayFlat* a = new(ELeave) CDesCArrayFlat(8);
 		CleanupStack::PushL(a);
+		// (the list's width is fixed, maxdisplaychar 16: a long command
+		// is shortened with "...")
+		const CFont* font = iEikonEnv->NormalFont();
+		const TInt width = 16 * font->MaxNormalCharWidthInPixels();
 		for (TInt i = 0; i < iCount; i++)
-			a->AppendL(Upto(iRecent.At(iIdx[i]).iCmd, 60));
+			{
+			TBuf<64> t(Upto(iRecent.At(iIdx[i]).iCmd, 60));
+			PtFitPx(t, *font, width);
+			a->AppendL(t);
+			}
 		if (iCount == 0)
 			a->AppendL(_L("(none yet)"));
 		CEikChoiceList* c = (CEikChoiceList*)Control(EPtDlgRecentList);

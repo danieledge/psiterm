@@ -359,6 +359,18 @@ private:
 	void PreLayoutDynInitL()
 		{
 		CEikChoiceList* c = (CEikChoiceList*)Control(EPtDlgTmuxSessList);
+		// (a fixed width, maxdisplaychar 22: a long line shortened with "...")
+		const CFont* font = iEikonEnv->NormalFont();
+		const TInt width = 22 * font->MaxNormalCharWidthInPixels();
+		for (TInt i = 0; i < iLines->Count(); i++)
+			{
+			if (font->TextWidthInPixels((*iLines)[i]) <= width)
+				continue;
+			TBuf<80> t((*iLines)[i].Left(Min((*iLines)[i].Length(), 79)));
+			PtFitPx(t, *font, width);
+			iLines->Delete(i);
+			iLines->InsertL(i, t);
+			}
 		c->SetArrayL(iLines);
 		c->SetArrayExternalOwnership(EFalse);
 		c->SetCurrentItem(iCurrent);
