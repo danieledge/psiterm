@@ -170,7 +170,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.12");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.13");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -6673,7 +6673,7 @@ void CAboutDialog::PreLayoutDynInitL()
 	who.Append(TChar(0xa9));
 	who.Append(_L(" 2026 Dan Edge"));
 	SetLabelL(EPtDlgAbout2, who);
-	TBuf<80> credit(_L("Dropbear SSH "));
+	TBuf<160> credit(_L("Dropbear SSH "));
 	credit.Append(TChar(0xa9));
 	credit.Append(_L(" Matt Johnston, libvterm "));
 	credit.Append(TChar(0xa9));
@@ -6681,9 +6681,11 @@ void CAboutDialog::PreLayoutDynInitL()
 	SetLabelL(EPtDlgAbout4, credit);
 	credit.Copy(_L("zlib "));
 	credit.Append(TChar(0xa9));
-	credit.Append(_L(" Gailly and Adler; Terminus font "));
+	credit.Append(_L(" Gailly and Adler. Fonts: Terminus "));
 	credit.Append(TChar(0xa9));
-	credit.Append(_L(" Dimitar Zhekov - SIL OFL"));
+	credit.Append(_L(" Dimitar Zhekov (SIL OFL),\nSpleen "));
+	credit.Append(TChar(0xa9));
+	credit.Append(_L(" Frederic Cambus (BSD), Gohufont, Cozette (MIT): Font-licences.txt"));
 	SetLabelL(EPtDlgAbout7, credit);
 	SetLabelL(EPtDlgAboutStatus, iStatus);
 	}
