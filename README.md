@@ -121,6 +121,16 @@ Fixed:
 
 The notes for each test build follow.
 
+**PsiTerm 1.15** (not yet released)
+- **PsiWeb's full browser.** PsiWeb 0.88's File > Open in full browser
+  starts PsiTerm (or hands it the request, if it runs already) with one of
+  your saved servers, by its name, and a browser to run there with the page:
+  Carbonyl (Chrome drawn in the terminal) or w3m. The saved server's own
+  login is used; only its command on login is replaced, for that
+  connection. A request names a server already saved: nothing new is
+  trusted. ("ssh:" followed by the server's name, a tab and the command, on
+  PsiTerm's command line or as a message to it.)
+
 **PsiTerm 1.14** (not yet released)
 - **The connection is called the same in every program.** Connection
   settings > Link > SSH connects via now offers *Network card or dial-up

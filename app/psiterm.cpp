@@ -170,7 +170,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.14");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.15");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -7586,6 +7586,7 @@ CPsiTermAppUi::~CPsiTermAppUi()
 		}
 	delete iStartBar;
 	delete iStartIdle;
+	delete iAskedIdle;
 	delete iSessBar;
 	DeleteEditor();
 	if (iBrowse)
@@ -8006,6 +8007,85 @@ void CPsiTermAppUi::HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestina
 	}
 
 // Connects to saved host aIndex (from the SSH to... list)
+// (1.15) Another program's request: "ssh:<server's name>\t<command>". The
+// saved server of that name (in any case) is connected to, as from the
+// Start view, with the command run on login in place of its own; PsiWeb's
+// Open in full browser sends "carbonyl 'address'" this way. Only a server
+// already saved is used, with its own login: nothing new is trusted.
+TBool CPsiTermAppUi::ProcessCommandParametersL(TApaCommand aCommand, TFileName& aDocumentName, const TDesC8& aTail)
+	{
+	if (aTail.Length() > 4 && aTail.Left(4).Compare(_L8("ssh:")) == 0)
+		{
+		iAsked.Copy(aTail.Left(aTail.Length() < iAsked.MaxLength() ? aTail.Length() : iAsked.MaxLength()));
+		if (!iAskedIdle)
+			iAskedIdle = CIdle::NewL(CActive::EPriorityIdle);
+		if (!iAskedIdle->IsActive())
+			iAskedIdle->Start(TCallBack(AskedCallback, this));
+		aDocumentName.Zero();
+		return EFalse;
+		}
+	return CEikAppUi::ProcessCommandParametersL(aCommand, aDocumentName, aTail);
+	}
+
+void CPsiTermAppUi::ProcessMessageL(TUid aUid, const TDesC8& aParams)
+	{
+	if (aUid == KUidPsiTerm && aParams.Length() > 4 && aParams.Left(4).Compare(_L8("ssh:")) == 0)
+		{
+		AskedL(aParams);
+		return;
+		}
+	CEikAppUi::ProcessMessageL(aUid, aParams);
+	}
+
+TInt CPsiTermAppUi::AskedCallback(TAny* aSelf)
+	{
+	CPsiTermAppUi* ui = (CPsiTermAppUi*)aSelf;
+	TBuf8<200> req(ui->iAsked);
+	TRAPD(err, ui->AskedL(req));
+	(void)err;
+	return 0;
+	}
+
+void CPsiTermAppUi::AskedL(const TDesC8& aRequest)
+	{
+	TPtrC8 rest(aRequest.Mid(4));
+	TInt tab = rest.Locate('\t');
+	if (tab <= 0)
+		return;
+	TBuf<24> name;
+	name.Copy(rest.Left(tab < name.MaxLength() ? tab : name.MaxLength()));
+	TBuf<127> cmd;
+	TPtrC8 c(rest.Mid(tab + 1));
+	cmd.Copy(c.Left(c.Length() < cmd.MaxLength() ? c.Length() : cmd.MaxLength()));
+	TInt found = -1;
+	for (TInt i = 0; i < iHosts->Count() && found < 0; i++)
+		if (iHosts->At(i).iName.CompareF(name) == 0)
+			found = i;
+	if (found < 0)
+		{
+		TBuf<80> m;
+		m.Format(_L("No saved server called \"%S\""), &name);
+		iEikonEnv->InfoMsg(m);
+		return;
+		}
+	TInt slot = PickSessionL();
+	if (slot < 0)
+		return;
+	THostEntry e = iHosts->At(found);
+	if (cmd.Length() > e.iCommand.MaxLength())
+		{
+		iEikonEnv->InfoMsg(_L("Not run - the command is too long"));   // (never cut: the quoting would break)
+		return;
+		}
+	e.iCommand = cmd;
+	CloseStart();
+	UseSessionL(slot);
+	iView->SetHostIndex(found);
+	ConnectEntryL(e);
+	e.iPassword.FillZ();
+	SessionsSync();
+	}
+
 void CPsiTermAppUi::ConnectHostL(TInt aIndex)
 	{
 	if (aIndex < 0 || aIndex >= iHosts->Count())

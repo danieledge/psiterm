@@ -1292,6 +1292,14 @@ private:
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);
 	void HandleAttemptDimmedSelectionL(TInt aCommandId);   // (0.97) why Send log is dimmed
+	// (1.15) another program asks for a saved server with a command run on
+	// it: "ssh:<server's name>\t<command>" (PsiWeb's Open in full browser)
+	TBool ProcessCommandParametersL(TApaCommand aCommand, TFileName& aDocumentName, const TDesC8& aTail);
+	void ProcessMessageL(TUid aUid, const TDesC8& aParams);
+	void AskedL(const TDesC8& aRequest);
+	static TInt AskedCallback(TAny* aSelf);
+	CIdle* iAskedIdle;                      // the request is acted on once PsiTerm is up
+	TBuf8<200> iAsked;
 	void HandleSwitchOnEventL(CCoeControl* aDestination);
 	void HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination);   // a backup is starting: close the log
 	TBool ConfirmDisconnectL(TInt aCommand);
