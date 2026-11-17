@@ -170,7 +170,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.13");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.14");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -1729,7 +1729,7 @@ void CTermView::StatusText(TDes& aText, TInt& aSplit) const
 	else if (ModemOnline())
 		aText.Format(_L("Online   modem, %d baud   Shift+Ctrl+U: hang up"), BaudValue(iSettings.iBaudIndex));
 	else if (iSettings.iNetMode)
-		aText.Copy(_L("Not connected   link: Psion Internet (PPP)"));
+		aText.Copy(_L("Not connected   link: Psion TCP/IP"));
 	else
 		aText.Format(_L("Not connected   %d baud"), BaudValue(iSettings.iBaudIndex));
 	{
@@ -4486,7 +4486,7 @@ void CTermView::StartSendLogL()
 	if (!link.Load(iCoeEnv->FsSession()) || !link.ProxyUsable() ||
 		!link.DevBox(iCoeEnv->FsSession(), iLogHost, iLogPort))
 		{
-		iEikonEnv->InfoMsg(_L("Not available - set a proxy in Connection settings"));
+		iEikonEnv->InfoMsg(_L("Not available - set a web helper in Connection settings"));
 		return;
 		}
 	LaunchSshL(6);
@@ -6785,7 +6785,7 @@ TBool CConnDialog::OkToExitL(TInt aButtonId)
 	TInt port = NumberEditorValue(EPtDlgProxyPort);
 	if (proxy && host.Length() == 0)
 		{
-		iEikonEnv->InfoMsg(_L("No proxy host entered"));
+		iEikonEnv->InfoMsg(_L("No helper's address entered"));
 		TryChangeFocusToL(EPtDlgProxyHost);
 		return EFalse;
 		}
@@ -8157,7 +8157,7 @@ TInt CPsiTermAppUi::PickSessionL()
 		// the modem's call is one raw pipe, and slot 0 has the serial port
 		if (LiveSessions() > 0)
 			{
-			iEikonEnv->InfoMsg(_L("The modem carries one connection - use Psion Internet for more"));
+			iEikonEnv->InfoMsg(_L("The modem carries one connection - use Psion TCP/IP for more"));
 			return -1;
 			}
 		return 0;
@@ -8894,7 +8894,7 @@ void CPsiTermAppUi::HandleAttemptDimmedSelectionL(TInt aCommandId)
 	else if (iView->SendingLog())
 		iEikonEnv->InfoMsg(_L("Not available while the log is being sent"));
 	else
-		iEikonEnv->InfoMsg(_L("Not available - set a proxy in Connection settings"));
+		iEikonEnv->InfoMsg(_L("Not available - set a web helper in Connection settings"));
 	}
 
 void CPsiTermAppUi::HandleCommandL(TInt aCommand)
@@ -9134,7 +9134,7 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EPtCmdReset:    iView->ResetTerminal(); break;
 	case EPtCmdAbout:
 		{
-		TPtrC link(s.iNetMode ? _L("Psion Internet") : _L("modem"));
+		TPtrC link(s.iNetMode ? _L("Psion TCP/IP") : _L("modem"));
 		TBuf<80> status;
 		status.Format(_L("Screen %dx%d, %d baud, SSH via %S"),
 			iView->Cols(), iView->Rows(), BaudValue(s.iBaudIndex), &link);

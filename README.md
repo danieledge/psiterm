@@ -85,6 +85,15 @@ to see it full size.
 <td><a href="docs/screenshots/netbook-08-more-folders.png"><img src="docs/screenshots/netbook-08-more-folders.png" alt="netBook: The Home lab, Retro and Work folders" width="400"></a></td>
 <td><a href="docs/screenshots/5mx-08-more-folders.png"><img src="docs/screenshots/5mx-08-more-folders.png" alt="Series 5mx: The Home lab, Retro and Work folders" width="400"></a></td>
 </tr>
+<tr><td colspan="2"><b>Connection settings, named as in PsiMail and PsiWeb (1.14)</b></td></tr>
+<tr>
+<td><a href="docs/screenshots/netbook-09-connection-link.png"><img src="docs/screenshots/netbook-09-connection-link.png" alt="netBook: Connection settings, Link page" width="400"></a></td>
+<td><a href="docs/screenshots/5mx-09-connection-link.png"><img src="docs/screenshots/5mx-09-connection-link.png" alt="Series 5mx: Connection settings with Network card or dial-up (Psion TCP/IP) chosen" width="400"></a></td>
+</tr>
+<tr>
+<td></td>
+<td><a href="docs/screenshots/5mx-10-connection-network.png"><img src="docs/screenshots/5mx-10-connection-network.png" alt="Series 5mx: Connection settings, Network page with the Web helper" width="400"></a></td>
+</tr>
 </table>
 
 ## What's new
@@ -111,6 +120,16 @@ Fixed:
 - A tmux session you had just made dropped out of the list once there were more than six.
 
 The notes for each test build follow.
+
+**PsiTerm 1.14** (not yet released)
+- **The connection is called the same in every program.** Connection
+  settings > Link > SSH connects via now offers *Network card or dial-up
+  (Psion TCP/IP)* where it said *Psion Internet (PPP)*: the same setting,
+  named so that a netBook with a network card finds it. The page that holds
+  *After use* is called Psion TCP/IP. The optional proxy is now the **Web
+  helper** (*None - direct*, or the Atom modem helper or PsiProxy on a
+  computer), as in PsiMail and PsiWeb. Only the words changed: PsiLink.ini
+  and every setting are as they were.
 
 **PsiTerm 1.09** (not yet released)
 - **A new tmux session stays in the session list.** With more than six
@@ -454,12 +473,15 @@ once - File > Disconnect or Hang up frees it.
 
 **Test** (Ctrl+T) in Connection settings tries the settings shown, before OK:
 for a modem, whether it answers and at what baud rate, CTS and DCD, the
-modem's name, and whether RTS/CTS will work; for Psion Internet, whether the
+modem's name, and whether RTS/CTS will work; for Psion TCP/IP, whether the
 connection is up and names can be looked up (it asks before dialling).
 
-- **Psion Internet (PPP)**: the Psion's own dial-up TCP/IP, set up in the
-  Control panel's Internet and Modems settings - a phone or a PPP server. The
-  apps start it when they need it and the Psion's connection dialogs appear.
+- **Network card or dial-up (Psion TCP/IP)**: the Psion's own TCP/IP, set up
+  in the Control panel's Internet and Modems settings: a netBook's PC Card
+  network card, or a dial-up (PPP) connection through a phone or a PPP
+  server. The apps start it when they need it and the Psion's connection
+  dialogs appear. (Until 1.13 this was called "Psion Internet (PPP)"; the
+  setting itself did not change.)
 - **A Wi-Fi serial modem** such as a WiRSa or a WiFi232: the apps dial
   `ATDT host:port` and talk through the connection the modem makes. Set the
   baud rate to the modem's; 115200 with RTS/CTS flow control is fastest if
@@ -468,26 +490,31 @@ connection is up and names can be looked up (it asks before dialling).
   turns an M5Stack Atom on an Atomic RS232 Base into a Hayes-style Wi-Fi
   modem that works exactly like a WiRSa, plus **output pacing** so the Psion
   is never overrun even on a three-wire cable without RTS/CTS. Its README has
-  the wiring, flashing, Wi-Fi set-up and the settings to use. It has a
-  small web proxy of its own for PsiWeb and PsiMail; it is not PsiProxy, so
-  *Send log to server* still needs a PsiProxy on a computer: set it in the
-  modem's Web proxy settings (AT$PU) and the log goes through the Atom.
-- **After use, Psion Internet** (Connection settings > Network): *Stays
-  connected* (the standard on a new Psion) keeps the dial-up connection up
-  after use, for all the apps, until you disconnect; *Disconnects when
-  idle* leaves it to the Psion's own idle time, as before. Anyone updating
-  from an older version keeps *Disconnects when idle* until they change it.
-  The modem route always hangs up after use.
+  the wiring, flashing, Wi-Fi set-up and the settings to use. It has a web
+  helper of its own for PsiWeb and PsiMail, the **Atom modem helper**; it is
+  not PsiProxy, so *Send log to server* still needs a PsiProxy on a
+  computer: set it in the modem's own settings (AT$PU) and the log goes
+  through the Atom.
+- **After use, Psion TCP/IP** (Connection settings > Psion TCP/IP): *Stays
+  connected* (the standard on a new Psion) keeps the connection up after
+  use, for all the apps, until you disconnect; *Disconnects when idle*
+  leaves it to the Psion's own idle time, as before. Anyone updating from an
+  older version keeps *Disconnects when idle* until they change it. The
+  modem route always hangs up after use.
 
-### The proxy (optional)
+### The web helper (optional)
 
-**You do not need a proxy.** Connection settings > Network > **Use proxy** is
-off as standard, and no address is built in. PsiTerm never sends its
-connections through a proxy: SSH, SFTP, tmux and updates all go direct. The
-only thing the proxy adds to PsiTerm is *Send log to server* (Tools > Debug),
-which sends PsiTerm's log to your own [PsiProxy](https://github.com/danieledge/psiproxy)
-to help find a fault. PsiTerm keeps that log only while Tools > Debug >
-*Keep a log* is ticked (it is off as standard). For what the proxy does for PsiMail and PsiWeb, see
+**You do not need one.** Connection settings > Network > **Web helper** is
+*None - direct* as standard, and no address is built in. PsiTerm never sends
+its connections through a helper: SSH, SFTP, tmux and updates all go direct.
+There are two kinds, named the same way in every program of the suite: the
+**Atom modem helper** (address `psiproxy`, port 8080) and **PsiProxy on a
+computer** (its address, port 8081;
+[github.com/danieledge/psiproxy](https://github.com/danieledge/psiproxy)).
+The only thing a helper adds to PsiTerm is *Send log to server* (Tools >
+Debug), which sends PsiTerm's log to your own PsiProxy to help find a fault.
+PsiTerm keeps that log only while Tools > Debug > *Keep a log* is ticked (it
+is off as standard). For what the helper does for PsiMail and PsiWeb, see
 their READMEs. Logs go as plain HTTP and can hold host and account names, so
 send them only to your own PsiProxy.
 

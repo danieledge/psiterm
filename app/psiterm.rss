@@ -27,6 +27,7 @@ NAME PSIT
 #include <eikon.rsg>
 
 #include "psiterm.hrh"
+#include "psilink.rh"           // the shared connection settings' words
 
 RESOURCE RSS_SIGNATURE { }
 
@@ -518,7 +519,7 @@ RESOURCE ARRAY r_pt_conn_pages
 		{
 		PAGE { text="Link"; id=EPtPageLink; lines=r_pt_conn_link_lines; },
 		PAGE { text="Network"; id=EPtPageProxy; lines=r_pt_conn_proxy_lines; },
-		PAGE { text="Psion Internet"; id=EPtPageInternet; lines=r_pt_conn_internet_lines; }
+		PAGE { text="Psion TCP/IP"; id=EPtPageInternet; lines=r_pt_conn_internet_lines; }
 		};
 	}
 
@@ -529,7 +530,7 @@ RESOURCE ARRAY r_pt_conn_internet_lines
 	{
 	items=
 		{
-		DLG_LINE { type=EEikCtChoiceList; prompt="After use, Psion Internet"; id=EPtDlgKeepUp; control=CHOICELIST { array_id=r_pt_keepup_array; }; },
+		DLG_LINE { type=EEikCtChoiceList; prompt=PSILINK_TXT_AFTER_USE; id=EPtDlgKeepUp; control=CHOICELIST { array_id=r_pt_keepup_array; }; },
 		DLG_LINE { type=EEikCtLabel; control=LABEL { standard_font=EEikLabelFontAnnotation;
 			txt="Disconnect with Shift+Ctrl+U - the modem route always hangs up after use"; }; }
 		};
@@ -541,8 +542,8 @@ RESOURCE ARRAY r_pt_conn_link_lines
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Baud rate"; id=EPtDlgBaud; control=CHOICELIST { array_id=r_pt_baud_array; }; },
 		DLG_LINE { type=EEikCtChoiceList; prompt="Flow control"; id=EPtDlgFlow; control=CHOICELIST { array_id=r_pt_flow_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="SSH connects via"; id=EPtDlgLink; control=CHOICELIST { array_id=r_pt_link_array; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Psion Internet: first send"; id=EPtDlgPppStart; control=EDWIN { width=14; maxlength=40; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt="SSH connects via"; id=EPtDlgLink; control=CHOICELIST { maxdisplaychar=20; array_id=r_pt_link_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt=PSILINK_TXT_FIRST_SEND; id=EPtDlgPppStart; control=EDWIN { width=14; maxlength=40; }; }
 		};
 	}
 
@@ -551,9 +552,9 @@ RESOURCE ARRAY r_pt_conn_proxy_lines
 	items=
 		{
 		DLG_LINE { type=EEikCtChoiceList; prompt="Reconnect if dropped"; id=EPtDlgReconnect; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
-		DLG_LINE { type=EEikCtChoiceList; prompt="Use proxy"; id=EPtDlgProxy; control=CHOICELIST { array_id=r_pt_noyes_array; }; },
-		DLG_LINE { type=EEikCtEdwin; prompt="Proxy host"; id=EPtDlgProxyHost; control=EDWIN { width=22; maxlength=60; }; },
-		DLG_LINE { type=EEikCtNumberEditor; prompt="Proxy port"; id=EPtDlgProxyPort; control=NUMBER_EDITOR { min=1; max=65535; }; }
+		DLG_LINE { type=EEikCtChoiceList; prompt=PSILINK_TXT_HELPER; id=EPtDlgProxy; control=CHOICELIST { array_id=r_pt_helper_array; }; },
+		DLG_LINE { type=EEikCtEdwin; prompt=PSILINK_TXT_HELPER_HOST; id=EPtDlgProxyHost; control=EDWIN { width=22; maxlength=60; }; },
+		DLG_LINE { type=EEikCtNumberEditor; prompt=PSILINK_TXT_HELPER_PORT; id=EPtDlgProxyPort; control=NUMBER_EDITOR { min=1; max=65535; }; }
 		};
 	}
 
@@ -586,9 +587,15 @@ RESOURCE ARRAY r_pt_noyes_array
 	items={ LBUF { txt="No"; }, LBUF { txt="Yes"; } };
 	}
 
+// Network > Web helper (iUseProxy): the same words in every program (psilink.rh)
+RESOURCE ARRAY r_pt_helper_array
+	{
+	items={ LBUF { txt=PSILINK_TXT_HELPER_NO; }, LBUF { txt=PSILINK_TXT_HELPER_YES; } };
+	}
+
 RESOURCE ARRAY r_pt_link_array
 	{
-	items={ LBUF { txt="Modem (ATDT host:port)"; }, LBUF { txt="Psion Internet (PPP)"; } };
+	items={ LBUF { txt=PSILINK_TXT_VIA_MODEM; }, LBUF { txt=PSILINK_TXT_VIA_NET; } };
 	}
 
 // Saved servers: pick one and Connect, or manage the list. The dialog title
