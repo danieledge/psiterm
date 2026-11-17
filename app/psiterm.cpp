@@ -6685,7 +6685,7 @@ void CAboutDialog::PreLayoutDynInitL()
 	credit.Append(TChar(0xa9));
 	credit.Append(_L(" Dimitar Zhekov (SIL OFL),\nSpleen "));
 	credit.Append(TChar(0xa9));
-	credit.Append(_L(" Frederic Cambus (BSD), Gohufont, Cozette (MIT): Font-licences.txt"));
+	credit.Append(_L(" Frederic Cambus (BSD), Gohufont (WTFPL), Cozette (MIT): Font-licences.txt"));
 	SetLabelL(EPtDlgAbout7, credit);
 	SetLabelL(EPtDlgAboutStatus, iStatus);
 	}

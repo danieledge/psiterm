@@ -920,7 +920,7 @@ RESOURCE DIALOG r_pt_about_dialog
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAboutStatus; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="-"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout4; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="Dropbear SSH (c) Matt Johnston, libvterm (c) Paul Evans - MIT"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout6; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="LibTomCrypt, LibTomMath, TweetNaCl - public domain"; }; },
-		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout7; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="zlib (c) Gailly and Adler. Fonts: Terminus (c) Dimitar Zhekov (SIL OFL),"<10>"Spleen (c) Frederic Cambus (BSD), Gohufont, Cozette (MIT): Font-licences.txt"; }; },
+		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout7; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="zlib (c) Gailly and Adler. Fonts: Terminus (c) Dimitar Zhekov (SIL OFL),"<10>"Spleen (c) Frederic Cambus (BSD), Gohufont (WTFPL), Cozette (MIT): Font-licences.txt"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout10; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="github.com/danieledge/psiterm - MIT licence"; }; },
 		DLG_LINE { type=EEikCtLabel; id=EPtDlgAbout8; control=LABEL { standard_font=EEikLabelFontAnnotation; txt="This product includes software licensed from Symbian Ltd (c) Symbian Ltd 1998-9"; }; }
 		};

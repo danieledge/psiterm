@@ -1160,6 +1160,10 @@ TBool CPsiTermAppUi::EditorCommandL(TInt aCommand)
 			}
 		return ETrue;
 		}
+	// the Zoom icons beside the screen zoom the editor while it is open
+	// (they zoomed the terminal behind it and saved that size)
+	if (iEdit && (aCommand == EEikCmdZoomIn || aCommand == EEikCmdZoomOut))
+		aCommand = aCommand == EEikCmdZoomIn ? EPtCmdEdZoomIn : EPtCmdEdZoomOut;
 	if (aCommand < EPtCmdEdSave || aCommand > EPtCmdEdLast)
 		return EFalse;
 	if (aCommand == EPtCmdEdClose)
