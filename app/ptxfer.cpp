@@ -133,6 +133,8 @@ static void ShortSize(TUint aSize, TDes& aOut)
 		aOut.Format(_L("%uM"), aSize >> 20);
 	}
 
+const TInt KXferWhatMax = 52;         // the progress window's text lines (their reserved length)
+
 // the end of a long text, "...<end>", in at most aMax characters
 static void Tail(const TDesC& aIn, TDes& aOut, TInt aMax)
 	{
@@ -243,10 +245,11 @@ void CPtXferDialog::PreLayoutDynInitL()
 	if (iEikonEnv->ScreenDevice()->GetNearestFontInTwips(iBigFont, spec) == KErrNone)
 		((CEikLabel*)Control(EPtDlgXferPct))->SetFont(iBigFont);
 	// (room for the longest lines before the window is laid out)
-	SetLabelReserveLengthL(EPtDlgXferWhat, 52);
+	// (a label panics, USER 23, on a text longer than its reserved length)
+	SetLabelReserveLengthL(EPtDlgXferWhat, KXferWhatMax);
 	SetLabelReserveLengthL(EPtDlgXferPct, 5);
-	SetLabelReserveLengthL(EPtDlgXferHow, 52);
-	SetLabelL(EPtDlgXferWhat, iWhat);
+	SetLabelReserveLengthL(EPtDlgXferHow, KXferWhatMax);
+	SetLabelL(EPtDlgXferWhat, iWhat.Left(Min(iWhat.Length(), KXferWhatMax)));
 	ShowProgressL(ETrue);
 	iTimer = CPeriodic::NewL(CActive::EPriorityStandard);
 	iTimer->Start(250000, 250000, TCallBack(TickCallback, this));
@@ -340,7 +343,7 @@ void CPtXferDialog::ShowProgressL(TBool aForce)
 	else
 		big.Copy(_L("..."));
 	SetLabelL(EPtDlgXferPct, big);
-	SetLabelL(EPtDlgXferHow, how);
+	SetLabelL(EPtDlgXferHow, how.Left(Min(how.Length(), KXferWhatMax)));
 	CEikProgressInfo* gauge = (CEikProgressInfo*)Control(EPtDlgXferGauge);
 	gauge->SetAndDraw(total > 0 ? pc * 10 : 0);
 	Control(EPtDlgXferPct)->DrawNow();
@@ -2505,10 +2508,13 @@ static void SendChosenL(CTermView& aView)
 		}
 	TBuf<512>& dirText = mem.iText;
 	Utf8ToText(dir, dirText, EFalse);
+	// (the progress window's line holds 52 characters: KXferWhatMax)
 	TBuf<30> dirShort;
-	Tail(dirText, dirShort, 26);
+	Tail(dirText, dirShort, 22);
+	TBuf<30> nameShort;
+	Tail(parse.NameAndExt(), nameShort, 22);
 	TBuf<80> what;
-	what.Format(_L("\"%S\" to %S"), &shortName, &dirShort);
+	what.Format(_L("\"%S\" to %S"), &nameShort, &dirShort);
 	r = RunXferL(aView, PSI_XOP_PUT, remote, name, _L("Sending file"), what);
 	if (r != PSI_XFER_OK)
 		{

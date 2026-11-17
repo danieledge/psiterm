@@ -554,7 +554,8 @@ TBool CPtEditView::SaveL(TBool aForce)
 		if (r == PSI_XFER_CHANGED && !aForce)
 			{
 			TBuf<160> q;
-			q.Format(_L("%S has changed on the server since you opened it"), &iName);
+			TPtrC name(Upto(iName, 100));        // (iName is up to 120: Format panics past q's 160)
+			q.Format(_L("%S has changed on the server since you opened it"), &name);
 			if (!iEikonEnv->QueryWinL(q, _L("Replace it with your version?")))
 				break;
 			aForce = ETrue;
