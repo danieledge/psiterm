@@ -182,11 +182,14 @@ void TMdBuilder::CharL(TInt aPos, TInt aLen, TUint aStyle, TInt aPx, TBool aBold
 
 void TMdBuilder::ParaL(TKind aKind, const TDesC& aText, TInt aSrcLine, TInt aLevel, TBool aFirstCode, TBool aLastCode)
 	{
-	TBuf<512> shown;
+	// (as long as the source text: a fixed 512 cut long paragraphs short.
+	// Inline's text is never longer than its source, and stops 2 short)
+	HBufC* shownBuf = HBufC::NewLC(aText.Length() + 4);
+	TPtr shown(shownBuf->Des());
 	TMdSpan spans[KMaxSpans];
 	TInt nspans = 0;
 	if (aKind == ECode || aKind == ETable || aKind == ERule)
-		shown.Copy(aText.Left(aText.Length() < shown.MaxLength() ? aText.Length() : shown.MaxLength()));
+		shown.Copy(aText);
 	else
 		nspans = Inline(aText, shown, spans);
 	if (aKind == ENumber)
@@ -304,7 +307,7 @@ void TMdBuilder::ParaL(TKind aKind, const TDesC& aText, TInt aSrcLine, TInt aLev
 	pm.SetAttrib(EAttIndent);
 	pm.SetAttrib(EAttFillColor);
 	iRt.ApplyParaFormatL(pf, pm, start, iPos - start);
-	CleanupStack::PopAndDestroy();
+	CleanupStack::PopAndDestroy();          // pf
 	// the text: the paragraph's own look, then the inline runs over it
 	TInt len = shown.Length();
 	if (aKind == ECode || aKind == ETable)
@@ -315,6 +318,7 @@ void TMdBuilder::ParaL(TKind aKind, const TDesC& aText, TInt aSrcLine, TInt aLev
 		for (TInt i = 0; i < nspans; i++)
 			CharL(start + spans[i].iStart, spans[i].iLen, spans[i].iStyle, px, bold, ink);
 		}
+	CleanupStack::PopAndDestroy();          // shownBuf
 	}
 
 // Leading spaces, for a list's level
@@ -451,12 +455,21 @@ void PtRenderMarkdownL(CRichText& aRt, const TDesC& aSrc, const TPtMdStyle& aSty
 			{
 		plain:
 			// lines of a paragraph run together (Markdown's soft line ends)
+			if (p.Length() + t.Length() + 1 > p.MaxLength())
+				{
+				// (a long paragraph: more room, rather than its end left out)
+				HBufC* bigger = para->ReAllocL(p.Length() + t.Length() + 1024);
+				CleanupStack::Pop();             // para, as it was
+				para = bigger;
+				CleanupStack::PushL(para);
+				TPtr again(para->Des());
+				p.Set(again);
+				}
 			if (p.Length() == 0)
 				paraLine = line;
-			else if (p.Length() < p.MaxLength())
+			else
 				p.Append(' ');
-			TInt room = p.MaxLength() - p.Length();
-			p.Append(t.Left(t.Length() < room ? t.Length() : room));
+			p.Append(t);
 			// two spaces at the end: a line break kept
 			if (l.Length() >= 2 && l.Right(2) == _L("  "))
 				FLUSH();
