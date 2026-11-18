@@ -4694,7 +4694,11 @@ void CTermView::LaunchSshL(TInt aMode)
 	Mem::Copy(iShared->entropy, iEntropy, PSI_ENTROPY_SIZE);
 	iShared->entropy_len = PSI_ENTROPY_SIZE;
 	iShared->mode = aMode;
-	iShared->log_on = iSettings.iKeepLog ? 1 : 0;   // (0.97) psissh writes PsiTerm.log only then
+	// (0.97) psissh writes PsiTerm.log only then; and while Coda's debug mode
+	// is on (C:\System\Data\PsiDiag.on: Coda's Control panel > Diagnostics),
+	// whose PsiDiag.exe copies its new lines into the system log
+	TEntry diag;
+	iShared->log_on = iSettings.iKeepLog || iCoeEnv->FsSession().Entry(_L("C:\\System\\Data\\PsiDiag.on"), diag) == KErrNone ? 1 : 0;
 	iEverLoggedIn = EFalse;
 	iConnStage = PSI_STATE_STARTING;
 	iLastState = -1;
