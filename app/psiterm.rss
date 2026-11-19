@@ -1234,7 +1234,7 @@ RESOURCE ARRAY r_pt_log_existing_array
 
 // tmux settings (1.01, as Muxedo's): the defaults (tmux > tmux settings...)
 // or one server's own (SSH server > tmux..., which hides the last two lines
-// and offers "Use default" in each choice). The choices are filled in by
+// and offers "As standard" in each choice). The choices are filled in by
 // pttmux.cpp.
 RESOURCE DIALOG r_pt_tmux_dialog
 	{

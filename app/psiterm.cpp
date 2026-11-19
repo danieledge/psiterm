@@ -34,6 +34,8 @@
 #include "pglinktest.h"
 #include "psigreyui.h"
 #include "psikeep.h"           // (1.17) settings kept on the card, without passwords or keys
+#include "psierr.h"            // (1.18) Coda's words for an error (review R105)
+#include "psisafe.h"           // (1.18) settings written whole (review R104)
 
 static void UseSharedLink(RFs& aFs, TPsiSettings& aSettings);
 static void SaveSharedLink(RFs& aFs, const TPsiSettings& aSettings);
@@ -163,7 +165,12 @@ _LIT(KKeepLogIni, "C:\\System\\Apps\\PsiTerm\\Log.ini");
 _LIT(KKeepFolders, "C:\\System\\Apps\\PsiTerm\\Folders.dat");
 _LIT(KKnownHosts, "C:\\System\\Apps\\PsiTerm\\.ssh\\known_hosts");
 const TInt KEntropyKeysNeeded = 40;
-const TInt KScrollbackLines = 300;       // ~150 KB of history
+// (1.18, review R115) the scrollback: 1,000 lines (512 KB) when the Psion
+// has the room at the start, as a netBook or a 5mx with little running
+// has; 300 (150 KB) otherwise, as before
+const TInt KScrollbackLines = 1000;
+const TInt KScrollbackLinesShort = 300;
+const TInt KScrollbackRoomNeeded = 6 * 1024 * 1024;   // free RAM for the long one
 const TInt KScrollbackCols = 128;
 const TInt KClipMax = 16384;            // most text copied/pasted at once
 // (0.81) power: the SSH pump and the status tick (see PumpQuiet, StartTick)
@@ -173,11 +180,12 @@ const TInt KPumpQuietUs = 1000000;      // quiet with no status tick to beat for
 const TInt KPumpNoBellUs = 125000;      // quiet without a working doorbell
 const TInt KTickUs = 500000;            // status line, cursor blink, tmux, the log
 const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (TickBusy)
+const TInt KTickBackUs = 10000000;      // (1.18) behind, a session up and quiet: the heartbeat, the log
 // releases: dist/ in github.com/danieledge/psiterm, fetched over HTTPS
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.17");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.18");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -342,7 +350,10 @@ void CSerialPort::Probe(TDes8& aOut)
 		if (r == KErrNone)
 			aOut.AppendFormat(_L8("  %d baud: accepted by the driver\r\n"), KRates[i]);
 		else
-			aOut.AppendFormat(_L8("  %d baud: refused (%d)\r\n"), KRates[i], r);
+			{
+			TPtrC why(PsiErrWords(r));
+			aOut.AppendFormat(_L8("  %d baud: refused - %S\r\n"), KRates[i], &why);
+			}
 		}
 	iComm.SetConfig(old);
 	RComm second;
@@ -354,7 +365,10 @@ void CSerialPort::Probe(TDes8& aOut)
 		second.Close();
 		}
 	else
-		aOut.AppendFormat(_L8("COMM::1 not available (%d)\r\n"), r);
+		{
+		TPtrC why(PsiErrWords(r));
+		aOut.AppendFormat(_L8("COMM::1 not available - %S\r\n"), &why);
+		}
 	ReadFirst();
 	}
 
@@ -630,16 +644,27 @@ void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	iCallbacks.sb_pushline = &CTermView::CbPushLine;
 	iCallbacks.sb_clear = &CTermView::CbClearScrollback;
 	// scrollback memory; without it PsiTerm still works, just with no history
-	iSbCells = (TSbCell*)User::Alloc(KScrollbackLines * KScrollbackCols * sizeof(TSbCell));
-	iSbCols = (short*)User::Alloc(KScrollbackLines * sizeof(short));
-	if (!iSbCells || !iSbCols)
+	TInt sbLines = KScrollbackLines;
+	{
+	TMemoryInfoV1Buf mi;
+	if (UserHal::MemoryInfo(mi) != KErrNone || mi().iFreeRamInBytes < KScrollbackRoomNeeded)
+		sbLines = KScrollbackLinesShort;
+	}
+	for (;;)
 		{
+		iSbCells = (TSbCell*)User::Alloc(sbLines * KScrollbackCols * sizeof(TSbCell));
+		iSbCols = (short*)User::Alloc(sbLines * sizeof(short));
+		if (iSbCells && iSbCols)
+			break;
 		User::Free(iSbCells);
 		User::Free(iSbCols);
 		iSbCells = NULL;
 		iSbCols = NULL;
+		if (sbLines == KScrollbackLinesShort)
+			break;
+		sbLines = KScrollbackLinesShort;     // (the heap could not grow so far: the short one)
 		}
-	SbInit(&iSb, iSbCells, iSbCols, KScrollbackLines, KScrollbackCols);
+	SbInit(&iSb, iSbCells, iSbCols, sbLines, KScrollbackCols);
 	vterm_screen_set_callbacks(iScreen, &iCallbacks, this);
 	vterm_screen_enable_altscreen(iScreen, 1);
 	// Let libvterm batch scrolling into window blits (CopyRect) instead of
@@ -778,8 +803,11 @@ TBool CTermView::OpenSerial()
 			msg.Format(_L8("\r\n[PsiTerm: the serial port is in use by another program (Sync,\r\n"
 				" PsiMail, PsiWeb or the Psion's dial-up). Type again once it has finished.]\r\n"));
 		else
-			msg.Format(_L8("\r\n[PsiTerm: could not open the serial port (%d) - the Remote link\r\n"
-				" may be on (switch it off from the System screen, Ctrl+L).]\r\n"), r);
+			{
+			TPtrC why(PsiErrWords(r));
+			msg.Format(_L8("\r\n[PsiTerm: could not open the serial port - %S. The Remote link\r\n"
+				" may be on (switch it off from the System screen, Ctrl+L).]\r\n"), &why);
+			}
 		LocalMessage(msg);
 		return EFalse;
 		}
@@ -1293,7 +1321,10 @@ void CTermView::StartInstallerL()
 		return;
 		}
 	TBuf<KMaxFileName + 80> m;           // (iUpdateFile is a TFileName: Format panics if it cannot fit)
-	m.Format(_L("The installer did not start (%d) - open %S from the System screen"), err, &iUpdateFile);
+	PsiErrMsg(m, _L("The installer did not start"), err);   // (1.18: in words, review R105)
+	m.Append(_L(" - open "));
+	m.Append(iUpdateFile.Left(Min(iUpdateFile.Length(), m.MaxLength() - m.Length() - 23)));
+	m.Append(_L(" from the System screen"));
 	iEikonEnv->InfoWinL(_L("Update downloaded"), m);
 	}
 
@@ -1517,7 +1548,7 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 		iUserAt = User::TickCount();
 		if (!iEchoAt)
 			iEchoAt = iUserAt ? iUserAt : 1;
-		if (iTick && iTickUs != KTickUs && TickBusy())
+		if (iTick && iTickUs != TickPace())
 			StartTick();
 		return;
 		}
@@ -1552,7 +1583,10 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 				msg.Format(_L8("\r\n[PsiTerm: the modem is not accepting data (CTS is off).\r\n"
 					" Set Flow control to None, or send AT&K1 then AT&W to the WiRSa.]\r\n"));
 			else
-				msg.Format(_L8("\r\n[PsiTerm: could not send to the modem (%d).]\r\n"), r);
+				{
+				TPtrC why(PsiErrWords(r));
+				msg.Format(_L8("\r\n[PsiTerm: could not send to the modem - %S.]\r\n"), &why);
+				}
 			LocalMessage(msg);
 			}
 		return;
@@ -1867,6 +1901,8 @@ void CTermView::Tick()
 			iEverLoggedIn = ETrue;
 			TRAP_IGNORE(((CPsiTermAppUi*)iEikonEnv->EikAppUi())->HostOutcomeL(iHostIndex, EPtResultLoggedIn));
 			}
+		if (iTick && iTickUs != TickPace())
+			StartTick();                     // (1.18) slower, or none, behind
 		return;
 		}
 	if (iSettings.iBlink && iCurVisible && iScrollOffset == 0)
@@ -1929,8 +1965,27 @@ void CTermView::Tick()
 			DeactivateGc();
 			}
 		}
-	if (iTick && iTickUs != (TickBusy() ? KTickUs : KTickSlowUs))
+	if (iTick && iTickUs != TickPace())
 		StartTick();                         // (0.81) the pace for what is on the screen now
+	}
+
+// (1.18, review R115) how often the tick goes, in microseconds (0: not at
+// all). In front: 0.5 s while something moves, else 2 s. Behind, nothing
+// is drawn: 2 s while connecting, reconnecting or closing; 10 s with a
+// session up and quiet (its heartbeat: psissh waits 45 s; the log reaches
+// the disk); and none with nothing open, so an idle PsiTerm left behind
+// another program no longer wakes the Psion every 2 s for ever.
+TInt CTermView::TickPace() const
+	{
+	if (iForeground)
+		return TickBusy() ? KTickUs : KTickSlowUs;
+	if (iReconnectWait || iQuitAsked || iLastTx)
+		return KTickSlowUs;
+	if (iSshActive && iShared)
+		return (iShared->state != PSI_STATE_CONNECTED || iLaunchMode != 0) ? KTickSlowUs : KTickBackUs;
+	if (iSshActive || iLog)
+		return KTickBackUs;
+	return 0;
 	}
 
 // (0.81) The tick goes every 0.5 s while something on the screen moves or
@@ -1965,8 +2020,9 @@ void CTermView::StartTick()
 	iBlinkHidden = EFalse;
 	// always: the status line, the cursor blink and the tmux tabs (every
 	// 0.5 s; 2 s when nothing moves, or in the background: TickBusy)
-	iTickUs = TickBusy() ? KTickUs : KTickSlowUs;
-	iTick->Start(iTickUs, iTickUs, TCallBack(TickCallback, this));
+	iTickUs = TickPace();
+	if (iTickUs > 0)
+		iTick->Start(iTickUs, iTickUs, TCallBack(TickCallback, this));
 	}
 
 // (0.81) PsiTerm came to the front or went behind another program
@@ -1977,8 +2033,8 @@ void CTermView::SetForeground(TBool aForeground)
 	if (aForeground == iForeground)
 		return;
 	iForeground = aForeground;
-	if (iTick && iTick->IsActive() && iTickUs != (TickBusy() ? KTickUs : KTickSlowUs))
-		StartTick();
+	if (iTick && (iTickUs != TickPace() || (iTickUs > 0 && !iTick->IsActive())))
+		StartTick();                         // (1.18: also back from none, behind)
 	if (iForeground && iTqDueAt)
 		iTqKickAt = User::TickCount();   // the tmux window list, which waited
 	if (iForeground)
@@ -4577,8 +4633,8 @@ TInt CTermView::ShotCallback(TAny* aSelf)
 	TRAPD(err, self->TakeScreenshotL());
 	if (err != KErrNone)
 		{
-		TBuf<48> m;
-		m.Format(_L("Screenshot not saved (%d)"), err);
+		TBuf<60> m;
+		PsiErrMsg(m, _L("Screenshot not saved"), err);
 		CEikonEnv::Static()->InfoMsg(m);
 		}
 	return 0;
@@ -4706,8 +4762,9 @@ void CTermView::LaunchSshL(TInt aMode)
 		}
 	if (r != KErrNone)
 		{
-		TBuf8<64> msg;
-		msg.Format(_L8("\r\n[SSH: could not set up shared memory (%d)]\r\n"), r);
+		TBuf8<100> msg;
+		TPtrC why(PsiErrWords(r));
+		msg.Format(_L8("\r\n[SSH: could not set up shared memory - %S]\r\n"), &why);
 		LocalMessage(msg);
 		if (iReconnecting)
 			CancelReconnect(_L8("[Could not reconnect - use SSH to... to try again]\r\n"));
@@ -4869,7 +4926,10 @@ void CTermView::LaunchSshL(TInt aMode)
 			msg.Format(_L8("\r\n[PsiTerm's SSH program (psissh.exe) is missing or cannot load.\r\n"
 				" Reinstall PsiTerm from its .sis file.]\r\n"));
 		else
-			msg.Format(_L8("\r\n[SSH: could not start psissh.exe (%d)]\r\n"), r);
+			{
+			TPtrC why(PsiErrWords(r));
+			msg.Format(_L8("\r\n[SSH: could not start psissh.exe - %S]\r\n"), &why);
+			}
 		LocalMessage(msg);
 		iChunk.Close();
 		iChunkOpen = EFalse;
@@ -5141,8 +5201,9 @@ void CTermView::ReconnectNowL()
 	TRAPD(err, LaunchSshL());
 	if (err != KErrNone)
 		{
-		TBuf8<80> m;
-		m.Format(_L8("\r\n[Could not reconnect (%d) - use SSH to... to try again]\r\n"), err);
+		TBuf8<100> m;
+		TPtrC why(PsiErrWords(err));
+		m.Format(_L8("\r\n[Could not reconnect - %S. Use SSH to... to try again]\r\n"), &why);
 		CancelReconnect(m);
 		if (!iSshActive)
 			ApplySerialSettings();
@@ -6511,12 +6572,12 @@ SEikControlInfo CHostEditDialog::CreateCustomControlL(TInt aControlType)
 	return info;
 	}
 
-// the tmux page's choices: "Use default (Yes)" / Yes / No (as tmux settings)
+// the tmux page's choices: "As standard (Yes)" / Yes / No (as tmux settings)
 void CHostEditDialog::TmuxChoicesL(TInt aId, TInt aValue, TInt aDefault)
 	{
 	CDesCArrayFlat* a = new(ELeave) CDesCArrayFlat(3);
 	CleanupStack::PushL(a);
-	a->AppendL(aDefault ? _L("Use default (Yes)") : _L("Use default (No)"));
+	a->AppendL(aDefault ? _L("As standard (Yes)") : _L("As standard (No)"));
 	a->AppendL(_L("Yes"));
 	a->AppendL(_L("No"));
 	CEikChoiceList* c = (CEikChoiceList*)Control(aId);

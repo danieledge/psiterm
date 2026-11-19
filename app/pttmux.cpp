@@ -3,7 +3,7 @@
 // tmux > tmux settings...   the defaults: start in tmux, the session, a
 //                           session of the Psion's own, the options set on
 //                           attach, the prefix key, a word if tmux is missing
-// SSH server > tmux...      one server's own (each "Use default" until set)
+// SSH server > tmux...      one server's own (each "As standard" until set)
 // tmux > Sessions...        tmux's sessions: Switch / New / Rename / Close
 // Windows, Panes            new, rename and close as tmux commands, not keys
 // View > Scroll > tmux history   the pane's own history into the scrollback
@@ -202,14 +202,14 @@ private:
 	TInt* iPrefix;              // (the defaults only) the prefix key setting
 	};
 
-// Yes/No, or for a server "Use default (Yes)" / Yes / No
+// Yes/No, or for a server "As standard (Yes)" / Yes / No
 void CPtTmuxDialog::SetChoicesL(TInt aId, TInt aValue, TInt aDefault)
 	{
 	CDesCArrayFlat* a = new(ELeave) CDesCArrayFlat(3);
 	CleanupStack::PushL(a);
 	if (iDefaults)
 		{
-		a->AppendL(aDefault ? _L("Use default (Yes)") : _L("Use default (No)"));
+		a->AppendL(aDefault ? _L("As standard (Yes)") : _L("As standard (No)"));
 		a->AppendL(_L("Yes"));
 		a->AppendL(_L("No"));
 		}

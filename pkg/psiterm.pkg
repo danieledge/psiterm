@@ -2,7 +2,7 @@
 ; PsiTerm: libvterm terminal.  psissh.exe: Dropbear SSH client.
 ; psihold.exe: holds the Psion Internet connection up after use ("Stay connected", ssh/psihold.cpp)
 &EN
-#{"PsiTerm"},(0x01000A77),1,17,0
+#{"PsiTerm"},(0x01000A77),1,18,0
 "psiterm.app"-"!:\System\Apps\PsiTerm\PsiTerm.app"
 "psiterm.rsc"-"!:\System\Apps\PsiTerm\PsiTerm.rsc"
 "psiterm.mbm"-"!:\System\Apps\PsiTerm\PsiTerm.mbm"
@@ -21,5 +21,77 @@
 ""-"C:\System\Apps\PsiTerm\Keys.dat",FN
 ""-"C:\System\Apps\PsiTerm\ssh_seed.bin",FN
 ""-"C:\System\Apps\PsiTerm\.ssh\known_hosts",FN
+; (1.18) the rest of its own files, and the SSH keys themselves (Keys\k<n>.key,
+; .pub and .fp; Keys.dat above is only their list): removing PsiTerm takes
+; its private keys with it. A key's number is one more than the highest in
+; use, so 1 to 20 covers every list of up to 10 keys made in turn.
+""-"C:\System\Apps\PsiTerm\Tmux.ini",FN
+""-"C:\System\Apps\PsiTerm\Log.ini",FN
+""-"C:\System\Apps\PsiTerm\Folders.dat",FN
+""-"C:\System\Apps\PsiTerm\History.dat",FN
+""-"C:\System\Apps\PsiTerm\History.tmp",FN
+""-"C:\System\Apps\PsiTerm\Edited.dat",FN
+""-"C:\System\Apps\PsiTerm\Edit.tmp",FN
+""-"C:\System\Apps\PsiTerm\id_ed25519",FN
+""-"C:\System\Apps\PsiTerm\Keys\k1.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k1.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k1.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k2.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k2.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k2.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k3.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k3.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k3.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k4.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k4.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k4.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k5.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k5.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k5.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k6.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k6.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k6.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k7.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k7.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k7.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k8.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k8.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k8.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k9.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k9.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k9.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k10.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k10.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k10.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k11.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k11.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k11.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k12.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k12.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k12.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k13.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k13.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k13.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k14.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k14.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k14.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k15.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k15.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k15.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k16.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k16.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k16.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k17.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k17.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k17.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k18.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k18.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k18.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k19.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k19.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k19.fp",FN
+""-"C:\System\Apps\PsiTerm\Keys\k20.key",FN
+""-"C:\System\Apps\PsiTerm\Keys\k20.pub",FN
+""-"C:\System\Apps\PsiTerm\Keys\k20.fp",FN
 ; EPOC C standard library (ESTLIB.DLL) - not in the 5mx ROM
 @"STDLIB.SIS",(0x100002c3)

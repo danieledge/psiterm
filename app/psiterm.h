@@ -288,7 +288,7 @@ private:
 // reading of the file but is NOT strong protection: anyone holding the
 // Psion can use the saved logins.
 // ---------------------------------------------------------------------------
-const TInt KMaxHosts = 16;
+const TInt KMaxHosts = 32;   // (1.18, review R115: 16 before; Hosts.dat holds the count, older PsiTerms read the first 16)
 
 // ---------------------------------------------------------------------------
 // tmux (1.01, as Muxedo): starting in tmux, the session, the options set on
@@ -296,7 +296,7 @@ const TInt KMaxHosts = 16;
 // server can override any of them (SSH server > tmux...). pttmux.cpp
 // ---------------------------------------------------------------------------
 const TInt KTmuxSessionLen = 16;   // (a grouped command must fit 127 characters)
-const TInt KTmuxHistoryLines = 1000;   // tmux history: asked of tmux (the scrollback keeps 300)
+const TInt KTmuxHistoryLines = 1000;   // tmux history: asked of tmux (the scrollback keeps 1,000, or 300 when memory is short)
 
 struct TPtTmux
 	{
@@ -1035,6 +1035,7 @@ private:
 	static TInt TickCallback(TAny* aSelf);
 	void StartTick();
 	TBool TickBusy() const;
+	TInt TickPace() const;          // (1.18) the tick's period now, 0: none (review R115)
 	void SyncToolbar();       // the first toolbar button: SSH to..., or End SSH
 	TInt iTbBusy;             // what it shows now (-1 = not yet set)
 	short* iSbCols;

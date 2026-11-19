@@ -121,6 +121,22 @@ Fixed:
 
 The notes for each test build follow.
 
+**PsiTerm 1.18** (not yet released)
+- **More room.** Up to 32 saved servers (16 before), and 1,000 lines of
+  scrollback when the Psion has the memory free at the start (300
+  otherwise, as before).
+- **Quiet behind other programs.** With no connection open, PsiTerm no
+  longer wakes the Psion every 2 seconds while it waits behind another
+  program. With a connection up and nothing happening it looks every
+  10 seconds.
+- **Removing PsiTerm removes its SSH keys** and the rest of its own files,
+  not only the list of keys.
+- **Messages say what went wrong** in words ("Screenshot not saved - the
+  disk is full"), not as a number. tmux's per-server choices read
+  "As standard (Yes)".
+- The favourite folders file is written beside itself and put in place
+  whole, so a full disk or a reset keeps the old list.
+
 **PsiTerm 1.16** (not yet released)
 - **The serial port is free for other programs.** PsiTerm opens the serial
   port only when a connection, or a key typed to the modem, needs it, and

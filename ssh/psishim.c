@@ -1149,7 +1149,7 @@ static int run_update(void)
 	pg_out_write("\r\nChecking the release signature...\r\n", 37);
 	if (verify_file(s->save_as, remote, sig) != 0) {
 		remove(s->save_as);
-		sprintf(why, "SIGNATURE CHECK FAILED - the download was deleted, nothing installed");
+		sprintf(why, "the release signature does not match - the download was deleted, nothing installed");
 		goto fail;
 	}
 	sprintf(msg, "Signature OK. Saved %ld bytes to %s\r\n", got, s->save_as);

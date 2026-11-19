@@ -15,6 +15,8 @@
 
 #include "psiterm.h"
 #include "ptxfer.h"
+#include "psierr.h"            // (1.18) Coda's words for an error (review R105)
+#include "psisafe.h"           // (1.18) Folders.dat written whole (review R104)
 
 #include <eikcfdlg.h>
 #include <eiklabel.h>
@@ -702,20 +704,19 @@ static void FavLoadL(RFs& aFs, CDesC8ArrayFlat& aLines)
 	CleanupStack::PopAndDestroy(2);         // buf, f
 	}
 
+// (1.18, review R104) written beside itself and put in its place whole: a
+// full disk or a reset leaves the old list, never a short one
 static TBool FavSave(RFs& aFs, const CDesC8ArrayFlat& aLines)
 	{
-	RFile f;
-	if (f.Replace(aFs, KFavFile, EFileWrite) != KErrNone)
+	RPsiSafeFile f;
+	if (f.Open(aFs, KFavFile) != KErrNone)
 		return EFalse;
-	TInt err = KErrNone;
-	for (TInt i = 0; i < aLines.Count() && err == KErrNone; i++)
+	for (TInt i = 0; i < aLines.Count(); i++)
 		{
-		err = f.Write(aLines[i]);
-		if (err == KErrNone)
-			err = f.Write(_L8("\n"));
+		f.Write(aLines[i]);
+		f.Write(_L8("\n"));
 		}
-	f.Close();
-	return err == KErrNone;
+	return f.Commit() == KErrNone;
 	}
 
 // the folder in a line of aServer's, or an empty pointer
@@ -2723,7 +2724,7 @@ void CPtLog::Flush()
 	else
 		{
 		TBuf<60> m;
-		m.Format(_L("Log stopped - could not write the file (%d)"), err);
+		PsiErrMsg(m, _L("Log stopped"), err);   // (1.18: in words, review R105)
 		env->InfoMsg(m);
 		}
 	}
@@ -2974,7 +2975,7 @@ void PtLogCommandL(CTermView& aView)
 	else if (r == KErrNotReady || r == KErrPathNotFound)
 		m.Copy(_L("Could not log - that disk is not there"));
 	else
-		m.Format(_L("Could not log to that file (%d)"), r);
+		PsiErrMsg(m, _L("Could not log to that file"), r);
 	env->InfoMsg(m);
 	}
 
