@@ -188,7 +188,7 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "\n"
 	  "File > Files > Edit file on server (Shift+Ctrl+O) picks a text file (up to 64 KB) in the same view "
 	  "and opens it in PsiTerm's editor, with its own menus and toolbar: Save (Ctrl+S), Find (Ctrl+F), "
-	  "Find next (Ctrl+G), Replace (Ctrl+R), Go to line (Ctrl+L), Undo (Ctrl+Z), Wrap to screen (Ctrl+W), "
+	  "Find next (Ctrl+J), Replace (Ctrl+H), Go to line (Ctrl+G), Undo (Ctrl+Z), Wrap to screen (Ctrl+W), "
 	  "zoom (Ctrl+M), and File > Recent for the last files edited on this server. Saving checks that the "
 	  "file has not changed on the server since you opened it, and asks if it has; it is written beside "
 	  "the old one and renamed over it, so a dropped link never leaves half a file. Lines keep their "
@@ -243,8 +243,10 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "Keep a log is ticked and a web helper is set. The log "
 	  "goes as plain HTTP and can hold host names. It never holds passwords or keys.\n"
 	  "\n"
-	  "The serial port can be used by one program at a time: switch the Remote link off (System "
-	  "screen, Ctrl+L) and close PsiMail or PsiWeb's connection first." },
+	  "The serial port can be used by one program at a time. PsiTerm takes it only while a "
+	  "connection, or a key typed to the modem, needs it, and lets it go when you switch to "
+	  "another program. Switch the Remote link off (System screen, Ctrl+L) and close PsiMail or "
+	  "PsiWeb's connection first." },
 
 	{ "Screen & greys",
 	  "On the Series 7 and netBook, PsiTerm shows the server's colours, all 256 of them (colours "

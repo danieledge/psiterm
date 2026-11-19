@@ -92,6 +92,8 @@ static inline ScreenCell *getcell(const VTermScreen *screen, int row, int col)
 static ScreenCell *alloc_buffer(VTermScreen *screen, int rows, int cols)
 {
   ScreenCell *new_buffer = vterm_allocator_malloc(screen->vt, sizeof(ScreenCell) * rows * cols);
+  if(!new_buffer)
+    return NULL;                                /* (PsiTerm 1.16) */
 
   for(int row = 0; row < rows; row++) {
     for(int col = 0; col < cols; col++) {
@@ -874,6 +876,8 @@ static VTermScreen *screen_new(VTerm *vt)
 
   VTermScreen *screen = vterm_allocator_malloc(vt, sizeof(VTermScreen));
   int rows, cols;
+  if(!screen)
+    return NULL;                                /* (PsiTerm 1.16) */
 
   vterm_get_size(vt, &rows, &cols);
 
@@ -899,6 +903,13 @@ static VTermScreen *screen_new(VTerm *vt)
   screen->buffer = screen->buffers[BUFIDX_PRIMARY];
 
   screen->sb_buffer = vterm_allocator_malloc(screen->vt, sizeof(VTermScreenCell) * cols);
+
+  if(!screen->buffers[BUFIDX_PRIMARY] || !screen->sb_buffer) {
+    vterm_allocator_free(vt, screen->buffers[BUFIDX_PRIMARY]);
+    vterm_allocator_free(vt, screen->sb_buffer);
+    vterm_allocator_free(vt, screen);
+    return NULL;
+  }
 
   vterm_state_set_callbacks(screen->state, &state_cbs, screen);
   vterm_state_callbacks_has_premove(screen->state);
@@ -1065,7 +1076,35 @@ void vterm_screen_enable_altscreen(VTermScreen *screen, int altscreen)
     vterm_get_size(screen->vt, &rows, &cols);
 
     screen->buffers[BUFIDX_ALTSCREEN] = alloc_buffer(screen, rows, cols);
+    /* (PsiTerm 1.16) no memory: no alternate screen (a full-screen
+       program draws over the main one) rather than a write through NULL */
   }
+}
+
+/* (PsiTerm 1.16) Is there memory to resize to rows x cols? Every block a
+   resize takes (state and screen, both buffers, with the old ones still
+   held) is taken and given back; 0 if any cannot be had. A resize itself
+   does not check, and wrote through NULL when memory ran out. */
+int vterm_screen_room_for_size(VTermScreen *screen, int rows, int cols)
+{
+  void *b[7];
+  int n = 0, ok = 1;
+  size_t sizes[7];
+  sizes[n++] = sizeof(ScreenCell) * rows * cols;             /* the main buffer */
+  sizes[n++] = sizeof(VTermLineInfo) * rows;
+  sizes[n++] = screen->buffers[BUFIDX_ALTSCREEN] ? sizeof(ScreenCell) * rows * cols : 1;
+  sizes[n++] = sizeof(VTermLineInfo) * rows;
+  sizes[n++] = sizeof(VTermScreenCell) * cols;               /* sb_buffer */
+  sizes[n++] = (cols + 7) / 8;                               /* the tab stops */
+  sizes[n++] = 2048;                                         /* (to spare) */
+  for(int i = 0; i < n; i++) {
+    b[i] = vterm_allocator_malloc(screen->vt, sizes[i]);
+    if(!b[i])
+      ok = 0;
+  }
+  for(int i = 0; i < n; i++)
+    vterm_allocator_free(screen->vt, b[i]);
+  return ok;
 }
 
 void vterm_screen_set_callbacks(VTermScreen *screen, const VTermScreenCallbacks *callbacks, void *user)

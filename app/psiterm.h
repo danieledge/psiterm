@@ -808,6 +808,8 @@ public:
 	void HangUp();
 	void ResetTerminal();
 	void ApplySerialSettings();
+	TBool OpenSerial();                 // (1.16) the raw modem terminal: opened when typed to
+	void ReleaseSerial();               // (1.16) let go (PsiTerm in the background)
 	void SerialClose() { if (iSerial) iSerial->Close(); }   // Connection settings > Test
 	void SetFontL(TInt aZoom);         // one of the zoom levels (Terminus, Courier small)
 	void SetFaceL(const TDesC& aName, TInt aPixels);   // 0.96: any typeface
@@ -864,6 +866,9 @@ public:
 	void DisconnectSsh();              // File > End SSH: asks psissh to stop (twice: ends it now)
 	void SshProcessEnded();
 	TBool SshActive() const { return iSshActive; }
+	// (1.16) Close: every connection is asked to end at once, then waited for together
+	void AskSshQuit() { if (iSshActive && iShared) { iShared->quit = 1; RingSsh(); iQuitWaited = ETrue; } }
+	TBool SshGone() { return !iSshActive || iSshProcess.ExitType() != EExitPending; }
 	TBool SshQuitting() const { return iQuitAsked; }   // asked to stop, not yet gone
 	TBool ReconnectWaiting() const { return iReconnectWait; }
 	// (0.68) the Psion was switched back on: psissh checks the link is still there
@@ -1166,6 +1171,7 @@ private:
 	TBool iChunkOpen;
 	PsiShared* iShared;
 	RProcess iSshProcess;
+	TBool iQuitWaited;                   // (1.16) Close has asked it to end and waited already
 	CSshWatcher* iWatcher;
 	CPeriodic* iPump;
 	// (0.81) power: the pump looks every tick only while output flows; then
@@ -1288,6 +1294,8 @@ private:
 	void UpdateReading(TBool aEnterOnly = EFalse);
 	TPsiReading iReading;
 	TBool iForeground;
+	TBool iSystemClose;                // (1.16) the system is closing PsiTerm (shut-down, backup, restart): no question
+	TBool EndConnectionsL();           // (1.16) Close: asks if connections are up, then ends them all at once
 	TBool iGreysOpen;                  // the greys screen is up (Reading mode stays off)
 	void HandleCommandL(TInt aCommand);
 	void DynInitMenuPaneL(TInt aMenuId, CEikMenuPane* aMenuPane);

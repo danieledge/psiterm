@@ -577,6 +577,8 @@ void vterm_screen_enable_reflow(VTermScreen *screen, bool reflow);
 #define vterm_screen_set_reflow  vterm_screen_enable_reflow
 
 void vterm_screen_enable_altscreen(VTermScreen *screen, int altscreen);
+/* (PsiTerm 1.16) 1 if memory allows a resize to rows x cols */
+int vterm_screen_room_for_size(VTermScreen *screen, int rows, int cols);
 
 typedef enum {
   VTERM_DAMAGE_CELL,    /* every cell */

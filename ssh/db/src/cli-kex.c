@@ -279,6 +279,110 @@ static void ask_to_confirm(const unsigned char* keyblob, unsigned int keybloblen
 	dropbear_exit("Didn't validate host key");
 }
 
+/* PsiTerm 1.16: the server sent a key other than the one known_hosts has
+   for it. Said plainly, with the choice to trust the new key (which then
+   takes the old one's place), instead of Dropbear's advice to edit
+   ~/.ssh/known_hosts, a file the Psion's user cannot reach. Anything but y
+   ends the connection. */
+static int confirm_changed_key(const unsigned char* keyblob, unsigned int keybloblen,
+	const char* algoname, const char* oldfp) {
+
+	char* fp = NULL;
+	FILE *tty = NULL;
+	int response = 'z';
+
+	if (!cli_opts.ask_hostkey || cli_opts.batch_mode) {
+		return 0;
+	}
+	fp = sign_key_fingerprint(keyblob, keybloblen);
+	fprintf(stderr, "\nThe server's identity has changed\n"
+			"'%s' sent a different %s key from before. Someone may be\n"
+			"intercepting the connection, or the server may have been set up again.\n"
+			"Its fingerprint now: %s\n"
+			"Before: %s\n"
+			"Trust the new one? (y/n) ",
+			cli_opts.remotehost, algoname, fp, oldfp ? oldfp : "unknown");
+	m_free(fp);
+	tty = fopen(_PATH_TTY, "r");
+	if (tty) {
+		response = getc(tty);
+		fclose(tty);
+	} else {
+		response = getc(stdin);
+	}
+	return response == 'y' || response == 'Y';
+}
+
+static char* known_hosts_name(void) {
+	char * homedir = getenv("HOME");
+	char * filename;
+	unsigned int len;
+	if (!homedir) {
+		struct passwd * pw = getpwuid(getuid());
+		if (pw) {
+			homedir = pw->pw_dir;
+		}
+	}
+	if (!homedir) {
+		return NULL;
+	}
+	len = strlen(homedir);
+	filename = m_malloc(len + 22);
+	snprintf(filename, len + 22, "%s/.ssh/known_hosts", homedir);
+	return filename;
+}
+
+/* PsiTerm 1.16: known_hosts written again without this host's lines for
+   this kind of key (beside it, then put in its place) */
+static int forget_host_key(const char* algoname, unsigned int algolen) {
+	char *name = known_hosts_name(), *tmp = NULL;
+	FILE *in = NULL, *out = NULL;
+	char *buf = NULL;
+	unsigned int hostlen = strlen(cli_opts.remotehost);
+	int ok = 0;
+	if (!name) {
+		return 0;
+	}
+	tmp = m_malloc(strlen(name) + 5);
+	sprintf(tmp, "%s.new", name);
+	buf = m_malloc(MAX_KNOWNHOSTS_LINE + 2);
+	in = fopen(name, "r");
+	out = in ? fopen(tmp, "w") : NULL;
+	if (in && out) {
+		ok = 1;
+		while (fgets(buf, MAX_KNOWNHOSTS_LINE + 1, in)) {
+			if (strncmp(buf, cli_opts.remotehost, hostlen) == 0 && buf[hostlen] == ' '
+				&& strncmp(buf + hostlen + 1, algoname, algolen) == 0
+				&& buf[hostlen + 1 + algolen] == ' ') {
+				continue;
+			}
+			if (fputs(buf, out) == EOF) {
+				ok = 0;
+				break;
+			}
+		}
+		if (ferror(in)) {
+			ok = 0;
+		}
+	}
+	if (in) {
+		fclose(in);
+	}
+	if (out && fclose(out) != 0) {
+		ok = 0;
+	}
+	if (ok) {
+		remove(name);
+		ok = rename(tmp, name) == 0;
+	} else if (out) {
+		remove(tmp);
+	}
+	m_free(buf);
+	m_free(tmp);
+	m_free(name);
+	return ok;
+}
+
 static FILE* open_known_hosts_file(int * readonly)
 {
 	FILE * hostsfile = NULL;
@@ -416,20 +520,27 @@ static void checkhostkey(const unsigned char* keyblob, unsigned int keybloblen) 
 			goto out;
 		}
 
-		/* The keys didn't match. eep. Note that we're "leaking"
-		   the fingerprint strings here, but we're exiting anyway */
-		dropbear_exit("\n\n%s host key mismatch for %s !\n"
-					"Fingerprint is %s\n"
-					"Expected %s\n"
-					"If you know that the host key is correct you can\nremove the bad entry from ~/.ssh/known_hosts", 
-					algoname,
-					cli_opts.remotehost,
-					sign_key_fingerprint(keyblob, keybloblen),
-					fingerprint ? fingerprint : "UNKNOWN");
+		/* The keys didn't match. (PsiTerm 1.16) asked: trusted, the old
+		   line goes and the new key is written as for a new server */
+		if (confirm_changed_key(keyblob, keybloblen, algoname, fingerprint)) {
+			fclose(hostsfile);
+			hostsfile = NULL;
+			if (!forget_host_key(algoname, algolen)) {
+				dropbear_log(LOG_WARNING, "The new key is trusted for now, but could not be saved");
+				goto out;
+			}
+			hostsfile = open_known_hosts_file(&readonly);
+			if (!hostsfile) {
+				goto out;
+			}
+			goto trusted;
+		}
+		dropbear_exit("The server's identity has changed - not connected");
 	} while (1); /* keep going 'til something happens */
 
 	/* Key doesn't exist yet */
 	ask_to_confirm(keyblob, keybloblen, algoname);
+trusted:
 
 	/* If we get here, they said yes */
 

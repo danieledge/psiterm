@@ -121,6 +121,30 @@ Fixed:
 
 The notes for each test build follow.
 
+**PsiTerm 1.16** (not yet released)
+- **The serial port is free for other programs.** PsiTerm opens the serial
+  port only when a connection, or a key typed to the modem, needs it, and
+  lets it go when you switch to another program, so Sync, PsiMail and
+  PsiWeb can use it while PsiTerm is open.
+- **A server whose key has changed** is no longer a dead end. PsiTerm says
+  "The server's identity has changed", shows the old and the new
+  fingerprint and asks "Trust the new one? (y/n)". y replaces the old key;
+  anything else ends the connection.
+- **Close asks first** while connections are up ("2 connections will be
+  ended / Close PsiTerm?") and then ends them all at once.
+- **The editor's keys are Psion's:** Ctrl+J Find next, Ctrl+G Go to line,
+  Ctrl+H Replace.
+- **Send file replaces a file in one step:** the new copy is written beside
+  the old one and renamed over it, so a send that is stopped or fails
+  leaves the file on the server as it was.
+
+Fixed:
+- A first run saved 9600 baud as the connection speed every program
+  shares. PsiTerm now starts from the shared standard and saves nothing
+  until you change a link setting.
+- Running out of memory as the window changed size could close PsiTerm. It
+  now keeps the old size and says "Not enough memory to change the size".
+
 **PsiTerm 1.15** (not yet released)
 - **PsiWeb's full browser.** PsiWeb 0.88's File > Open in full browser
   starts PsiTerm (or hands it the request, if it runs already) with one of
@@ -259,8 +283,8 @@ The notes for each test build follow.
   terminal; Ctrl+Q goes back to the terminal.
 - **Edit files on the server.** File > Files > Edit file on server...
   (Shift+Ctrl+O) opens a text file (up to 64 KB) in an editor of its own,
-  over SFTP: Save (Ctrl+S), Find (Ctrl+F), Replace (Ctrl+R), Go to line
-  (Ctrl+L), Undo, word wrap, zoom, LF or CR LF lines, and the last files
+  over SFTP: Save (Ctrl+S), Find (Ctrl+F), Find next (Ctrl+J), Replace
+  (Ctrl+H), Go to line (Ctrl+G), Undo, word wrap, zoom, LF or CR LF lines, and the last files
   you edited on that server under File > Recent. Saving checks the file has
   not changed on the server since you opened it (and asks if it has), and
   writes it beside the old one first, then renames it over, so a dropped

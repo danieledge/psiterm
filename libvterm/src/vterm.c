@@ -56,6 +56,9 @@ VTerm *vterm_build(const struct VTermBuilder *builder)
 
   /* Need to bootstrap using the allocator function directly */
   VTerm *vt = (*allocator->malloc)(sizeof(VTerm), builder->allocdata);
+  /* (PsiTerm 1.16) out of memory: NULL, never a write through it */
+  if(!vt)
+    return NULL;
 
   vt->allocator = allocator;
   vt->allocdata = builder->allocdata;
@@ -79,6 +82,13 @@ VTerm *vterm_build(const struct VTermBuilder *builder)
 
   vt->tmpbuffer_len = DEFAULT(builder->tmpbuffer_len, 4096);
   vt->tmpbuffer = vterm_allocator_malloc(vt, vt->tmpbuffer_len);
+
+  if(!vt->outbuffer || !vt->tmpbuffer) {
+    vterm_allocator_free(vt, vt->outbuffer);
+    vterm_allocator_free(vt, vt->tmpbuffer);
+    vterm_allocator_free(vt, vt);
+    return NULL;
+  }
 
   return vt;
 }

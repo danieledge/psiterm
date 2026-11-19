@@ -644,7 +644,7 @@ void CPtEditView::LineCol(TInt& aLine, TInt& aCol, TInt& aLines) const
 		}
 	}
 
-// View > Go to line... (Ctrl+L): "Line [ ] of 38"
+// View > Go to line... (Ctrl+G): "Line [ ] of 38"
 class CPtGotoDialog : public CEikDialog
 	{
 public:

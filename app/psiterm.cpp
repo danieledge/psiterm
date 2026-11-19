@@ -170,7 +170,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.15");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.16");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -459,7 +459,7 @@ CTermView::~CTermView()
 		TRAP_IGNORE(iEikonEnv->BusyMsgL(_L("Ending SSH..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
 		iShared->quit = 1;
 		RingSsh();
-		for (TInt i = 0; i < 30 && iSshProcess.ExitType() == EExitPending; i++)
+		for (TInt i = iQuitWaited ? 30 : 0; i < 30 && iSshProcess.ExitType() == EExitPending; i++)
 			User::After(100000);
 		if (iSshProcess.ExitType() == EExitPending)
 			{
@@ -613,6 +613,7 @@ void CTermView::ConstructL(const TRect& aRect, const TPsiSettings& aSettings)
 	vterm_set_utf8(iVt, 1);
 	vterm_output_set_callback(iVt, &CTermView::CbOutput, this);
 	iScreen = vterm_obtain_screen(iVt);
+	User::LeaveIfNull(iScreen);              // (1.16: libvterm says NULL when out of memory)
 	Mem::FillZ(&iCallbacks, sizeof(iCallbacks));
 	iCallbacks.damage = &CTermView::CbDamage;
 	iCallbacks.moverect = &CTermView::CbMoveRect;
@@ -730,6 +731,13 @@ void CTermView::RunBench()
 	LocalMessage(r);
 	}
 
+// (1.16) The serial port is PsiTerm's only while something uses it: the
+// raw modem terminal opens it when a key is typed to it (OpenSerial), and
+// it is let go when PsiTerm goes into the background and when SSH takes
+// over (psissh opens its own). Before, it was opened, exclusive, at the
+// start and after every session, and held all the while PsiTerm was open,
+// so PsiMail, PsiWeb, Sync and the Psion's own dial-up were refused it.
+// Here: new settings apply to a port that is open; one that is not stays shut.
 void CTermView::ApplySerialSettings()
 	{
 	if (!iSerial)
@@ -741,18 +749,34 @@ void CTermView::ApplySerialSettings()
 		iSerial->Close();
 		return;
 		}
+	if (iSerial->IsOpen())
+		OpenSerial();
+	}
+
+void CTermView::ReleaseSerial()
+	{
+	if (iSerial)
+		iSerial->Close();
+	}
+
+TBool CTermView::OpenSerial()
+	{
+	if (!iSerial || iSettings.iNetMode)
+		return EFalse;
 	TInt r = iSerial->Open(iSettings.iBaudIndex, iSettings.iRtsCts);
 	if (r != KErrNone)
 		{
 		TBuf8<160> msg;
-		if (iSettings.iNetMode && r == KErrInUse)
-			msg.Format(_L8("\r\n[PsiTerm: serial port in use - probably by the Psion's dial-up\r\n"
-				" connection. It is freed when the dial-up hangs up.]\r\n"));
+		if (r == KErrInUse)
+			msg.Format(_L8("\r\n[PsiTerm: the serial port is in use by another program (Sync,\r\n"
+				" PsiMail, PsiWeb or the Psion's dial-up). Type again once it has finished.]\r\n"));
 		else
 			msg.Format(_L8("\r\n[PsiTerm: could not open the serial port (%d) - the Remote link\r\n"
 				" may be on (switch it off from the System screen, Ctrl+L).]\r\n"), r);
 		LocalMessage(msg);
+		return EFalse;
 		}
+	return ETrue;
 	}
 
 // copies (or appends) as much of aFrom as fits. (ER5's Left() panics,
@@ -991,6 +1015,21 @@ void CTermView::Layout()
 		iOriginY = iOriginY0;
 		}
 
+	// (1.16) a resize needs memory libvterm does not check for (it wrote
+	// through NULL when it ran out): with too little, the size stays
+	{
+	int oldRows = 0, oldCols = 0;
+	vterm_get_size(iVt, &oldRows, &oldCols);
+	if ((iRows != oldRows || iCols != oldCols) && !vterm_screen_room_for_size(iScreen, iRows, iCols))
+		{
+		iRows = oldRows;
+		iCols = oldCols;
+		iOriginX = Max(0, (size.iWidth - iCols * iCellW) / 2);
+		if (!iTabsTop)
+			iOriginY0 = iOriginY = Max(0, (size.iHeight - iRows * iCellH) / 2);
+		iEikonEnv->InfoMsg(_L("Not enough memory to change the size"));
+		}
+	}
 	iScrollOffset = 0;                       // back to the live screen
 	iSelActive = EFalse;
 	iCacheValid = EFalse;
@@ -1485,13 +1524,15 @@ void CTermView::WriteToHost(const TDesC8& aBytes)
 	TUint now = User::TickCount();
 	if (!iSerial->IsOpen())
 		{
-		if (iLastSerialErr == 0 || now - iLastSerialErr > 320)
+		// (1.16) opened now, as a key is typed to the modem (ApplySerialSettings);
+		// a refusal is said at most every 10 s
+		if (iLastSerialErr != 0 && now - iLastSerialErr <= 320)
+			return;
+		if (!OpenSerial())
 			{
 			iLastSerialErr = now;
-			LocalMessage(_L8("\r\n[PsiTerm: the serial port is not open, so typing goes nowhere - the\r\n"
-				" Remote link may be on. Tools > Connection settings > OK opens the port again.]\r\n"));
+			return;
 			}
-		return;
 		}
 	TInt r = iSerial->Write(aBytes);
 	if (r != KErrNone)
@@ -3713,6 +3754,8 @@ void CTermView::SerialInfo()
 	if (iSshActive)
 		return;
 	TBuf8<512> info;
+	if (iSerial && !iSerial->IsOpen())
+		OpenSerial();                    // (1.16: opened only when used)
 	if (iSerial)
 		iSerial->Probe(info);
 	TRAPD(err, BeginDebugL(_L("Serial port")));
@@ -7718,8 +7761,12 @@ void CPsiTermAppUi::SshToL()
 	}
 
 // The link settings (speed, flow control, modem or Psion Internet, the PPP
-// start command) are shared with PsiMail and PsiWeb in PsiLink.ini. If it is
-// there it wins; if not, PsiTerm's own settings start it off.
+// start command) are shared with PsiMail, PsiWeb and Sync in PsiLink.ini.
+// If it is there it wins. (1.16) If not, nothing is written: PsiTerm starts
+// from the shared standard (TPsiLink::SetDefaults, as every other program
+// does), and the file is made only when a link setting is changed
+// (SaveSharedLink). Before, a first run wrote PsiTerm's own 9600 baud into
+// it, which every other program then took.
 static void UseSharedLink(RFs& aFs, TPsiSettings& aSettings)
 	{
 	TPsiLink link;
@@ -7730,35 +7777,39 @@ static void UseSharedLink(RFs& aFs, TPsiSettings& aSettings)
 		aSettings.iNetMode = link.iNetMode;
 		aSettings.iPppStart = link.iPppStart;
 		}
-	else
-		SaveSharedLink(aFs, aSettings);
 	}
 
 static void SaveSharedLink(RFs& aFs, const TPsiSettings& aSettings)
 	{
 	TPsiLink link, old;
 	link.SetDefaults();
-	TBool had = link.Load(aFs);               // (keeps the shared proxy as it is)
+	link.Load(aFs);                          // (keeps the shared proxy as it is)
 	old = link;
 	link.iBaudIndex = aSettings.iBaudIndex;
 	link.iRtsCts = aSettings.iRtsCts ? 1 : 0;
 	link.iNetMode = aSettings.iNetMode ? 1 : 0;
 	link.iPppStart = aSettings.iPppStart;
-	if (had && old.iBaudIndex == link.iBaudIndex && old.iRtsCts == link.iRtsCts
+	if (old.iBaudIndex == link.iBaudIndex && old.iRtsCts == link.iRtsCts
 		&& old.iNetMode == link.iNetMode && old.iPppStart == link.iPppStart)
-		return;                              // unchanged: don't rewrite it
+		return;                              // unchanged (or, with no file, the standard): don't write it
 	link.Save(aFs);
 	}
 
 void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	{
-	aSettings.iBaudIndex = 0;     // 9600: what most modems start at
-	aSettings.iRtsCts = 0;
+	// (1.16) the link's settings start as the shared standard's (psilink.h)
+	{
+	TPsiLink std;
+	std.SetDefaults();
+	aSettings.iBaudIndex = std.iBaudIndex;
+	aSettings.iRtsCts = std.iRtsCts;
+	aSettings.iNetMode = std.iNetMode;
+	aSettings.iPppStart = std.iPppStart;
+	}
 	aSettings.iZoom = KDefaultZoom;
 	aSettings.iSshHost.Zero();
 	aSettings.iSshUser.Zero();
 	aSettings.iSshPort = 22;
-	aSettings.iNetMode = 0;
 	aSettings.iUpdHost.Zero();
 	aSettings.iUpdPort = 8686;
 	aSettings.iBold = 0;
@@ -7773,7 +7824,6 @@ void CPsiTermAppUi::LoadSettings(TPsiSettings& aSettings)
 	aSettings.iBell = 0;
 	aSettings.iStartScreen = 1;
 	aSettings.iTmuxTabs = 1;
-	aSettings.iPppStart.Copy(_L("ATDT777"));   // WiRSa and similar: dial 777 = PPP
 	aSettings.iToolbar = 1;       // shown the first time, as the style guide expects
 	aSettings.iDisplay = 0;       // Reading mode off, coloured text dark (docs/display.md)
 	aSettings.iFontName.Zero();   // the zoom levels (Terminus 12)
@@ -7998,16 +8048,60 @@ void CPsiTermAppUi::HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestina
 		UpdateReading();
 		if (iView)
 			iView->SetForeground(iForeground);   // (0.81) power: no drawing behind
+		if (!iForeground && iSessions[0])
+			iSessions[0]->ReleaseSerial();       // (1.16) the port is free for other programs behind
 		if (iForeground && iHosts)
 			TRAP_IGNORE(HostsFromDiskL());   // (1.08) Hosts.dat copied over meanwhile: its servers come in
 		}
 	else if (aEvent.Type() == EEventKey && !iReading.Active() && iForeground)
 		UpdateReading(ETrue);
+	if (aEvent.Type() == EEventUser && *(TApaSystemEvent*)aEvent.EventData() == EApaSystemEventShutdown)
+		iSystemClose = ETrue;                // (1.16) the system closes us: no question (EndConnectionsL)
 	if (aEvent.Type() == EEventUser && *(TApaSystemEvent*)aEvent.EventData() == EApaSystemEventBackupStarting)
 		for (TInt i = 0; i < KMaxSessions; i++)   // (1.04) every connection's log
 			if (iSessions[i] && PtLogging(*iSessions[i]))
 				TRAP_IGNORE(PtLogCommandL(*iSessions[i]));   // (with the log on, the command stops it)
 	CEikAppUi::HandleWsEventL(aEvent, aDestination);
+	}
+
+// (1.16) Close with connections up: "2 connections will be ended / Close
+// PsiTerm?" (not when the system closes PsiTerm). Then every connection is
+// told to end at once and they are waited for together, 3 s at most in all
+// (each view's destructor waited 3 s of its own, one after the other).
+TBool CPsiTermAppUi::EndConnectionsL()
+	{
+	TInt live = 0;
+	for (TInt i = 0; i < KMaxSessions; i++)
+		if (iSessions[i] && iSessions[i]->SshActive())
+			live++;
+	if (live == 0)
+		return ETrue;
+	if (!iSystemClose)
+		{
+		TBuf<48> what;
+		if (live == 1)
+			what.Copy(_L("The connection will be ended"));
+		else
+			what.Format(_L("%d connections will be ended"), live);
+		if (!iEikonEnv->QueryWinL(what, _L("Close PsiTerm?")))
+			return EFalse;
+		}
+	TRAP_IGNORE(iEikonEnv->BusyMsgL(_L("Ending SSH..."), EHLeftVBottom, TTimeIntervalMicroSeconds32(0)));
+	for (TInt i = 0; i < KMaxSessions; i++)
+		if (iSessions[i])
+			iSessions[i]->AskSshQuit();
+	for (TInt w = 0; w < 30; w++)
+		{
+		TBool all = ETrue;
+		for (TInt i = 0; i < KMaxSessions; i++)
+			if (iSessions[i] && !iSessions[i]->SshGone())
+				all = EFalse;
+		if (all)
+			break;
+		User::After(100000);
+		}
+	iEikonEnv->BusyMsgCancel();
+	return ETrue;                            // (one still running is ended by its view's destructor)
 	}
 
 // Connects to saved host aIndex (from the SSH to... list)
@@ -9062,6 +9156,8 @@ void CPsiTermAppUi::HandleCommandL(TInt aCommand)
 	case EEikCmdExit:
 		if (iEdit && !CloseEditorL())
 			return;                           // (1.02: changes not saved, and saving failed)
+		if (!EndConnectionsL())
+			return;
 		Exit();
 		return;
 	case EPtCmdToolbar:                       // View > Show toolbar (tick box)

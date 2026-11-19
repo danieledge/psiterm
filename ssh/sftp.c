@@ -567,16 +567,16 @@ static void finish(int result)
 	   answer); a half upload is removed too */
 	if (have_handle && ch && ch_state == CH_READY) {
 		send_handle(FXP_CLOSE, K_FREE);
-		if (op == PSI_XOP_PUT && result != PSI_XFER_OK && out_room(strlen(s->xfer_remote) + 32)) {
+		if (op == PSI_XOP_PUT && !wtemp && result != PSI_XFER_OK && out_room(strlen(s->xfer_remote) + 32)) {
 			pkt_begin(FXP_REMOVE);
 			put32(next_id++);
 			putstr(s->xfer_remote, strlen(s->xfer_remote));
 			pkt_end();
 		}
 	}
-	/* (1.02) SAVE that failed after starting the file beside the target:
-	   that file goes (the target is untouched) */
-	if (op == PSI_XOP_SAVE && wtemp && result != PSI_XFER_OK && ch && ch_state == CH_READY
+	/* (1.02) SAVE (1.16: and Send file) that failed after starting the
+	   file beside the target: that file goes (the target is untouched) */
+	if ((op == PSI_XOP_SAVE || op == PSI_XOP_PUT) && wtemp && result != PSI_XFER_OK && ch && ch_state == CH_READY
 		&& out_room(strlen(wpath) + 32)) {
 		pkt_begin(FXP_REMOVE);
 		put32(next_id++);
@@ -656,9 +656,7 @@ static void first_request(void)
 {
 	PsiShared *s = sh();
 	switch (op) {
-	case PSI_XOP_PUT:
-		if (send_open(s->xfer_remote, FXF_WRITE | FXF_CREAT | FXF_TRUNC) < 0) finish(PSI_XFER_FAILED);
-		break;
+	case PSI_XOP_PUT:                 /* (1.16) as SAVE: written beside the target, then renamed over it */
 	case PSI_XOP_GET:
 	case PSI_XOP_STAT:
 	case PSI_XOP_SAVE:                /* (1.02) first: is it the file that was opened? */
@@ -883,7 +881,7 @@ static void handle_reply(const unsigned char *p, unsigned int n)
 				finish(PSI_XFER_OK);
 				return;
 			}
-			if (op == PSI_XOP_SAVE && code == FX_NO_SUCH_FILE) {
+			if ((op == PSI_XOP_SAVE || op == PSI_XOP_PUT) && code == FX_NO_SUCH_FILE) {
 				/* not there: a new file, or one deleted since it was opened */
 				if (save_opened_mtime && !s->xfer_force) {
 					set_fail(PSI_XFER_CHANGED, "it has been deleted on the server");
@@ -938,7 +936,7 @@ static void handle_reply(const unsigned char *p, unsigned int n)
 		case K_CLOSE:
 			/* for an upload, the last chance for the server to say "disk full" */
 			if (code != FX_OK && (op == PSI_XOP_PUT || op == PSI_XOP_SAVE)) status_fail(code, msg, mlen);
-			if (op == PSI_XOP_SAVE && !failed) {
+			if ((op == PSI_XOP_SAVE || op == PSI_XOP_PUT) && !failed) {
 				/* written: rename the file beside it over the target, or
 				   (written in place) just the new time */
 				if (wtemp) {
@@ -1008,7 +1006,7 @@ static void handle_reply(const unsigned char *p, unsigned int n)
 			finish(PSI_XFER_OK);
 			return;
 		}
-		if (op == PSI_XOP_SAVE) {
+		if (op == PSI_XOP_SAVE || op == PSI_XOP_PUT) {   /* (PUT: save_opened_mtime is 0, no check) */
 			unsigned int want_t = s->xfer_expect;
 			if (has_perm && S_TYPE(perm) == T_DIR) {
 				set_fail(PSI_XFER_FAILED, "that is a folder");

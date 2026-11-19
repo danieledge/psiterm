@@ -59,6 +59,9 @@ static void erase(VTermState *state, VTermRect rect, int selective)
 static VTermState *vterm_state_new(VTerm *vt)
 {
   VTermState *state = vterm_allocator_malloc(vt, sizeof(VTermState));
+  /* (PsiTerm 1.16) out of memory: NULL */
+  if(!state)
+    return NULL;
 
   state->vt = vt;
 
@@ -92,6 +95,11 @@ static VTermState *vterm_state_new(VTerm *vt)
   /* TODO: Make an 'enable' function */
   state->lineinfos[BUFIDX_ALTSCREEN] = vterm_allocator_malloc(state->vt, state->rows * sizeof(VTermLineInfo));
   state->lineinfo = state->lineinfos[BUFIDX_PRIMARY];
+
+  if(!state->combine_chars || !state->tabstops || !state->lineinfos[BUFIDX_PRIMARY] || !state->lineinfos[BUFIDX_ALTSCREEN]) {
+    vterm_state_free(state);
+    return NULL;
+  }
 
   state->encoding_utf8.enc = vterm_lookup_encoding(ENC_UTF8, 'u');
   if(*state->encoding_utf8.enc->init)
@@ -2090,6 +2098,8 @@ VTermState *vterm_obtain_state(VTerm *vt)
     return vt->state;
 
   VTermState *state = vterm_state_new(vt);
+  if(!state)
+    return NULL;
   vt->state = state;
 
   vterm_parser_set_callbacks(vt, &parser_callbacks, state);
