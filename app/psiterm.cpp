@@ -33,6 +33,7 @@
 #include "psilink.h"
 #include "pglinktest.h"
 #include "psigreyui.h"
+#include "psikeep.h"           // (1.17) settings kept on the card, without passwords or keys
 
 static void UseSharedLink(RFs& aFs, TPsiSettings& aSettings);
 static void SaveSharedLink(RFs& aFs, const TPsiSettings& aSettings);
@@ -155,6 +156,12 @@ _LIT(KKeysFile, "C:\\System\\Apps\\PsiTerm\\Keys.dat");
 _LIT(KKeysDir, "C:\\System\\Apps\\PsiTerm\\Keys\\");
 _LIT(KOldKey, "C:\\System\\Apps\\PsiTerm\\id_ed25519");       // 0.44-0.49
 _LIT(KSshHome, "C:\\System\\Apps\\PsiTerm");
+// (1.17) the other settings files kept on the card (psikeep.h), as
+// pttmux.cpp and ptxfer.cpp name them; and psissh's known hosts
+_LIT(KKeepTmuxIni, "C:\\System\\Apps\\PsiTerm\\Tmux.ini");
+_LIT(KKeepLogIni, "C:\\System\\Apps\\PsiTerm\\Log.ini");
+_LIT(KKeepFolders, "C:\\System\\Apps\\PsiTerm\\Folders.dat");
+_LIT(KKnownHosts, "C:\\System\\Apps\\PsiTerm\\.ssh\\known_hosts");
 const TInt KEntropyKeysNeeded = 40;
 const TInt KScrollbackLines = 300;       // ~150 KB of history
 const TInt KScrollbackCols = 128;
@@ -170,7 +177,7 @@ const TInt KTickSlowUs = 2000000;       // ...when nothing on the screen moves (
 _LIT8(KGitHubHost, "raw.githubusercontent.com");
 _LIT8(KGitHubPath, "/danieledge/psiterm/main/dist/");
 _LIT8(KGitHubDevPath, "/danieledge/psiterm/dev/dist/");
-_LIT(KPsiTermVersion, "1.16");           // also in psiterm.pkg; version.txt must match
+_LIT(KPsiTermVersion, "1.17");           // also in psiterm.pkg; version.txt must match
 
 static TBps BaudFromIndex(TInt aIndex)
 	{
@@ -4348,7 +4355,8 @@ void CTermView::StartSshL()
 	if (!SeedFileExists() && iKeyCount < KEntropyKeysNeeded)
 		{
 		// first ever SSH: gather randomness from the user's typing
-		LocalMessage(_L8("\r\nSSH needs some randomness for its keys the first time.\r\n"
+		LocalMessage(_L8("\r\nSSH needs some randomness for its keys the first time, and after the\r\n"
+			"internal memory is cleared (it is never kept on the card).\r\n"
 			"Type random keys until it says done (Esc cancels): "));
 		iGatheringEntropy = ETrue;
 		iEntropyMode = 0;
@@ -5144,6 +5152,9 @@ void CTermView::ReconnectNowL()
 void CTermView::SshProcessEnded()
 	{
 	PumpSsh();
+	// (1.17) a server's key trusted in that session: the card's copy of the
+	// known hosts up to date
+	PsiKeepFile(iCoeEnv->FsSession(), KKnownHosts);
 	if (iPump)
 		iPump->Cancel();
 	if (iBellWaiter)
@@ -5782,10 +5793,35 @@ TInt CHostList::Save()
 	if (!buf)
 		return KErrNoMemory;
 	TPtr8 data(buf->Des());
-	TUint32 salt = (TUint32)User::TickCount() * 2654435761u ^ (TUint32)(TInt)this;
-	TTime now;
-	now.HomeTime();
-	salt ^= now.Int64().Low();
+	Build(data, EFalse);
+	TInt r = SafeWrite(iFs, KHostsFile, data);
+	NoteDisk();
+	// (1.17) the card's copy (psikeep.h): the same servers, every saved
+	// password left out, and a fixed salt so that it changes only when they do
+	if (r == KErrNone)
+		{
+		data.FillZ();
+		Build(data, ETrue);
+		PsiKeepData(iFs, KHostsFile, data);
+		}
+	data.FillZ();
+	delete buf;
+	return r;
+	}
+
+// Hosts.dat's bytes into aData (KHostsFileMax); aForCard: with no passwords
+void CHostList::Build(TDes8& aData, TBool aForCard)
+	{
+	TDes8& data = aData;
+	data.Zero();
+	TUint32 salt = 0;
+	if (!aForCard)
+		{
+		salt = (TUint32)User::TickCount() * 2654435761u ^ (TUint32)(TInt)this;
+		TTime now;
+		now.HomeTime();
+		salt ^= now.Int64().Low();
+		}
 	TUint32 key = KeyFor(salt);
 	data.Append('P');
 	data.Append('H');
@@ -5803,13 +5839,21 @@ TInt CHostList::Save()
 		data.Append((TUint8)(e.iPort & 0xff));
 		data.Append((TUint8)(e.iPort >> 8));
 		TBuf8<64> pw;
-		pw.Copy(e.iPassword);
+		if (!aForCard)
+			pw.Copy(e.iPassword);
 		Scramble(pw, key + (TUint32)i * 0x10001u);
 		data.Append((TUint8)pw.Length());
 		data.Append(pw);
 		pw.FillZ();
 		PutStr(data, e.iCommand);
-		data.Append((TUint8)e.iAuth);
+		// (the card's copy: no saved password, so it is asked for, as
+		// ReadFile does for one that cannot be read)
+		TInt auth = e.iAuth;
+		if (aForCard && auth == 2)
+			auth = 1;
+		else if (aForCard && auth == 3)
+			auth = 0;
+		data.Append((TUint8)auth);
 		data.Append((TUint8)e.iKeyId);
 		}
 	// (1.01) after the hosts, where older PsiTerms do not look: "PX" 2, then
@@ -5856,11 +5900,6 @@ TInt CHostList::Save()
 	data.Append((TUint8)iShutCount);
 	for (TInt i = 0; i < iShutCount; i++)
 		PutStr(data, iShut[i]);
-	TInt r = SafeWrite(iFs, KHostsFile, data);
-	data.FillZ();
-	delete buf;
-	NoteDisk();
-	return r;
 	}
 
 // ----- SSH keys -------------------------------------------------------------
@@ -7241,6 +7280,7 @@ TBool CUpdateDialog::OkToExitL(TInt /*aButtonId*/)
 void CPsiTermAppUi::ConstructL()
 	{
 	BaseConstructL();
+	TBool keptBack = RestoreKept();          // (1.17) a new C:: the card's copies first
 	TPsiSettings settings;
 	LoadSettings(settings);
 	iHosts = CHostList::NewL(iCoeEnv->FsSession());
@@ -7312,9 +7352,50 @@ void CPsiTermAppUi::ConstructL()
 	TPsiReading::Recover(iCoeEnv->FsSession(), iCoeEnv->WsSession(), KUidPsiTerm);
 	iForeground = ETrue;
 	UpdateReading();
+	// (1.17) the card's copies up to date (settings saved by an older
+	// PsiTerm, or another card); and, after a new C:, said once
+	KeepOnCard(iCoeEnv->FsSession());
+	if (keptBack)
+		iEikonEnv->InfoWinL(_L("Settings put back from the card"), _L("Passwords and SSH keys are not kept there"));
 	// (1.02) PsiTerm opens on the Start view (Preferences > Start screen)
 	if (settings.iStartScreen)
 		StartSoon();
+	}
+
+// (1.17) Coda's rule for settings on C: (psikeep.h): the settings, the
+// servers (without their passwords), the snippets and the known hosts are
+// copied to the card and put back on a new C:. The keys (Keys\, Keys.dat),
+// the random seed (ssh_seed.bin) and saved passwords never are: a card can
+// be read on any computer, and scrambling is no protection there.
+TBool CPsiTermAppUi::RestoreKept()
+	{
+	RFs& fs = iCoeEnv->FsSession();
+	TBool back = EFalse;
+	if (PsiKeepRestore(fs, KIniFile))
+		back = ETrue;
+	if (PsiKeepRestore(fs, KHostsFile))
+		back = ETrue;
+	PsiKeepRestore(fs, KSnippetsFile);
+	PsiKeepRestore(fs, KKeepTmuxIni);
+	PsiKeepRestore(fs, KKeepLogIni);
+	PsiKeepRestore(fs, KKeepFolders);
+	PsiKeepRestore(fs, KKnownHosts);
+	PsiKeepRestore(fs, KPsiLinkFile);
+	return back;
+	}
+
+void CPsiTermAppUi::KeepOnCard(RFs& aFs)
+	{
+	if (!PsiKeepCard(aFs))
+		return;
+	PsiKeepFile(aFs, KIniFile);
+	PsiKeepFile(aFs, KSnippetsFile);
+	PsiKeepFile(aFs, KKeepTmuxIni);
+	PsiKeepFile(aFs, KKeepLogIni);
+	PsiKeepFile(aFs, KKeepFolders);
+	PsiKeepFile(aFs, KKnownHosts);
+	PsiKeepFile(aFs, KPsiLinkFile);
+	// (Hosts.dat's copy is made by CHostList::Save, without the passwords)
 	}
 
 // ----- Reading mode and the grey calibration (docs/display.md) ------------------
@@ -8017,7 +8098,8 @@ void CPsiTermAppUi::SaveSettings(const TPsiSettings& aSettings)
 	data.Append((TUint8)(aSettings.iKeepLog ? 1 : 0));    // v16 (0.97): Keep a log
 	data.Append((TUint8)aSettings.iFace);                 // v17 (0.99): Typeface
 	data.Append((TUint8)1);                               // v18 (1.04): Clean is the colour default
-	SafeWrite(fs, KIniFile, data);
+	if (SafeWrite(fs, KIniFile, data) == KErrNone)
+		KeepOnCard(fs);                                   // (1.17) and the card's copies
 	}
 
 // The Debug tools need the serial port: offer to end the SSH session first.

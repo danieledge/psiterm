@@ -157,7 +157,13 @@ static const TPtHelpTopic KHelpTopics[] =
 	  "\n"
 	  "Once logged in to a server with a password, File > Install login key on server adds a key to "
 	  "the server's ~/.ssh/authorized_keys. Then choose that key under Log in with in File > SSH to > "
-	  "Edit, and the server stops asking for the password." },
+	  "Edit, and the server stops asking for the password.\n"
+	  "\n"
+	  "Keys and saved passwords are kept on this Psion only (in its internal memory; passwords "
+	  "scrambled, not encrypted), never on the card. The servers, settings, snippets and known "
+	  "hosts are copied to the card as well (\\System\\Data\\Kept\\) and put back if the "
+	  "internal memory is cleared; then make or import your keys again and type the passwords. "
+	  "Keep a copy of a key file somewhere safe if you need it back." },
 
 	{ "Files & logs",
 	  "While logged in, PsiTerm can copy files to and from the server over the same connection - no "

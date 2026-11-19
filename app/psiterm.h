@@ -589,6 +589,7 @@ private:
 	TBool iDiskKnown;         // ...there was one
 	CHostList(RFs& aFs) : iFs(aFs) {}
 	TUint32 KeyFor(TUint32 aSalt) const;
+	void Build(TDes8& aData, TBool aForCard);   // (1.17) Hosts.dat's bytes; aForCard: no passwords (psikeep.h)
 	RFs& iFs;
 	CArrayFixFlat<THostEntry>* iEntries;
 	};
@@ -1312,6 +1313,13 @@ private:
 	void HandleWsEventL(const TWsEvent& aEvent, CCoeControl* aDestination);   // a backup is starting: close the log
 	TBool ConfirmDisconnectL(TInt aCommand);
 	void LoadSettings(TPsiSettings& aSettings);
+	// (1.17) settings kept on the card (psikeep.h): put back on a new C:,
+	// the card's copies brought up to date (never the keys, the seed or a
+	// saved password)
+	TBool RestoreKept();
+public:
+	static void KeepOnCard(RFs& aFs);
+private:
 	void SshToL();
 	TBool EditHostL(THostEntry& aEntry, TBool aNew = EFalse);
 	void SaveSettings(const TPsiSettings& aSettings);
